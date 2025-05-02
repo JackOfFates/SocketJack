@@ -1,0 +1,29 @@
+﻿<UserControl x:Class="BandwidthTest"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             mc:Ignorable="d" 
+             d:DesignHeight="450" d:DesignWidth="800">
+    <!--<local:TestTemplate x:Name="Base">
+
+    </local:TestTemplate>-->
+    <Grid Background="#FF212121">
+        <Button x:Name="ButtonStartStop" Content="Start Test" Height="56" Margin="10,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126"/>
+        <TextBox x:Name="TextboxLog" VerticalScrollBarVisibility="Auto" Padding="10" Margin="10,10,10,71" TextWrapping="NoWrap" AcceptsReturn="true" IsReadOnly="True" Text="*****************************************************************WARNING**********************************************************************&#xA;&#xA;Something with Visual Studio's debugger makes this test EXTREMELY SLOW and use a METRIC TON of system memory. &#xA;When you dont use the debugger the code runs with no issues.&#xA;&#xA;*****************************************************************WARNING**********************************************************************" Foreground="#FFEAEAEA" BorderThickness="0,0,0,0" Background="#540C0C0C"/>
+        <GroupBox x:Name="gb1" Header="Stats" Margin="141,0,0,0" Foreground="#FFC5C5C5" BorderBrush="#FF940000" Height="71" VerticalAlignment="Bottom">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <TextBlock x:Name="LabelClients" Text="Connected" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
+                <TextBlock x:Name="LabelConnects" Text="Connect #" HorizontalAlignment="Left" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" Margin="5,0,5,0" TextAlignment="Center"/>
+                <TextBlock x:Name="LabelDisconnects" Text="D/C #" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" Margin="5,0,5,0" TextAlignment="Center"/>
+                <TextBlock x:Name="LabelSent" Text="Sent" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
+                <TextBlock x:Name="LabelReceived" Text="Received" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
+                <Grid  Width="100">
+                    <TextBlock Text="Unit Size" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
+                    <Slider x:Name="SliderUnitSize" Thumb.DragStarted="Slider_DragStarted" Thumb.DragCompleted="Slider_DragCompleted" Maximum="1000000" Value="1000000" SmallChange="1" LargeChange="25000" Margin="0,24,0,0" IsMoveToPointEnabled="True" AutoToolTipPlacement="TopLeft" Delay="0"/>
+                </Grid>
+            </StackPanel>
+        </GroupBox>
+
+    </Grid>
+</UserControl>

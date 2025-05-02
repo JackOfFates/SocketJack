@@ -1,0 +1,67 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1</TargetFrameworks>
+    <OutputType>Library</OutputType>
+    <RootNamespace>SocketJack.NewtonsoftJson</RootNamespace>
+    <AssemblyName>SocketJack.NewtonsoftJson</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AssemblyTitle>SocketJack.NewtonsoftJson</AssemblyTitle>
+    <Product>SocketJack.NewtonsoftJson</Product>
+    <Copyright>Copyright © JackOfFates 2025</Copyright>
+    <AssemblyVersion>1.0.0.1</AssemblyVersion>
+    <FileVersion>1.0.0.1</FileVersion>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <Title>SocketJack Newtonsoft.Json Serializer</Title>
+    <PackageLicenseFile>License.txt</PackageLicenseFile>
+    <Description>An Implementation of Newtonsoft.Json for SocketJack</Description>
+    <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
+    <PackageIcon>SocketJackIcon.png</PackageIcon>
+    <PackageReadmeFile>SocketJack.NewtonsoftJson.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/JackOfFates/SocketJack.NewtonsoftJson</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>Socket; Sockets; Jack; Newtonsoft; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; PeerToPeer; Non Generic;</PackageTags>
+    <PackageReleaseNotes>v1.0.0.0</PackageReleaseNotes>
+    <Version>1.0.0.1</Version>
+    <Company>JackOfFates</Company>
+    <Authors>JackOfFates</Authors>
+    <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
+    <BuildPackage>true</BuildPackage>
+    <NeutralLanguage>en</NeutralLanguage>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(ProjectDir)**\*.vb</DefaultItemExcludes>
+    <LangVersion>latest</LangVersion>
+    <NoWin32Manifest>true</NoWin32Manifest>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DocumentationFile>SocketJack.NewtonsoftJson.xml</DocumentationFile>
+    <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DocumentationFile>SocketJack.NewtonsoftJson.xml</DocumentationFile>
+    <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Import Include="System.Threading.Tasks" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\..\..\Desktop\SocketJackIcon.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\..\..\License.txt" Link="License.txt">
+      <PackagePath>\</PackagePath>
+      <Pack>True</Pack>
+    </None>
+    <None Include="..\..\..\SocketJack.NewtonsoftJson.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.Data.DataSetExtensions" Version="4.5.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
+  </ItemGroup>
+</Project>
