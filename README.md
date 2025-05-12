@@ -15,10 +15,10 @@ PM> NuGet\Install-Package  SocketJack.NewtonsoftJson
 ```
 
 
-# Roadmap
+# Future Features in v1.0.2
 - SSL Support
-- Bandwidth limiting
-- FTP-like Functions
+- Bandwidth Throttling
+- Automatic FTP / Bitmap support
 
 # Release Notes
 
@@ -27,7 +27,7 @@ PM> NuGet\Install-Package  SocketJack.NewtonsoftJson
 - PeerRedirect Vulnerability 
 
 ### Development
-RemoteIdentity.Tag feature for easily indentifying User's by name
+- RemoteIdentity.Tag feature for easily indentifying User's by name
 
 ### Added
 - Chat Test
