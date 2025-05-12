@@ -26,7 +26,7 @@ PM> NuGet\Install-Package  SocketJack.NewtonsoftJson
 ### Fixed
 - PeerRedirect Vulnerability 
 
-### Development (Not Complete)
+### Development
 RemoteIdentity.Tag feature for easily indentifying User's by name
 
 ### Added
