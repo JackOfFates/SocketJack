@@ -29,6 +29,9 @@ PM> NuGet\Install-Package  SocketJack.NewtonsoftJson
 ### Development (Not Complete)
 RemoteIdentity.Tag feature for easily indentifying User's by name
 
+### Added
+- Chat Test
+- Generic Callbacks
 
 ## v1.0.1.5701
 ### Fixed
@@ -66,11 +69,11 @@ RemoteIdentity.Tag feature for easily indentifying User's by name
 
 ```cs
 public class MyApp {
-    SocketJack.Networking.Client.TcpClient TcpClient = new  Client.TcpClient();
+    SocketJack.Networking.Client.TcpClient TcpClient = new Client.TcpClient();
     SocketJack.Networking.Server.TcpServer TcpServer = new Server.TcpServer(Port);
 
-    private const string  Host = "127.0.0.1";
-    private const int  Port = 7474;
+    private const string Host = "127.0.0.1";
+    private const int Port = 7474;
 
     // Handle all incoming objects
     private void TcpServer_OnReceive(ref ReceivedEventArgs e) {
@@ -82,24 +85,24 @@ public class MyApp {
         TcpClient.Send(new AuthorizationRequest());
     }
 
-    private void Server_AuthorizationRequest(ReceivedEventArgs args) {
+    private void Server_AuthorizationRequest(ReceivedEventArgs<AuthorizationRequest> args) {
         // Handle the auth request on the server
         // Note: This is just used as an example.
     }
 
-        private void Server_AuthorizationRequest(ReceivedEventArgs args) {
+    private void Client_AuthorizationRequest(ReceivedEventArgs<AuthorizationRequest> args) {
         // Handle the auth request on the client
         // Note: This is just used as an example.
     }
 
     public async void Start_MyApp() {
         // Start the server.
-        TcpServer.RegisterCallback(typeof(AuthorizationRequest), Server_AuthorizationRequest);
+        TcpServer.RegisterCallback<AuthorizationRequest>(typeof(AuthorizationRequest), Server_AuthorizationRequest);
         TcpServer.OnReceive += TcpServer_OnReceive;
         TcpServer.Listen();
 
         // Start the client.
-        TcpClient.RegisterCallback(typeof(AuthorizationRequest), Client_AuthorizationRequest);
+        TcpClient.RegisterCallback<AuthorizationRequest>(typeof(AuthorizationRequest), Client_AuthorizationRequest);
         TcpClient.OnConnected += TcpClient_OnConnected;
         // Connect function timeout is 3 seconds by default.
         await TcpClient.Connect("127.0.0.1", Port);
