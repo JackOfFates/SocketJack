@@ -24,8 +24,8 @@
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
     <Copyright>Copyright © JackOfFates 2025</Copyright>
-    <AssemblyVersion>1.0.1.5701</AssemblyVersion>
-    <FileVersion>1.0.1.5701</FileVersion>
+    <AssemblyVersion>1.0.1.51201</AssemblyVersion>
+    <FileVersion>1.0.1.51201</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
@@ -36,9 +36,9 @@
     <RepositoryUrl>https://github.com/JackOfFates/SocketJack</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>Socket; Sockets; Jack; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; PeerToPeer; Non Generic;</PackageTags>
-    <PackageReleaseNotes>v1.0.1.5701</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.0.1.51201</PackageReleaseNotes>
     <Company>JackOfFates</Company>
-    <Version>1.0.1.5701</Version>
+    <Version>1.0.1.51201</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
