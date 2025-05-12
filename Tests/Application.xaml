@@ -1,7 +1,6 @@
 ﻿<Application x:Class="Application"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:MSL_Tests"
              StartupUri="TestWindow.xaml">
     <Application.Resources>
         <SolidColorBrush x:Key="TabItem.Selected.Background" Color="#F1910101"/>

@@ -9,8 +9,14 @@
         StartTest(t)
     End Sub
 
+    Private Sub ButtonChat_Click(sender As Object, e As RoutedEventArgs) Handles ButtonChat.Click
+        Dim t = New ChatTest With {.Name = "BandwidthTestControl"}
+        StartTest(t)
+    End Sub
+
     Private Sub StartTest(Test As ITest)
         If Not TestTabs.ContainsKey(Test.TestName) Then
+            Me.Height = 450
             Dim Tab As New TabItem
             Tab.Content = Test
             Tab.Header = Test.TestName
@@ -20,10 +26,11 @@
             If Test.AutoStart Then
                 Test.StartTest()
             End If
-            Me.Height = 450
+
         Else
             TestTabs(Test.TestName).IsSelected = True
             Test = Nothing
         End If
     End Sub
+
 End Class

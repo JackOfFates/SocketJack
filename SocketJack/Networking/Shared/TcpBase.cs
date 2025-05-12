@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -27,13 +29,17 @@ namespace SocketJack.Networking.Shared {
         public delegate void OnDisconnectedEventHandler(DisconnectedEventArgs e);
 
         public event OnReceiveEventHandler OnReceive;
-        public delegate void OnReceiveEventHandler(ref ReceivedEventArgs e);
+        public delegate void OnReceiveEventHandler(ref IReceivedEventArgs e);
 
         public event OnSentEventHandler OnSent;
 
         public delegate void OnSentEventHandler(SentEventArgs e);
         public event OnErrorEventHandler OnError;
         public delegate void OnErrorEventHandler(ErrorEventArgs e);
+
+
+        public event OnSerializationErrorEventHandler OnSerializationError;
+        public delegate void OnSerializationErrorEventHandler(ErrorEventArgs e);
 
         public event OnDeserializationErrorEventHandler OnDeserializationError;
         public delegate void OnDeserializationErrorEventHandler(ErrorEventArgs e);
@@ -70,27 +76,23 @@ namespace SocketJack.Networking.Shared {
 
         protected internal event InternalSendEventEventHandler InternalSendEvent;
         protected internal delegate void InternalSendEventEventHandler(ConnectedClient ConnectedSocket, Type objType, object obj, int BytesSent);
+
+
+        protected internal void InvokeOnDisconnected(DisconnectedEventArgs e) {
+            if(e.Client != BaseConnection) OnDisconnected?.Invoke(e);
+        }
         #endregion
 
         #region Internal
-        internal Thread ByteCounterThread;
 
         protected internal ConcurrentDictionary<Guid, byte[]> Buffers = new ConcurrentDictionary<Guid, byte[]>();
         protected internal ConcurrentDictionary<string, PeerIdentification> Peers = new ConcurrentDictionary<string, PeerIdentification>();
         protected internal ConcurrentDictionary<Guid, ConnectedClient> _ConnectedClients = new ConcurrentDictionary<Guid, ConnectedClient>();
-        protected internal Dictionary<Type, List<Action<ReceivedEventArgs>>> TypeCallbacks = new Dictionary<Type, List<Action<ReceivedEventArgs>>>();
+        protected internal Dictionary<Type, List<Action<IReceivedEventArgs>>> TypeCallbacks = new Dictionary<Type, List<Action<IReceivedEventArgs>>>();
         protected internal long SentBytesCounter = 0L;
         protected internal long ReceivedBytesCounter = 0L;
         protected internal bool isDisposed = false;
         private static TimeSpan OneSecond = TimeSpan.FromSeconds(1L);
-
-        protected internal bool isReceiving() {
-            return BaseConnection != null && BaseConnection.IsReceiving;
-        }
-
-        protected internal bool isSending() {
-            return BaseConnection != null && BaseConnection.IsSending;
-        }
 
         private void HandleReceive(ConnectedClient Client, object obj, Type objType, int Length) {
             if (ReferenceEquals(objType, typeof(PingObj)))
@@ -99,6 +101,16 @@ namespace SocketJack.Networking.Shared {
                 case var @case when @case == typeof(PeerIdentification): {
                         if (PeerToPeerEnabled)
                             PeerUpdate?.Invoke(this, (PeerIdentification)obj);
+                        break;
+                    }
+                case var case1 when case1 == typeof(IdentityTag): {
+                        //IdentityTag TagObj = (IdentityTag)obj;
+                        //if (BaseConnection.IsServer) {
+                        //    Client.RemoteIdentity.Tag = TagObj.Tag;
+                        //    _ConnectedClients.SendBroadcast(TagObj);
+                        //} else if(Peers.ContainsKey(TagObj.ID)) {
+                        //    Peers[TagObj.ID].Tag = TagObj.Tag;
+                        //}
                         break;
                     }
                 case var case1 when case1 == typeof(PeerServer): {
@@ -117,63 +129,75 @@ namespace SocketJack.Networking.Shared {
                         PeerRefusedConnection?.Invoke(this, refusedArgs);
                         break;
                     }
-                case var case3 when case3 == typeof(Segment): {
-                        Segment s = (Segment)obj;
-                        if (Segment.Cache.ContainsKey(s.SID)) {
-                            Segment.Cache[s.SID].Add(s);
-                            if (Segment.SegmentComplete(s)) {
-                                byte[] RebuiltSegments = Segment.Rebuild(s);
-                                var segObj = ((ObjectWrapper)Serializer.Deserialize(RebuiltSegments)).Unwrap(this);
-                                var segObjType = segObj.GetType();
-                                var e = new ReceivedEventArgs(this, Client, segObj, RebuiltSegments.Count());
-                                InternalReceiveEvent?.Invoke(Client, segObjType, segObj, RebuiltSegments.Count());
-                                OnReceive?.Invoke(ref e);
-                                InvokeAllCallbacks(e);
-                            }
-                        } else {
-                            Segment.Cache.Add(s.SID, new List<Segment>() { s });
-                        }
+                //case var case3 when case3 == typeof(Segment): {
+                //        Segment s = (Segment)obj;
+                //        if (Segment.Cache.ContainsKey(s.SID)) {
+                //            Segment.Cache[s.SID].Add(s);
+                //            if (Segment.SegmentComplete(s)) {
+                //                byte[] RebuiltSegments = Segment.Rebuild(s);
+                //                try {
+                //                    var segObj = ((ObjectWrapper)Serializer.Deserialize(RebuiltSegments)).Unwrap(this);
+                //                    var segObjType = segObj.GetType();
+                //                    var e = new ReceivedEventArgs(this, Client, segObj, RebuiltSegments.Count());
+                //                    InternalReceiveEvent?.Invoke(Client, segObjType, segObj, RebuiltSegments.Count());
+                //                    OnReceive?.Invoke(ref e);
+                //                    InvokeAllCallbacks(e);
+                //                } catch (Exception) {
+                //                    OnDeserializationError?.Invoke(new ErrorEventArgs(this, Client, new Exception("Failed to deserialize segment.")));
+                //                }
+                //            }
+                //        } else {
+                //            Segment.Cache.Add(s.SID, new List<Segment>() { s });
+                //        }
 
-                        break;
-                    }
+                //        break;
+                //    }
                 case var case4 when case4 == typeof(PeerRedirect): {
-                        var e = new ReceivedEventArgs(this, Client, obj, Length);
-                        OnReceive?.Invoke(ref e);
-                        InvokeAllCallbacks(e);
+                        PeerRedirect redirect = (PeerRedirect)obj;
+                        var e = new ReceivedEventArgs<PeerRedirect>(this, Client, redirect, Length);
+                        if (BaseConnection.IsServer) {
+                            IReceivedEventArgs args = e;
+                            OnReceive?.Invoke(ref args);
+                        }
                         if (!e.CancelPeerRedirect) {
-                            PeerRedirect Wrapper = (PeerRedirect)obj;
-                            InternalReceiveEvent?.Invoke(Client, objType, obj, Length);
-                            InternalPeerRedirect?.Invoke(Wrapper.Recipient, Client.RemoteIdentity, Wrapper, Length);
+                            if (LogReceiveEvents)
+                                InternalReceiveEvent?.Invoke(Client, objType, obj, Length);
+                            InternalPeerRedirect?.Invoke(redirect.Recipient, Client.RemoteIdentity, redirect.StripIPs(), Length);
                         }
                         break;
                     }
                 default: {
                         if (LogReceiveEvents)
                             InternalReceiveEvent?.Invoke(Client, objType, obj, Length);
-                        var e = new ReceivedEventArgs(this, Client, obj, Length);
-                        OnReceive?.Invoke(ref e);
-                        InvokeAllCallbacks(e);
+                        var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(obj.GetType());
+
+                        var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
+                        receivedEventArgs.Initialize(this, Client, obj, Length);
+                        OnReceive?.Invoke(ref receivedEventArgs);
+                        InvokeAllCallbacks(receivedEventArgs);
                         break;
                     }
             }
         }
-        private void InvokeAllCallbacks(ReceivedEventArgs e) {
-            if (TypeCallbacks.ContainsKey(e.type)) {
-                var l = TypeCallbacks[e.type];
+        protected internal void InvokeAllCallbacks(IReceivedEventArgs e) {
+            if (TypeCallbacks.ContainsKey(e.Type)) {
+                var l = TypeCallbacks[e.Type];
                 for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
                     l.ElementAt(i).Invoke(e);
                 }
             }
         }
-        private void InvokeAllCallbacks(Type t, ReceivedEventArgs e) {
-            if (TypeCallbacks.ContainsKey(t)) {
-                var l = TypeCallbacks[t];
+
+        protected internal void InvokeAllCallbacks(Type Type, object obj, IReceivedEventArgs e) {
+            if (TypeCallbacks.ContainsKey(Type)) {
+                var l = TypeCallbacks[Type];
                 for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
                     l.ElementAt(i).Invoke(e);
                 }
             }
         }
-        protected internal void InvokeOnReceive(ReceivedEventArgs e) {
+
+        protected internal void InvokeOnReceive(IReceivedEventArgs e) {
             OnReceive?.Invoke(ref e);
         }
         protected internal void InvokeBytesPerSecondUpdate() {
@@ -186,7 +210,6 @@ namespace SocketJack.Networking.Shared {
         }
         protected internal void CloseConnection(ConnectedClient Client, DisconnectionReason Reason = DisconnectionReason.Unknown) {
             if (!Client.Closed) {
-                OnDisconnected?.Invoke(new DisconnectedEventArgs(this, Client));
                 Client.CloseClient(this);
             }
         }
@@ -230,7 +253,7 @@ namespace SocketJack.Networking.Shared {
         public WhitelistedTypes Whitelist { get; set; } = DefaultOptions.Whitelist;
 
         /// <summary>
-        /// Serialization protocol for serialization and deserialization.
+        /// Serializer for serialization and deserialization.
         /// </summary>
         public ISerializer Serializer {
             get {
@@ -371,9 +394,9 @@ namespace SocketJack.Networking.Shared {
                 } else {
                     return true;
                 }
-            } catch (SocketException ex) {
+            } catch (SocketException) {
                 return false;
-            } catch (ObjectDisposedException ex) {
+            } catch (ObjectDisposedException) {
                 return false;
             }
         }
@@ -398,11 +421,10 @@ namespace SocketJack.Networking.Shared {
         /// <summary>
         /// Receive buffer size.
         /// <para>Configurable from DefaultOptions.</para>
-        /// </summary>
         /// <remarks>Default is 8192 bytes.</remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
-        /// <summary>
+        /// </summary>
         public int DownloadBufferSize { get; set; } = DefaultOptions.DownloadBufferSize;
 
         /// <summary>
@@ -423,28 +445,28 @@ namespace SocketJack.Networking.Shared {
         /// </remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
-        public int MaxReceiveMbps {
+        public int MaximumDownloadMbps {
             get {
-                return _MaxReceiveMbps;
+                return _MaximumDownloadMbps;
             }
             set {
-                _MaxReceiveMbps = value;
-                MaximumDownloadBytesPerSecond = MaxReceiveMbps * 1024 * 1024 / 8;
+                _MaximumDownloadMbps = value;
+                MaximumDownloadBytesPerSecond = MaximumDownloadMbps * 1024 * 1024 / 8;
             }
         }
-        private int _MaxReceiveMbps = DefaultOptions._MaximumDownloadMbps;
+        private int _MaximumDownloadMbps = DefaultOptions._MaximumDownloadMbps;
         private int MaximumDownloadBytesPerSecond = DefaultOptions.MaximumDownloadBytesPerSecond;
 
         /// <summary>
         /// Maximum Upload bandwidth.
         /// <para>Configurable from DefaultOptions.</para>
-        /// </summary>
         /// <remarks>
         /// <para>Default is 100Mbps. Set to 0 for unlimited.</para>
         /// </remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
-        public static int MaximumUploadMbps {
+        /// </summary>
+        public int MaximumUploadMbps {
             get {
                 return _MaximumUploadMbps;
             }
@@ -453,17 +475,27 @@ namespace SocketJack.Networking.Shared {
                 MaximumUploadBytesPerSecond = MaximumUploadMbps * 1024 * 1024 / 8;
             }
         }
-        protected internal static int _MaximumUploadMbps = DefaultOptions._MaximumUploadMbps;
-        protected internal static int MaximumUploadBytesPerSecond = DefaultOptions.MaximumUploadBytesPerSecond;
+        protected internal int _MaximumUploadMbps = DefaultOptions._MaximumUploadMbps;
+        protected internal int MaximumUploadBytesPerSecond = DefaultOptions.MaximumUploadBytesPerSecond;
 
         /// <summary>
         /// Upload buffer size.
-        /// </summary>
         /// <remarks>Default is 65536 bytes.</remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
-        /// <summary>
+        /// </summary>
         public static int UploadBufferSize { get; set; } = 65536;
+
+        public bool isReceiving { 
+            get {
+                return BaseConnection != null && BaseConnection.IsReceiving;
+            }
+        }
+        public bool isSending {
+            get {
+                return BaseConnection != null && BaseConnection.IsSending;
+            }
+        }
 
         #endregion
 
@@ -473,12 +505,29 @@ namespace SocketJack.Networking.Shared {
         /// <para>Registers a type callback.</para>
         /// <para>Action invoked when type is received.</para>
         /// </summary>
-        public void RegisterCallback(Type Type, Action<ReceivedEventArgs> Action) {
+        public void RegisterCallback(Type Type, Action<IReceivedEventArgs> Action) {
             Whitelist.AddType(Type);
             if (TypeCallbacks.ContainsKey(Type)) {
                 TypeCallbacks[Type].Add(Action);
             } else {
-                var l = new List<Action<ReceivedEventArgs>>() { Action };
+                var l = new List<Action<IReceivedEventArgs>>() { Action };
+                TypeCallbacks.Add(Type, l);
+            }
+        }
+
+        /// <summary>
+        /// <para>Registers a type callback using generic types.</para>
+        /// <para>Action of type invoked when type is received.</para>
+        /// </summary>
+        public void RegisterCallback<T>(Action<ReceivedEventArgs<T>> Action) {
+            Type Type = typeof(T);
+            Whitelist.AddType(Type);
+            if (TypeCallbacks.ContainsKey(Type)) {
+                TypeCallbacks[Type].Add(e => Action((ReceivedEventArgs<T>)e));
+            } else {
+                var l = new List<Action<IReceivedEventArgs>>() {
+                    e => Action((ReceivedEventArgs<T>)e)
+                };
                 TypeCallbacks.Add(Type, l);
             }
         }
@@ -486,16 +535,27 @@ namespace SocketJack.Networking.Shared {
         /// <summary>
         /// <para>Removes a type callback.</para>
         /// </summary>
-        public void RemoveCallback(Type Type, Action<ReceivedEventArgs> Action) {
+        public void RemoveCallback(Type Type, Action<IReceivedEventArgs> Action) {
             if (TypeCallbacks.ContainsKey(Type))
                 TypeCallbacks[Type].Remove(Action);
+            Whitelist.RemoveType(Type);
+        }
+
+        /// <summary>
+        /// Removes a type callback.
+        /// </summary>
+        public void RemoveCallback<T>(Type Type, Action<ReceivedEventArgs<T>> Action) {
+            if (TypeCallbacks.ContainsKey(Type)) {
+                Action<IReceivedEventArgs> wrappedAction = e => Action((ReceivedEventArgs<T>)e);
+                TypeCallbacks[Type].Remove(wrappedAction);
+            }
             Whitelist.RemoveType(Type);
         }
 
         #endregion
 
         #region Peer to Peer
-       
+
         protected internal void AddPeer(PeerIdentification RemotePeer) {
             var peersInternal = Peers;
             peersInternal.Add(RemotePeer.ID, RemotePeer);
@@ -550,111 +610,241 @@ namespace SocketJack.Networking.Shared {
             if (Client.Socket.Connected)
                 Client.SendQueue.Enqueue(new SendState(Obj, Client));
         }
-        protected internal void SendSegmented(ConnectedClient Client, object Obj) {
-            if (Client.Socket.Connected) {
-                Task.Run(() => {
-                    byte[] Bytes = Serializer.Serialize(ObjectWrapper.Wrap(Obj, this));
-                    SendSegmented(Client, Bytes);
-                });
-            }
-        }
-        protected internal void SendSegmented(ConnectedClient Client, byte[] SerializedBytes) {
-            if (Client.Socket.Connected) {
-                Task.Run(() => {
-                    Segment[] SegmentedObject = SerializedBytes.GetSegments();
+        //protected internal void SendSegmented(ConnectedClient Client, object Obj) {
+        //    if (Client.Socket.Connected) {
+        //        Task.Run(() => {
+        //            try {
+        //                byte[] Bytes = Serializer.Serialize(ObjectWrapper.Wrap(Obj, this));
+        //                SendSegmented(Client, Bytes);
+        //            } catch (Exception ex) {
+        //                OnSerializationError?.Invoke(new ErrorEventArgs(this, Client, ex));
+        //                throw;
+        //            }
+        //        });
+        //    }
+        //}
+        //protected internal void SendSegmented(ConnectedClient Client, byte[] SerializedBytes) {
+        //    if (Client.Socket.Connected) {
+        //        Task.Run(() => {
+        //            Segment[] SegmentedObject = SerializedBytes.GetSegments();
 
-                    for (int i = 0, loopTo = SegmentedObject.Count() - 1; i <= loopTo; i++) {
-                        var s = SegmentedObject[i];
-                        var state = new SendState(s, Client);
-                        Client.SendQueue.Enqueue(state);
-                    }
+        //            for (int i = 0, loopTo = SegmentedObject.Count() - 1; i <= loopTo; i++) {
+        //                var s = SegmentedObject[i];
+        //                var state = new SendState(s, Client);
+        //                Client.SendQueue.Enqueue(state);
+        //            }
 
-                }).ConfigureAwait(false);
-            }
-        }
+        //        }).ConfigureAwait(false);
+        //    }
+        //}
         protected internal bool ProcessSendState(SendState State) {
-            if (isDisposed)
-                return false;
-            if (BaseConnection == null || BaseConnection.IsSending)
-                return false;
+            if (isDisposed || BaseConnection == null || BaseConnection.IsSending || BaseConnection.Closed) return false;
+            BaseConnection.IsSending = true;
             bool sentSuccessful = false;
             try {
                 ObjectWrapper wrapped = (ObjectWrapper)ObjectWrapper.Wrap(State.Object, this);
-                byte[] SerializedBytes = Serializer.Serialize(wrapped);
+                MethodExtensions.TryFuncResult<byte[]> result = MethodExtensions.TryInvoke(() => { return Serializer.Serialize(wrapped); });
+                if (result.Success) {
+                    string txt = System.Text.UTF8Encoding.UTF8.GetString(result.Result);
+                    byte[] SerializedBytes = Serializer.Serialize(wrapped);
+                    var Type = State.Object.GetType();
+                    //if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
+                    // Object smaller than MTU.
+                    bool isSegment = ReferenceEquals(Type, typeof(Segment));
+                    byte[] TerminatedBytes = PrepareSend(SerializedBytes);
+                    int totalBytes = TerminatedBytes.Length;
+                    ConnectedClient Client = State.Client;
+                    long TotalUploadedBytes = 0L;
+                    DateTime UploadStartTime = DateTime.UtcNow;
+                    byte[] SentBytes = new byte[totalBytes];
 
-                var Type = State.Object.GetType();
-                //if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
-                // Object smaller than MTU.
-                bool isSegment = ReferenceEquals(Type, typeof(Segment));
-                bool isPingObj = ReferenceEquals(Type, typeof(PingObj));
-                byte[] TerminatedBytes = PrepareSend(SerializedBytes);
-                int BytesToSend = TerminatedBytes.Length;
-                ConnectedClient Client = State.Client;
+                    try {
+                        int offset = 0;
 
-                try {
-                    BaseConnection.IsSending = true;
-                    for (int offset = 0, loopTo = BytesToSend - 1; UploadBufferSize >= 0 ? offset <= loopTo : offset >= loopTo; offset += UploadBufferSize) {
-                        if (Client.Closed) {
-                            SerializedBytes = null;
-                            TerminatedBytes = null;
-                            wrapped = null;
-                            return false;
+                        while (offset < totalBytes) {
+                            if (Client.Closed) {
+                                SerializedBytes = null;
+                                TerminatedBytes = null;
+                                wrapped = null;
+                                return false;
+                            }
+                            if (MaximumUploadMbps > 0) {
+                                // Limit upload bandwidth.
+                                while (LimitUploadBandwidth(TotalUploadedBytes, UploadStartTime))
+                                    Thread.Sleep(1);
+                                UploadStartTime = DateTime.UtcNow;
+                            }
+                            int chunkSize = Math.Min(UploadBufferSize, totalBytes - offset);
+                            int BytesSent = State.Client.Socket.Send(TerminatedBytes, offset, chunkSize, SocketFlags.None);
+                            InternalSentByteCounter?.Invoke(State.Client, BytesSent);
+                            offset += chunkSize;
                         }
-                        //while (LimitUploadBandwidth(ref Client))
-                        //    Thread.Sleep(1);
-                        int OffsetSize = BytesToSend - offset;
-                        int BufferSize = OffsetSize < UploadBufferSize ? OffsetSize : UploadBufferSize;
-                        byte[] buffer = new byte[BufferSize];
-                        Array.Copy(TerminatedBytes, offset, buffer, 0, BufferSize);
-                        int BytesSent = State.Client.Socket.Send(buffer, 0, buffer.Length, SocketFlags.None);
-                        InternalSentByteCounter?.Invoke(State.Client, BytesSent);
-                    }
-                    BaseConnection.IsSending = false;
-                    sentSuccessful = true;
+                        sentSuccessful = true;
 
-                    if (!isSegment) {
-                        InternalSendEvent?.Invoke(State.Client, Type, TerminatedBytes, TerminatedBytes.Length);
-                        OnSent?.Invoke(new SentEventArgs(this, State.Client, TerminatedBytes.Length));
+                        if (!isSegment) {
+                            InternalSendEvent?.Invoke(State.Client, Type, TerminatedBytes, TerminatedBytes.Length);
+                            OnSent?.Invoke(new SentEventArgs(this, State.Client, TerminatedBytes.Length));
+                        }
+                    } catch (ObjectDisposedException) {
+                        CloseConnection(State.Client, DisconnectionReason.ObjectDisposed);
+                    } catch (SocketException ex) {
+                        var Reason = DisconnectionReason.Unknown;
+                        if (ex.Message.ToLower().Contains("an existing connection was forcibly closed by a remote host")) {
+                            Reason = DisconnectionReason.RemoteSocketClosed;
+                        } else if (isDisposed) {
+                            Reason = DisconnectionReason.ObjectDisposed;
+                        } else if (!IsConnected(State.Client)) {
+                            Reason = DisconnectionReason.LocalSocketClosed;
+                        } else if (!NIC.InternetAvailable()) {
+                            Reason = DisconnectionReason.InternetNotAvailable;
+                        }
+                        SerializedBytes = null;
+                        TerminatedBytes = null;
+                        CloseConnection(State.Client, Reason);
+                    } catch (Exception ex) {
+                        InvokeOnError(State.Client, ex);
                     }
-                } catch (ObjectDisposedException ex) {
-                    CloseConnection(State.Client, DisconnectionReason.ObjectDisposed);
-                    BaseConnection.IsSending = false;
-                } catch (SocketException ex) {
-                    BaseConnection.IsSending = false;
-
-                    var Reason = DisconnectionReason.Unknown;
-                    if (ex.Message.ToLower().Contains("an existing connection was forcibly closed by a remote host")) {
-                        Reason = DisconnectionReason.RemoteSocketClosed;
-                    } else if (isDisposed) {
-                        Reason = DisconnectionReason.ObjectDisposed;
-                    } else if (!IsConnected(State.Client)) {
-                        Reason = DisconnectionReason.LocalSocketClosed;
-                    } else if (!NIC.InternetAvailable()) {
-                        Reason = DisconnectionReason.InternetNotAvailable;
-                    }
-                    SerializedBytes = null;
-                    TerminatedBytes = null;
-                    CloseConnection(State.Client, Reason);
+                    //} else if (SerializedBytes.Length > NIC.MTU) {
+                    //    // Object larger than MTU, Segment.
+                    //    SendSegmented(State.Client, SerializedBytes);
+                    //    if (!ReferenceEquals(Type, typeof(Segment)))
+                    //        InternalSendEvent?.Invoke(State.Client, Type, SerializedBytes, SerializedBytes.Length);
+                    //}
+                } else {
+                    OnSerializationError?.Invoke(new ErrorEventArgs(this, State.Client, result.Exception));
+                    InvokeOnError(State.Client, result.Exception);
                 }
-                //} else if (SerializedBytes.Length > NIC.MTU) {
-                //    // Object larger than MTU, Segment.
-                //    SendSegmented(State.Client, SerializedBytes);
-                //    if (!ReferenceEquals(Type, typeof(Segment)))
-                //        InternalSendEvent?.Invoke(State.Client, Type, SerializedBytes, SerializedBytes.Length);
-                //}
             } catch (Exception ex) {
-                BaseConnection.IsSending = false;
                 InvokeOnError(State.Client, ex);
             }
+            BaseConnection.IsSending = false;
             return sentSuccessful;
         }
         #endregion
 
         #region Synchronous Receiving
 
-        internal bool ReceiveSyncNoLoop(ref TcpClient Client) {
-            var BaseConnection = Client.BaseConnection;
-            return ReceiveSyncNoLoop(ref BaseConnection);
+        internal async Task<ReceiveResult> ReceiveClient(TcpClient Client) {
+            BaseConnection.IsReceiving = true;
+            ReceiveResult result = await Receive(BaseConnection);
+            BaseConnection._DownloadBuffer = result.RemainingBytes;
+            BaseConnection.IsReceiving = false;
+            return result;
+        }
+
+        private async Task<ReceiveResult> NoBufferReceive(ConnectedClient Connection) {
+            // Do not buffer to keep up with available bytes since Maximum Mbps is unlimited.
+            var state = new ReceiveState() { Client = Connection };
+
+            if (Connection.DownloadBuffer != null)
+                state.Buffer = (byte[])Connection.DownloadBuffer.Clone();
+
+            try {
+                int BufferSize = Connection.Socket.Available;
+                byte[] temp = new byte[BufferSize];
+                int bytesRead = Connection.Socket.Receive(temp, 0, BufferSize, SocketFlags.None);
+                state.Buffer = state.Buffer == null ? state.Buffer = (byte[])temp.Clone() : state.Buffer.Concat(temp);
+
+                temp = null;
+                state.BytesRead += bytesRead;
+
+                InternalReceivedByteCounter?.Invoke(Connection, bytesRead);
+                var result = await ProcessReceiveBuffer(state.Buffer);
+                foreach (var ProcessedObject in result.Objects)
+                    HandleReceive(Connection, ProcessedObject.Obj, ProcessedObject.Obj.GetType(), (int)ProcessedObject.Length);
+                state.Buffer = null;
+                return new ReceiveResult(result.remainingBytes);
+            } catch (SocketException ex) {
+                var Reason = DisconnectionReason.Unknown;
+                if (ex.Message.ToLower().Contains("an existing connection was forcibly closed by a remote host")) {
+                    Reason = DisconnectionReason.RemoteSocketClosed;
+                } else if (isDisposed) {
+                    Reason = DisconnectionReason.ObjectDisposed;
+                } else if (!IsConnected(state.Client)) {
+                    Reason = DisconnectionReason.LocalSocketClosed;
+                } else if (!NIC.InternetAvailable()) {
+                    Reason = DisconnectionReason.InternetNotAvailable;
+                }
+                CloseConnection(state.Client, Reason);
+                state.Buffer = null;
+                return ReceiveResult.NotAvailable;
+            } catch (ObjectDisposedException) {
+                CloseConnection(Connection, DisconnectionReason.ObjectDisposed);
+                return ReceiveResult.NotAvailable;
+            } catch (Exception ex) {
+                InvokeOnError(Connection, ex);
+                return ReceiveResult.NotAvailable;
+            }
+        }
+
+        private async Task<ReceiveResult> BufferedReceive(ConnectedClient Connection) {
+            // Bytes available small enough to buffer.
+            var state = new ReceiveState() { Client = Connection };
+            if (Connection.DownloadBuffer != null)
+                state.Buffer = (byte[])Connection.DownloadBuffer.Clone();
+
+            int BytesAvailable = Connection.Socket.Available;
+            DateTime DownloadStartTime = DateTime.UtcNow;
+            long TotalDownloadedBytes = 0L;
+
+            for (int offset = 0, loopTo = BytesAvailable - 1; DownloadBufferSize >= 0 ? offset <= loopTo : offset >= loopTo; offset += DownloadBufferSize) {
+                if (MaximumDownloadMbps > 0) {
+                    // Limit download bandwidth.
+                    while (LimitDownloadBandwidth(TotalDownloadedBytes, DownloadStartTime))
+                        Thread.Sleep(1);
+                    DownloadStartTime = DateTime.UtcNow;
+                }
+                try {
+                    if (Connection.Socket is null) {
+                        CloseConnection(state.Client);
+                        state.Buffer = null;
+                        return ReceiveResult.NotAvailable;
+                    }
+                    int OffsetSize = BytesAvailable - offset;
+                    int BufferSize = OffsetSize < DownloadBufferSize ? OffsetSize : DownloadBufferSize;
+                    byte[] temp = new byte[BufferSize];
+                    int bytesRead = Connection.Socket.Receive(temp, 0, BufferSize, SocketFlags.None);
+                    if (state.Buffer == null) {
+                        state.Buffer = (byte[])temp.Clone();
+                    } else {
+                        state.Buffer = state.Buffer.Concat(temp);
+                    }
+
+                    temp = null;
+                    state.BytesRead += bytesRead;
+                    TotalDownloadedBytes += bytesRead;
+
+                    InternalReceivedByteCounter?.Invoke(Connection, bytesRead);
+                } catch (SocketException ex) {
+                    var Reason = DisconnectionReason.Unknown;
+                    if (ex.Message.ToLower().Contains("an existing connection was forcibly closed by a remote host")) {
+                        Reason = DisconnectionReason.RemoteSocketClosed;
+                    } else if (isDisposed) {
+                        Reason = DisconnectionReason.ObjectDisposed;
+                    } else if (!NIC.InternetAvailable()) {
+                        Reason = DisconnectionReason.InternetNotAvailable;
+                    } else if (!IsConnected(state.Client)) {
+                        Reason = DisconnectionReason.LocalSocketClosed;
+                    }
+                    CloseConnection(state.Client, Reason);
+                    state.Buffer = null;
+                    return ReceiveResult.NotAvailable;
+                } catch (ObjectDisposedException) {
+                    CloseConnection(Connection, DisconnectionReason.ObjectDisposed);
+                    return ReceiveResult.NotAvailable;
+                } catch (Exception ex) {
+                    InvokeOnError(Connection, ex);
+                    return ReceiveResult.NotAvailable;
+                }
+            }
+            var result = await ProcessReceiveBuffer(state.Buffer);
+            foreach (var ProcessedObject in result.Objects) {
+                if(ProcessedObject is null)
+                    continue;
+                HandleReceive(Connection, ProcessedObject.Obj, ProcessedObject.Obj.GetType(), (int)ProcessedObject.Length);
+            }
+            state.Buffer = null;
+            return new ReceiveResult(result.remainingBytes);
         }
 
         /// <summary>
@@ -663,173 +853,50 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Connection"></param>
         /// <returns><see langword="True"/> if successful; <see langword="False"/> if failed to receive.</returns>
         /// <remarks></remarks>
-        internal bool ReceiveSyncNoLoop(ref ConnectedClient Connection) {
-            if (Connection == null || Connection.Socket == null) 
-                return false;
-            
+        internal async Task<ReceiveResult> Receive(ConnectedClient Connection) {
+            if (Connection == null || Connection.Socket == null)
+                return new ReceiveResult();
             try {
-                // Dim CurrentBufferSize As Long = If(BufferSizes.ContainsKey(Client.ID), BufferSizes(Client.ID), 0)
                 int BytesAvailable = Connection.Socket.Available;
-                if (BytesAvailable > DownloadBufferSize * 32) {
-                    /// No buffer required to keep up with bytes available.
-                    var state = new ReceiveState() { Client = Connection };
-                    try {
-                        int BufferSize = BytesAvailable;
-                        byte[] temp = new byte[BufferSize];
-                        if (Connection.Closed) {
-                            temp = null;
-                            state.Buffer = null;
-                            Connection.IsReceiving = false;
-                            return false;
-                        }
-                        int bytesRead = Connection.Socket.Receive(temp, 0, BufferSize, SocketFlags.None);
-                        if (state.Buffer == null) {
-                            state.Buffer = (byte[])temp.Clone();
-                        } else {
-                            state.Buffer = state.Buffer.Concat(temp);
-                        }
-
-                        temp = null;
-                        state.BytesRead += bytesRead;
-                        Connection.TotalDownloadedBytes += bytesRead;
-
-                        InternalReceivedByteCounter?.Invoke(Connection, bytesRead);
-
-                        var result = ProcessReceiveState(ref state);
-                        foreach (var ProcessedObject in result.Objects)
-                            HandleReceive(Connection, ProcessedObject.Obj, ProcessedObject.Obj.GetType(), (int)ProcessedObject.Length);
-                        Connection._DownloadBuffer = (byte[])state.Buffer.Clone();
-                        state.Buffer = null;
-                        Connection.IsReceiving = false;
-                        return true;
-                    } catch (SocketException ex) {
-                        var Reason = DisconnectionReason.Unknown;
-                        if (ex.Message.ToLower().Contains("an existing connection was forcibly closed by a remote host")) {
-                            Reason = DisconnectionReason.RemoteSocketClosed;
-                        } else if (isDisposed) {
-                            Reason = DisconnectionReason.ObjectDisposed;
-                        } else if (!IsConnected(state.Client)) {
-                            Reason = DisconnectionReason.LocalSocketClosed;
-                        } else if (!NIC.InternetAvailable()) {
-                            Reason = DisconnectionReason.InternetNotAvailable;
-                        }
-                        CloseConnection(state.Client, Reason);
-                        state.Buffer = null;
-                        Connection.IsReceiving = false;
-                        return false;
-                    } catch (ObjectDisposedException ex) {
-                        CloseConnection(Connection, DisconnectionReason.ObjectDisposed);
-                        Connection.IsReceiving = false;
-                        return false;
-                    } catch (Exception ex) {
-                        InvokeOnError(Connection, ex);
-                        Connection.IsReceiving = false;
-                        return false;
-                    }
+                if (BytesAvailable > DownloadBufferSize * 32 && MaximumDownloadMbps == 0) {
+                    return await NoBufferReceive(Connection);
                 } else if (BytesAvailable > 0) {
-                    /// Bytes available small enough to buffer.
-                    Connection.IsReceiving = true;
-                    // Dim BufferSize As Integer = BytesAvailable 'If(CurrentBufferSize + BytesAvailable <= MaximumBufferSize, BytesAvailable, Math.Max(MaximumBufferSize - BytesAvailable, 0))
-                    var state = new ReceiveState() { Client = Connection };
-
-                    // , .Buffer = If(Client.Buffer Is Nothing OrElse Client.Buffer.Length = 0, New Byte(ReceiveBufferSize - 1) {}, Client.Buffer.Combine(New Byte(BytesAvailable - 1) {}))
-                    // If BufferSize = 0 Then
-                    // If Not Client.IsProcessingBuffer Then
-                    // Task.Run(Sub() HandleBuffer(state, True))
-                    // End If
-                    // Return False
-                    // End If
-
-                    if (Connection.DownloadBuffer != null) {
-                        state.Buffer = (byte[])Connection.DownloadBuffer.Clone();
-                        Connection._DownloadBuffer = null;
-                    }
-
-                    for (int offset = 0, loopTo = BytesAvailable - 1; DownloadBufferSize >= 0 ? offset <= loopTo : offset >= loopTo; offset += DownloadBufferSize) {
-                        //while (LimitDownloadBandwidth(ref Client))
-                        //    Thread.Sleep(1);
-                        try {
-                            int OffsetSize = BytesAvailable - offset;
-                            int BufferSize = OffsetSize < DownloadBufferSize ? OffsetSize : DownloadBufferSize;
-                            byte[] temp = new byte[BufferSize];
-                            if (Connection.Closed) {
-                                temp = null;
-                                state.Buffer = null;
-                                Connection.IsReceiving = false;
-                                return false;
-                            }
-                            int bytesRead = Connection.Socket.Receive(temp, 0, BufferSize, SocketFlags.None);
-                            if(state.Buffer == null) {
-                                state.Buffer = (byte[])temp.Clone();
-                            } else {
-                                state.Buffer = state.Buffer.Concat(temp);
-                            }
-
-                            temp = null;
-                            state.BytesRead += bytesRead;
-                            Connection.TotalDownloadedBytes += bytesRead;
-
-                            InternalReceivedByteCounter?.Invoke(Connection, bytesRead);
-                        } catch (SocketException ex) {
-                            var Reason = DisconnectionReason.Unknown;
-                            if (ex.Message.ToLower().Contains("an existing connection was forcibly closed by a remote host")) {
-                                Reason = DisconnectionReason.RemoteSocketClosed;
-                            } else if (isDisposed) {
-                                Reason = DisconnectionReason.ObjectDisposed;
-                            } else if (!IsConnected(state.Client)) {
-                                Reason = DisconnectionReason.LocalSocketClosed;
-                            } else if (!NIC.InternetAvailable()) {
-                                Reason = DisconnectionReason.InternetNotAvailable;
-                            }
-                            CloseConnection(state.Client, Reason);
-                            state.Buffer = null;
-                            Connection.IsReceiving = false;
-                            return false;
-                        } catch (ObjectDisposedException ex) {
-                            CloseConnection(Connection, DisconnectionReason.ObjectDisposed);
-                            Connection.IsReceiving = false;
-                            return false;
-                        } catch (Exception ex) {
-                            InvokeOnError(Connection, ex);
-                            Connection.IsReceiving = false;
-                            return false;
-                        }
-                    }
-                    var result = ProcessReceiveState(ref state);
-                    foreach (var ProcessedObject in result.Objects)
-                        HandleReceive(Connection, ProcessedObject.Obj, ProcessedObject.Obj.GetType(), (int)ProcessedObject.Length);
-                    Connection._DownloadBuffer = (byte[])state.Buffer.Clone();
-                    state.Buffer = null;
-                    Connection.IsReceiving = false;
-                    return true;
+                    return await BufferedReceive(Connection);
                 } else {
-                    Connection.IsReceiving = false;
-                    return false;
+                    return ReceiveResult.NotAvailable;
                 }
             } catch (SocketException ex) {
-                CloseConnection(Connection);
-                Connection.IsReceiving = false;
-                return false;
-            } catch (ObjectDisposedException ex) {
-                Connection.IsReceiving = false;
-                return false;
+                var Reason = DisconnectionReason.Unknown;
+                if (ex.Message.ToLower().Contains("an existing connection was forcibly closed by a remote host")) {
+                    Reason = DisconnectionReason.RemoteSocketClosed;
+                } else if (isDisposed) {
+                    Reason = DisconnectionReason.ObjectDisposed;
+                } else if (!NIC.InternetAvailable()) {
+                    Reason = DisconnectionReason.InternetNotAvailable;
+                } else if (!IsConnected(Connection)) {
+                    Reason = DisconnectionReason.LocalSocketClosed;
+                }
+                CloseConnection(Connection, Reason);
+                return ReceiveResult.NotAvailable;
+            } catch (ObjectDisposedException) {
+                CloseConnection(Connection, DisconnectionReason.ObjectDisposed);
+                return ReceiveResult.NotAvailable;
             } catch (Exception ex) {
                 InvokeOnError(Connection, ex);
-                Connection.IsReceiving = false;
-                return false;
+                return ReceiveResult.NotAvailable;
             }
         }
 
-        private bool LimitDownloadBandwidth(ref ConnectedClient Client) {
+        private bool LimitDownloadBandwidth(long TotalDownloadedBytes, DateTime DownloadStartTime) {
             if (MaximumDownloadBytesPerSecond <= 0)
                 return false;
             var Now = DateTime.UtcNow;
-            if (Client.DownloadStartTime - Now >= OneSecond) {
-                Client.DownloadStartTime = Now;
-                Client.TotalDownloadedBytes = 0L;
+            if (DownloadStartTime - Now >= OneSecond) {
+                DownloadStartTime = Now;
+                TotalDownloadedBytes = 0L;
             } else {
-                var elapsedTime = Now - Client.DownloadStartTime;
-                if (Client.TotalDownloadedBytes > MaximumDownloadBytesPerSecond) {
+                var elapsedTime = Now - DownloadStartTime;
+                if (TotalDownloadedBytes > MaximumDownloadBytesPerSecond) {
                     int sleepTime = (int)Math.Round(1000d - elapsedTime.TotalMilliseconds);
                     if (sleepTime > 0)
                         return true;
@@ -837,16 +904,16 @@ namespace SocketJack.Networking.Shared {
             }
             return false;
         }
-        private bool LimitUploadBandwidth(ref ConnectedClient Client) {
+        private bool LimitUploadBandwidth(long TotalUploadedBytes, DateTime UploadStartTime) {
             if (MaximumUploadBytesPerSecond <= 0)
                 return false;
             var Now = DateTime.UtcNow;
-            if (Client.UploadStartTime - Now >= OneSecond) {
-                Client.UploadStartTime = Now;
-                Client.TotalUploadedBytes = 0L;
+            if (UploadStartTime - Now >= OneSecond) {
+                UploadStartTime = Now;
+                TotalUploadedBytes = 0L;
             } else {
-                var elapsedTime = Now - Client.UploadStartTime;
-                if (Client.TotalUploadedBytes > MaximumUploadBytesPerSecond) {
+                var elapsedTime = Now - UploadStartTime;
+                if (TotalUploadedBytes > MaximumUploadBytesPerSecond) {
                     int sleepTime = (int)Math.Round(1000d - elapsedTime.TotalMilliseconds);
                     if (sleepTime > 0)
                         return true;
@@ -854,36 +921,61 @@ namespace SocketJack.Networking.Shared {
             }
             return false;
         }
-        private ReceiveStateResult ProcessReceiveState(ref ReceiveState state) { // , TerminatorIndices As List(Of Integer)
+        private async Task<ReceiveStateResult> ProcessReceiveBuffer(byte[] Buffer) { //(ref ReceiveState state) {
             var Objects = new List<DeserializedObject>();
             var Errors = new List<Exception>();
-            int StartIndex = 0;
-            if (state.Buffer != null && state.Buffer.Length > 0) {
-                var TerminatorIndices = state.Buffer.IndexOfAll(ReceiveState.Terminator);
+            int LastIndexOf = 0;
+            List<Task> tasks = new List<Task>();
+            if (Buffer != null && Buffer.Length > 0) {
+                var TerminatorIndices = Buffer.IndexOfAll(ReceiveState.Terminator);
                 if (TerminatorIndices.Count > 0) {
-                    foreach (var Index in TerminatorIndices) {
-                        if (state.Buffer.Length < Index | state.Buffer.Length < StartIndex)
-                            break;
-                        int MinusTerminator = StartIndex + ReceiveState.Terminator.Length;
-                        byte[] Bytes = state.Buffer.Part(StartIndex == 0 ? StartIndex : MinusTerminator, Index);
-                        StartIndex = Index;
-                        try {
-                            ObjectWrapper wrapper = (ObjectWrapper)Serializer.Deserialize(Bytes);
-                            if (Whitelist.Contains(wrapper.Type)) {
-                                var obj = wrapper.Unwrap(this);
-                                Objects.Add(new DeserializedObject(obj, Bytes.Length));
-                            } else {
-                                throw new TypeNotAllowedException(wrapper.Type);
+                    for (int i = 0, loopTo = TerminatorIndices.Count - 1; i <= loopTo; i++) {
+                        int lastIndex = i > 0 ? TerminatorIndices[i - 1] : 0;
+                        int Index = TerminatorIndices[i];
+                        if(i == TerminatorIndices.Count - 1) 
+                            LastIndexOf = Index;
+                        
+                        tasks.Add(Task.Run(() => {
+                            if (Buffer.Length < Index || Buffer.Length < lastIndex)
+                                return;
+                            int MinusTerminator = lastIndex + ReceiveState.Terminator.Length;
+                            byte[] Bytes = Buffer.Part(lastIndex == 0 ? lastIndex : MinusTerminator, Index);
+                            try {
+                                object verified = VerifyObject((ObjectWrapper)Serializer.Deserialize(Bytes));
+                                if(verified != null) {
+                                    var txt = System.Text.UTF8Encoding.UTF8.GetString(Bytes);
+                                    DeserializedObject obj = new DeserializedObject(verified, Bytes.Length);
+                                    Objects.Add(obj);
+                                }
+                            } catch (Exception ex) {
+                                OnDeserializationError?.Invoke(new ErrorEventArgs(this, BaseConnection, ex));
+                                Objects.Add(new DeserializedObject(ex, 0));
+                                Errors.Add(ex);
+                                InvokeOnError(BaseConnection, ex);
                             }
-                        } catch (Exception ex) {
-                            Errors.Add(ex);
-                        }
+                        }));
                     }
+                    await Task.WhenAll(tasks);
                 }
             }
-            if (StartIndex > 0)
-                state.Buffer = state.Buffer.Remove(0, StartIndex + ReceiveState.Terminator.Length);
-            return new ReceiveStateResult(state, Objects, StartIndex, Errors);
+            byte[] remainingBytes = null;
+            if (LastIndexOf > 0)
+                remainingBytes = Buffer.Remove(0, LastIndexOf + ReceiveState.Terminator.Length);
+            return new ReceiveStateResult(remainingBytes, Objects, LastIndexOf, Errors);
+        }
+        private object VerifyObject(ObjectWrapper wrapper) {
+            if (wrapper.Data is null)
+                return null;
+            if (wrapper.Type == "") {
+                return null;
+            } else if (Whitelist.Contains(wrapper.Type) || DefaultOptions.Whitelist.Contains(wrapper.Type)) {
+                return wrapper.Unwrap(this);
+            } else {
+                Exception ex = new TypeNotAllowedException(wrapper.Type);
+                OnDeserializationError?.Invoke(new ErrorEventArgs(this, BaseConnection, ex));
+                InvokeOnError(BaseConnection, ex);
+                return ex;
+            }
         }
 
         #endregion
@@ -891,8 +983,8 @@ namespace SocketJack.Networking.Shared {
         public TcpBase() {
             NIC.Initialize();
         }
-        public TcpBase(ISerializer Protocol) {
-            this.Serializer = Protocol;
+        public TcpBase(ISerializer Serializer) {
+            this.Serializer = Serializer;
             NIC.Initialize();
         }
     }

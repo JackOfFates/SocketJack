@@ -2,7 +2,6 @@
 namespace SocketJack.Networking.Shared {
     public class SendState {
         public object Object { get; set; }
-
         public ConnectedClient Client { get; set; }
 
         public SendState(object Object, ConnectedClient Client) {

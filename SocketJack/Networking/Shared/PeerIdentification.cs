@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading.Tasks;
+using SocketJack.Management;
 using SocketJack.Serialization;
 
 namespace SocketJack.Networking.Shared {
@@ -15,8 +16,9 @@ namespace SocketJack.Networking.Shared {
         public string IP { get; set; }
 
         /// <summary>
-        /// <para>Can be used to store any additional information about the Peer.</para>
+        /// <para>Used to store any additional information about the Peer.</para>
         /// <para>For example, the username of the Peer.</para>
+        /// <para>CURRENTLY UNDER DEVELOPMENT. DOES NOT WORK.</para>
         /// </summary>
         /// <returns></returns>
         public string Tag { get; set; }
@@ -40,30 +42,26 @@ namespace SocketJack.Networking.Shared {
         }
 
         /// <summary>
-        /// Start a connection with this Remote Client.
+        /// Start a connection with a Remote Client.
         /// </summary>
         /// <param name="RemotePeer">PeerIdentity to request a connection with.</param>
-        /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <param name="Client">TcpClient associated with the RemotePeer.</param>
+        /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns></returns>
-        public static TcpServer StartServer(PeerIdentification RemotePeer, TcpClient Client, string Name = "TcpServer") {
-            if (!Client.PeerToPeerEnabled)
-                throw new Exception("P2P is not enabled.");
-            return Client.StartServer(RemotePeer, null, Name);
+        protected internal static TcpServer StartServer(PeerIdentification RemotePeer, TcpClient Client, string Name = "TcpServer") {
+            return Client.StartServer(RemotePeer, Client.Serializer, Name);
         }
 
         /// <summary>
-        /// Start a connection with this Remote Client.
+        /// Start a connection with a Remote Client.
         /// </summary>
         /// <param name="RemotePeer">PeerIdentity to request a connection with.</param>
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <param name="Client">TcpClient associated with the RemotePeer.</param>
-        /// <param name="Protocol">Serialization Protocol used for this connection.</param>
+        /// <param name="Serializer">Serializer used for this connection.</param>
         /// <returns></returns>
-        public static async Task<TcpServer> StartServer(PeerIdentification RemotePeer, TcpClient Client, ISerializer Protocol, string Name = "TcpServer") {
-            if (!Client.PeerToPeerEnabled)
-                throw new Exception("P2P is not enabled.");
-            return Client.StartServer(RemotePeer, Protocol, Name);
+        protected internal static TcpServer StartServer(PeerIdentification RemotePeer, TcpClient Client, ISerializer Serializer, string Name = "TcpServer") {
+            return Client.StartServer(RemotePeer, Serializer, Name);
         }
 
         /// <summary>
@@ -72,21 +70,17 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns></returns>
         public TcpServer StartServer(string Name = "TcpServer") {
-            if (!ReferenceClient.PeerToPeerEnabled)
-                throw new Exception("P2P is not enabled.");
-            return ReferenceClient.StartServer(this, null, Name);
+            return ReferenceClient.StartServer(this, ReferenceClient.Serializer, Name);
         }
 
         /// <summary>
         /// Start a connection with this Remote Client.
         /// </summary>
-        /// <param name="Protocol">Serialization Protocol used for this connection.</param>
+        /// <param name="Serializer">Serializer used for this connection.</param>
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer</returns>
-        public TcpServer P2P(ISerializer Protocol, string Name = "TcpServer") {
-            if (!ReferenceClient.PeerToPeerEnabled)
-                throw new Exception("P2P is not enabled.");
-            return ReferenceClient.StartServer(this, Protocol, Name);
+        public TcpServer StartServer(ISerializer Serializer, string Name = "TcpServer") {
+            return ReferenceClient.StartServer(this, Serializer, Name);
         }
 
         protected internal PeerIdentification WithReference(TcpClient TcpClient) {

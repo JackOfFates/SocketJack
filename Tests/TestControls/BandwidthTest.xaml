@@ -3,22 +3,67 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:syntax="clr-namespace:UI.SyntaxBox;assembly=UI.SyntaxBox"
              mc:Ignorable="d" 
-             d:DesignHeight="450" d:DesignWidth="800">
+             d:DesignHeight="450" d:DesignWidth="830">
     <!--<local:TestTemplate x:Name="Base">
 
     </local:TestTemplate>-->
     <Grid Background="#FF212121">
         <Button x:Name="ButtonStartStop" Content="Start Test" Height="56" Margin="10,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126"/>
-        <TextBox x:Name="TextboxLog" VerticalScrollBarVisibility="Auto" Padding="10" Margin="10,10,10,71" TextWrapping="NoWrap" AcceptsReturn="true" IsReadOnly="True" Text="*****************************************************************WARNING**********************************************************************&#xA;&#xA;Something with Visual Studio's debugger makes this test EXTREMELY SLOW and use a METRIC TON of system memory. &#xA;When you dont use the debugger the code runs with no issues.&#xA;&#xA;*****************************************************************WARNING**********************************************************************" Foreground="#FFEAEAEA" BorderThickness="0,0,0,0" Background="#540C0C0C"/>
+        <TextBox x:Name="TextboxLog" 
+                 FontFamily="Consolas"
+                 VerticalScrollBarVisibility="Auto" 
+                 Padding="0,0,0,0" Margin="10,10,10,71" 
+                 TextWrapping="NoWrap" 
+                 AcceptsReturn="true" 
+                 IsReadOnly="True" 
+                 Text="&#xA;***************************************************** Note ***********************************************************&#xA;&#xA;For large objects disable buffering on the socket that will receive it.&#xA;We are sending via client. So, we will disable buffering on the server.&#xA;&#xA;&#xA;// Allows for the maximum bytes to be downloaded without any need to use a buffer&#xA;Server.MaximumDownloadMbps = 0&#xA;&#xA;&#xA;***************************************************** Note **********************************************************&#xA;" Foreground="#FFEAEAEA" BorderThickness="0,0,0,0" Background="#540C0C0C"
+                 syntax:SyntaxBox.Enable="True"
+                 syntax:SyntaxBox.ExpandTabs="True"
+                 syntax:SyntaxBox.AutoIndent="True"
+                 syntax:SyntaxBox.ShowLineNumbers="True"
+                 syntax:SyntaxBox.LineNumbersBackground="#363636"
+                 syntax:SyntaxBox.LineNumbersForeground="SlateGray">
+            <syntax:SyntaxBox.SyntaxDrivers>
+                <syntax:SyntaxConfig>
+                    <!-- Keywords -->
+                    <syntax:KeywordRule Foreground="#FF00B3FF"
+                Keywords="abstract,as,base,bool,break,byte,case,catch,char,checked,class,const,continue,decimal,default,delegate,do,double,else,enum,event,explicit,extern,false,finally,fixed,float,for,foreach,goto,if,implicit,in,int,interface,internal,is,lock,long,namespace,new,null,object,operator,out,override,params,private,protected,public,readonly,ref,return,sbyte,sealed,short,sizeof,stackalloc,static,string,struct,switch,this,throw,true,try,typeof,uint,ulong,unchecked,unsafe,ushort,using,using,static,virtual,void,volatile,while,get,set,yield,var"
+            />
+
+                    <!-- Operators -->
+                    <syntax:KeywordRule Foreground="Gray"  Keywords="*,C#" WholeWordsOnly="False" />
+                    <syntax:RegexRule Op="Line" Foreground="#FF0A8600"  Pattern="\s*\/\/.*" />
+                    <!--<syntax:RegexRule Op="Line" Foreground="Purple" Pattern="[\!+-\/\*%=&amp;\^|\?&lt;&gt;]" />
+
+                    --><!-- Preproc directives --><!--
+                    <syntax:RegexRule Op="Line" Foreground="Gray" Pattern="^\s*#.*" />
+
+                    --><!-- String --><!--
+                    <syntax:RegexRule Op="Line" Foreground="Maroon" Pattern="&quot;(?:[^&quot;\\]|\\.)*&quot;" />
+
+                    --><!-- Verbatim string --><!--
+                    <syntax:RegexRule Op="Block" Foreground="Maroon" Pattern="@&quot;(?:[^&quot;])*&quot;" />
+
+                    --><!-- Comment --><!--
+                    <syntax:RegexRule Op="Line" Foreground="Green" Pattern="//.*" />
+
+                    --><!-- Multiline comment --><!--
+                    <syntax:RegexRule Op="Block" Foreground="Green" Pattern="(?m)/\*[^*]*\*+(?:[^\/*][^*]*\*+)*/" />-->
+
+                </syntax:SyntaxConfig>
+            </syntax:SyntaxBox.SyntaxDrivers>
+        </TextBox>
         <GroupBox x:Name="gb1" Header="Stats" Margin="141,0,0,0" Foreground="#FFC5C5C5" BorderBrush="#FF940000" Height="71" VerticalAlignment="Bottom">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+            <StackPanel x:Name="sp1" Orientation="Horizontal" HorizontalAlignment="Left">
                 <TextBlock x:Name="LabelClients" Text="Connected" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
                 <TextBlock x:Name="LabelConnects" Text="Connect #" HorizontalAlignment="Left" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" Margin="5,0,5,0" TextAlignment="Center"/>
                 <TextBlock x:Name="LabelDisconnects" Text="D/C #" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" Margin="5,0,5,0" TextAlignment="Center"/>
                 <TextBlock x:Name="LabelSent" Text="Sent" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
                 <TextBlock x:Name="LabelReceived" Text="Received" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
-                <Grid  Width="100">
+                <TextBlock x:Name="LabelReceivedObjects" Text="Objects" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center"/>
+                <Grid x:Name="UnitGrid" Width="375">
                     <TextBlock Text="Unit Size" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
                     <Slider x:Name="SliderUnitSize" Thumb.DragStarted="Slider_DragStarted" Thumb.DragCompleted="Slider_DragCompleted" Maximum="1000000" Value="1000000" SmallChange="1" LargeChange="25000" Margin="0,24,0,0" IsMoveToPointEnabled="True" AutoToolTipPlacement="TopLeft" Delay="0"/>
                 </Grid>

@@ -80,12 +80,11 @@ namespace SocketJack.Extensions {
 
                 try {
                     return client.GetStringAsync(URL).Result;
-                } catch (Exception ex) {
+                } catch (Exception) {
                     return string.Empty;
                 }
 
             }
-            return null;
         }
 
         public static async Task<string> DownloadStringAsync(string URL) {
@@ -95,12 +94,11 @@ namespace SocketJack.Extensions {
 
                 try {
                     return await client.GetStringAsync(URL);
-                } catch (Exception ex) {
+                } catch (Exception) {
                     return string.Empty;
                 }
 
             }
-            return null;
         }
 
         private static void SetHeaders(HttpClient httpClient) {

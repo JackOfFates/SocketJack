@@ -110,7 +110,7 @@ namespace SocketJack.Networking {
             if (Environment.UserInteractive && UpdateConsoleTitle) {
                 try {
                     Console.Title = string.Format("{0} - Sent {1}/s Received {2}/s", new[] { Name, BytesPerSecondSent.ByteToString(2), BytesPerSecondReceived.ByteToString(2) });
-                } catch (Exception ex) {
+                } catch (Exception) {
                 }
             }
         }
@@ -211,8 +211,8 @@ namespace SocketJack.Networking {
                 }
             }
         }
-        private async void SyncPeers(ConnectedClient Client) {
-            await Task.Run(() => Peers.Values.ToList().ForEach((p) => Client.Send(p)));
+        private void SyncPeers(ConnectedClient Client) {
+            Peers.ValuesForAll((p) => Client.Send(p));
         }
         private void InitializePeer(ConnectedClient Client) {
             Task.Run(() => {
@@ -226,12 +226,11 @@ namespace SocketJack.Networking {
 
         #region Private/Internal
 
-        private Thread ListenerThread;
         private Dictionary<string, List<PeerServer>> PeerServers = new Dictionary<string, List<PeerServer>>();
         private bool DelayListen = false;
         protected internal int ActiveClients = 0;
-
         protected internal bool AcceptNextClient = true;
+
         private void DelayListenDelegate(int MTU, IPAddress LocalIP) => InvokeDelayedListen();
         private void Init(int Port, string Name = "TcpServer") {
             this.Name = Name;
@@ -256,7 +255,6 @@ namespace SocketJack.Networking {
                 AcceptNextClient = true;
             }
         }
-
         private ConnectedClient NewConnection(Socket handler) {
             var cs = new ConnectedClient(this, handler);
             bool Success = false;
@@ -319,8 +317,8 @@ namespace SocketJack.Networking {
         /// </summary>
         /// <param name="Port">Socket Listen Port.</param>
         /// <param name="Name">Name used for Logging.</param>
-        public TcpServer(ISerializer Protocol, int Port, string Name = "TcpServer") : base() {
-            this.Serializer = Protocol;
+        public TcpServer(ISerializer Serializer, int Port, string Name = "TcpServer") : base() {
+            this.Serializer = Serializer;
             Init(Port, Name);
             PeerServerShutdown += TcpServer_PeerServerShutdown;
             PeerRefusedConnection += TcpServer_PeerRefusedConnection;
@@ -393,18 +391,19 @@ namespace SocketJack.Networking {
         /// <summary>
         /// Stops listening.
         /// </summary>
-        public async void StopListening() {
+        public void StopListening() {
             if (isListening) {
                 isListening = false;
                 BaseConnection.CloseClient(this);
                 StoppedListening?.Invoke(this);
+                Peers.Clear();
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
             } else {
                 InvokeOnError(null, new Exception("Not listening."));
             }
         }
-
+        List<object> l1 = new List<object>();
         /// <summary>
         /// Send a serializable object to a Client.
         /// </summary>
@@ -413,6 +412,7 @@ namespace SocketJack.Networking {
         /// <remarks>Send can also be accessed directly from ConnectedSocket.Send()</remarks>
         public new void Send(ConnectedClient Client, object Obj) {
             if (Client != null && !Client.Closed && Client.Socket.Connected) {
+                l1.Add(Obj);
                 base.Send(Client, Obj);
             }
         }
@@ -451,16 +451,7 @@ namespace SocketJack.Networking {
         /// <param name="Except">The socket to exclude.</param>
         /// <remarks>SendBroadcast can be accessed directly from TcpServer.ConnectedSockets.SendBroadcast()</remarks>
         public void SendBroadcast(ConnectedClient[] Clients, object Obj, ConnectedClient Except = null) {
-            if (Clients.Length > 0) {
-                foreach (var c in Clients) {
-                    try {
-                        if (!ReferenceEquals(c, Except))
-                            Send(c, Obj);
-                    } catch (Exception ex) {
-                        InvokeOnError(c, ex);
-                    }
-                }
-            }
+            ConnectedClients.SendBroadcast(Obj, Except);
         }
 
         /// <summary>

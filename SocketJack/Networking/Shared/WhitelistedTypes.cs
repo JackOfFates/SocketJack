@@ -9,7 +9,7 @@ namespace SocketJack.Networking.Shared
 
         protected internal List<string> Types { get; set; } = new List<string>();
 
-        public ReadOnlyCollection<string> Whitelist { get {  return Types.AsReadOnly(); } }
+        public ReadOnlyCollection<string> List { get {  return Types.AsReadOnly(); } }
 
         public WhitelistedTypes(Type[] Types) {
             foreach (Type Type in Types)

@@ -22,6 +22,7 @@
   <ItemGroup>
     <PackageReference Include="MsgPack.Cli" Version="1.0.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="UI.SyntaxBox" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -36,5 +37,9 @@
       <SubType>Code</SubType>
     </Compile>
   </ItemGroup>
+
+  <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
+    <Exec Command="if exist &quot;$(TargetPath).locked&quot; del &quot;$(TargetPath).locked&quot;" />
+  </Target>
 
 </Project>

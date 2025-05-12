@@ -18,7 +18,7 @@ Public Class BandwidthTest
     Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Logging = True}
     Public WithEvents Client As New TcpClient(True, String.Format("{0}Client", {TestName})) With {.Logging = True, .UpdateConsoleTitle = True}
 
-    Public Property TestName As String = "Bandwidth" Implements ITest.TestName
+    Public ReadOnly Property TestName As String = "Bandwidth Test" Implements ITest.TestName
 
     Public Property Connected As Integer
         Get
@@ -79,6 +79,18 @@ Public Class BandwidthTest
         End Set
     End Property
     Private _Received As Long
+
+    Public Property ReceivedObjects As Integer
+        Get
+            Return _ReceivedObjects
+        End Get
+        Set(value As Integer)
+            _ReceivedObjects += value
+            If LabelReceivedObjects Is Nothing Then Return
+            Dispatcher.InvokeAsync(Sub() LabelReceivedObjects.Text = "Objects" & vbCrLf & _ReceivedObjects)
+        End Set
+    End Property
+    Private _ReceivedObjects As Integer
 
     Public Property TotalClients As Integer
         Get
@@ -193,6 +205,9 @@ Public Class BandwidthTest
             If Client.Connected Then
                 Client.Send(BandwidthObject.Create())
             End If
+            'If Server.isListening Then
+            '    Server.SendBroadcast(BandwidthObject.Create())
+            'End If
             Thread.Sleep(1)
         Loop
     End Sub
@@ -202,11 +217,11 @@ Public Class BandwidthTest
         Worker.Start()
     End Sub
 
-    Private Sub Client_OnSent(e As SentEventArgs) Handles Client.OnSent
+    Private Sub Tcp_OnSent(e As SentEventArgs) Handles Client.OnSent, Server.OnSent
         Sent = e.BytesSent
     End Sub
 
-    Private Sub Server_OnReceive(ByRef e As ReceivedEventArgs) Handles Server.OnReceive
+    Private Sub Tcp_OnReceive(ByRef e As ReceivedEventArgs(Of Object)) Handles Client.OnReceive, Server.OnReceive
         Received = e.BytesReceived
     End Sub
 
@@ -230,13 +245,19 @@ Public Class BandwidthTest
         InitializeComponent()
 
         ' Add any initialization after the InitializeComponent() call.
-        ' ThreadPool.SetMaxThreads(96, 96)
+
+        ' Alternative way to white-list types
         ' Server.Whitelist.AddType(GetType(BandwidthObject))
+        Server.MaximumDownloadMbps = 0
+        Client.MaximumDownloadMbps = 0
         Server.RegisterCallback(GetType(BandwidthObject), AddressOf Received_BandwidthObject)
+        Client.RegisterCallback(GetType(BandwidthObject), AddressOf Received_BandwidthObject)
     End Sub
 
-    Private Sub Received_BandwidthObject(args As ReceivedEventArgs)
-        Log(TestName & " Received: BandwidthObject")
+    Private Sub Received_BandwidthObject(e As ReceivedEventArgs(Of Object))
+        ReceivedObjects = 1
+        ' Dim obj As BandwidthObject = e.obj
+
     End Sub
 
     Private Sub Slider_DragStarted()
@@ -255,6 +276,16 @@ Public Class BandwidthTest
 
     Private Sub TextboxLog_TextChanged(sender As Object, e As TextChangedEventArgs) Handles TextboxLog.TextChanged
 
+    End Sub
+
+    Private Sub LabelClients_SizeChanged() Handles LabelClients.SizeChanged, LabelConnects.SizeChanged, LabelDisconnects.SizeChanged, LabelReceived.SizeChanged, LabelReceivedObjects.SizeChanged, LabelSent.SizeChanged, Me.Loaded, Me.SizeChanged
+        SetUnitWidth()
+    End Sub
+
+    Private Sub SetUnitWidth()
+        Dim leftPos As Double = LabelClients.ActualWidth + LabelConnects.ActualWidth + LabelDisconnects.ActualWidth + LabelReceived.ActualWidth + LabelReceivedObjects.ActualWidth + LabelSent.ActualWidth
+        Dim UnitWidth As Double = gb1.ActualWidth - leftPos - 100
+        If UnitWidth > 0 Then UnitGrid.Width = UnitWidth
     End Sub
 End Class
 

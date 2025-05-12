@@ -24,7 +24,7 @@ namespace SocketJack.Networking {
         #region Peer To Peer
 
         public event OnIdentifiedEventHandler OnIdentified;
-        public delegate void OnIdentifiedEventHandler(PeerIdentification LocalIdentity);
+        public delegate void OnIdentifiedEventHandler(ref PeerIdentification LocalIdentity);
 
         protected internal static ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new ConcurrentDictionary<string, PeerServer>();
         protected internal static ConcurrentDictionary<string, TcpServer> P2P_Servers = new ConcurrentDictionary<string, TcpServer>();
@@ -83,37 +83,39 @@ namespace SocketJack.Networking {
             }
         }
 
-        /// <summary>
-        /// Start a connection with the specified Remote Client.
-        /// </summary>
-        /// <param name="RemotePeer">The Remote Client.</param>
-        /// <param name="Name">Name of the TcpServer (Used for logging)</param>
-        /// <returns></returns>
-        public TcpServer NewPeerServer(PeerIdentification RemotePeer, string Name = "TcpServer") {
-            return NewPeerServer(RemotePeer.ID, null, Name);
-        }
+        ///// <summary>
+        ///// Start a connection with the specified Remote Client.
+        ///// </summary>
+        ///// <param name="RemotePeer">The Remote Client.</param>
+        ///// <param name="Name">Name of the TcpServer (Used for logging)</param>
+        ///// <returns></returns>
+        //public TcpServer NewPeerServer(PeerIdentification RemotePeer, string Name = "TcpServer") {
+        //    return NewPeerServer(RemotePeer.ID, null, Name);
+        //}
 
         /// <summary>
         /// Start a connection with the specified Remote Client.
         /// </summary>
         /// <param name="RemotePeer">The Remote Client.</param>
-        /// <param name="Protocol">Serialization Protocol.</param>
+        /// <param name="Serializer">Serializer used for this connection.</param>
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer</returns>
-        public TcpServer StartServer(PeerIdentification RemotePeer, ISerializer Protocol, string Name = "TcpServer") {
-            if (!PeerToPeerEnabled)
-                throw new Exception("P2P is not enabled.");
-            return NewPeerServer(RemotePeer.ID, Protocol, Name);
+        public TcpServer StartServer(PeerIdentification RemotePeer, ISerializer Serializer, string Name = "TcpServer") {
+            return StartServer(RemotePeer.ID, Serializer, Name);
         }
 
         /// <summary>
         /// Start a connection with the specified Remote Client.
         /// </summary>
         /// <param name="ID">The GUID as String of the Remote Client.</param>
-        /// <param name="Protocol">Serialization Protocol.</param>
+        /// <param name="Serializer">Serializer used for this connection.</param>
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer</returns>
-        public TcpServer NewPeerServer(string ID, ISerializer Protocol, string Name = "TcpServer") {
+        private TcpServer StartServer(string ID, ISerializer Serializer, string Name = "TcpServer") {
+            if (!PeerToPeerEnabled) {
+                InvokeOnError(BaseConnection, new Exception("P2P is not enabled."));
+                return null;
+            }
             if (!NIC.InterfaceDiscovered) {
                 InvokeOnError(BaseConnection, new PeerToPeerException("Failed to start P2P Server." + Environment.NewLine + "Network interface card has not yet been discovered."));
                 return null;
@@ -123,7 +125,7 @@ namespace SocketJack.Networking {
                 return null;
             }
             string RemoteIP = RemoteIdentity.IP; // Await HttpClientExtensions.DownloadStringAsync("https: //JackOfAllFates.com/IP.aspx")
-            var ServerInfo = new PeerServer(RemoteIP, PeerIdentification.Create(ID), PeerIdentification.Create(RemoteIdentity.ID), Protocol);
+            var ServerInfo = new PeerServer(RemoteIP, PeerIdentification.Create(ID), PeerIdentification.Create(RemoteIdentity.ID), Serializer);
             var newServer = new TcpServer((int)ServerInfo.Port, Name) { _PeerToPeerInstance = true };
             ServerInfo.OnNicError += (ex) => LogFormatAsync("[{0}] NAT Error '{1}'", new[] { newServer.Name, ex.Message });
             newServer.StoppedListening += P2pServer_StoppedListening;
@@ -166,7 +168,10 @@ namespace SocketJack.Networking {
         }
 
         protected internal void InvokeOnIdentified(PeerIdentification Identity) {
-            OnIdentified?.Invoke(Identity);
+            OnIdentified?.Invoke(ref Identity);
+            if (Identity.Tag != null && this.BaseConnection.RemoteIdentity != null) {
+                Send(new IdentityTag(this.BaseConnection.RemoteIdentity.ID, Identity.Tag));
+            }
         }
 
         private void StopP2P(string ID) {
@@ -260,7 +265,7 @@ namespace SocketJack.Networking {
         /// Connected clients on the Server. (Includes your connection)
         /// </summary>
         /// <returns></returns>
-        public ConcurrentDictionary<string, PeerIdentification> Peers {
+        public new ConcurrentDictionary<string, PeerIdentification> Peers {
             get {
                 lock (base.Peers)
                     return base.Peers;
@@ -305,7 +310,18 @@ namespace SocketJack.Networking {
         protected internal static ConcurrentDictionary<string, IPEndPoint> CachedHosts = new ConcurrentDictionary<string, IPEndPoint>();
 
         private void TcpClient_InternalPeerRedirect(PeerIdentification Recipient, PeerIdentification Sender, object Obj, int ReceivedBytes) {
-            InvokeOnReceive(new ReceivedEventArgs(this, BaseConnection, Obj, ReceivedBytes).WithIdentity(Sender));
+
+            PeerRedirect Redirect = (PeerRedirect)Obj;
+
+            Type RedirectType = Type.GetType(Redirect.Type);
+            var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(RedirectType);
+
+            var receivedEventArgs = ((IReceivedEventArgs)Activator.CreateInstance(genericType));
+            receivedEventArgs.Initialize(this, BaseConnection, Redirect.Obj, ReceivedBytes, Sender);
+            InvokeOnReceive(receivedEventArgs);
+
+            InvokeAllCallbacks(RedirectType, Redirect.Obj, receivedEventArgs);
+            InvokeOnReceive(new ReceivedEventArgs<object>(this, BaseConnection, Redirect.Obj, ReceivedBytes, Sender));
         }
         private async void TcpClient_OnDisconnected(DisconnectedEventArgs args) {
             base.Peers.Clear();
@@ -334,7 +350,7 @@ namespace SocketJack.Networking {
             if (Environment.UserInteractive && UpdateConsoleTitle) {
                 try {
                     Console.Title = string.Format("{0} - Sent {1}/s Received {2}/s", new[] { Name, BytesPerSecondSent.ByteToString(2), BytesPerSecondReceived.ByteToString(2) });
-                } catch (Exception ex) {
+                } catch (Exception) {
                 }
             }
         }
@@ -347,7 +363,7 @@ namespace SocketJack.Networking {
             }
         }
         protected internal async Task<bool> ConnectAsync(Socket socket, EndPoint endpoint, TimeSpan timeout) {
-            return await Task.Run(() => { try { if (isDisposed) throw new ObjectDisposedException(Name + " is disposed, cannot connect."); if (_Connecting) return false; _Connecting = true; var result = socket.BeginConnect(endpoint, null, null); bool success = result.AsyncWaitHandle.WaitOne(timeout, isDisposed); if (success) { socket.EndConnect(result); } else { socket.Close(); } _Connecting = false; return success; } catch (Exception ex) { _Connecting = false; return false; } });
+            return await Task.Run(() => { try { if (isDisposed) throw new ObjectDisposedException(Name + " is disposed, cannot connect."); if (_Connecting) return false; _Connecting = true; var result = socket.BeginConnect(endpoint, null, null); bool success = result.AsyncWaitHandle.WaitOne(timeout, isDisposed); if (success) { socket.EndConnect(result); } else { socket.Close(); } _Connecting = false; return success; } catch (Exception) { _Connecting = false; return false; } });
         }
         private async Task<bool> DoConnect(EndPoint EndPoint, string Host, int Port) {
             LogFormatAsync("[{0}] Connecting -> {1}:{2}...", new[] { Name, Host, Port.ToString() });

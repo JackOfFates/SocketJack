@@ -1,41 +1,15 @@
 ﻿using System;
+using System.ComponentModel;
 
 namespace SocketJack.Networking.Shared {
 
-    public class ReceivedEventArgs {
-        public ReceivedEventArgs(object sender, ConnectedClient Client, object obj, int BytesReceived, PeerIdentification From = null) {
-            this.sender = sender;
-            this.Client = Client;
-            this.obj = obj;
-            this.BytesReceived = BytesReceived;
-            @type = obj.GetType();
-            _From = From;
-        }
+    public interface IReceivedEventArgs {
 
-        public ReceivedEventArgs(object sender, ConnectedClient Client, object obj, Type objType, int BytesReceived, PeerIdentification From = null) {
-            this.sender = sender;
-            this.Client = Client;
-            this.obj = obj;
-            this.BytesReceived = BytesReceived;
-            @type = objType;
-            _From = From;
-        }
-
-        public object sender { get; private set; }
-        public ConnectedClient Client { get; private set; }
-        public object obj { get; private set; }
-        public Type @type { get; private set; }
-        public int BytesReceived { get; private set; }
         /// <summary>
         /// The Remote Client idendity that sent this object.
         /// </summary>
         /// <returns>Empty if from the server.</returns>
-        public PeerIdentification From {
-            get {
-                return _From;
-            }
-        }
-        private PeerIdentification _From;
+        public PeerIdentification From { get; set; }
 
         /// <summary>
         /// Set to False to stop the object from being sent to the Recipient (if exists the 'obj' Property in this object will be type of 'PeerRedirect')
@@ -43,8 +17,67 @@ namespace SocketJack.Networking.Shared {
         /// <returns></returns>
         public bool CancelPeerRedirect { get; set; }
 
-        protected internal ReceivedEventArgs WithIdentity(PeerIdentification From) {
-            _From = From;
+        public object sender { get; set; }
+        public ConnectedClient Client { get; set; }
+
+        public Type Type { get; set; }
+        public int BytesReceived { get; set; }
+
+        public object Obj { get; set; }
+
+
+        protected internal void Initialize(object sender, ConnectedClient Client, object obj, int BytesReceived, PeerIdentification From = null) {
+            this.sender = sender;
+            this.Client = Client;
+            this.Obj = obj;
+            this.BytesReceived = BytesReceived;
+            this.Type = obj.GetType();
+            this.From = From;
+        }
+
+        protected internal IReceivedEventArgs WithIdentity(PeerIdentification From) {
+            this.From = From;
+            return this;
+        }
+    }
+
+    public class ReceivedEventArgs<T> : IReceivedEventArgs {
+
+        /// <summary>
+        /// The Remote Peer information.
+        /// </summary>
+        /// <returns>Null if from the server.</returns>
+        public PeerIdentification From { get; set; }
+
+        /// <summary>
+        /// Set to False to stop the object from being sent to the Recipient (if exists the 'obj' Property in this object will be type of 'PeerRedirect')
+        /// </summary>
+        /// <returns></returns>
+        public bool CancelPeerRedirect { get; set; }
+
+        public object sender { get; set; }
+        public ConnectedClient Client { get; set; }
+        public Type Type { get; set; }
+        public int BytesReceived { get; set; }
+
+        public T Object { get { return (T)_obj; } private set { _obj = value; } }
+        object IReceivedEventArgs.Obj { get => _obj; set => _obj = value; }
+
+        private object _obj = null;
+
+        public ReceivedEventArgs() { }
+
+        public ReceivedEventArgs(object sender, ConnectedClient Client, object obj, int BytesReceived, PeerIdentification From = null) {
+            this.sender = sender;
+            this.Client = Client;
+            this.Object = (T)obj;
+            this.BytesReceived = BytesReceived;
+            this.Type = Object.GetType();
+            this.From = From;
+        }
+
+        protected internal ReceivedEventArgs<T> WithIdentity(PeerIdentification From) {
+            this.From = From;
             return this;
         }
     }

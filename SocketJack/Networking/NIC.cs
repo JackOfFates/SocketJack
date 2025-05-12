@@ -13,11 +13,11 @@ namespace SocketJack.Networking {
     public class NIC {
 
         public static event OnInterfaceDiscoveredEventHandler OnInterfaceDiscovered;
-
         public delegate void OnInterfaceDiscoveredEventHandler(int MTU, IPAddress LocalIP);
+
         public static event NatDiscoveredEventHandler NatDiscovered;
 
-        public delegate void NatDiscoveredEventHandler(int MTU, IPAddress LocalIP);
+        public delegate void NatDiscoveredEventHandler();
         public static event OnErrorEventHandler OnError;
 
         public delegate void OnErrorEventHandler(Exception ex);
@@ -87,6 +87,7 @@ namespace SocketJack.Networking {
 
         private static void OnNatDeviceFound(object sender, DeviceEventArgs args) {
             _NAT = args.Device;
+            NatDiscovered?.Invoke();
         }
 
         /// <summary>

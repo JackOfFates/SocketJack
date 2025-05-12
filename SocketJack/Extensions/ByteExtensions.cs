@@ -33,17 +33,6 @@ namespace SocketJack.Extensions {
         }
 
         /// <summary>
-        /// Clones a byte array.
-        /// </summary>
-        /// <param name="sourceArray"></param>
-        /// <returns></returns>
-        public static byte[] CloneBytes(this byte[] sourceArray) {
-            byte[] newArray = new byte[sourceArray.Length];
-            sourceArray.CopyTo(newArray, 0);
-            return newArray;
-        }
-
-        /// <summary>
         /// Remove bytes from source Array.
         /// </summary>
         /// <param name="byteArray"></param>

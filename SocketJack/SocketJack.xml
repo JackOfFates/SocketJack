@@ -4,13 +4,6 @@
         <name>SocketJack</name>
     </assembly>
     <members>
-        <member name="M:SocketJack.Extensions.ByteExtensions.CloneBytes(System.Byte[])">
-            <summary>
-            Clones a byte array.
-            </summary>
-            <param name="sourceArray"></param>
-            <returns></returns>
-        </member>
         <member name="M:SocketJack.Extensions.ByteExtensions.Remove(System.Byte[],System.Int32,System.Int32)">
             <summary>
             Remove bytes from source Array.
@@ -179,18 +172,32 @@
             <value>Integer</value>
             <remarks></remarks>
         </member>
-        <!-- Badly formed XML comment ignored for member "P:SocketJack.Management.DefaultOptions.DownloadBufferSize" -->
+        <member name="P:SocketJack.Management.DefaultOptions.DownloadBufferSize">
+            <summary>
+            Download buffer size.
+            <remarks>Default is 65536 bytes.</remarks>
+            <value>Integer</value>
+            <remarks></remarks>
+            </summary>
+        </member>
         <member name="P:SocketJack.Management.DefaultOptions.MaximumUploadMbps">
             <summary>
             Maximum Upload bandwidth.
-            </summary>
             <remarks>
             <para>Default is 100Mbps. Set to 0 for unlimited.</para>
             </remarks>
             <value>Integer</value>
             <remarks></remarks>
+            </summary>
         </member>
-        <!-- Badly formed XML comment ignored for member "P:SocketJack.Management.DefaultOptions.UploadBufferSize" -->
+        <member name="P:SocketJack.Management.DefaultOptions.UploadBufferSize">
+            <summary>
+            Upload buffer size.
+            <remarks>Default is 65536 bytes.</remarks>
+            <value>Integer</value>
+            <remarks></remarks>
+            </summary>
+        </member>
         <member name="P:SocketJack.Management.DefaultOptions.Whitelist">
             <summary>
             Types that are allowed to be deserialized.
@@ -335,13 +342,25 @@
             Sends the remote client their remote Identity and IP.
             </summary>
         </member>
-        <member name="P:SocketJack.Networking.Shared.ReceivedEventArgs.From">
+        <member name="P:SocketJack.Networking.Shared.IReceivedEventArgs.From">
             <summary>
             The Remote Client idendity that sent this object.
             </summary>
             <returns>Empty if from the server.</returns>
         </member>
-        <member name="P:SocketJack.Networking.Shared.ReceivedEventArgs.CancelPeerRedirect">
+        <member name="P:SocketJack.Networking.Shared.IReceivedEventArgs.CancelPeerRedirect">
+            <summary>
+            Set to False to stop the object from being sent to the Recipient (if exists the 'obj' Property in this object will be type of 'PeerRedirect')
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Networking.Shared.ReceivedEventArgs`1.From">
+            <summary>
+            The Remote Peer information.
+            </summary>
+            <returns>Null if from the server.</returns>
+        </member>
+        <member name="P:SocketJack.Networking.Shared.ReceivedEventArgs`1.CancelPeerRedirect">
             <summary>
             Set to False to stop the object from being sent to the Recipient (if exists the 'obj' Property in this object will be type of 'PeerRedirect')
             </summary>
@@ -362,28 +381,29 @@
         </member>
         <member name="P:SocketJack.Networking.Shared.PeerIdentification.Tag">
             <summary>
-            <para>Can be used to store any additional information about the Peer.</para>
+            <para>Used to store any additional information about the Peer.</para>
             <para>For example, the username of the Peer.</para>
+            <para>CURRENTLY UNDER DEVELOPMENT. DOES NOT WORK.</para>
             </summary>
             <returns></returns>
         </member>
         <member name="M:SocketJack.Networking.Shared.PeerIdentification.StartServer(SocketJack.Networking.Shared.PeerIdentification,SocketJack.Networking.TcpClient,System.String)">
             <summary>
-            Start a connection with this Remote Client.
+            Start a connection with a Remote Client.
             </summary>
             <param name="RemotePeer">PeerIdentity to request a connection with.</param>
-            <param name="Name">Name of the TcpServer (Used for logging)</param>
             <param name="Client">TcpClient associated with the RemotePeer.</param>
+            <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns></returns>
         </member>
         <member name="M:SocketJack.Networking.Shared.PeerIdentification.StartServer(SocketJack.Networking.Shared.PeerIdentification,SocketJack.Networking.TcpClient,SocketJack.Serialization.ISerializer,System.String)">
             <summary>
-            Start a connection with this Remote Client.
+            Start a connection with a Remote Client.
             </summary>
             <param name="RemotePeer">PeerIdentity to request a connection with.</param>
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <param name="Client">TcpClient associated with the RemotePeer.</param>
-            <param name="Protocol">Serialization Protocol used for this connection.</param>
+            <param name="Serializer">Serializer used for this connection.</param>
             <returns></returns>
         </member>
         <member name="M:SocketJack.Networking.Shared.PeerIdentification.StartServer(System.String)">
@@ -393,17 +413,22 @@
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns></returns>
         </member>
-        <member name="M:SocketJack.Networking.Shared.PeerIdentification.P2P(SocketJack.Serialization.ISerializer,System.String)">
+        <member name="M:SocketJack.Networking.Shared.PeerIdentification.StartServer(SocketJack.Serialization.ISerializer,System.String)">
             <summary>
             Start a connection with this Remote Client.
             </summary>
-            <param name="Protocol">Serialization Protocol used for this connection.</param>
+            <param name="Serializer">Serializer used for this connection.</param>
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns>new TcpServer</returns>
         </member>
         <member name="T:SocketJack.Networking.Shared.PingObj">
             <summary>
             Used as a dummy class to check if the connection is alive.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Networking.Shared.ReceiveResult.NotAvailable">
+            <summary>
+            No Bytes Available.
             </summary>
         </member>
         <member name="T:SocketJack.Networking.Shared.TcpBase">
@@ -425,7 +450,7 @@
         </member>
         <member name="P:SocketJack.Networking.Shared.TcpBase.Serializer">
             <summary>
-            Serialization protocol for serialization and deserialization.
+            Serializer for serialization and deserialization.
             </summary>
         </member>
         <member name="P:SocketJack.Networking.Shared.TcpBase.InternalID">
@@ -523,7 +548,15 @@
             </summary>
             <returns></returns>
         </member>
-        <!-- Badly formed XML comment ignored for member "P:SocketJack.Networking.Shared.TcpBase.DownloadBufferSize" -->
+        <member name="P:SocketJack.Networking.Shared.TcpBase.DownloadBufferSize">
+            <summary>
+            Receive buffer size.
+            <para>Configurable from DefaultOptions.</para>
+            <remarks>Default is 8192 bytes.</remarks>
+            <value>Integer</value>
+            <remarks></remarks>
+            </summary>
+        </member>
         <member name="P:SocketJack.Networking.Shared.TcpBase.MaximumBufferSize">
             <summary>
             Maximum buffer size per connection.
@@ -533,7 +566,7 @@
             <value>Long</value>
             <remarks></remarks>
         </member>
-        <member name="P:SocketJack.Networking.Shared.TcpBase.MaxReceiveMbps">
+        <member name="P:SocketJack.Networking.Shared.TcpBase.MaximumDownloadMbps">
             <summary>
             Maximum receiving bandwidth.
             <para>Configurable from DefaultOptions.</para>
@@ -548,26 +581,44 @@
             <summary>
             Maximum Upload bandwidth.
             <para>Configurable from DefaultOptions.</para>
-            </summary>
             <remarks>
             <para>Default is 100Mbps. Set to 0 for unlimited.</para>
             </remarks>
             <value>Integer</value>
             <remarks></remarks>
+            </summary>
         </member>
-        <!-- Badly formed XML comment ignored for member "P:SocketJack.Networking.Shared.TcpBase.UploadBufferSize" -->
-        <member name="M:SocketJack.Networking.Shared.TcpBase.RegisterCallback(System.Type,System.Action{SocketJack.Networking.Shared.ReceivedEventArgs})">
+        <member name="P:SocketJack.Networking.Shared.TcpBase.UploadBufferSize">
+            <summary>
+            Upload buffer size.
+            <remarks>Default is 65536 bytes.</remarks>
+            <value>Integer</value>
+            <remarks></remarks>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Networking.Shared.TcpBase.RegisterCallback(System.Type,System.Action{SocketJack.Networking.Shared.IReceivedEventArgs})">
             <summary>
             <para>Registers a type callback.</para>
             <para>Action invoked when type is received.</para>
             </summary>
         </member>
-        <member name="M:SocketJack.Networking.Shared.TcpBase.RemoveCallback(System.Type,System.Action{SocketJack.Networking.Shared.ReceivedEventArgs})">
+        <member name="M:SocketJack.Networking.Shared.TcpBase.RegisterCallback``1(System.Action{SocketJack.Networking.Shared.ReceivedEventArgs{``0}})">
+            <summary>
+            <para>Registers a type callback using generic types.</para>
+            <para>Action of type invoked when type is received.</para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Networking.Shared.TcpBase.RemoveCallback(System.Type,System.Action{SocketJack.Networking.Shared.IReceivedEventArgs})">
             <summary>
             <para>Removes a type callback.</para>
             </summary>
         </member>
-        <member name="M:SocketJack.Networking.Shared.TcpBase.ReceiveSyncNoLoop(SocketJack.Networking.Shared.ConnectedClient@)">
+        <member name="M:SocketJack.Networking.Shared.TcpBase.RemoveCallback``1(System.Type,System.Action{SocketJack.Networking.Shared.ReceivedEventArgs{``0}})">
+            <summary>
+            Removes a type callback.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Networking.Shared.TcpBase.Receive(SocketJack.Networking.Shared.ConnectedClient)">
             <summary>
             Receive data from the socket without entering a loop.
             </summary>
@@ -581,29 +632,21 @@
             </summary>
             <remarks></remarks>
         </member>
-        <member name="M:SocketJack.Networking.TcpClient.NewPeerServer(SocketJack.Networking.Shared.PeerIdentification,System.String)">
-            <summary>
-            Start a connection with the specified Remote Client.
-            </summary>
-            <param name="RemotePeer">The Remote Client.</param>
-            <param name="Name">Name of the TcpServer (Used for logging)</param>
-            <returns></returns>
-        </member>
         <member name="M:SocketJack.Networking.TcpClient.StartServer(SocketJack.Networking.Shared.PeerIdentification,SocketJack.Serialization.ISerializer,System.String)">
             <summary>
             Start a connection with the specified Remote Client.
             </summary>
             <param name="RemotePeer">The Remote Client.</param>
-            <param name="Protocol">Serialization Protocol.</param>
+            <param name="Serializer">Serializer used for this connection.</param>
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns>new TcpServer</returns>
         </member>
-        <member name="M:SocketJack.Networking.TcpClient.NewPeerServer(System.String,SocketJack.Serialization.ISerializer,System.String)">
+        <member name="M:SocketJack.Networking.TcpClient.StartServer(System.String,SocketJack.Serialization.ISerializer,System.String)">
             <summary>
             Start a connection with the specified Remote Client.
             </summary>
             <param name="ID">The GUID as String of the Remote Client.</param>
-            <param name="Protocol">Serialization Protocol.</param>
+            <param name="Serializer">Serializer used for this connection.</param>
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns>new TcpServer</returns>
         </member>

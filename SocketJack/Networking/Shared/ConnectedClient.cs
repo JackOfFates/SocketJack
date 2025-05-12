@@ -79,11 +79,6 @@ namespace SocketJack.Networking.Shared {
 
         protected internal ConcurrentQueue<SendState> SendQueue = new ConcurrentQueue<SendState>();
 
-        protected internal DateTime DownloadStartTime = DateTime.UtcNow;
-        protected internal DateTime UploadStartTime = DateTime.UtcNow;
-        protected internal long TotalDownloadedBytes = 0L;
-        protected internal long TotalUploadedBytes = 0L;
-
         /// <summary>
         /// Returns true if created via TcpServer.
         /// </summary>
@@ -92,7 +87,7 @@ namespace SocketJack.Networking.Shared {
         protected internal void CloseClient(object sender) {
             if(!_Closed) {
                 _Closed = true;
-                InvokeDisconnected(this, new DisconnectedEventArgs(sender, this, DisconnectionReason.LocalSocketClosed));
+                InvokeDisconnected(sender, new DisconnectedEventArgs(sender, this, DisconnectionReason.LocalSocketClosed));
                 MethodExtensions.TryInvoke(() => { Socket.Shutdown(SocketShutdown.Both); });
                 SendQueue.Clear();
                 _UploadBuffer = null;
@@ -113,8 +108,10 @@ namespace SocketJack.Networking.Shared {
                 case PeerAction.LocalIdentity: {
                         _RemoteIdentity = RemotePeer;
                         SocketJack.Networking.TcpClient Client = (SocketJack.Networking.TcpClient)Parent;
-                        Client.LogFormatAsync("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
-                        Client.InvokeOnIdentified(_RemoteIdentity);
+                        if (Client != null) {
+                            Client.LogFormatAsync("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
+                            Client.InvokeOnIdentified(_RemoteIdentity);
+                        }
                         break;
                     }
             }
@@ -130,6 +127,13 @@ namespace SocketJack.Networking.Shared {
         public delegate void ClientDisconnectedEventHandler(ConnectedClient sender, DisconnectedEventArgs e);
 
         protected internal void InvokeDisconnected(object sender, DisconnectedEventArgs e) {
+            if (sender is TcpClient) 
+                ((TcpClient)sender).InvokeOnDisconnected(e);
+            if (sender is TcpServer) {
+                TcpServer server = ((TcpServer)sender);
+                server.InvokeOnDisconnected(e);
+            }
+                
             ClientDisonnected?.Invoke(this, e);
         }
 
@@ -176,6 +180,7 @@ namespace SocketJack.Networking.Shared {
         public void Send(object Obj) {
             if (IsServer) {
                 TcpServer Server = (TcpServer)Parent;
+                if (Server is null) return;
                 Server.Send(this, Obj);
             } else {
                 TcpClient Client = (TcpClient)Parent;
@@ -186,6 +191,7 @@ namespace SocketJack.Networking.Shared {
         public void Send(PeerIdentification Recipient, object Obj) {
             if (IsServer) {
                 TcpServer Server = (TcpServer)Parent;
+                if (Server is null) return;
                 PeerRedirect Wrapper = (PeerRedirect)Obj;
                 Server.Send(Recipient.ID, Wrapper.Obj);
             } else {

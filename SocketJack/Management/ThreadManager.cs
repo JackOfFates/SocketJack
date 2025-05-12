@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 using Microsoft.VisualBasic;
 using SocketJack.Extensions;
 using SocketJack.Networking;
@@ -42,7 +43,7 @@ namespace SocketJack.Management {
         /// <summary>
         /// Must be called on application shutdown to ensure all threads are closed.
         /// </summary>
-        public void Shutdown() {
+        public static void Shutdown() {
             Alive = false;
             TcpClients.ValuesForAll(DisposeDelegate);
             TcpServers.ValuesForAll(DisposeDelegate);
@@ -89,7 +90,7 @@ namespace SocketJack.Management {
             Server.ConnectedClients.ValuesForAll((Client) => {
                 if (Client.Socket is null)
                     return;
-                Client.Send(new PingObj());
+                //Client.Send(new PingObj());
                 if (!Server.IsConnected(Client))
                     Server.CloseConnection(Client);
             });
@@ -97,7 +98,7 @@ namespace SocketJack.Management {
 
         private static void ClientConnectionCheckDelegate(TcpClient Client) {
             if (Client.BaseSocket != null && Client.BaseConnection != null)
-                Client.Send(new PingObj());
+                //Client.Send(new PingObj());
 
             if(Client.BaseConnection != null) {
                 lock (Client.BaseConnection) {
@@ -117,60 +118,73 @@ namespace SocketJack.Management {
         }
 
         private static void ClientSendDelegate(TcpClient Client) {
-            if ((!Client.Connected) || Client.BaseConnection.Closed) { return; }
-            var ProcessStates = new List<SendState>();
+            if (Client.BaseConnection != null && !Client.BaseConnection.IsSending) {
+                lock (Client.BaseConnection.SendQueue) {
+                    if ((Client.Connected) && !Client.BaseConnection.Closed && !Client.isSending) {
+                        var ProcessStates = new List<SendState>();
+                        while (Client.BaseConnection.SendQueue.Count > 0) {
+                            SendState state;
+                            Client.BaseConnection.SendQueue.TryDequeue(out state);
+                            if (state != null)
+                                ProcessStates.Add(state);
+                        }
 
-            SendState sendState;
-            while (Client.BaseConnection.SendQueue.TryDequeue(out sendState))
-                ProcessStates.Add(sendState);
-            if (ProcessStates.Count == 0)
-                return;
-            foreach (var state in ProcessStates) {
-                Client.ProcessSendState(state);
+                        if (ProcessStates.Count == 0)
+                            return;
+
+                        for (int i = 0; i < ProcessStates.Count; i++) {
+                            var state = ProcessStates[i];
+                            if (!Client.Connected || Client.BaseConnection.Closed) 
+                                break;
+                            if (state != null)
+                                Client.ProcessSendState(state);
+                        }
+                    }
+                }
             }
-            // Parallel.For(0, ProcessStates.Count, i => Instance.ProcessSendState(ProcessStates[i]));
-            Thread.Sleep(1);
         }
 
         private static void ServerSendDelegate(TcpServer Server) {
-            if (!Server.isListening) { return; }
-            var ProcessStates = new List<SendState>();
-
-            SendState sendState;
-            while (Server.BaseConnection.SendQueue.TryDequeue(out sendState))
-                ProcessStates.Add(sendState);
-            if (ProcessStates.Count == 0)
-                return;
-            Task.Run(() => {
-                foreach (var state in ProcessStates) {
-                    Server.ProcessSendState(state);
+            if (Server.isListening) {
+                foreach (var item in Server.ConnectedClients) {
+                    if (!item.Value.IsSending) {
+                        lock (item.Value?.SendQueue) {
+                            while (item.Value?.SendQueue.Count > 0) {
+                                SendState state = null;
+                                var success = item.Value?.SendQueue.TryDequeue(out state);
+                                if (state != null) 
+                                    Server.ProcessSendState(state);
+                            }
+                        }
+                    }
                 }
-            });
-            // Parallel.For(0, ProcessStates.Count, i => Instance.ProcessSendState(ProcessStates[i]));
-            Thread.Sleep(1);
+            }
         }
 
         private static void ClientReceiveStateLoop() {
             while (Alive) {
-                TcpClients.ValuesForAll((Client) => ClientReceiveDelegate(ref Client));
+                TcpClients.ValuesForAll(async (Client) => await ClientReceiveDelegate(Client));
                 Thread.Sleep(1);
             }
         }
 
-        private static void ServerReceiveStateLoop() {
+        private async static void ServerReceiveStateLoop() {
             while (Alive) {
                 for (int i = 0, loopTo = TcpServers.Count - 1; i <= loopTo; i++) {
                     var server = TcpServers.ElementAt(i).Value;
                     if (server != null && server.isListening) {
                         for (int ClientIndex = 0, loopTo1 = server.ConnectedClients.Count; ClientIndex < loopTo1; ClientIndex++) {
-                            if (server.ConnectedClients.Count - 1 < i)
-                                return;
+                            if (server.ConnectedClients.Count - 1 < i) return;
+
                             var Client = server.ConnectedClients.ElementAt(ClientIndex).Value;
-                            if (Client == null || Client.Socket is null)
+                            if (Client == null || Client.Socket is null) {
                                 return;
-                            if (!Client.IsReceiving) {
+                            } else if (!Client.IsReceiving) {
                                 Interlocked.Increment(ref server.ActiveClients);
-                                Task.Run(() => server.ReceiveSyncNoLoop(ref Client));
+                                Client.IsReceiving = true;
+                                ReceiveResult result = await server.Receive(Client);
+                                Client._DownloadBuffer = result.RemainingBytes;
+                                Client.IsReceiving = false;
                                 Interlocked.Decrement(ref server.ActiveClients);
                             }
                         }
@@ -180,25 +194,40 @@ namespace SocketJack.Management {
             }
         }
 
-        private static void ServerReceiveDelegate(TcpServer server) {
-            server.ConnectedClients.ValuesForAll((Client) => {
-                if (Client == null|| Client.Socket is null)
-                    return;
-                if (!Client.IsReceiving) {
-                    Interlocked.Increment(ref server.ActiveClients);
-                    server.ReceiveSyncNoLoop(ref Client);
-                    Interlocked.Decrement(ref server.ActiveClients);
-                }
-            });
-        }
-
-        private static void ClientReceiveDelegate(ref TcpClient Client) {
-            if (Client == null|| Client.BaseSocket == null|| !Client.Connected)
+        private async static Task ClientReceiveDelegate(TcpClient Client) {
+            if (Client == null || Client.BaseSocket == null || !Client.Connected) {
                 return;
-            if (!Client.BaseConnection.IsReceiving) {
-                Client.ReceiveSyncNoLoop(ref Client);
+            }
+            lock (Client.BaseConnection) {
+                if (Client.BaseConnection.IsReceiving) 
+                    return;
+                Client.BaseConnection.IsReceiving = true;
+            }
+
+            try {
+                ReceiveResult result = await Client.ReceiveClient(Client);
+                lock (Client.BaseConnection) {
+                    Client.BaseConnection._DownloadBuffer = result.RemainingBytes;
+                }
+            } catch (Exception ex) {
+                Client.InvokeOnError(Client.BaseConnection, ex);
+            } finally {
+                lock (Client.BaseConnection) {
+                    Client.BaseConnection.IsReceiving = false;
+                }
             }
         }
+
+        //private async static Task ClientReceiveDelegate(TcpClient Client) {
+        //    if (Client == null || Client.BaseSocket == null || !Client.Connected) {
+        //        return;
+        //    } else if (!Client.BaseConnection.IsReceiving) {
+        //        Client.BaseConnection.IsReceiving = true;
+        //        ReceiveResult result = await Client.ReceiveClient(Client);
+        //        Client.BaseConnection._DownloadBuffer = result.RemainingBytes;
+        //        Client.BaseConnection.IsReceiving = false;
+        //    }
+        //}
 
         protected internal static void CreateThreads(bool Start) {
             if (ConnectionCheckThread == null || ConnectionCheckThread.ThreadState == System.Threading.ThreadState.Stopped) {
@@ -298,7 +327,7 @@ namespace SocketJack.Management {
         private static string[] Variables = new[] { "      \"DOTNET_GCCpuGroup\": \"1\"", "      \"DOTNET_Thread_UseAllCpuGroups\": \"1\"", "      \"DOTNET_gcAllowVeryLargeObjects\": \"1\"", "      \"DOTNET_Thread_AssignCpuGroups\": \"0\"", "      \"COMPlus_Thread_AssignCpuGroups\": \"0\"", "      \"COMPlus_GCCpuGroup\": \"1\"", "      \"COMPlus_Thread_UseAllCpuGroups\": \"1\"", "      \"COMPlus_gcAllowVeryLargeObjects\": \"1\"", "      \"COMPlus_GCNoAffinitize\": \"1\"", "      \"DOTNET_GCNoAffinitize\": \"1\"" };
         private static string FullConfigProperties = "    \"configProperties\": {" + Environment.NewLine + "      \"DOTNET_GCCpuGroup\": \"1\"," + Environment.NewLine + "      \"DOTNET_Thread_UseAllCpuGroups\": \"1\"," + Environment.NewLine + "      \"DOTNET_Thread_AssignCpuGroups\": \"0\"," + Environment.NewLine + "      \"DOTNET_gcAllowVeryLargeObjects\": \"1\"," + Environment.NewLine + "      \"COMPlus_GCCpuGroup\": \"1\"," + Environment.NewLine + "      \"COMPlus_Thread_UseAllCpuGroups\": \"1\"," + Environment.NewLine + "      \"COMPlus_Thread_AssignCpuGroups\": \"0\"," + Environment.NewLine + "      \"COMPlus_gcAllowVeryLargeObjects\": \"1\"," + Environment.NewLine + "      \"DOTNET_GCNoAffinitize\": \"1\"," + Environment.NewLine + "      \"COMPlus_GCNoAffinitize\": \"1\"" + Environment.NewLine + "      }";
         private static string ConfigPropertiesHeader = "\"configProperties\": {";
-        private static string RuntimeOptionsHeader = "\"runtimeOptions\": {";
+        //private static string RuntimeOptionsHeader = "\"runtimeOptions\": {";
         private static string AfterIndex1 = "],";
         private static string AfterIndex2 = "]";
 

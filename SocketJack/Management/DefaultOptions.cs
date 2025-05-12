@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using SocketJack.Networking.P2P;
 using SocketJack.Networking.Shared;
 using SocketJack.Serialization;
@@ -23,7 +21,7 @@ namespace SocketJack.Management {
         /// <summary>
         /// Default serialization protocol for <see langword="TcpClient"/> and <see langword="TcpServer"/>.
         /// </summary>
-        public static ISerializer DefaultSerializer { get; set; } = new JsonProtocol();
+        public static ISerializer DefaultSerializer { get; set; } = new JsonSerializer();
 
         /// <summary>
         /// Output events like OnConnected, OnDisconnected, OnConnectionFailed, OnClientTimedOut, and more to Console and Debug Output Window.
@@ -108,21 +106,20 @@ namespace SocketJack.Management {
 
         /// <summary>
         /// Download buffer size.
-        /// </summary>
         /// <remarks>Default is 65536 bytes.</remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
-        /// <summary>
+        /// </summary>
         public static int DownloadBufferSize { get; set; } = 65536;
 
         /// <summary>
         /// Maximum Upload bandwidth.
-        /// </summary>
         /// <remarks>
         /// <para>Default is 100Mbps. Set to 0 for unlimited.</para>
         /// </remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
+        /// </summary>
         public static int MaximumUploadMbps {
             get {
                 return _MaximumUploadMbps;
@@ -137,16 +134,15 @@ namespace SocketJack.Management {
 
         /// <summary>
         /// Upload buffer size.
-        /// </summary>
         /// <remarks>Default is 65536 bytes.</remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
-        /// <summary>
+        /// </summary>
         public static int UploadBufferSize { get; set; } = 65536;
 
         /// <summary>
         /// Types that are allowed to be deserialized.
         /// </summary>
-        public static WhitelistedTypes Whitelist { get; internal set; } = new WhitelistedTypes(new[]{typeof(PingObj), typeof(PeerIdentification), typeof(PeerRedirect), typeof(PeerServer) });
+        public static WhitelistedTypes Whitelist { get; internal set; } = new WhitelistedTypes(new[]{typeof(PingObj), typeof(PeerIdentification), typeof(PeerRedirect), typeof(PeerServer), typeof(ObjectWrapper), typeof(IdentityTag) });
     }
 }

@@ -3,9 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:MSL_Tests"
         mc:Ignorable="d"
-        Title="Select a Test" Height="112" Width="750" Name="TestWindow">
+        Title="Select a Test" Height="112" Width="850" Name="TestWindow" WindowStartupLocation="CenterOwner">
     <TabControl x:Name="Tabs">
         <TabItem Header="Tests">
             <Grid Background="#FF272727">
@@ -23,7 +22,7 @@
                 <Button x:Name="ButtonBandwidth" Content="Bandwidth" Grid.Column="1" Margin="10,5,10,5"/>
                 <Button x:Name="ButtonP2P" Content="P2P" Grid.Column="2" Margin="10,5,10,5" IsEnabled="False" Background="{DynamicResource Button.Disabled.Background}"/>
                 <Button x:Name="ButtonBenchmarks" Content="Benchmark Serializers" Grid.Column="3" Margin="10,5,10,5" IsEnabled="False"/>
-                <Button x:Name="ButtonChat" Content="Chat" Grid.Column="4" Margin="10,5,10,5" IsEnabled="False"/>
+                <Button x:Name="ButtonChat" Content="Chat" Grid.Column="4" Margin="10,5,10,5"/>
             </Grid>
         </TabItem>
     </TabControl>

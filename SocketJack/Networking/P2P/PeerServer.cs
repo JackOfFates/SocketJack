@@ -13,8 +13,6 @@ namespace SocketJack.Networking.P2P {
         public static int PortLowerBound = 7700;
         public static int PortUpperBound = 7800;
 
-        public event InternalVersionErrorEventHandler InternalVersionError;
-
         public delegate void InternalVersionErrorEventHandler();
         public long Port { get; set; }
         public string Host { get; set; }

@@ -8,21 +8,21 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SocketJack.Serialization.Json {
-    public class JsonProtocol : ISerializer {
+    public class JsonSerializer : ISerializer {
 
-        public JsonProtocol() {
+        public JsonSerializer() {
             JsonOptions.Converters.Add(new JsonTypeConverter());
         }
 
-        public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions();
+        public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions() { DefaultBufferSize = 1048576 };
 
         public byte[] Serialize(object Obj) {
-            string Json = JsonSerializer.Serialize(Obj, JsonOptions);
+            string Json = System.Text.Json.JsonSerializer.Serialize(Obj, JsonOptions);
             return Encoding.UTF8.GetBytes(Json);
         }
 
         public ObjectWrapper Deserialize(byte[] bytes) {
-            return (ObjectWrapper)JsonSerializer.Deserialize(Encoding.UTF8.GetString(bytes), typeof(ObjectWrapper), JsonOptions);
+            return (ObjectWrapper)System.Text.Json.JsonSerializer.Deserialize(Encoding.UTF8.GetString(bytes), typeof(ObjectWrapper), JsonOptions);
         }
 
         public object GetPropertyValue(PropertyValueArgs e) {
@@ -55,9 +55,16 @@ namespace SocketJack.Serialization.Json {
                     case JsonValueKind.False: {
                             return jsonObject.GetBoolean();
                         }
-                    case JsonValueKind.Object:
+                    case JsonValueKind.Object: {
+                            var obj = (ObjectWrapper)System.Text.Json.JsonSerializer.Deserialize(jsonObject.GetRawText(), typeof(ObjectWrapper), JsonOptions);
+                            if(obj.Type == null) {
+                                return System.Text.Json.JsonSerializer.Deserialize(jsonObject.GetRawText(), e.Reference.Info.PropertyType, JsonOptions);
+                            } else {
+                                return obj;
+                            }
+                        }
                     case JsonValueKind.Array: {
-                            return JsonSerializer.Deserialize(jsonObject.GetRawText(), e.Reference.Info.PropertyType, JsonOptions);
+                            return System.Text.Json.JsonSerializer.Deserialize(jsonObject.GetRawText(), e.Reference.Info.PropertyType, JsonOptions);
                         }
                 }
             }
