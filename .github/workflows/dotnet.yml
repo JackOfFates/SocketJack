@@ -31,4 +31,3 @@ jobs:
       - name: Build only selected projects
         run: |
           dotnet build ./SocketJack/SocketJack.csproj --configuration Release --no-restore
-          dotnet build ./Tests/SocketJack-Tests.csproj --configuration Release --no-restore
