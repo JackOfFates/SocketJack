@@ -30,19 +30,12 @@
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
     <Description>Fast, Efficient, 100% Managed, Peer to Peer, Non Generic, Extensible TCP Client &amp; Server with built in Serialization that can be used to transmit any object.</Description>
-    <PackageReadmeFile>SocketJack v1.md</PackageReadmeFile>
-    <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
-    <PackageIcon>SocketJackIcon.png</PackageIcon>
-    <RepositoryUrl>https://github.com/JackOfFates/SocketJack</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageTags>Socket; Sockets; Jack; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; PeerToPeer; Non Generic;</PackageTags>
-    <PackageReleaseNotes>v1.0.1.51201</PackageReleaseNotes>
+    <IsPackable>false</IsPackable>
     <Company>JackOfFates</Company>
     <Version>1.0.1.51201</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
-    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
   </PropertyGroup>
@@ -275,20 +268,6 @@
     <ApplicationDefinition Include="runtimeconfig.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </ApplicationDefinition>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\..\..\..\Desktop\SocketJackIcon.png">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\..\..\License.txt">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\..\..\SocketJack v1.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Mono.Nat" Version="3.0.4" />
