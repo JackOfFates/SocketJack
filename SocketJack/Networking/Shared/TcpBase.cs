@@ -752,7 +752,7 @@ namespace SocketJack.Networking.Shared {
                 int DataAvailable = Connection.Socket.Available;
                 if (Options.MaximumDownloadMbps <= 0) {
                     return await NoBufferReceive(Connection);
-                } else if (DataAvailable > 0 && Connection.Compressed) {
+                } else if (DataAvailable > 0) {
                     return await BufferedReceive(Connection);
                 } else {
                     return ReceiveResult.NotAvailable;
