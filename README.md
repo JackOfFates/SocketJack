@@ -1,6 +1,6 @@
 # SocketJack
 
-Fast, Efficient, 100% Managed, Peer to Peer, Non Generic, Extensible TCP Client & Server with built in Serialization that can be used to transmit any object.
+Fast, Efficient, 100% Managed, Peer to Peer, Generic, Extensible TCP Client & Server with built in Serialization that can be used to transmit any object.
 
 `SocketJack` automatically serializes `Public Properties` utilizing a type `white-list` for security.
 
@@ -15,43 +15,39 @@ PM> NuGet\Install-Package  SocketJack.NewtonsoftJson
 ```
 
 
-# Future Features in v1.0.2
+# v1.0.2 Roadmap
 - SSL Support
 - Bandwidth Throttling
-- Automatic FTP / Bitmap support
+- IO File & Media Type Serialization
 
 # Release Notes
 
-## v1.0.1.51201
-### Fixed
-- PeerRedirect Vulnerability 
-
-### Development
-- RemoteIdentity.Tag feature for easily indentifying User's by name
-
+## v1.0.1.51801
 ### Added
+- Compression
 - Chat Test
 - Generic Callbacks
+- Blacklist
+- RemoteIdentity.Tag
+- Upload buffer
 
-## v1.0.1.5701
 ### Fixed
+- DefaultOptions Initialization
+- PeerRedirect Type Checking
+- PeerRedirect Vulnerability 
+- Non-Generic OnReceive not being called
 - Buffering
 - Race conditions
 
 ### Updated
 - Tests UI
-
-### Added
-- Upload buffer
-
-## v1.0.0.0
- - Multi-CPU Support at Runtime (***No configuration required***)
- - Fully **Thread  Safe** and **Concurrent** w\ThreadManager Class to handle all Tcp Threading
- - Host Caching for **Improved Connection Performance**
- - Standardized Type, Method, And Function Naming
+- Tests compatibility w/ compression
+- Multi-CPU Support at Runtime
+- Host Caching for **Improved Connection Performance**
+- Standardized Type, Method, And Function Naming
+- Fully **Thread  Safe** and **Concurrent** w\ThreadManager Class to handle all Tcp Threading
 
 # Getting Started
-
 
 ### Default Options
 
@@ -97,12 +93,12 @@ public class MyApp {
 
     public async void Start_MyApp() {
         // Start the server.
-        TcpServer.RegisterCallback<AuthorizationRequest>(typeof(AuthorizationRequest), Server_AuthorizationRequest);
+        TcpServer.RegisterCallback<AuthorizationRequest>(Server_AuthorizationRequest);
         TcpServer.OnReceive += TcpServer_OnReceive;
         TcpServer.Listen();
 
         // Start the client.
-        TcpClient.RegisterCallback<AuthorizationRequest>(typeof(AuthorizationRequest), Client_AuthorizationRequest);
+        TcpClient.RegisterCallback<AuthorizationRequest>(Client_AuthorizationRequest);
         TcpClient.OnConnected += TcpClient_OnConnected;
         // Connect function timeout is 3 seconds by default.
         await TcpClient.Connect("127.0.0.1", Port);
@@ -123,7 +119,7 @@ TcpClient.LogSendEvents = true;
 
 ### Peer to peer functionality
 Built for faster latency and direct communication between clients.
-P2P TcpServer is ***automatically***  `port forwarded` using `Mono.NAT` UPNP.
+P2P TcpServer is ***automatically*** `port forwarded` using `Mono.NAT` UPNP.
 
 
 Send another client on the server an object `WITHOUT` extra code or exposing their IP address.
@@ -133,10 +129,10 @@ PeerRedirect can be canceled on the server inside the `TcpServer.OnReceive` by s
 `Connect to the main server then, anytime after the TcpClient.OnIdentified Event start a P2P server.`
 
 ```cs
-private  async  void  MyTcpClient_PeerConnected(object  sender, PeerIdentification  RemotePeer) {
+private  async  void  MyTcpClient_PeerConnected(object sender, PeerIdentification RemotePeer) {
     // Make sure it's not your own client.
     if (MyTcpClient.RemoteIdentity != null && RemotePeer.ID != MyTcpClient.RemoteIdentity.ID) {
-        TcpServer P2P_Server = await  RemotePeer.StartServer("ExampleServer");
+        TcpServer P2P_Server = await RemotePeer.StartServer("ExampleServer");
         P2P_Server.Logging = true;
         P2P_Server.LogReceiveEvents = true;
         P2P_Server.LogSendEvents = true;
@@ -151,9 +147,9 @@ private  async  void  MyTcpClient_PeerConnected(object  sender, PeerIdentificati
 
 ```cs
 
-private  async  void  MyTcpClient_PeerConnectionRequest(object  sender, P2PServer  Server) {
+private async void MyTcpClient_PeerConnectionRequest(object sender, P2PServer Server) {
     // CHANGE THIS - Add UI which allows the user to accept the connection.
-    TcpClient P2P_Client = await  Server.Accept(true, "ExampleClient");
+    TcpClient P2P_Client = await Server.Accept(true, "ExampleClient");
     P2P_Client.Logging = true;
     P2P_Client.LogReceiveEvents = true;
     P2P_Client.LogSendEvents = true;
