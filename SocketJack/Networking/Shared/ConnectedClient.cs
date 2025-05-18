@@ -1,17 +1,27 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.IO.Compression;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using Microsoft.VisualBasic;
 using SocketJack.Extensions;
 using SocketJack.Networking.P2P;
+using System.Runtime.InteropServices.ComTypes;
+using SocketJack.Management;
 
 namespace SocketJack.Networking.Shared {
     public class ConnectedClient : IDisposable {
 
         #region Properties
         public Socket Socket { get; set; }
+
+        /// <summary>
+        /// Whether the data is compressed or not.
+        /// </summary>
+        public bool Compressed { get; }
+
         public IPEndPoint EndPoint { get; set; }
         public Guid ID { get; set; }
         public object Parent {
@@ -80,9 +90,24 @@ namespace SocketJack.Networking.Shared {
         protected internal ConcurrentQueue<SendState> SendQueue = new ConcurrentQueue<SendState>();
 
         /// <summary>
-        /// Returns true if created via TcpServer.
+        /// <see langword="True"/> if created by a TcpServer.
         /// </summary>
         protected internal bool IsServer = false;
+
+        /// <summary>
+        /// Set the Tag for the connection.
+        /// <para>Used for idendtification by other peers with for example a Username.</para>
+        /// <para>Can only be set from server.</para>
+        /// </summary>
+        /// <param name="server"></param>
+        public void SetTag(string Tag) {
+            if (Parent != null) {
+                if(Parent.GetType() == typeof(TcpServer)) {
+                    TcpServer server = (TcpServer)Parent;
+                    RemoteIdentity.SetTag(server, Tag);
+                }
+            }
+        }
 
         protected internal void CloseClient(object sender) {
             if(!_Closed) {
@@ -95,7 +120,9 @@ namespace SocketJack.Networking.Shared {
                 _Parent = null;
                 EndPoint = null;
                 MethodExtensions.TryInvoke(Socket.Close);
+                MethodExtensions.TryInvoke(Socket.Dispose);
                 Socket = null;
+                UnsubscribePeerUpdate();
             }
         }
 
@@ -107,10 +134,10 @@ namespace SocketJack.Networking.Shared {
             switch (RemotePeer.Action) {
                 case PeerAction.LocalIdentity: {
                         _RemoteIdentity = RemotePeer;
-                        SocketJack.Networking.TcpClient Client = (SocketJack.Networking.TcpClient)Parent;
+                        TcpClient Client = (TcpClient)Parent;
                         if (Client != null) {
                             Client.LogFormatAsync("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
-                            Client.InvokeOnIdentified(_RemoteIdentity);
+                            Client.InvokeOnIdentified(ref _RemoteIdentity);
                         }
                         break;
                     }
@@ -118,6 +145,25 @@ namespace SocketJack.Networking.Shared {
         }
         private void ResetPeerID(DisconnectedEventArgs args) {
             _RemoteIdentity = null;
+            UnsubscribePeerUpdate();
+        }
+        private void SubscribePeerUpdate() {
+            if (IsServer) return;
+            var Client = (TcpClient)Parent;
+            if (Client != null && !Client.isPeerUpdateSubscribed) {
+                Client.isPeerUpdateSubscribed = true;
+                Client.OnDisconnected += ResetPeerID;
+                Client.PeerUpdate += SetPeerID;
+            }
+        }
+        private void UnsubscribePeerUpdate() {
+            if (IsServer) return;
+            var Client = (TcpClient)Parent;
+            if (Client != null && Client.isPeerUpdateSubscribed) {
+                Client.OnDisconnected -= ResetPeerID;
+                Client.PeerUpdate -= SetPeerID;
+                Client.isPeerUpdateSubscribed = false;
+            }
         }
 
         #endregion
@@ -144,6 +190,7 @@ namespace SocketJack.Networking.Shared {
         public void Dispose() {
             if(!isDisposed) {
                 isDisposed = true;
+                UnsubscribePeerUpdate();
                 CloseClient(Parent);
                 GC.SuppressFinalize(this);
             } else {
@@ -161,19 +208,20 @@ namespace SocketJack.Networking.Shared {
             Send(PeerIdentification.Create(this, true, EndPoint.Address.ToString()));
         }
 
-        public ConnectedClient(TcpServer Server, Socket Socket) {
+        public ConnectedClient(TcpServer Server, Socket Socket, bool UseCompression) {
             _Parent = Server;
             IsServer = true;
             this.Socket = Socket;
+            Compressed = UseCompression;
             EndPoint = (IPEndPoint)Socket.RemoteEndPoint;
         }
 
-        public ConnectedClient(TcpClient Client, Socket Socket) {
+        public ConnectedClient(TcpClient Client, Socket Socket, bool UseCompression) {
             _Parent = Client;
-            Client.OnDisconnected += ResetPeerID;
-            Client.PeerUpdate += SetPeerID;
+            SubscribePeerUpdate();
             IsServer = false;
             this.Socket = Socket;
+            Compressed = UseCompression;
             EndPoint = (IPEndPoint)Socket.RemoteEndPoint;
         }
 

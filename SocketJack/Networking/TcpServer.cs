@@ -58,20 +58,6 @@ namespace SocketJack.Networking {
             }
         }
 
-        /// <summary>
-        /// Maximum concurrent pending connections.
-        /// </summary>
-        /// <returns>9999 is default. Lower to reduce processing time.</returns>
-        public int Backlog {
-            get {
-                return _Backlog;
-            }
-            set {
-                _Backlog = value;
-            }
-        }
-        private int _Backlog = DefaultOptions.Backlog;
-
         #endregion
 
         #region Events
@@ -86,11 +72,11 @@ namespace SocketJack.Networking {
         protected internal delegate void StoppedListeningEventHandler(TcpServer sender);
 
         private void TcpServer_InternalReceiveEvent(ConnectedClient ConnectedSocket, Type objType, object obj, int BytesReceived) {
-            if (LogReceiveEvents) {
+            if (Options.LogReceiveEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
-                    LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name + @"\" + ConnectedSocket.RemoteIdentity.ID.ToUpper(), string.Format("PeerRedirect (Of {0}", Redirect.Obj.GetType().Name), BytesReceived.ByteToString() });
-                } else {
+                    LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name + @"\" + ConnectedSocket.RemoteIdentity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.Obj.GetType().Name), BytesReceived.ByteToString() });
+                } else if(objType != typeof(PingObj)) {
                     LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name + @"\" + ConnectedSocket.RemoteIdentity.ID.ToUpper(), objType.ToString(), BytesReceived.ByteToString() });
                 }
             }
@@ -99,7 +85,7 @@ namespace SocketJack.Networking {
             Interlocked.Add(ref ReceivedBytesCounter, BytesReceived);
         }
         private void TcpServer_InternalSendEvent(ConnectedClient ConnectedSocket, Type objType, object obj, int BytesSent) {
-            if (LogSendEvents) {
+            if (Options.LogSendEvents) {
                 LogFormatAsync("[{0}] Sent {1} - {2}", new[] { Name + @"\" + ConnectedSocket.RemoteIdentity.ID.ToUpper(), objType.ToString(), BytesSent.ByteToString() });
             }
         }
@@ -107,7 +93,7 @@ namespace SocketJack.Networking {
             Interlocked.Add(ref SentBytesCounter, BytesSent);
         }
         private void TcpServer_BytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
-            if (Environment.UserInteractive && UpdateConsoleTitle) {
+            if (Environment.UserInteractive && Options.UpdateConsoleTitle) {
                 try {
                     Console.Title = string.Format("{0} - Sent {1}/s Received {2}/s", new[] { Name, BytesPerSecondSent.ByteToString(2), BytesPerSecondReceived.ByteToString(2) });
                 } catch (Exception) {
@@ -230,6 +216,7 @@ namespace SocketJack.Networking {
         private bool DelayListen = false;
         protected internal int ActiveClients = 0;
         protected internal bool AcceptNextClient = true;
+        protected internal int WaitingConnections = 0;
 
         private void DelayListenDelegate(int MTU, IPAddress LocalIP) => InvokeDelayedListen();
         private void Init(int Port, string Name = "TcpServer") {
@@ -246,17 +233,19 @@ namespace SocketJack.Networking {
         protected internal void AcceptCallback(IAsyncResult ar) {
             if (!isListening)
                 return;
-            var handler = BaseSocket.EndAccept(ar);
-
-            if (handler.Connected) {
-                var newClient = NewConnection(handler);
-                LogFormatAsync("[{0}] Client Connected.", new[] { Name + @"\" + newClient.RemoteIdentity.ID.ToUpper(), Port.ToString() });
-                ClientConnected?.Invoke(new ConnectedEventArgs(this, newClient));
-                AcceptNextClient = true;
+            var tryResult = MethodExtensions.TryInvoke(BaseSocket.EndAccept, ref ar);
+            if(tryResult.Success) {
+                var handler = tryResult.Result;
+                if (handler.Connected) {
+                    var newClient = NewConnection(ref handler);
+                    LogFormatAsync("[{0}] Client Connected.", new[] { Name + @"\" + newClient.RemoteIdentity.ID.ToUpper(), Port.ToString() });
+                    ClientConnected?.Invoke(new ConnectedEventArgs(this, newClient));
+                    AcceptNextClient = true;
+                }
             }
         }
-        private ConnectedClient NewConnection(Socket handler) {
-            var cs = new ConnectedClient(this, handler);
+        private ConnectedClient NewConnection(ref Socket handler) {
+            var cs = new ConnectedClient(this, handler, Options.UseCompression);
             bool Success = false;
             while (!Success) {
                 cs.ID = Guid.NewGuid();
@@ -265,7 +254,7 @@ namespace SocketJack.Networking {
             }
             cs._RemoteIdentity = PeerIdentification.Create(cs);
 
-            if (PeerToPeerEnabled)
+            if (Options.PeerToPeerEnabled)
                 InitializePeer(cs);
             return cs;
         }
@@ -317,8 +306,8 @@ namespace SocketJack.Networking {
         /// </summary>
         /// <param name="Port">Socket Listen Port.</param>
         /// <param name="Name">Name used for Logging.</param>
-        public TcpServer(ISerializer Serializer, int Port, string Name = "TcpServer") : base() {
-            this.Serializer = Serializer;
+        public TcpServer(TcpOptions Options, int Port, string Name = "TcpServer") : base() {
+            this.Options = Options;
             Init(Port, Name);
             PeerServerShutdown += TcpServer_PeerServerShutdown;
             PeerRefusedConnection += TcpServer_PeerRefusedConnection;
@@ -347,7 +336,7 @@ namespace SocketJack.Networking {
                     withBlock.ReceiveTimeout = -1;
                     withBlock.SendTimeout = -1;
                 }
-                BaseConnection = new ConnectedClient(this, BaseSocket);
+                BaseConnection = new ConnectedClient(this, BaseSocket, Options.UseCompression);
                 try {
                     Bind(Port);
                     if (!NIC.InterfaceDiscovered) {
@@ -356,7 +345,7 @@ namespace SocketJack.Networking {
                         NIC.OnInterfaceDiscovered += this.DelayListenDelegate;
                         return false;
                     } else {
-                        BaseSocket.Listen(Backlog);
+                        BaseSocket.Listen(Options.Backlog);
                         isListening = true;
                         Task.Run(() => ServerLoop());
                         return true;
@@ -375,7 +364,8 @@ namespace SocketJack.Networking {
             LogFormatAsync("[{0}] Listening on port {1}.", new[] { Name, Port.ToString() });
             while (isListening) {
                 if (AcceptNextClient) {
-                    AcceptNextClient = false;
+                    if (WaitingConnections >= Options.Backlog) 
+                        AcceptNextClient = false;
                     BaseSocket.BeginAccept(new AsyncCallback(AcceptCallback), null);
                 }
                 Thread.Sleep(1);

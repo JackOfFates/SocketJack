@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using SocketJack.Extensions;
+using SocketJack.Management;
 using SocketJack.Networking.Shared;
 using SocketJack.Serialization;
 
@@ -19,7 +20,7 @@ namespace SocketJack.Networking.P2P {
         public PeerIdentification RemotePeer { get; set; }
         public PeerIdentification HostPeer { get; set; }
         public bool Shutdown { get; set; } = false;
-        public string Protocol { get; set; }
+        public string Serializer { get; set; }
 
         public static Dictionary<string, object> InitializedProtocols = new Dictionary<string, object>();
 
@@ -34,10 +35,29 @@ namespace SocketJack.Networking.P2P {
         /// <returns>New TcpClient if successful; <see langword="Nothing"/> if connection failed.</returns>
         public async Task<TcpClient> Accept(string Name = "TcpServer", bool AutoReconnect = false) {
             return await Task.Run<TcpClient>(async () => {
-                if (HostPeer.ReferenceClient != null && HostPeer.ReferenceClient.Logging) {
+                if (HostPeer.ReferenceClient != null && HostPeer.ReferenceClient.Options.Logging) {
                     HostPeer.ReferenceClient.LogFormatAsync(@"[{0}\{1}] Accepting {2} P2P Connection.", new[] { HostPeer.ReferenceClient.Name, HostPeer.ID.ToUpper(), RemotePeer.ID.ToUpper() });
                 }
-                var newClient = new TcpClient(AutoReconnect, Name) { _PeerToPeerInstance = true };
+                var newClient = new TcpClient(HostPeer.ReferenceClient.Options, Name) { _PeerToPeerInstance = true };
+                // If TcpClient.P2P_Clients.ContainsKey(HostPeer.ID) AndAlso Not TcpClient.P2P_Clients(HostPeer.ID).isDisposed Then TcpClient.P2P_Clients(HostPeer.ID).Dispose()
+                if (await newClient.Connect(Host, (int)Port)) {
+                    TcpClient.P2P_Clients.AddOrUpdate(HostPeer.ID, newClient);
+                }
+                return newClient;
+            });
+        }
+
+        /// <summary>
+        /// Accept the requested Peer to Peer connection.
+        /// </summary>
+        /// <param name="AutoReconnect">Reconnect automatically.</param>
+        /// <returns>New TcpClient if successful; <see langword="Nothing"/> if connection failed.</returns>
+        public async Task<TcpClient> Accept(TcpOptions Options, string Name = "TcpServer", bool AutoReconnect = false) {
+            return await Task.Run<TcpClient>(async () => {
+                if (HostPeer.ReferenceClient != null && HostPeer.ReferenceClient.Options.Logging) {
+                    HostPeer.ReferenceClient.LogFormatAsync(@"[{0}\{1}] Accepting {2} P2P Connection.", new[] { HostPeer.ReferenceClient.Name, HostPeer.ID.ToUpper(), RemotePeer.ID.ToUpper() });
+                }
+                var newClient = new TcpClient(Options, Name) { _PeerToPeerInstance = true };
                 // If TcpClient.P2P_Clients.ContainsKey(HostPeer.ID) AndAlso Not TcpClient.P2P_Clients(HostPeer.ID).isDisposed Then TcpClient.P2P_Clients(HostPeer.ID).Dispose()
                 if (await newClient.Connect(Host, (int)Port)) {
                     TcpClient.P2P_Clients.AddOrUpdate(HostPeer.ID, newClient);
@@ -73,13 +93,13 @@ namespace SocketJack.Networking.P2P {
             NIC.OnError -= InvokeNicError;
         }
 
-        public PeerServer(string IP, PeerIdentification RemotePeer, PeerIdentification PeerHost, ISerializer Protocol) {
+        public PeerServer(string IP, PeerIdentification RemotePeer, PeerIdentification PeerHost, ISerializer Serializer) {
             NIC.OnError += InvokeNicError;
             Host = IP;
             Port = NIC.FindOpenPort(PortLowerBound, PortUpperBound, true);
             this.RemotePeer = RemotePeer;
             HostPeer = PeerHost;
-            this.Protocol = Protocol.GetType().AssemblyQualifiedName;
+            this.Serializer = Serializer.GetType().AssemblyQualifiedName;
         }
 
         public PeerServer(string IP, PeerIdentification RemotePeer, PeerIdentification PeerHost, string SerializerTypeAssemblyQualifiedName) {
@@ -88,7 +108,7 @@ namespace SocketJack.Networking.P2P {
             Port = NIC.FindOpenPort(PortLowerBound, PortUpperBound, true);
             this.RemotePeer = RemotePeer;
             HostPeer = PeerHost;
-            Protocol = SerializerTypeAssemblyQualifiedName;
+            Serializer = SerializerTypeAssemblyQualifiedName;
         }
 
         public PeerServer() {

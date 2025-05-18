@@ -9,6 +9,7 @@ using System.Runtime.Serialization;
 using Microsoft.VisualBasic;
 using SocketJack.Extensions;
 using SocketJack.Management;
+using SocketJack.Networking.P2P;
 using SocketJack.Networking.Shared;
 using SocketJack.Serialization.Json;
 using static System.Net.Mime.MediaTypeNames;
@@ -19,7 +20,7 @@ namespace SocketJack.Serialization {
     public class ObjectWrapper {
 
         public static BindingFlags ReflectionFlags { get; set; } = BindingFlags.Instance | BindingFlags.Public;
-
+        protected internal List<Type> BlacklistedRedirects = new List<Type>() { typeof(PeerIdentification), typeof(PeerServer), typeof(PeerRedirect) };
         public ObjectWrapper() {
         }
 
@@ -51,6 +52,16 @@ namespace SocketJack.Serialization {
             }
         }
 
+        private TypeNotAllowedException CreateTypeException(ref TcpBase sender, string Type, bool isBlacklisted = false) {
+            var exception = new TypeNotAllowedException(Type, isBlacklisted);
+            sender.InvokeOnError(sender.BaseConnection, exception);
+            return exception;
+        }
+
+        private TypeNotAllowedException CreateTypeException(ref TcpBase sender, Type Type, bool isBlacklisted = false) {
+            return CreateTypeException(ref sender, Type.AssemblyQualifiedName, isBlacklisted);
+        }
+
         public object Unwrap(TcpBase sender) {
             var tt = MethodExtensions.TryInvoke(() => System.Type.GetType(this.Type));
             var Type = tt.Result;
@@ -71,10 +82,12 @@ namespace SocketJack.Serialization {
                     sender.InvokeOnError(sender.BaseConnection, exception);
                     return null;
                 }
-                if (!sender.Whitelist.Contains(redirectType) && !DefaultOptions.Whitelist.Contains(redirectType)) {
-                    var redirect = (PeerRedirect)Data;
-                    TypeNotAllowedException exception = new TypeNotAllowedException(redirectTypeString);
-                    sender.InvokeOnError(sender.BaseConnection, exception);
+                if(BlacklistedRedirects.Contains(redirectType) || sender.Options.Blacklist.Contains(redirectType)) {
+                    CreateTypeException(ref sender, redirectType, true);
+                    return null;
+                }
+                if (!sender.Options.Whitelist.Contains(redirectType) && !TcpOptions.DefaultOptions.Whitelist.Contains(redirectType)) {
+                    CreateTypeException(ref sender, redirectType);
                     return null;
                 }
             }
@@ -83,18 +96,30 @@ namespace SocketJack.Serialization {
                 index = i;
                 var reference = references[i];
                 try {
+                    if(sender.Options.Blacklist.Contains(reference.Info.PropertyType)) {
+                        CreateTypeException(ref sender, reference.Info.PropertyType, true);
+                        return null;
+                    } else if((reference.Info.PropertyType != typeof(object) && this.Type != "SocketJack.Networking.Shared.PeerRedirect") &
+                               !sender.Options.Whitelist.Contains(reference.Info.PropertyType)) {
+                        CreateTypeException(ref sender, reference.Info.PropertyType);
+                        return null;
+                    }
                     SetProperty(ref instance, reference, sender);
                 } catch (Exception ex) {
                     var r = references[index];
                     if (ex.Message.Contains("Object of type 'System.Int64' cannot be converted to type 'System.Int32'.")) {
                         var NotSupportedEx = new Int32NotSupportedException(instance.GetType().Name + "." + r.Info.Name);
-                        Debug.WriteLine("Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine + "     " + NotSupportedEx.Message + Environment.NewLine + ex.StackTrace);
+                        string errorMessage = "Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine + "     " + NotSupportedEx.Message +
+                                              (ex.StackTrace == string.Empty ? string.Empty : Environment.NewLine + ex.StackTrace);
+                        Debug.WriteLine(errorMessage);
                         sender.InvokeOnError(sender.BaseConnection, NotSupportedEx);
                         throw NotSupportedEx;
                     } else {
-                        string errorMessage = "Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine + "     " + ex.Message + Environment.NewLine + ex.StackTrace;
+                        string errorMessage = "Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine + 
+                                              (ex.Message == string.Empty ? string.Empty : "     " + ex.Message) +
+                                              (ex.StackTrace == string.Empty ? string.Empty : Environment.NewLine + ex.StackTrace );
                         Debug.WriteLine(errorMessage);
-                        Exception exception = new Exception(errorMessage, ex);
+                        Exception exception = new Exception(errorMessage + Environment.NewLine, ex);
                         sender.InvokeOnError(sender.BaseConnection, exception);
                         throw exception;
                     }
@@ -105,7 +130,7 @@ namespace SocketJack.Serialization {
         }
 
         public object GetPropertyValue(TcpBase sender, PropertyReference Reference) {
-            return sender.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Data, Reference));
+            return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Data, Reference));
         }
 
         public void SetProperty(ref object Instance, PropertyReference Reference, TcpBase sender) {

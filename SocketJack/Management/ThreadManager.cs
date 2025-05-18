@@ -90,7 +90,7 @@ namespace SocketJack.Management {
             Server.ConnectedClients.ValuesForAll((Client) => {
                 if (Client.Socket is null)
                     return;
-                //Client.Send(new PingObj());
+                Client.Send(new PingObj());
                 if (!Server.IsConnected(Client))
                     Server.CloseConnection(Client);
             });
@@ -98,7 +98,7 @@ namespace SocketJack.Management {
 
         private static void ClientConnectionCheckDelegate(TcpClient Client) {
             if (Client.BaseSocket != null && Client.BaseConnection != null)
-                //Client.Send(new PingObj());
+                Client.Send(new PingObj());
 
             if(Client.BaseConnection != null) {
                 lock (Client.BaseConnection) {
@@ -137,13 +137,13 @@ namespace SocketJack.Management {
                             if (!Client.Connected || Client.BaseConnection.Closed) 
                                 break;
                             if (state != null)
-                                Client.ProcessSendState(state);
+                                Client.ProcessSendState(ref state);
                         }
                     }
                 }
             }
         }
-
+        
         private static void ServerSendDelegate(TcpServer Server) {
             if (Server.isListening) {
                 foreach (var item in Server.ConnectedClients) {
@@ -153,7 +153,7 @@ namespace SocketJack.Management {
                                 SendState state = null;
                                 var success = item.Value?.SendQueue.TryDequeue(out state);
                                 if (state != null) 
-                                    Server.ProcessSendState(state);
+                                    Server.ProcessSendState(ref state);
                             }
                         }
                     }

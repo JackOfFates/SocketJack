@@ -2,6 +2,7 @@
 Imports System.Threading
 Imports System.Windows.Threading
 Imports SocketJack.Extensions
+Imports SocketJack.Management
 Imports SocketJack.Networking
 Imports SocketJack.Networking.[Shared]
 
@@ -12,7 +13,7 @@ Public Class MaxClientsTest
     Public Clients As New ConcurrentDictionary(Of Guid, TcpClient)
     Public ServerPort As Integer = NIC.FindOpenPort(7500, 8000)
 
-    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Logging = False, .UpdateConsoleTitle = True}
+    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = New TcpOptions With {.Logging = False, .UpdateConsoleTitle = True}}
 
 #Region "Properties"
     Public Property TestName As String = "MaxConnections" Implements ITest.TestName
@@ -165,7 +166,7 @@ Public Class MaxClientsTest
     End Sub
 
     Private Async Function CreateClientAndConnect(index As Integer) As Task(Of Boolean)
-        Dim Client As New TcpClient(False, String.Format("{0}Client[{1}]", {TestName, index}))
+        Dim Client As New TcpClient(Server.Options, String.Format("{0}Client[{1}]", {TestName, index}))
         Clients.Add(Client.InternalID, Client)
         Return Await Client.Connect("127.0.0.1", ServerPort)
     End Function

@@ -21,7 +21,20 @@ namespace SocketJack.Networking.Shared {
         /// <para>CURRENTLY UNDER DEVELOPMENT. DOES NOT WORK.</para>
         /// </summary>
         /// <returns></returns>
-        public string Tag { get; set; }
+        public string Tag { 
+            get {
+                return _Tag;
+            }
+        }
+        protected internal string _Tag;
+
+        protected internal void SetTag(TcpServer server, string Tag) {
+            if (server != null) {
+                server.SendBroadcast(Create(this));
+                _Tag = Tag;
+                server.Peers[ID]._Tag = Tag;
+            }
+        }
 
         public PeerAction Action { get; set; }
 
@@ -49,7 +62,7 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns></returns>
         protected internal static TcpServer StartServer(PeerIdentification RemotePeer, TcpClient Client, string Name = "TcpServer") {
-            return Client.StartServer(RemotePeer, Client.Serializer, Name);
+            return Client.StartServer(RemotePeer, Client.Options, Name);
         }
 
         /// <summary>
@@ -60,8 +73,8 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Client">TcpClient associated with the RemotePeer.</param>
         /// <param name="Serializer">Serializer used for this connection.</param>
         /// <returns></returns>
-        protected internal static TcpServer StartServer(PeerIdentification RemotePeer, TcpClient Client, ISerializer Serializer, string Name = "TcpServer") {
-            return Client.StartServer(RemotePeer, Serializer, Name);
+        protected internal static TcpServer StartServer(PeerIdentification RemotePeer, TcpClient Client, TcpOptions Options, string Name = "TcpServer") {
+            return Client.StartServer(RemotePeer, Options, Name);
         }
 
         /// <summary>
@@ -70,7 +83,7 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns></returns>
         public TcpServer StartServer(string Name = "TcpServer") {
-            return ReferenceClient.StartServer(this, ReferenceClient.Serializer, Name);
+            return ReferenceClient.StartServer(this, ReferenceClient.Options, Name);
         }
 
         /// <summary>
@@ -79,8 +92,8 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Serializer">Serializer used for this connection.</param>
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer</returns>
-        public TcpServer StartServer(ISerializer Serializer, string Name = "TcpServer") {
-            return ReferenceClient.StartServer(this, Serializer, Name);
+        public TcpServer StartServer(TcpOptions Options, string Name = "TcpServer") {
+            return ReferenceClient.StartServer(this, Options, Name);
         }
 
         protected internal PeerIdentification WithReference(TcpClient TcpClient) {
@@ -100,6 +113,11 @@ namespace SocketJack.Networking.Shared {
             return new PeerIdentification(ID) { Action = IsLocalIdentity ? PeerAction.LocalIdentity : PeerAction.RemoteIdentity, IP = IsLocalIdentity ? IP : string.Empty };
         }
 
+
+        public static PeerIdentification Create(PeerIdentification Identity) {
+            return new PeerIdentification(Identity.ID) { Action = PeerAction.TagUpdate };
+        }
+
         public static PeerIdentification Create(Guid ID, bool IsLocalIdentity, string IP = "") {
             return Create(ID.ToString(), IsLocalIdentity, IP);
         }
@@ -117,7 +135,8 @@ namespace SocketJack.Networking.Shared {
     public enum PeerAction {
         RemoteIdentity,
         Dispose,
-        LocalIdentity
+        LocalIdentity,
+        TagUpdate
     }
 
 }

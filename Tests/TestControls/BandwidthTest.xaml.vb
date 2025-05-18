@@ -15,8 +15,8 @@ Public Class BandwidthTest
     'End Sub
 
     Public Property ServerPort As Integer = NIC.FindOpenPort(7500, 8000)
-    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Logging = True}
-    Public WithEvents Client As New TcpClient(True, String.Format("{0}Client", {TestName})) With {.Logging = True, .UpdateConsoleTitle = True}
+    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = New TcpOptions With {.Logging = True}}
+    Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options = New TcpOptions With {.Logging = True, .UpdateConsoleTitle = True}}
 
     Public ReadOnly Property TestName As String = "Bandwidth Test" Implements ITest.TestName
 
@@ -248,13 +248,16 @@ Public Class BandwidthTest
 
         ' Alternative way to white-list types
         ' Server.Whitelist.AddType(GetType(BandwidthObject))
-        Server.MaximumDownloadMbps = 0
-        Client.MaximumDownloadMbps = 0
-        Server.RegisterCallback(GetType(BandwidthObject), AddressOf Received_BandwidthObject)
-        Client.RegisterCallback(GetType(BandwidthObject), AddressOf Received_BandwidthObject)
+        With Server.Options
+            .LogReceiveEvents = False
+            .MaximumDownloadMbps = 0
+        End With
+        Client.Options = Server.Options
+        Server.RegisterCallback(Of BandwidthObject)(AddressOf Received_BandwidthObject)
+        Client.RegisterCallback(Of BandwidthObject)(AddressOf Received_BandwidthObject)
     End Sub
 
-    Private Sub Received_BandwidthObject(e As ReceivedEventArgs(Of Object))
+    Private Sub Received_BandwidthObject(e As ReceivedEventArgs(Of BandwidthObject))
         ReceivedObjects = 1
         ' Dim obj As BandwidthObject = e.obj
 

@@ -1,4 +1,6 @@
-﻿Imports Microsoft.SqlServer
+﻿Imports System.IO.Compression
+Imports Microsoft.SqlServer
+Imports SocketJack.Compression
 Imports SocketJack.Management
 Imports SocketJack.Networking
 Imports SocketJack.Networking.Shared
@@ -83,7 +85,7 @@ Public Class ChatTest
     Public Sub Log(text As String)
         Dim isAtEnd As Boolean = TextLog.VerticalOffset >= (TextLog.ExtentHeight - TextLog.ViewportHeight) * 0.9
         Dispatcher.InvokeAsync(Sub()
-                                   TextLog.AppendText(text & vbCrLf)
+                                   TextLog.AppendText(If(text.EndsWith(Environment.NewLine), text, text & vbCrLf))
                                    If isAtEnd Then TextLog.ScrollToEnd()
                                End Sub)
     End Sub
@@ -107,11 +109,11 @@ Public Class ChatTest
             End If
         ElseIf controldown AndAlso e.Key = Key.Enter Then
             e.Handled = True
-            If sender = ChatMessage1 Then
+            If sender Is ChatMessage1 Then
                 Dim lastIndex As Integer = ChatMessage1.CaretIndex
                 ChatMessage1.Text = ChatMessage1.Text & vbCrLf
                 ChatMessage1.CaretIndex = lastIndex + 1
-            ElseIf sender = ChatMessage2 Then
+            ElseIf sender Is ChatMessage2 Then
                 Dim lastIndex As Integer = ChatMessage2.CaretIndex
                 ChatMessage2.Text = ChatMessage2.Text & vbCrLf
                 ChatMessage2.CaretIndex = lastIndex + 1
@@ -147,21 +149,26 @@ Public Class ChatTest
 
 #End Region
 
-    Public Sub New()
+    Private ServerPort As Integer = 7543
+    Public WithEvents Server As TcpServer
+    Public WithEvents Client1 As TcpClient
+    Public WithEvents Client2 As TcpClient
 
-        ' This call is required by the designer.
-        InitializeComponent()
-
-        ' Add any initialization after the InitializeComponent() call.
+    Private Sub ChatTest_Loaded(sender As Object, e As RoutedEventArgs) Handles Me.Loaded
+        With TcpOptions.DefaultOptions
+            .Logging = True
+            .LogReceiveEvents = True
+            .UseCompression = True
+            .CompressionAlgorithm.CompressionLevel = CompressionLevel.SmallestSize
+        End With
+        Server = New TcpServer(ServerPort, "ChatServer")
+        Client1 = New TcpClient("ChatClient1")
+        Client2 = New TcpClient("ChatClient2")
         Server.RegisterCallback(Of LoginObj)(AddressOf Server_ClientLogin)
+        Server.Options.Whitelist.AddType(GetType(ChatMessage))
         Client1.RegisterCallback(Of ChatMessage)(AddressOf Client1_ReceivedMessage)
         Client2.RegisterCallback(Of ChatMessage)(AddressOf Client2_ReceivedMessage)
     End Sub
-
-    Private ServerPort As Integer = 7543
-    Public WithEvents Server As New TcpServer(ServerPort, "ChatServer") With {.Logging = True, .LogReceiveEvents = True}
-    Public WithEvents Client1 As New TcpClient(False, "ChatClient1") With {.Logging = True, .LogReceiveEvents = True}
-    Public WithEvents Client2 As New TcpClient(False, "ChatClient2") With {.Logging = True, .LogReceiveEvents = True}
 
 
     Private Sub Client1_ReceivedMessage(args As ReceivedEventArgs(Of ChatMessage))
@@ -175,20 +182,19 @@ Public Class ChatTest
     End Sub
 
     Private Sub Server_ClientLogin(e As ReceivedEventArgs(Of LoginObj))
-        e.Client.RemoteIdentity.Tag = e.Object.UserName
+        e.Client.SetTag(e.Object.UserName)
     End Sub
 
     Private Sub Client1_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client1.OnIdentified
-        'LocalIdentity.Tag = "Client1"
         Client1.Send(New LoginObj With {.UserName = "Client1"})
     End Sub
 
     Private Sub Client2_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client2.OnIdentified
-        'LocalIdentity.Tag = "Client2"
         Client2.Send(New LoginObj With {.UserName = "Client2"})
     End Sub
 
     Private Sub Server_LogOutput(text As String) Handles Server.LogOutput
         Log(text)
     End Sub
+
 End Class
