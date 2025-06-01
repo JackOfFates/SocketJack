@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketJack.Extensions;
@@ -37,17 +39,23 @@ namespace SocketJack.Networking {
         }
         private string _Name;
 
+        /// <summary>
+        /// Server certificate for SSL connections.
+        /// </summary>
+        public X509Certificate SslCertificate { get; set; }
+
         public bool isListening { get; set; } = false;
 
         /// <summary>
         /// Connected Clients.
         /// </summary>
         /// <returns></returns>
-        public ConcurrentDictionary<Guid, ConnectedClient> ConnectedClients {
+        public ConcurrentDictionary<Guid, TcpConnection> Clients {
             get {
-                return _ConnectedClients;
+                return _Clients;
             }
         }
+        protected internal ConcurrentDictionary<Guid, TcpConnection> _Clients = new ConcurrentDictionary<Guid, TcpConnection>();
 
         public override int Port {
             get {
@@ -65,59 +73,72 @@ namespace SocketJack.Networking {
         public event ClientConnectedEventHandler ClientConnected;
         public delegate void ClientConnectedEventHandler(ConnectedEventArgs e);
 
+        public event OnClientDisconnectedEventHandler ClientDisconnected;
+        public delegate void OnClientDisconnectedEventHandler(DisconnectedEventArgs e);
+
         public event PortUnavailableEventHandler PortUnavailable;
         public delegate void PortUnavailableEventHandler(ref TcpServer Server, int Port);
 
         protected internal event StoppedListeningEventHandler StoppedListening;
         protected internal delegate void StoppedListeningEventHandler(TcpServer sender);
 
-        private void TcpServer_InternalReceiveEvent(ConnectedClient ConnectedSocket, Type objType, object obj, int BytesReceived) {
+        protected internal void InvokeOnDisconnected(DisconnectedEventArgs e) {
+            if (e.Connection != Connection) ClientDisconnected?.Invoke(e);
+        }
+
+        private void TcpServer_InternalReceiveEvent(TcpConnection Connection, Type objType, object obj, int BytesReceived) {
             if (Options.LogReceiveEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
-                    LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name + @"\" + ConnectedSocket.RemoteIdentity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.Obj.GetType().Name), BytesReceived.ByteToString() });
-                } else if(objType != typeof(PingObj)) {
-                    LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name + @"\" + ConnectedSocket.RemoteIdentity.ID.ToUpper(), objType.ToString(), BytesReceived.ByteToString() });
+                    LogFormat("[{0}] Received {1} - {2}", new[] { Name + @"\" + Connection.RemoteIdentity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.CleanTypeName()), BytesReceived.ByteToString() });
+                } else {
+                    LogFormat("[{0}] Received {1} - {2}", new[] { Name + @"\" + Connection.RemoteIdentity.ID.ToUpper(), objType.Name, BytesReceived.ByteToString() });
                 }
             }
         }
-        private void TcpServer_InternalReceiveByteCounter(ConnectedClient ConnectedSocket, int BytesReceived) {
-            Interlocked.Add(ref ReceivedBytesCounter, BytesReceived);
+        private void TcpServer_InternalReceiveByteCounter(TcpConnection Connection, int BytesReceived) {
+            Interlocked.Add(ref Connection.ReceivedBytesCounter, BytesReceived);
         }
-        private void TcpServer_InternalSendEvent(ConnectedClient ConnectedSocket, Type objType, object obj, int BytesSent) {
+        private void TcpServer_InternalSendEvent(TcpConnection Connection, Type objType, object obj, int BytesSent) {
             if (Options.LogSendEvents) {
-                LogFormatAsync("[{0}] Sent {1} - {2}", new[] { Name + @"\" + ConnectedSocket.RemoteIdentity.ID.ToUpper(), objType.ToString(), BytesSent.ByteToString() });
+                if (ReferenceEquals(objType, typeof(PeerRedirect))) {
+                    PeerRedirect Redirect = (PeerRedirect)obj;
+                    LogFormat("[{0}] Sent {1} - {2}", new[] { Name + @"\" + Connection.RemoteIdentity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.CleanTypeName()), BytesSent.ByteToString() });
+                } else {
+                    LogFormat("[{0}] Sent {1} - {2}", new[] { Name + @"\" + Connection.RemoteIdentity.ID.ToUpper(), objType.Name, BytesSent.ByteToString() });
+                }
             }
         }
-        private void TcpServer_InternalSentByteCounter(ConnectedClient ConnectedSocket, int BytesSent) {
-            Interlocked.Add(ref SentBytesCounter, BytesSent);
+        private void TcpServer_InternalSentByteCounter(TcpConnection Connection, int BytesSent) {
+            Interlocked.Add(ref Connection.SentBytesCounter, BytesSent);
         }
         private void TcpServer_BytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
             if (Environment.UserInteractive && Options.UpdateConsoleTitle) {
                 try {
-                    Console.Title = string.Format("{0} - Sent {1}/s Received {2}/s", new[] { Name, BytesPerSecondSent.ByteToString(2), BytesPerSecondReceived.ByteToString(2) });
+                    Console.Title = string.Format("{0} - Sent {1}/s Received {2}/s", new[] { Name, Connection.BytesPerSecondSent.ByteToString(2), 
+                                                                                                   Connection.BytesPerSecondReceived.ByteToString(2) });
                 } catch (Exception) {
                 }
             }
         }
-        private void TcpServer_OnDisconnected(DisconnectedEventArgs args) {
-            string id = new Func<string>(() => { if (args.Client.RemoteIdentity == null) { return "null"; } else { return args.Client.RemoteIdentity.ID.ToUpper(); } }).Invoke();
-            LogFormatAsync("[{0}] Client Disconnected.", new[] { Name + @"\" + id, Port.ToString() });
-            _ConnectedClients.Remove(args.Client.ID);
-            if (args.Client.RemoteIdentity != null && ContainsPeer(args.Client.RemoteIdentity)) {
-                RemovePeer(args.Client.RemoteIdentity);
-                SendBroadcast(new PeerIdentification(args.Client.ID.ToString(), PeerAction.Dispose));
+        private void TcpServer_OnClientDisconnected(DisconnectedEventArgs args) {
+            string id = new Func<string>(() => { if (args.Connection.RemoteIdentity == null) { return "null"; } else { return args.Connection.RemoteIdentity.ID.ToUpper(); } }).Invoke();
+            LogFormat("[{0}] Client Disconnected.", new[] { Name + @"\" + id, Port.ToString() });
+            _Clients.Remove(args.Connection.ID);
+            if (args.Connection.RemoteIdentity != null && ContainsPeer(args.Connection.RemoteIdentity)) {
+                RemovePeer(args.Connection.RemoteIdentity);
+                SendBroadcast(new PeerIdentification(args.Connection.ID.ToString(), PeerAction.Dispose));
             }
-            if (args.Client.RemoteIdentity != null && PeerServers.ContainsKey(args.Client.RemoteIdentity.ID)) {
+            if (args.Connection.RemoteIdentity != null && PeerServers.ContainsKey(args.Connection.RemoteIdentity.ID)) {
                 List<PeerServer> ServerList;
                 lock (PeerServers)
-                    ServerList = PeerServers[args.Client.RemoteIdentity.ID];
+                    ServerList = PeerServers[args.Connection.RemoteIdentity.ID];
                 for (int i = 0, loopTo = ServerList.Count - 1; i <= loopTo; i++) {
                     var Server = ServerList[i];
                     Send(Server.RemotePeer.ID, Server.ShutdownSignal());
                 }
                 lock (PeerServers)
-                    PeerServers[args.Client.RemoteIdentity.ID] = ServerList;
+                    PeerServers[args.Connection.RemoteIdentity.ID] = ServerList;
             }
         }
         #endregion
@@ -128,7 +149,7 @@ namespace SocketJack.Networking {
 
             Guid.TryParse(Server.RemotePeer.ID, out ClientID);
             if (ClientID != default) {
-                if (ConnectedClients.ContainsKey(ClientID)) {
+                if (Clients.ContainsKey(ClientID)) {
                     if (Server.Shutdown) {
                         if (PeerServers.ContainsKey(Server.HostPeer.ID)) {
                             List<PeerServer> ServerList;
@@ -143,7 +164,7 @@ namespace SocketJack.Networking {
                             }
                         }
                     }
-                    var Client = ConnectedClients[ClientID];
+                    var Client = Clients[ClientID];
                     Client.Send(Server);
                 }
             }
@@ -157,7 +178,7 @@ namespace SocketJack.Networking {
 
             Guid.TryParse(Server.RemotePeer.ID, out ClientID);
             if (ClientID != default) {
-                if (ConnectedClients.ContainsKey(ClientID)) {
+                if (Clients.ContainsKey(ClientID)) {
                     if (Server.Shutdown) {
                         if (PeerServers.ContainsKey(Server.HostPeer.ID)) {
                             List<PeerServer> ServerList;
@@ -180,7 +201,7 @@ namespace SocketJack.Networking {
                             }
                         }
                     }
-                    var Client = ConnectedClients[ClientID];
+                    var Client = Clients[ClientID];
                     Client.Send(Server);
                 }
             }
@@ -191,21 +212,24 @@ namespace SocketJack.Networking {
 
             Guid.TryParse(Recipient.ID, out ClientID);
             if (ClientID != default) {
-                if (ConnectedClients.ContainsKey(ClientID)) {
-                    var Client = ConnectedClients[ClientID];
+                if (Clients.ContainsKey(ClientID)) {
+                    var Client = Clients[ClientID];
                     Client.Send(Obj);
                 }
             }
         }
-        private void SyncPeers(ConnectedClient Client) {
-            Peers.ValuesForAll((p) => Client.Send(p));
+        private void SyncPeer(TcpConnection Client) {
+            //SendBroadcast(Client.RemoteIdentity, Client);
+            //peerList.ForEach(Client.Send);
+            Task.Run(() => {
+                Client.Send(Peers.ToArrayWithLocal(Client));
+                Clients.SendBroadcast(Client.RemoteIdentity);
+            });
         }
-        private void InitializePeer(ConnectedClient Client) {
+        private void InitializePeer(TcpConnection Client) {
             Task.Run(() => {
                 AddPeer(Client.RemoteIdentity);
-                Client.SendLocalIdentity();
-                SyncPeers(Client);
-                SendBroadcast(Client.RemoteIdentity, Client);
+                SyncPeer(Client);
             });
         }
         #endregion
@@ -215,8 +239,7 @@ namespace SocketJack.Networking {
         private Dictionary<string, List<PeerServer>> PeerServers = new Dictionary<string, List<PeerServer>>();
         private bool DelayListen = false;
         protected internal int ActiveClients = 0;
-        protected internal bool AcceptNextClient = true;
-        protected internal int WaitingConnections = 0;
+        protected internal int PendingConnections = 0;
 
         private void DelayListenDelegate(int MTU, IPAddress LocalIP) => InvokeDelayedListen();
         private void Init(int Port, string Name = "TcpServer") {
@@ -230,33 +253,64 @@ namespace SocketJack.Networking {
             var argServer1 = this;
             Globals.RegisterServer(ref argServer1);
         }
+        protected internal void StartServerLoop() {
+            Task.Factory.StartNew(async () => {
+                while (isListening) {
+                    int AcceptNext = Options.Backlog - PendingConnections;
+                    if (AcceptNext > 0) {
+                        Parallel.For(1, AcceptNext, (i) => {
+                            if (PendingConnections + 1 <= Options.Backlog) {
+                                Interlocked.Increment(ref PendingConnections);
+                                Socket.BeginAccept(new AsyncCallback(AcceptCallback), null);
+                            }
+                        });
+                    }
+                    await Task.Delay(1);
+                }
+                LogFormat("[{0}] Shutdown Started *:{1}", new[] { Name, Port.ToString() });
+                Clients.ToList().ForEach((KeyValuePair<Guid, TcpConnection> kvp) => {
+                    if (kvp.Value != null && !kvp.Value.Closed) {
+                        CloseConnection(kvp.Value);
+                    }
+                });
+                CloseConnection(Connection);
+                while (Clients.Count != 0)
+                   await Task.Delay(1);
+                LogFormat("[{0}] Shutdown Complete *:{1}", new[] { Name, Port.ToString() });
+            }, TaskCreationOptions.LongRunning );
+        }
         protected internal void AcceptCallback(IAsyncResult ar) {
             if (!isListening)
                 return;
-            var tryResult = MethodExtensions.TryInvoke(BaseSocket.EndAccept, ref ar);
-            if(tryResult.Success) {
-                var handler = tryResult.Result;
-                if (handler.Connected) {
-                    var newClient = NewConnection(ref handler);
-                    LogFormatAsync("[{0}] Client Connected.", new[] { Name + @"\" + newClient.RemoteIdentity.ID.ToUpper(), Port.ToString() });
-                    ClientConnected?.Invoke(new ConnectedEventArgs(this, newClient));
-                    AcceptNextClient = true;
+            var tryResult = MethodExtensions.TryInvoke(Socket.EndAccept, ref ar);
+            if (PendingConnections >= 1) Interlocked.Decrement(ref PendingConnections);
+            if (tryResult.Success) {
+                var newSocket = tryResult.Result;
+                if (newSocket.Connected) {
+                    var newConnection = NewConnection(ref newSocket);
+                    LogFormat("[{0}] Client Connected.", new[] { Name + @"\" + newConnection.RemoteIdentity.ID.ToUpper(), Port.ToString() });
+                    ClientConnected?.Invoke(new ConnectedEventArgs(this, newConnection));
                 }
             }
         }
-        private ConnectedClient NewConnection(ref Socket handler) {
-            var cs = new ConnectedClient(this, handler, Options.UseCompression);
+        private TcpConnection NewConnection(ref Socket handler) {
+            var newConnection = new TcpConnection(this, handler);
+            newConnection._Stream = new NetworkStream(newConnection.Socket);
+            if (Options.UseSsl)
+                newConnection.InitializeSslStream(SslCertificate, SslTargetHost);
             bool Success = false;
             while (!Success) {
-                cs.ID = Guid.NewGuid();
-                Success = ConnectedClients.TryAdd(cs.ID, cs);
-                Task.Delay(1);
+                newConnection.ID = Guid.NewGuid();
+                Success = Clients.TryAdd(newConnection.ID, newConnection);
+                Thread.Sleep(1);
             }
-            cs._RemoteIdentity = PeerIdentification.Create(cs);
-
+            newConnection._RemoteIdentity = PeerIdentification.Create(newConnection);
+            newConnection.StartReceiving();
+            newConnection.StartSending();
+            newConnection.StartConnectionTester();
             if (Options.PeerToPeerEnabled)
-                InitializePeer(cs);
-            return cs;
+                InitializePeer(newConnection);
+            return newConnection;
         }
         private void InvokeDelayedListen() {
             if (DelayListen) {
@@ -298,7 +352,7 @@ namespace SocketJack.Networking {
             InternalSendEvent += TcpServer_InternalSendEvent;
             InternalSentByteCounter += TcpServer_InternalSentByteCounter;
             BytesPerSecondUpdate += TcpServer_BytesPerSecondUpdate;
-            OnDisconnected += TcpServer_OnDisconnected;
+            ClientDisconnected += TcpServer_OnClientDisconnected;
         }
 
         /// <summary>
@@ -318,7 +372,7 @@ namespace SocketJack.Networking {
             InternalSendEvent += TcpServer_InternalSendEvent;
             InternalSentByteCounter += TcpServer_InternalSentByteCounter;
             BytesPerSecondUpdate += TcpServer_BytesPerSecondUpdate;
-            OnDisconnected += TcpServer_OnDisconnected;
+            ClientDisconnected += TcpServer_OnClientDisconnected;
         }
 
         /// <summary>
@@ -326,28 +380,29 @@ namespace SocketJack.Networking {
         /// </summary>
         public bool Listen() {
             if (!isListening) {
-                AcceptNextClient = true;
-                BaseSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                PendingConnections = 0;
+                Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 {
-                    var withBlock = BaseSocket;
+                    var withBlock = Socket;
                     withBlock.NoDelay = true;
                     withBlock.ReceiveBufferSize = int.MaxValue;
                     withBlock.SendBufferSize = int.MaxValue;
                     withBlock.ReceiveTimeout = -1;
                     withBlock.SendTimeout = -1;
                 }
-                BaseConnection = new ConnectedClient(this, BaseSocket, Options.UseCompression);
+                Connection = new TcpConnection(this, Socket);
                 try {
                     Bind(Port);
                     if (!NIC.InterfaceDiscovered) {
-                        LogAsync("Waiting for Network Interface Card..");
+                        Log("Waiting for Network Interface Card..");
                         DelayListen = true;
                         NIC.OnInterfaceDiscovered += this.DelayListenDelegate;
                         return false;
                     } else {
-                        BaseSocket.Listen(Options.Backlog);
+                        Socket.Listen(Options.Backlog);
+                        LogFormat("[{0}] Listening on port {1}.", new[] { Name, Port.ToString() });
                         isListening = true;
-                        Task.Run(() => ServerLoop());
+                        StartServerLoop();
                         return true;
                     }
                 } catch (Exception ex) {
@@ -360,31 +415,13 @@ namespace SocketJack.Networking {
             }
         }
 
-        protected internal void ServerLoop() {
-            LogFormatAsync("[{0}] Listening on port {1}.", new[] { Name, Port.ToString() });
-            while (isListening) {
-                if (AcceptNextClient) {
-                    if (WaitingConnections >= Options.Backlog) 
-                        AcceptNextClient = false;
-                    BaseSocket.BeginAccept(new AsyncCallback(AcceptCallback), null);
-                }
-                Thread.Sleep(1);
-            }
-            LogFormatAsync("[{0}] Shutdown Started *:{1}", new[] { Name, Port.ToString() });
-            ConnectedClients.ValuesForAll((Client) => CloseConnection(Client));
-            CloseConnection(BaseConnection);
-            while (ConnectedClients.Count != 0)
-                Thread.Sleep(1);
-            LogFormatAsync("[{0}] Shutdown Complete *:{1}", new[] { Name, Port.ToString() });
-        }
-
         /// <summary>
         /// Stops listening.
         /// </summary>
         public void StopListening() {
             if (isListening) {
                 isListening = false;
-                BaseConnection.CloseClient(this);
+                Connection.Close(this);
                 StoppedListening?.Invoke(this);
                 Peers.Clear();
                 GC.Collect();
@@ -393,55 +430,54 @@ namespace SocketJack.Networking {
                 InvokeOnError(null, new Exception("Not listening."));
             }
         }
-        List<object> l1 = new List<object>();
+
         /// <summary>
-        /// Send a serializable object to a Client.
+        /// Sends an object to a client.
         /// </summary>
-        /// <param name="Client">The ConnectedSocket.</param>
-        /// <param name="Obj">Serializable Object to send to the client.</param>
-        /// <remarks>Send can also be accessed directly from ConnectedSocket.Send()</remarks>
-        public new void Send(ConnectedClient Client, object Obj) {
+        /// <param name="Client">The Client's TcpConnection.</param>
+        /// <param name="Obj">Object to send to the client.</param>
+        /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+        public new void Send(TcpConnection Client, object Obj) {
             if (Client != null && !Client.Closed && Client.Socket.Connected) {
-                l1.Add(Obj);
                 base.Send(Client, Obj);
             }
         }
 
         /// <summary>
-        /// Send a serializable object to a Client.
+        /// Sends an object to a client.
         /// </summary>
-        /// <param name="ClientID">The ConnectedSocket GUID as string.</param>
-        /// <param name="Obj">Serializable Object.</param>
-        /// <remarks>Send can also be accessed directly from ConnectedSocket.Send()</remarks>
-        public void Send(string ClientID, object Obj) {
+        /// <param name="ID">The clients's ID.</param>
+        /// <param name="Obj">An object.</param>
+        /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+        public void Send(string ID, object Obj) {
             Guid ClientGuid = default;
-            if (Guid.TryParse(ClientID, out ClientGuid)) {
+            if (Guid.TryParse(ID, out ClientGuid)) {
                 Send(ClientGuid, Obj);
             }
         }
 
         /// <summary>
-        /// Send a serializable object to a Client.
+        /// Sends an object to a client.
         /// </summary>
-        /// <param name="ClientGuid">The ConnectedSocket's GUID.</param>
-        /// <param name="Obj">Serializable Object to send to the client.</param>
-        /// <remarks>Send can also be accessed directly from ConnectedSocket.Send()</remarks>
-        public void Send(Guid ClientGuid, object Obj) {
-            if (ConnectedClients.ContainsKey(ClientGuid)) {
-                var Client = ConnectedClients[ClientGuid];
+        /// <param name="ID">The clients's ID.</param>
+        /// <param name="Obj">An Object.</param>
+        /// <remarks>Can also be accessed directly from TcpConnection.Send()</remarks>
+        public void Send(Guid ID, object Obj) {
+            if (Clients.ContainsKey(ID)) {
+                var Client = Clients[ID];
                 base.Send(Client, Obj);
             }
         }
 
         /// <summary>
-        /// Send a serializable object to an array of ConnectedSocket.
+        /// Send an object to an array of TcpConnection.
         /// </summary>
         /// <param name="Clients">An array of ConnectedSocket</param>
         /// <param name="Obj">Object to send to the client.</param>
-        /// <param name="Except">The socket to exclude.</param>
-        /// <remarks>SendBroadcast can be accessed directly from TcpServer.ConnectedSockets.SendBroadcast()</remarks>
-        public void SendBroadcast(ConnectedClient[] Clients, object Obj, ConnectedClient Except = null) {
-            ConnectedClients.SendBroadcast(Obj, Except);
+        /// <param name="Except">The client to exclude.</param>
+        /// <remarks>Can be accessed directly from TcpServer.ConnectedSockets.SendBroadcast()</remarks>
+        public void SendBroadcast(TcpConnection[] Clients, object Obj, TcpConnection Except = null) {
+            this.Clients.SendBroadcast(Obj, Except);
         }
 
         /// <summary>
@@ -450,7 +486,7 @@ namespace SocketJack.Networking {
         /// <param name="Obj">Serializable Object to send to the client.</param>
         /// <remarks>Can be accessed directly from TcpServer.ConnectedSockets.SendBroadcast()</remarks>
         public void SendBroadcast(object Obj) {
-            ConnectedClients.SendBroadcast(Obj);
+            Clients.SendBroadcast(Obj);
         }
 
         /// <summary>
@@ -459,8 +495,8 @@ namespace SocketJack.Networking {
         /// <param name="Obj">Serializable Object to send to the client.</param>
         /// <param name="Except">The socket to exclude.</param>
         /// <remarks></remarks>
-        public void SendBroadcast(object Obj, ConnectedClient Except) {
-            ConnectedClients.SendBroadcast(Obj, Except);
+        public void SendBroadcast(object Obj, TcpConnection Except) {
+            Clients.SendBroadcast(Obj, Except);
         }
     }
 }

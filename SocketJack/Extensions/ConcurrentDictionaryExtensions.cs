@@ -1,6 +1,10 @@
-﻿using System;
+﻿using SocketJack.Networking.P2P;
+using SocketJack.Networking.Shared;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using SocketJack.Extensions;
+using System.Net;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
@@ -9,23 +13,34 @@ namespace SocketJack.Extensions {
     public static class ConcurrentDictionaryExtensions {
 
         public static List<Task> ValuesForAll<T, T2>(this ConcurrentDictionary<T, T2> Dict, Action<T2> action) {
-            return ForAll(Dict, keypair => action.Invoke(keypair.Value));
+            return ForAll(Dict, keypair => action(keypair.Value));
         }
 
         public static List<Task> KeysForAll<T, T2>(this ConcurrentDictionary<T, T2> Dict, Action<T> action) {
-            return ForAll(Dict, keypair => action.Invoke(keypair.Key));
+            return ForAll(Dict, keypair => action(keypair.Key));
         }
 
-        public static List<Task> ForAll<T, T2>(this ConcurrentDictionary<T, T2> Dict, Action<System.Collections.Generic.KeyValuePair<T, T2>> action) {
-            // Dict.AsParallel.ForAll(action)
+        public static List<Task> ForAll<T, T2>(this ConcurrentDictionary<T, T2> Dict, Action<KeyValuePair<T, T2>> action) {
             var Tasks = new List<Task>();
             lock (Dict) {
                 foreach (var keyValuePair in Dict) {
-                    var task = Task.Run(() => action.Invoke(keyValuePair));
-                    Tasks.Add(task);
+                    Tasks.Add(Task.Run(() => action(keyValuePair)));
                 }
             }
             return Tasks;
+        }
+
+        public static PeerIdentification[] ToArrayWithLocal<T, T2>(this ConcurrentDictionary<T, T2> Dict, TcpConnection LocalClient) where T2 : PeerIdentification {
+            var peers = Array.Empty<PeerIdentification>();
+            foreach (var keyValuePair in Dict) {
+                if (keyValuePair.Value is PeerIdentification peer) {
+                    if(peer.ID == LocalClient.RemoteIdentity.ID) {
+                        peer = PeerIdentification.Create(LocalClient.RemoteIdentity.ID, true, LocalClient.EndPoint.Address.ToString());
+                    }
+                    peers = peers.Add(peer);
+                }
+            }
+            return peers;
         }
 
         /// <summary>

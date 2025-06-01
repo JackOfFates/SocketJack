@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Select a Test" Height="112" Width="850" Name="TestWindow" WindowStartupLocation="CenterOwner">
+        Title="Select a Test" Height="112" Width="1280" Name="TestWindow" WindowStartupLocation="CenterScreen">
     <TabControl x:Name="Tabs">
         <TabItem Header="Tests">
             <Grid Background="#FF272727">

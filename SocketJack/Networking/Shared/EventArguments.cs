@@ -1,4 +1,5 @@
-﻿using System;
+﻿using SocketJack.Networking.P2P;
+using System;
 using System.ComponentModel;
 
 namespace SocketJack.Networking.Shared {
@@ -8,7 +9,7 @@ namespace SocketJack.Networking.Shared {
         /// <summary>
         /// The Remote Client idendity that sent this object.
         /// </summary>
-        /// <returns>Empty if from the server.</returns>
+        /// <returns><see langword="null"/> if from the server.</returns>
         public PeerIdentification From { get; set; }
 
         /// <summary>
@@ -16,19 +17,15 @@ namespace SocketJack.Networking.Shared {
         /// </summary>
         /// <returns></returns>
         public bool CancelPeerRedirect { get; set; }
-
         public object sender { get; set; }
-        public ConnectedClient Client { get; set; }
-
+        public TcpConnection Connection { get; set; }
         public Type Type { get; set; }
         public int BytesReceived { get; set; }
-
         public object Obj { get; set; }
 
-
-        protected internal void Initialize(object sender, ConnectedClient Client, object obj, int BytesReceived, PeerIdentification From = null) {
+        protected internal void Initialize(object sender, TcpConnection Client, object obj, int BytesReceived, PeerIdentification From = null) {
             this.sender = sender;
-            this.Client = Client;
+            this.Connection = Client;
             this.Obj = obj;
             this.BytesReceived = BytesReceived;
             this.Type = obj.GetType();
@@ -56,7 +53,7 @@ namespace SocketJack.Networking.Shared {
         public bool CancelPeerRedirect { get; set; }
 
         public object sender { get; set; }
-        public ConnectedClient Client { get; set; }
+        public TcpConnection Connection { get; set; }
         public Type Type { get; set; }
         public int BytesReceived { get; set; }
 
@@ -67,9 +64,9 @@ namespace SocketJack.Networking.Shared {
 
         public ReceivedEventArgs() { }
 
-        public ReceivedEventArgs(object sender, ConnectedClient Client, object obj, int BytesReceived, PeerIdentification From = null) {
+        public ReceivedEventArgs(object sender, TcpConnection Connection, object obj, int BytesReceived, PeerIdentification From = null) {
             this.sender = sender;
-            this.Client = Client;
+            this.Connection = Connection;
             this.Object = (T)obj;
             this.BytesReceived = BytesReceived;
             this.Type = Object.GetType();
@@ -83,25 +80,25 @@ namespace SocketJack.Networking.Shared {
     }
 
     public class SentEventArgs {
-        public SentEventArgs(object sender, ConnectedClient Client, int BytesSent) {
+        public SentEventArgs(object sender, TcpConnection Connection, int BytesSent) {
             this.sender = sender;
-            this.Client = Client;
+            this.Connection = Connection;
             this.BytesSent = BytesSent;
         }
         public object sender { get; private set; }
-        public ConnectedClient Client { get; private set; }
+        public TcpConnection Connection { get; private set; }
         public int BytesSent { get; private set; }
     }
 
     public class DisconnectedEventArgs {
-        public DisconnectedEventArgs(object sender, ConnectedClient Client, DisconnectionReason Reason = DisconnectionReason.Unknown) {
+        public DisconnectedEventArgs(object sender, TcpConnection Connection, DisconnectionReason Reason = DisconnectionReason.Unknown) {
             this.sender = sender;
-            this.Client = Client;
+            this.Connection = Connection;
             this.Reason = Reason;
         }
 
         public object sender { get; private set; }
-        public ConnectedClient Client { get; private set; }
+        public TcpConnection Connection { get; private set; }
         public DisconnectionReason Reason { get; private set; }
     }
 
@@ -115,28 +112,29 @@ namespace SocketJack.Networking.Shared {
         RemoteSocketClosed,
         LocalSocketClosed,
         InternetNotAvailable,
-        ObjectDisposed
+        ObjectDisposed,
+        CompressionError
     }
 
     public class ConnectedEventArgs {
-        public ConnectedEventArgs(object sender, ConnectedClient Client) {
+        public ConnectedEventArgs(object sender, TcpConnection Connection) {
             this.sender = sender;
-            this.Client = Client;
+            this.Connection = Connection;
         }
 
         public object sender { get; private set; }
-        public ConnectedClient Client { get; private set; }
+        public TcpConnection Connection { get; private set; }
     }
 
     public class ErrorEventArgs {
-        public ErrorEventArgs(object sender, ConnectedClient Client, Exception e) {
+        public ErrorEventArgs(object sender, TcpConnection Connection, Exception e) {
             this.sender = sender;
-            this.Client = Client;
+            this.Connection = Connection;
             Exception = e;
         }
 
         public object sender { get; private set; }
-        public ConnectedClient Client { get; private set; }
+        public TcpConnection Connection { get; private set; }
         public Exception Exception { get; private set; }
     }
 }

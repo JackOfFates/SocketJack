@@ -13,7 +13,9 @@ Public Class MaxClientsTest
     Public Clients As New ConcurrentDictionary(Of Guid, TcpClient)
     Public ServerPort As Integer = NIC.FindOpenPort(7500, 8000)
 
-    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = New TcpOptions With {.Logging = False, .UpdateConsoleTitle = True}}
+    Public ServerOptions As New TcpOptions With {.Logging = False, .PeerToPeerEnabled = False, .UpdateConsoleTitle = True}
+    Public ClientOptions As New TcpOptions With {.Logging = False, .PeerToPeerEnabled = False, .UpdateConsoleTitle = False}
+    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = ServerOptions}
 
 #Region "Properties"
     Public Property TestName As String = "MaxConnections" Implements ITest.TestName
@@ -96,10 +98,17 @@ Public Class MaxClientsTest
         End If
     End Sub
 
-    Public Sub Log(text As String)
+    Public Sub Log(text As String, Optional AppendNewLine As Boolean = False)
+        Dim isAtEnd As Boolean = TextboxLog.VerticalOffset >= (TextboxLog.ExtentHeight - TextboxLog.ViewportHeight) * 0.9
+        Dispatcher.Invoke(Sub()
+                              TextboxLog.AppendText(If(TextboxLog.Text = String.Empty, String.Empty, vbCrLf) & text & If(AppendNewLine, Environment.NewLine, String.Empty))
+                              If isAtEnd Then TextboxLog.ScrollToEnd()
+                          End Sub)
+    End Sub
+    Public Sub LogAsync(text As String, Optional AppendNewLine As Boolean = False)
         Dim isAtEnd As Boolean = TextboxLog.VerticalOffset >= (TextboxLog.ExtentHeight - TextboxLog.ViewportHeight) * 0.9
         Dispatcher.InvokeAsync(Sub()
-                                   TextboxLog.AppendText(vbCrLf & text)
+                                   TextboxLog.AppendText(If(TextboxLog.Text = String.Empty, String.Empty, vbCrLf) & text & If(AppendNewLine, Environment.NewLine, String.Empty))
                                    If isAtEnd Then TextboxLog.ScrollToEnd()
                                End Sub)
     End Sub
@@ -109,15 +118,15 @@ Public Class MaxClientsTest
 #Region "Events"
 
     Private Sub Server_OnError(e As ErrorEventArgs) Handles Server.OnError
-        Log(e.Exception.Message & vbCrLf & e.Exception.StackTrace)
+        LogAsync(e.Exception.Message & vbCrLf & e.Exception.StackTrace)
     End Sub
 
     Private Sub Server_LogOutput(text As String) Handles Server.LogOutput
         Dim isAtEnd As Boolean = TextboxLog.VerticalOffset >= (TextboxLog.ExtentHeight - TextboxLog.ViewportHeight) * 0.9
-        Dispatcher.InvokeAsync(Sub()
-                                   TextboxLog.AppendText(text)
-                                   If isAtEnd Then TextboxLog.ScrollToEnd()
-                               End Sub)
+        Dispatcher.Invoke(Sub()
+                              TextboxLog.AppendText(text)
+                              If isAtEnd Then TextboxLog.ScrollToEnd()
+                          End Sub)
     End Sub
 
     Private Sub Server_ClientConnected(e As ConnectedEventArgs) Handles Server.ClientConnected
@@ -125,7 +134,7 @@ Public Class MaxClientsTest
         Interlocked.Increment(TotalClients)
     End Sub
 
-    Private Sub Server_OnDisconnected(e As DisconnectedEventArgs) Handles Server.OnDisconnected
+    Private Sub Server_ClientDisconnected(e As DisconnectedEventArgs) Handles Server.ClientDisconnected
         Interlocked.Increment(Disconnects)
         Interlocked.Decrement(TotalClients)
     End Sub
@@ -138,7 +147,7 @@ Public Class MaxClientsTest
             If Server.Listen() Then
                 cancelTest = False
                 Clients.Clear()
-                Log("Test Started.")
+                Log("Starting test.", True)
                 ButtonStartStop.Content = "Stop Test"
                 Dim t As New Thread(Async Sub()
                                         For i As Integer = 0 To MaxClients
@@ -161,12 +170,12 @@ Public Class MaxClientsTest
             cancelTest = True
             ButtonStartStop.Content = "Start Test"
             Server.StopListening()
-            Log("Test Stopped.")
+            Log("Stopping test.", True)
         End If
     End Sub
 
     Private Async Function CreateClientAndConnect(index As Integer) As Task(Of Boolean)
-        Dim Client As New TcpClient(Server.Options, String.Format("{0}Client[{1}]", {TestName, index}))
+        Dim Client As New TcpClient(ClientOptions, String.Format("{0}Client[{1}]", {TestName, index}))
         Clients.Add(Client.InternalID, Client)
         Return Await Client.Connect("127.0.0.1", ServerPort)
     End Function

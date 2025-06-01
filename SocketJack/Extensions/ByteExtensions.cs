@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using SocketJack.Networking;
+using SocketJack.Networking.Shared;
 
 namespace SocketJack.Extensions {
     public static class ByteExtensions {
@@ -32,6 +33,10 @@ namespace SocketJack.Extensions {
             return SerializedBytes.GetSegments();
         }
 
+        public static byte[] Terminate(this byte[] Data) {
+            return ByteExtensions.Concat(new[] { Data, TcpConnection.Terminator });
+        }
+
         /// <summary>
         /// Remove bytes from source Array.
         /// </summary>
@@ -40,6 +45,26 @@ namespace SocketJack.Extensions {
         /// <param name="length"></param>
         /// <returns>New byte array with removed bytes between startIndex and length.</returns>
         public static byte[] Remove(this byte[] byteArray, int startIndex, int length) {
+            if (startIndex < 0 || length < 0) {
+                throw new ArgumentOutOfRangeException("Invalid start index or length.");
+            } else if(startIndex + length >= byteArray.Length) {
+                return null;
+            }
+            byte[] newArray = new byte[(byteArray.Length - length)];
+            Array.Copy(byteArray, 0, newArray, 0, startIndex);
+            Array.Copy(byteArray, startIndex + length, newArray, startIndex, byteArray.Length - (startIndex + length));
+            return newArray;
+        }
+
+        /// <summary>
+        /// Remove bytes from source Array.
+        /// </summary>
+        /// <param name="byteArray"></param>
+        /// <param name="startIndex"></param>
+        /// <param name="length"></param>
+        /// <returns>New byte array with removed bytes from startIndex to end.</returns>
+        public static byte[] Remove(this byte[] byteArray, int startIndex) {
+            int length = byteArray.Length - startIndex;
             if (startIndex < 0 || length < 0 || startIndex + length > byteArray.Length) {
                 throw new ArgumentOutOfRangeException("Invalid start index or length.");
             }
@@ -66,8 +91,8 @@ namespace SocketJack.Extensions {
         /// <param name="startIndex"></param>
         /// <param name="Length"></param>
         /// <returns>Byte array From startIndex to Length.</returns>
-        public static byte[] Part(this byte[] sourceArray, int startIndex, int length) {
-            int newLength = length - startIndex;
+        public static byte[] Part(this byte[] sourceArray, int startIndex, int endIndex) {
+            int newLength = endIndex - startIndex;
             byte[] Bytes = new byte[newLength];
             Buffer.BlockCopy(sourceArray, startIndex, Bytes, 0, newLength);
             return Bytes;

@@ -5,8 +5,9 @@ namespace SocketJack.Networking.Shared {
     /// Used as a dummy class to check if the connection is alive.
     /// </summary>
     [Serializable]
-    public class PingObj {
-        public PingObj() {
+    public class PingObject {
+        public static PingObject StaticInstance { get; } = new PingObject();
+        public PingObject() {
 
         }
     }

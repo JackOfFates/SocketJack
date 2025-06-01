@@ -65,7 +65,7 @@
                 <TextBlock x:Name="LabelReceivedObjects" Text="Objects" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center"/>
                 <Grid x:Name="UnitGrid" Width="375">
                     <TextBlock Text="Unit Size" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
-                    <Slider x:Name="SliderUnitSize" Thumb.DragStarted="Slider_DragStarted" Thumb.DragCompleted="Slider_DragCompleted" Maximum="1000000" Value="1000000" SmallChange="1" LargeChange="25000" Margin="0,24,0,0" IsMoveToPointEnabled="True" AutoToolTipPlacement="TopLeft" Delay="0"/>
+                    <Slider x:Name="SliderUnitSize" Thumb.DragStarted="Slider_DragStarted" Thumb.DragCompleted="Slider_DragCompleted" Maximum="4000000" Value="250" SmallChange="1" LargeChange="25000" Margin="0,24,0,0" IsMoveToPointEnabled="True" AutoToolTipPlacement="TopLeft" Delay="0"/>
                 </Grid>
             </StackPanel>
         </GroupBox>

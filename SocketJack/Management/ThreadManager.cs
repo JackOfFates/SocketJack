@@ -10,9 +10,7 @@ using Microsoft.VisualBasic;
 using SocketJack.Extensions;
 using SocketJack.Networking;
 using SocketJack.Networking.Shared;
-/* TODO ERROR: Skipped EndIfDirectiveTrivia
-#End If
-*/
+
 namespace SocketJack.Management {
 
     /// <summary>
@@ -20,8 +18,10 @@ namespace SocketJack.Management {
     /// </summary>
     public class ThreadManager : IDisposable {
 
+        #region Properties
+
         /// <summary>
-        /// Time in Milliseconds to wait for the client to connect before timing out.
+        /// Time in Milliseconds to wait before timing out.
         /// </summary>
         public static int Timeout { get; set; } = 3000;
 
@@ -34,19 +34,35 @@ namespace SocketJack.Management {
             set {
                 bool Start = !_Alive && value;
                 _Alive = value;
-                if (Alive)
-                    CreateThreads(Start);
+                StartCounters(Alive);
             }
         }
         private static bool _Alive = false;
 
+        #endregion
+
+        #region IDisposable
         /// <summary>
         /// Must be called on application shutdown to ensure all threads are closed.
         /// </summary>
         public static void Shutdown() {
             Alive = false;
-            TcpClients.ValuesForAll(DisposeDelegate);
-            TcpServers.ValuesForAll(DisposeDelegate);
+            TcpClients.Values.ToList().ForEach(DisposeDelegate);
+            TcpServers.Values.ToList().ForEach(DisposeDelegate);
+        }
+
+        protected virtual void Dispose(bool disposing) {
+            if (!disposedValue) {
+                if (disposing) {
+                    Shutdown();
+                }
+
+                disposedValue = true;
+            }
+        }
+        public void Dispose() {
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
         }
 
         private static void DisposeDelegate(TcpBase Instance) {
@@ -54,208 +70,36 @@ namespace SocketJack.Management {
                 Instance.Dispose();
         }
 
-        protected internal static ConcurrentDictionary<Guid, TcpClient> TcpClients = new ConcurrentDictionary<Guid, TcpClient>();
-        protected internal static ConcurrentDictionary<Guid, TcpServer> TcpServers = new ConcurrentDictionary<Guid, TcpServer>();
-        protected internal static Thread ConnectionCheckThread;
-        protected internal static Thread CounterThread;
-        protected internal static Thread SendThread;
-        protected internal static Thread ClientReceiveThread;
-        protected internal static Thread ServerReceiveThread;
+        #endregion
 
-        protected internal static void ConnectionCheckLoop() {
-            while (Alive) {
-                TcpClients.ValuesForAll(ClientConnectionCheckDelegate);
-                TcpServers.ValuesForAll(ServerConnectionCheckDelegate);
-                Thread.Sleep(Timeout);
-            }
-        }
-
-        protected internal static void CounterLoop() {
-            while (Alive) {
-                TcpClients.ValuesForAll(CounterDelegate);
-                TcpServers.ValuesForAll(CounterDelegate);
-                Thread.Sleep(1000);
-            }
-        }
-
-        private static void CounterDelegate(TcpBase Instance) {
-            Instance._SentBytesPerSecond = (int)Instance.SentBytesCounter;
-            Instance._ReceivedBytesPerSecond = (int)Instance.ReceivedBytesCounter;
-            Instance.SentBytesCounter = 0L;
-            Instance.ReceivedBytesCounter = 0L;
-            Instance.InvokeBytesPerSecondUpdate();
-        }
-
-        private static void ServerConnectionCheckDelegate(TcpServer Server) {
-            Server.ConnectedClients.ValuesForAll((Client) => {
-                if (Client.Socket is null)
-                    return;
-                Client.Send(new PingObj());
-                if (!Server.IsConnected(Client))
-                    Server.CloseConnection(Client);
-            });
-        }
-
-        private static void ClientConnectionCheckDelegate(TcpClient Client) {
-            if (Client.BaseSocket != null && Client.BaseConnection != null)
-                Client.Send(new PingObj());
-
-            if(Client.BaseConnection != null) {
-                lock (Client.BaseConnection) {
-                    bool isConnected = Client.IsConnected(Client.BaseConnection);
-                    if (!isConnected && !Client.BaseConnection.Closed)
-                        Client.Disconnect();
-                }
-            }
-        }
-
-        private static void SendStateLoop() {
-            while (Alive) {
-                TcpClients.ValuesForAll(ClientSendDelegate);
-                TcpServers.ValuesForAll(ServerSendDelegate);
-                Thread.Sleep(1);
-            }
-        }
-
-        private static void ClientSendDelegate(TcpClient Client) {
-            if (Client.BaseConnection != null && !Client.BaseConnection.IsSending) {
-                lock (Client.BaseConnection.SendQueue) {
-                    if ((Client.Connected) && !Client.BaseConnection.Closed && !Client.isSending) {
-                        var ProcessStates = new List<SendState>();
-                        while (Client.BaseConnection.SendQueue.Count > 0) {
-                            SendState state;
-                            Client.BaseConnection.SendQueue.TryDequeue(out state);
-                            if (state != null)
-                                ProcessStates.Add(state);
-                        }
-
-                        if (ProcessStates.Count == 0)
-                            return;
-
-                        for (int i = 0; i < ProcessStates.Count; i++) {
-                            var state = ProcessStates[i];
-                            if (!Client.Connected || Client.BaseConnection.Closed) 
-                                break;
-                            if (state != null)
-                                Client.ProcessSendState(ref state);
-                        }
-                    }
-                }
-            }
-        }
-        
-        private static void ServerSendDelegate(TcpServer Server) {
-            if (Server.isListening) {
-                foreach (var item in Server.ConnectedClients) {
-                    if (!item.Value.IsSending) {
-                        lock (item.Value?.SendQueue) {
-                            while (item.Value?.SendQueue.Count > 0) {
-                                SendState state = null;
-                                var success = item.Value?.SendQueue.TryDequeue(out state);
-                                if (state != null) 
-                                    Server.ProcessSendState(ref state);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        private static void ClientReceiveStateLoop() {
-            while (Alive) {
-                TcpClients.ValuesForAll(async (Client) => await ClientReceiveDelegate(Client));
-                Thread.Sleep(1);
-            }
-        }
-
-        private async static void ServerReceiveStateLoop() {
-            while (Alive) {
-                for (int i = 0, loopTo = TcpServers.Count - 1; i <= loopTo; i++) {
-                    var server = TcpServers.ElementAt(i).Value;
-                    if (server != null && server.isListening) {
-                        for (int ClientIndex = 0, loopTo1 = server.ConnectedClients.Count; ClientIndex < loopTo1; ClientIndex++) {
-                            if (server.ConnectedClients.Count - 1 < i) return;
-
-                            var Client = server.ConnectedClients.ElementAt(ClientIndex).Value;
-                            if (Client == null || Client.Socket is null) {
-                                return;
-                            } else if (!Client.IsReceiving) {
-                                Interlocked.Increment(ref server.ActiveClients);
-                                Client.IsReceiving = true;
-                                ReceiveResult result = await server.Receive(Client);
-                                Client._DownloadBuffer = result.RemainingBytes;
-                                Client.IsReceiving = false;
-                                Interlocked.Decrement(ref server.ActiveClients);
-                            }
-                        }
-                    }
-                }
-                Thread.Sleep(1);
-            }
-        }
-
-        private async static Task ClientReceiveDelegate(TcpClient Client) {
-            if (Client == null || Client.BaseSocket == null || !Client.Connected) {
-                return;
-            }
-            lock (Client.BaseConnection) {
-                if (Client.BaseConnection.IsReceiving) 
-                    return;
-                Client.BaseConnection.IsReceiving = true;
-            }
-
-            try {
-                ReceiveResult result = await Client.ReceiveClient(Client);
-                lock (Client.BaseConnection) {
-                    Client.BaseConnection._DownloadBuffer = result.RemainingBytes;
-                }
-            } catch (Exception ex) {
-                Client.InvokeOnError(Client.BaseConnection, ex);
-            } finally {
-                lock (Client.BaseConnection) {
-                    Client.BaseConnection.IsReceiving = false;
-                }
-            }
-        }
-
-        //private async static Task ClientReceiveDelegate(TcpClient Client) {
-        //    if (Client == null || Client.BaseSocket == null || !Client.Connected) {
-        //        return;
-        //    } else if (!Client.BaseConnection.IsReceiving) {
-        //        Client.BaseConnection.IsReceiving = true;
-        //        ReceiveResult result = await Client.ReceiveClient(Client);
-        //        Client.BaseConnection._DownloadBuffer = result.RemainingBytes;
-        //        Client.BaseConnection.IsReceiving = false;
-        //    }
-        //}
-
-        protected internal static void CreateThreads(bool Start) {
-            if (ConnectionCheckThread == null || ConnectionCheckThread.ThreadState == System.Threading.ThreadState.Stopped) {
-                ConnectionCheckThread = new Thread(ConnectionCheckLoop) { Name = "ConnectionCheckThread", Priority = ThreadPriority.Highest };
-            }
-            if (CounterThread == null|| CounterThread.ThreadState == System.Threading.ThreadState.Stopped) {
+        #region Multithreading
+        protected internal static void StartCounters(bool Start) {
+            //if (ConnectionCheckThread == null || ConnectionCheckThread.ThreadState == System.Threading.ThreadState.Stopped) {
+            //    ConnectionCheckThread = new Thread(ConnectionCheckLoop) { Name = "ConnectionCheckThread", Priority = ThreadPriority.Highest };
+            //}
+            if (CounterThread == null || CounterThread.ThreadState == System.Threading.ThreadState.Stopped) {
                 CounterThread = new Thread(CounterLoop) { Name = "ByteCounterThread" };
             }
-            if (SendThread == null|| SendThread.ThreadState == System.Threading.ThreadState.Stopped) {
-                SendThread = new Thread(SendStateLoop) { Name = "SendThread" };
-            }
-            if (ServerReceiveThread == null|| ServerReceiveThread.ThreadState == System.Threading.ThreadState.Stopped) {
-                ServerReceiveThread = new Thread(ServerReceiveStateLoop) { Name = "ServerReceiveThread" };
-            }
-            if (ClientReceiveThread == null|| ClientReceiveThread.ThreadState == System.Threading.ThreadState.Stopped) {
-                ClientReceiveThread = new Thread(ClientReceiveStateLoop) { Name = "ClientReceiveThread" };
-            }
+            //if (SendThread == null || SendThread.ThreadState == System.Threading.ThreadState.Stopped) {
+            //    SendThread = new Thread(SendStateLoop) { Name = "SendThread" };
+            //}
+            //if (ServerReceiveThread == null || ServerReceiveThread.ThreadState == System.Threading.ThreadState.Stopped) {
+            //    ServerReceiveThread = new Thread(ServerReceiveStateLoop) { Name = "ServerReceiveThread" };
+            //}
+            //if (ClientReceiveThread == null || ClientReceiveThread.ThreadState == System.Threading.ThreadState.Stopped) {
+            //    ClientReceiveThread = new Thread(ClientReceiveStateLoop) { Name = "ClientReceiveThread" };
+            //}
             if (Start) {
-                if (!ConnectionCheckThread.IsAlive)
-                    ConnectionCheckThread.Start();
+                //if (!ConnectionCheckThread.IsAlive)
+                //    ConnectionCheckThread.Start();
                 if (!CounterThread.IsAlive)
                     CounterThread.Start();
-                if (!SendThread.IsAlive)
-                    SendThread.Start();
-                if (!ClientReceiveThread.IsAlive)
-                    ClientReceiveThread.Start();
-                if (!ServerReceiveThread.IsAlive)
-                    ServerReceiveThread.Start();
+                //if (!SendThread.IsAlive)
+                //    SendThread.Start();
+                //if (!ClientReceiveThread.IsAlive)
+                //    ClientReceiveThread.Start();
+                //if (!ServerReceiveThread.IsAlive)
+                //    ServerReceiveThread.Start();
             }
         }
 
@@ -265,12 +109,12 @@ namespace SocketJack.Management {
             Environment.SetEnvironmentVariable("DOTNET_GCCpuGroup", "1");
             Environment.SetEnvironmentVariable("DOTNET_Thread_UseAllCpuGroups", "1");
             Environment.SetEnvironmentVariable("DOTNET_gcAllowVeryLargeObjects", "1");
-            Environment.SetEnvironmentVariable("DOTNET_Thread_AssignCpuGroups", "0");
+            Environment.SetEnvironmentVariable("DOTNET_Thread_AssignCpuGroups", "1");
             Environment.SetEnvironmentVariable("DOTNET_GCNoAffinitize", "1");
             Environment.SetEnvironmentVariable("COMPlus_GCCpuGroup", "1");
             Environment.SetEnvironmentVariable("COMPlus_Thread_UseAllCpuGroups", "1");
             Environment.SetEnvironmentVariable("COMPlus_gcAllowVeryLargeObjects", "1");
-            Environment.SetEnvironmentVariable("COMPlus_Thread_AssignCpuGroups", "0");
+            Environment.SetEnvironmentVariable("COMPlus_Thread_AssignCpuGroups", "1");
             Environment.SetEnvironmentVariable("COMPlus_GCNoAffinitize", "1");
         }
 
@@ -286,9 +130,15 @@ namespace SocketJack.Management {
                 if (newConfig.Contains(ConfigPropertiesHeader)) {
                     var AddVars = new List<string>();
                     bool hasVars = ContainsVariables(newConfig);
+                    for (int i = 0, loopTo = DisabledVariables.Count() - 1; i <= loopTo; i++) {
+                        string @var = DisabledVariables[i];
+                        if (newConfig.Contains(@var, StringComparison.CurrentCultureIgnoreCase)) {
+                            newConfig.Replace(@var, Variables[i], StringComparison.CurrentCultureIgnoreCase);
+                        }
+                    }
                     for (int i = 0, loopTo = Variables.Count() - 1; i <= loopTo; i++) {
                         string @var = Variables[i];
-                        if (!newConfig.Contains(@var)) {
+                        if (!newConfig.Contains(@var, StringComparison.CurrentCultureIgnoreCase)) {
                             AddVars.Add(@var);
                         }
                     }
@@ -296,9 +146,9 @@ namespace SocketJack.Management {
                         string @var = i == 0 && !hasVars ? AddVars[i] : AddVars[i] + ",";
                         newConfig = newConfig.Insert(newConfig.IndexOf(ConfigPropertiesHeader) + ConfigPropertiesHeader.Length + 1, @var + Environment.NewLine);
                     }
-                } else if (newConfig.Contains(AfterIndex1)) {
+                } else if (newConfig.Contains(AfterIndex1, StringComparison.CurrentCultureIgnoreCase)) {
                     newConfig = newConfig.Insert(newConfig.IndexOf(AfterIndex1) + AfterIndex1.Length + 1, Environment.NewLine + FullConfigProperties);
-                } else if (newConfig.Contains(AfterIndex2)) {
+                } else if (newConfig.Contains(AfterIndex2, StringComparison.CurrentCultureIgnoreCase)) {
                     newConfig = newConfig.Insert(newConfig.IndexOf(AfterIndex2) + AfterIndex2.Length + 1, Environment.NewLine + FullConfigProperties);
                 }
                 if ((config ?? "") != (newConfig ?? "")) {
@@ -324,8 +174,41 @@ namespace SocketJack.Management {
             return false;
         }
 
-        private static string[] Variables = new[] { "      \"DOTNET_GCCpuGroup\": \"1\"", "      \"DOTNET_Thread_UseAllCpuGroups\": \"1\"", "      \"DOTNET_gcAllowVeryLargeObjects\": \"1\"", "      \"DOTNET_Thread_AssignCpuGroups\": \"0\"", "      \"COMPlus_Thread_AssignCpuGroups\": \"0\"", "      \"COMPlus_GCCpuGroup\": \"1\"", "      \"COMPlus_Thread_UseAllCpuGroups\": \"1\"", "      \"COMPlus_gcAllowVeryLargeObjects\": \"1\"", "      \"COMPlus_GCNoAffinitize\": \"1\"", "      \"DOTNET_GCNoAffinitize\": \"1\"" };
-        private static string FullConfigProperties = "    \"configProperties\": {" + Environment.NewLine + "      \"DOTNET_GCCpuGroup\": \"1\"," + Environment.NewLine + "      \"DOTNET_Thread_UseAllCpuGroups\": \"1\"," + Environment.NewLine + "      \"DOTNET_Thread_AssignCpuGroups\": \"0\"," + Environment.NewLine + "      \"DOTNET_gcAllowVeryLargeObjects\": \"1\"," + Environment.NewLine + "      \"COMPlus_GCCpuGroup\": \"1\"," + Environment.NewLine + "      \"COMPlus_Thread_UseAllCpuGroups\": \"1\"," + Environment.NewLine + "      \"COMPlus_Thread_AssignCpuGroups\": \"0\"," + Environment.NewLine + "      \"COMPlus_gcAllowVeryLargeObjects\": \"1\"," + Environment.NewLine + "      \"DOTNET_GCNoAffinitize\": \"1\"," + Environment.NewLine + "      \"COMPlus_GCNoAffinitize\": \"1\"" + Environment.NewLine + "      }";
+        private static string[] Variables = new[] { "      \"DOTNET_GCCpuGroup\": \"1\"", 
+                                                    "      \"DOTNET_Thread_UseAllCpuGroups\": \"1\"",
+                                                    "      \"DOTNET_gcAllowVeryLargeObjects\": \"1\"",
+                                                    "      \"DOTNET_Thread_AssignCpuGroups\": \"1\"",
+                                                    "      \"COMPlus_Thread_AssignCpuGroups\": \"1\"",
+                                                    "      \"COMPlus_GCCpuGroup\": \"1\"",
+                                                    "      \"COMPlus_Thread_UseAllCpuGroups\": \"1\"",
+                                                    "      \"COMPlus_gcAllowVeryLargeObjects\": \"1\"",
+                                                    "      \"COMPlus_GCNoAffinitize\": \"1\"",
+                                                    "      \"DOTNET_GCNoAffinitize\": \"1\"" };
+
+        private static string[] DisabledVariables = new[] { 
+                                                    "      \"DOTNET_GCCpuGroup\": \"0\"",
+                                                    "      \"DOTNET_Thread_UseAllCpuGroups\": \"0\"",
+                                                    "      \"DOTNET_gcAllowVeryLargeObjects\": \"0\"",
+                                                    "      \"DOTNET_Thread_AssignCpuGroups\": \"0\"",
+                                                    "      \"COMPlus_Thread_AssignCpuGroups\": \"0\"",
+                                                    "      \"COMPlus_GCCpuGroup\": \"0\"",
+                                                    "      \"COMPlus_Thread_UseAllCpuGroups\": \"0\"",
+                                                    "      \"COMPlus_gcAllowVeryLargeObjects\": \"0\"",
+                                                    "      \"COMPlus_GCNoAffinitize\": \"0\"",
+                                                    "      \"DOTNET_GCNoAffinitize\": \"0\"" };
+
+        private static string FullConfigProperties =  "    \"configProperties\": {" + Environment.NewLine + 
+                                                    "      \"DOTNET_GCCpuGroup\": \"1\"," + Environment.NewLine + 
+                                                    "      \"DOTNET_Thread_UseAllCpuGroups\": \"1\"," + Environment.NewLine +
+                                                    "      \"DOTNET_Thread_AssignCpuGroups\": \"1\"," + Environment.NewLine +
+                                                    "      \"DOTNET_gcAllowVeryLargeObjects\": \"1\"," + Environment.NewLine +
+                                                    "      \"COMPlus_GCCpuGroup\": \"1\"," + Environment.NewLine +
+                                                    "      \"COMPlus_Thread_UseAllCpuGroups\": \"1\"," + Environment.NewLine +
+                                                    "      \"COMPlus_Thread_AssignCpuGroups\": \"1\"," + Environment.NewLine +
+                                                    "      \"COMPlus_gcAllowVeryLargeObjects\": \"1\"," + Environment.NewLine +
+                                                    "      \"DOTNET_GCNoAffinitize\": \"1\"," + Environment.NewLine +
+                                                    "      \"COMPlus_GCNoAffinitize\": \"1\"" + Environment.NewLine + "      }";
+
         private static string ConfigPropertiesHeader = "\"configProperties\": {";
         //private static string RuntimeOptionsHeader = "\"runtimeOptions\": {";
         private static string AfterIndex1 = "],";
@@ -342,20 +225,217 @@ namespace SocketJack.Management {
             string fullpath = System.Reflection.Assembly.GetEntryAssembly().Location;
             return fullpath.Remove(fullpath.LastIndexOf(@"\"));
         }
+        #endregion
 
-        protected virtual void Dispose(bool disposing) {
-            if (!disposedValue) {
-                if (disposing) {
-                    Shutdown();
+        protected internal static ConcurrentDictionary<Guid, TcpClient> TcpClients = new ConcurrentDictionary<Guid, TcpClient>();
+        protected internal static ConcurrentDictionary<Guid, TcpServer> TcpServers = new ConcurrentDictionary<Guid, TcpServer>();
+        protected internal static Thread CounterThread;
+        private static DateTime LastCount = DateTime.UtcNow;
+        private static TimeSpan OneSecond = TimeSpan.FromSeconds(1);
+        //protected internal static Thread SendThread;
+        //protected internal static Thread ClientReceiveThread;
+        //protected internal static Thread ServerReceiveThread;
+        protected internal static void CounterLoop() {
+            while (Alive) {
+                for (int i = 0; i < TcpClients.Count; i++) {
+                    MethodExtensions.TryInvoke(() => {
+                        if(TcpClients.Count - 1 < i) return;
+                        var Client = TcpClients.Values.ElementAt(i);
+                        if (Client.Connected) {
+                            Client.Connection._SentBytesPerSecond = Client.Connection.SentBytesCounter;
+                            Client.Connection._ReceivedBytesPerSecond = Client.Connection.ReceivedBytesCounter;
+                            Client.Connection.SentBytesCounter = 0;
+                            Client.Connection.ReceivedBytesCounter = 0;
+                            Client.InvokeBytesPerSecondUpdate(Client.Connection);
+                        }
+                    });
                 }
-
-                disposedValue = true;
+                for (int i = 0; i < TcpServers.Count; i++) {
+                    MethodExtensions.TryInvoke(() => {
+                        if (TcpServers.Count - 1 < i) return;
+                        var Server = TcpServers.Values.ElementAt(i);
+                        if (Server.Connected) {
+                            Server.Connection._SentBytesPerSecond = Server.Connection.SentBytesCounter;
+                            Server.Connection._ReceivedBytesPerSecond = Server.Connection.ReceivedBytesCounter;
+                            Server.Connection.SentBytesCounter = 0;
+                            Server.Connection.ReceivedBytesCounter = 0;
+                            Server.InvokeBytesPerSecondUpdate(Server.Connection);
+                        }
+                    });
+                }
+                //var Clients = TcpClients.ToList();
+                //Clients.ForEach(c => {
+                //    var Client = c.Value;
+                //    if (Client.Connected) {
+                //        Client.Connection._SentBytesPerSecond = Client.Connection.SentBytesCounter;
+                //        Client.Connection._ReceivedBytesPerSecond = Client.Connection.ReceivedBytesCounter;
+                //        Client.Connection.SentBytesCounter = 0;
+                //        Client.Connection.ReceivedBytesCounter = 0;
+                //        Client.InvokeBytesPerSecondUpdate(Client.Connection);
+                //    }
+                //});
+                //var Servers = TcpServers.ToList();
+                //Servers.ForEach(c => {
+                //    var Server = c.Value;
+                //    if (Server.isListening) {
+                //        Server.Connection._SentBytesPerSecond = Server.Connection.SentBytesCounter;
+                //        Server.Connection._ReceivedBytesPerSecond = Server.Connection.ReceivedBytesCounter;
+                //        Server.Connection.SentBytesCounter = 0;
+                //        Server.Connection.ReceivedBytesCounter = 0;
+                //        Server.InvokeBytesPerSecondUpdate(Server.Connection);
+                //    }
+                //});
+                do {
+                    Thread.Sleep(1);
+                } while(DateTime.UtcNow - LastCount < OneSecond);
+                LastCount = DateTime.UtcNow;
             }
         }
-        public void Dispose() {
-            Dispose(disposing: true);
-            GC.SuppressFinalize(this);
-        }
-    }
+        //private static void CounterDelegate(TcpBase Instance) {
+        //    Instance._SentBytesPerSecond = (int)Instance.SentBytesCounter;
+        //    Instance._ReceivedBytesPerSecond = (int)Instance.ReceivedBytesCounter;
+        //    Instance.SentBytesCounter = 0L;
+        //    Instance.ReceivedBytesCounter = 0L;
+        //    Instance.InvokeBytesPerSecondUpdate();
+        //}
+        //private static void ServerConnectionCheckDelegate(TcpServer Server) {
+        //    Server.Clients.ValuesForAll((Client) => {
+        //        if (Client.Socket is null)
+        //            return;
+        //        Client.Send(new PingObj());
+        //        if (!Client.Poll())
+        //            Server.CloseConnection(Client);
+        //    });
+        //}
+        //private static void ClientConnectionCheckDelegate(TcpClient Client) {
+        //    if (Client.Socket != null && Client.Connection != null)
+        //        Client.Send(new PingObj());
+        //    if(Client.Connection != null) {
+        //        lock (Client.Connection) {
+        //            if (!Client.Connection.Poll())
+        //                Client.Disconnect();
+        //        }
+        //    }
+        //}
+        //private static void SendStateLoop() {
+        //    while (Alive) {
+        //        var clientsTasks = Task.Run(() => {
+        //            var clients = TcpClients.Values.ToArray();
+        //            for (int i = 0; i < clients.Length - 1; i++) {
+        //                var client = clients[i];
+        //                if (!client.isSending)
+        //                    Task.Run(() => { ClientSendDelegate(client); });
+        //            }
+        //        });
+        //        var serversTasks = Task.Run(() => {
+        //            var servers = TcpServers.Values.ToArray();
+        //            for (int i = 0; i < servers.Length - 1; i++) {
+        //                var server = servers[i];
+        //                if (!server.isSending)
+        //                    Task.Run(() => { ServerSendDelegate(server); });
+        //            }
+        //        });
+        //        //var t1 = TcpClients.ValuesForAll(ClientSendDelegate);
+        //        //var t2 = TcpServers.ValuesForAll(ServerSendDelegate);
+        //        //t1 = null;
+        //        //t2 = null;
+        //        Thread.Sleep(1);
+        //    }
+        //}
+        //private static void ClientSendDelegate(TcpClient Client) {
+        //    if (Client.Connection != null && !Client.Connection.IsSending) {
+        //        lock (Client.Connection.SendQueue) {
+        //            if ((Client.Connected) && !Client.Connection.Closed && !Client.isSending) {
+        //                var Items = new List<SendQueueItem>();
+        //                while (Client.Connection.SendQueue.Count > 0) {
+        //                    SendQueueItem Item;
+        //                    Client.Connection.SendQueue.TryDequeue(out Item);
+        //                    if (Item != null)
+        //                        Items.Add(Item);
+        //                }
+        //                if (Items.Count == 0)
+        //                    return;
+        //                for (int i = 0; i < Items.Count; i++) {
+        //                    var state = Items[i];
+        //                    if (!Client.Connected || Client.Connection.Closed) 
+        //                        break;
+        //                    if (state != null)
+        //                        Client.Connection.TrySendQueueItem(ref state);
+        //                }
+        //            }
+        //        }
+        //    }
+        //}
+        //private static void ServerSendDelegate(TcpServer Server) {
+        //    if (Server.isListening) {
+        //        foreach (var item in Server.Clients) {
+        //            if (!item.Value.IsSending) {
+        //                lock (item.Value?.SendQueue) {
+        //                    while (item.Value?.SendQueue.Count > 0) {
+        //                        SendQueueItem state = null;
+        //                        var success = item.Value?.SendQueue.TryDequeue(out state);
+        //                        if (state != null) 
+        //                            Server.Connection.TrySendQueueItem(ref state);
+        //                    }
+        //                }
+        //            }
+        //        }
+        //    }
+        //}
+        //private static void ClientReceiveStateLoop() {
+        //    while (Alive) {
+        //        if (TcpClients.Count > 0) {
+        //            for (int i = 0, loopTo = TcpClients.Count - 1; i <= loopTo; i++) {
+        //                var client = TcpClients.ElementAt(i).Value;
+        //                if (client != null && client.Connected) {
+        //                    TcpConnection Connection = client.Connection;
+        //                    if (Connection is null || Connection.Socket is null || Connection.IsReceiving || Connection.Socket.Available == 0) {
+        //                        continue;
+        //                    } else {
+        //                        Connection.IsReceiving = true;
+        //                        Task.Run(async () => {
+        //                            await Connection.Receive();
+        //                            Connection.IsReceiving = false;
+        //                        });
+        //                    }
+        //                }
+        //            }
+        //        }
+        //        Thread.Sleep(1);
+        //    }
+        //}
+        //private static void ServerReceiveStateLoop() {
+        //    while (Alive) {
+        //        if (TcpServers.Count > 0) {
+        //            for (int i = 0, loopTo = TcpServers.Count - 1; i <= loopTo; i++) {
+        //                var server = TcpServers.ElementAt(i).Value;
+        //                if (server != null && server.isListening) {
+        //                    if (server.Clients.Count > 0) {
+        //                        for (int ClientIndex = 0, loopTo1 = server.Clients.Count; ClientIndex < loopTo1; ClientIndex++) {
+        //                            if (server.Clients.Count - 1 < i) break;
+        //                            var getClient = MethodExtensions.TryInvoke(server.Clients.ElementAt, ref ClientIndex);
+        //                            if (getClient != null) {
+        //                                TcpConnection Connection = getClient.Result.Value;
+        //                                if (Connection == null || Connection.Socket is null || Connection.IsReceiving || Connection.Socket.Available == 0) {
+        //                                    continue;
+        //                                } else {
+        //                                    Connection.IsReceiving = true;
+        //                                    Interlocked.Increment(ref server.ActiveClients);
+        //                                    Task.Run(async () => {
+        //                                        await Connection.Receive();
+        //                                        Connection.IsReceiving = false;
+        //                                        Interlocked.Decrement(ref server.ActiveClients);
+        //                                    });
+        //                                }
+        //                            }
+        //                        }
+        //                    }
+        //                }
+        //            }
+        //        }
+        //        Thread.Sleep(1);
+        //    }
+        //}
 
+    }
 }

@@ -1,12 +1,94 @@
 ﻿Imports System.IO.Compression
+Imports System.Security.Cryptography.X509Certificates
 Imports Microsoft.SqlServer
 Imports SocketJack.Compression
 Imports SocketJack.Management
 Imports SocketJack.Networking
+Imports SocketJack.Networking.P2P
 Imports SocketJack.Networking.Shared
 
+''' <summary>
+''' This test simulates a simple chat application where two clients can send messages to each other through a server.
+''' The server is responsible for redirecting messages between clients.
+''' The clients can send messages and receive them from other clients.
+''' The server should use SSL for secure communication, compression is enabled for message size reduction.
+''' </summary>
 Public Class ChatTest
     Implements ITest
+
+    Private ServerPort As Integer = 7543
+    Public WithEvents Server As TcpServer
+    Public WithEvents Client1 As TcpClient
+    Public WithEvents Client2 As TcpClient
+    Public ServerOptions As New TcpOptions()
+    Public ClientOptions As New TcpOptions()
+
+    Private Sub SetupTcpOptions()
+        With ServerOptions
+            .Logging = True
+            .LogReceiveEvents = True
+            .LogSendEvents = True
+            .UseCompression = True
+            .CompressionAlgorithm.CompressionLevel = CompressionLevel.SmallestSize
+            '.UseSsl = True
+        End With
+        With ClientOptions
+            .Logging = True
+            .LogReceiveEvents = True
+            .LogSendEvents = True
+            .UseCompression = True
+            .CompressionAlgorithm.CompressionLevel = CompressionLevel.SmallestSize
+            '.UseSsl = True
+        End With
+    End Sub
+
+    Private Sub ChatTest_Loaded(sender As Object, e As RoutedEventArgs) Handles Me.Loaded
+        SetupTcpOptions()
+        Dim KeyHostName As String = "MY-KEY-HOSTNAME.com" ' Replace with your actual SSL certificate hostname
+        Server = New TcpServer(ServerPort, "ChatServer") With {.Options = ServerOptions, .SslTargetHost = KeyHostName}
+
+        ' Add the ChatMessage type to the whitelist since the server is just redirecting and not handling it
+        ' For doing things like blocking other users or filtering messages you should handle it on the server.
+        ' Set e.CancelPeerRedirect = true to stop the message from being sent to the recipient.
+        Server.Options.Whitelist.Add(GetType(ChatMessage))
+        Server.RegisterCallback(Of LoginObj)(AddressOf Server_ClientLogin)
+
+        ' Set the SSL certificate for the server. 
+        ' Make sure to replace the path and password with your actual certificate details.
+        ' NEVER hardcode the password in production code on the client side.
+        'Server.SslCertificate = New X509Certificate2("...\Location on drive\Private Key.pfx", "MY KEY PASSWORD")
+
+        Client1 = New TcpClient("ChatClient1") With {.Options = ClientOptions, .SslTargetHost = KeyHostName}
+        Client2 = New TcpClient("ChatClient2") With {.Options = ClientOptions, .SslTargetHost = KeyHostName}
+
+        ' Handle messages on the clients
+        Client1.RegisterCallback(Of ChatMessage)(AddressOf Clients_ReceivedMessage)
+        Client2.RegisterCallback(Of ChatMessage)(AddressOf Clients_ReceivedMessage)
+    End Sub
+
+    Private Sub Clients_ReceivedMessage(args As ReceivedEventArgs(Of ChatMessage))
+        'LogMessage(args.From.Tag, args.Object.Text)
+        LogMessage(args.Object.From, args.Object.Text)
+    End Sub
+
+    Private Sub Server_ClientLogin(e As ReceivedEventArgs(Of LoginObj))
+        ' When the server receives a login object, we can set the tag for the connection.
+        ' Usernames are just an example, you can use any identifier you want.
+        e.Connection.SetTag(e.Object.UserName)
+    End Sub
+
+    Private Sub Client1_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client1.OnIdentified
+        ' When the client is identified, we can send the login object to the server.
+        ' This is a dummy object for your login, you can replace it with your actual login logic.
+        Client1.Send(New LoginObj With {.UserName = "Client1"})
+    End Sub
+
+    Private Sub Client2_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client2.OnIdentified
+        ' When the client is identified, we can send the login object to the server.
+        ' This is a dummy object for your login, you can replace it with your actual login logic.
+        Client2.Send(New LoginObj With {.UserName = "Client2"})
+    End Sub
+
 
 #Region "Chat Classes"
     Public Class ChatMessage
@@ -50,6 +132,7 @@ Public Class ChatTest
 
     Private Async Sub ITest_StartTest() Implements ITest.StartTest
         If Not Running Then
+            TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
             ButtonStartStop.Content = "Starting.."
             If Server.Listen() Then
@@ -66,6 +149,7 @@ Public Class ChatTest
 
     Private Sub ITest_StopTest() Implements ITest.StopTest
         If Running Then
+            TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
             ButtonStartStop.Content = "Stopping.."
             Server.StopListening()
@@ -82,7 +166,7 @@ Public Class ChatTest
         End If
     End Sub
 
-    Public Sub Log(text As String)
+    Public Sub Log(text As String) Handles Server.LogOutput, Client1.LogOutput, Client2.LogOutput
         Dim isAtEnd As Boolean = TextLog.VerticalOffset >= (TextLog.ExtentHeight - TextLog.ViewportHeight) * 0.9
         Dispatcher.InvokeAsync(Sub()
                                    TextLog.AppendText(If(text.EndsWith(Environment.NewLine), text, text & vbCrLf))
@@ -149,52 +233,6 @@ Public Class ChatTest
 
 #End Region
 
-    Private ServerPort As Integer = 7543
-    Public WithEvents Server As TcpServer
-    Public WithEvents Client1 As TcpClient
-    Public WithEvents Client2 As TcpClient
-
-    Private Sub ChatTest_Loaded(sender As Object, e As RoutedEventArgs) Handles Me.Loaded
-        With TcpOptions.DefaultOptions
-            .Logging = True
-            .LogReceiveEvents = True
-            .UseCompression = True
-            .CompressionAlgorithm.CompressionLevel = CompressionLevel.SmallestSize
-        End With
-        Server = New TcpServer(ServerPort, "ChatServer")
-        Client1 = New TcpClient("ChatClient1")
-        Client2 = New TcpClient("ChatClient2")
-        Server.RegisterCallback(Of LoginObj)(AddressOf Server_ClientLogin)
-        Server.Options.Whitelist.AddType(GetType(ChatMessage))
-        Client1.RegisterCallback(Of ChatMessage)(AddressOf Client1_ReceivedMessage)
-        Client2.RegisterCallback(Of ChatMessage)(AddressOf Client2_ReceivedMessage)
-    End Sub
-
-
-    Private Sub Client1_ReceivedMessage(args As ReceivedEventArgs(Of ChatMessage))
-        'LogMessage(args.From.Tag, args.Object.Text)
-        LogMessage(args.Object.From, args.Object.Text)
-    End Sub
-
-    Private Sub Client2_ReceivedMessage(args As ReceivedEventArgs(Of ChatMessage))
-        'LogMessage(args.From.Tag, args.Object.Text)
-        LogMessage(args.Object.From, args.Object.Text)
-    End Sub
-
-    Private Sub Server_ClientLogin(e As ReceivedEventArgs(Of LoginObj))
-        e.Client.SetTag(e.Object.UserName)
-    End Sub
-
-    Private Sub Client1_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client1.OnIdentified
-        Client1.Send(New LoginObj With {.UserName = "Client1"})
-    End Sub
-
-    Private Sub Client2_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client2.OnIdentified
-        Client2.Send(New LoginObj With {.UserName = "Client2"})
-    End Sub
-
-    Private Sub Server_LogOutput(text As String) Handles Server.LogOutput
-        Log(text)
-    End Sub
-
 End Class
+
+

@@ -1,4 +1,5 @@
-﻿
+﻿using System;
+
 namespace SocketJack.Serialization {
 
     /// <summary>
@@ -7,8 +8,10 @@ namespace SocketJack.Serialization {
     public interface ISerializer {
 
         byte[] Serialize(object Obj);
-        ObjectWrapper Deserialize(byte[] Data);
+        Wrapper Deserialize(byte[] Data);
         object GetPropertyValue(PropertyValueArgs e);
+
+        object GetValue(object source, Type asType, bool Parse);
     }
 
 }

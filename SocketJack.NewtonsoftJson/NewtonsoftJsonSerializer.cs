@@ -38,8 +38,8 @@ namespace SocketJack.NewtonsoftJson {
         /// </summary>
         /// <param name="Data"></param>
         /// <returns></returns>
-        public ObjectWrapper Deserialize(byte[] Data) {
-            return JsonConvert.DeserializeObject<ObjectWrapper>(Encoding.UTF8.GetString(Data), JsonSettings);
+        public Wrapper Deserialize(byte[] Data) {
+            return JsonConvert.DeserializeObject<Wrapper>(Encoding.UTF8.GetString(Data), JsonSettings);
         }
 
         /// <summary>

@@ -16,7 +16,8 @@
 
     Private Sub StartTest(Test As ITest)
         If Not TestTabs.ContainsKey(Test.TestName) Then
-            Me.Height = 450
+            Me.Height = 720
+            Me.Top = Me.Top - 360
             Dim Tab As New TabItem
             Tab.Content = Test
             Tab.Header = Test.TestName

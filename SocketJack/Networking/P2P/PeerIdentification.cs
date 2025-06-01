@@ -1,10 +1,14 @@
 ﻿using System;
+using System.Linq;
 using System.Threading.Tasks;
+using SocketJack;
 using SocketJack.Management;
+using SocketJack.Networking;
+using SocketJack.Networking.P2P;
+using SocketJack.Networking.Shared;
 using SocketJack.Serialization;
 
-namespace SocketJack.Networking.Shared {
-    [Serializable]
+namespace SocketJack.Networking.P2P {
     public class PeerIdentification {
 
         public string ID { get; set; }
@@ -83,6 +87,7 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns></returns>
         public TcpServer StartServer(string Name = "TcpServer") {
+            if (ReferenceClient == null) FindClient();
             return ReferenceClient.StartServer(this, ReferenceClient.Options, Name);
         }
 
@@ -93,10 +98,19 @@ namespace SocketJack.Networking.Shared {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer</returns>
         public TcpServer StartServer(TcpOptions Options, string Name = "TcpServer") {
+            if( ReferenceClient == null) FindClient();
             return ReferenceClient.StartServer(this, Options, Name);
         }
 
-        protected internal PeerIdentification WithReference(TcpClient TcpClient) {
+        private void FindClient() {
+            ThreadManager.TcpClients.Values.ToList().ForEach(client => {
+                if (client.RemoteIdentity.ID == ID) {
+                    ReferenceClient = client;
+                }
+            });
+        }
+
+        public PeerIdentification WithReference(TcpClient TcpClient) {
             ReferenceClient = TcpClient;
             return this;
         }
@@ -113,7 +127,6 @@ namespace SocketJack.Networking.Shared {
             return new PeerIdentification(ID) { Action = IsLocalIdentity ? PeerAction.LocalIdentity : PeerAction.RemoteIdentity, IP = IsLocalIdentity ? IP : string.Empty };
         }
 
-
         public static PeerIdentification Create(PeerIdentification Identity) {
             return new PeerIdentification(Identity.ID) { Action = PeerAction.TagUpdate };
         }
@@ -122,16 +135,16 @@ namespace SocketJack.Networking.Shared {
             return Create(ID.ToString(), IsLocalIdentity, IP);
         }
 
-        public static PeerIdentification Create(ConnectedClient Client) {
+        public static PeerIdentification Create(TcpConnection Client) {
             return Create(Client.ID);
         }
 
-        public static PeerIdentification Create(ConnectedClient Client, bool IsLocalIdentity, string IP = "") {
+        public static PeerIdentification Create(TcpConnection Client, bool IsLocalIdentity, string IP = "") {
             return Create(Client.ID, IsLocalIdentity, IP);
         }
+
     }
 
-    [Serializable]
     public enum PeerAction {
         RemoteIdentity,
         Dispose,

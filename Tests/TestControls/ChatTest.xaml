@@ -5,7 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
              xmlns:SyntaxBox="clr-namespace:UI.SyntaxBox;assembly=UI.SyntaxBox" x:Class="ChatTest" 
              mc:Ignorable="d" 
-             d:DesignHeight="450" d:DesignWidth="800">
+             d:DesignHeight="608.886" d:DesignWidth="1260.515">
     <Grid>
         <Button x:Name="ButtonStartStop" Content="Start Test" Height="56" Margin="10,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126"/>
         <Grid Margin="10,10,10,66">
@@ -70,9 +70,16 @@
             />
 
                         <!-- Operators -->
-                        <SyntaxBox:KeywordRule Foreground="Gray"  Keywords="*,C#" WholeWordsOnly="False" />
+                        <SyntaxBox:KeywordRule Foreground="Gray" Keywords="*,C#" WholeWordsOnly="False" />
+                        <SyntaxBox:KeywordRule Foreground="#FF9CFF82" Keywords="Connected" WholeWordsOnly="True" />
+                        <SyntaxBox:KeywordRule Foreground="#FFF5FF9D" Keywords="Connecting" WholeWordsOnly="True" />
+                        <SyntaxBox:KeywordRule Foreground="#FF848484" Keywords="Connection" WholeWordsOnly="True" />
+                        <SyntaxBox:KeywordRule Foreground="#FFFF9A9A" Keywords="Disconnected" WholeWordsOnly="True" />
+                        <SyntaxBox:KeywordRule Foreground="#FFFF9A9A" Keywords="failed" WholeWordsOnly="True" />
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF0A8600"  Pattern="\s*\/\/.*" />
-
+                        <SyntaxBox:RegexRule Op="Line" Foreground="Red" Pattern="\s(ERROR)"/>
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF656EFF" Pattern="^\[.*(S|s)erver.*\]\s"/>
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFFFBF8A" Pattern="^\[.*(C|c)lient.*\]\s"/>
                     </SyntaxBox:SyntaxConfig>
                 </SyntaxBox:SyntaxBox.SyntaxDrivers>
             </TextBox>

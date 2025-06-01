@@ -11,50 +11,48 @@ using SocketJack.Extensions;
 using SocketJack.Management;
 using SocketJack.Networking.P2P;
 using SocketJack.Networking.Shared;
+using SocketJack.Serialization;
 using SocketJack.Serialization.Json;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace SocketJack.Serialization {
 
-    [Serializable]
-    public class ObjectWrapper {
-
-        public static BindingFlags ReflectionFlags { get; set; } = BindingFlags.Instance | BindingFlags.Public;
-        protected internal List<Type> BlacklistedRedirects = new List<Type>() { typeof(PeerIdentification), typeof(PeerServer), typeof(PeerRedirect) };
-        public ObjectWrapper() {
-        }
-
-        public ObjectWrapper(object Obj, TcpBase sender) {
-            Type = Obj.GetType().AssemblyQualifiedName;
-            if (Obj != null) { 
-                Data = Wrap_Internal(Obj, sender);
-            } else {
-                Data = null;
-            }
-        }
+    public class Wrapper{
 
         public string Type { get; set; }
-        public object Data { get; set; }
+        public object Value { get; set; }
 
-        public static object Wrap(object Obj, TcpBase sender) {
-            return new ObjectWrapper(Obj, sender);
+        public Type GetValueType() {
+            return System.Type.GetType(Type);
         }
 
-        private object Wrap_Internal(object Obj, TcpBase sender) {
-            try {
-                var Type = Obj.GetType();
-                var instance = FormatterServices.GetSafeUninitializedObject(Type);
-                GetPropertyReferences(Type).ForEach(r => MethodExtensions.TryInvoke(() => SetProperty(Obj, ref instance, r, sender)));
-                return instance;
-            } catch (Exception ex) {
-                sender.InvokeOnError(sender.BaseConnection, ex);
-                return null;
+        public static BindingFlags ReflectionFlags { get; set; } = BindingFlags.Instance | BindingFlags.Public;
+
+        public Wrapper() {
+        }
+
+        public Wrapper(object Obj, TcpBase sender) {
+            if (Obj == null) return;
+            Type T = Obj.GetType();
+            Type = T.AssemblyQualifiedName;
+            if (IsTypeAllowed(Obj, sender)) {
+                if (T.IsArray || T.IsValueType) {
+                    Value = Obj;
+                } else {
+                    object stripped = Strip(T, Obj, sender);
+                    Value = stripped;
+                }
             }
+        }
+
+        private object Strip(Type T, object obj, TcpBase sender) {
+            var instance = FormatterServices.GetSafeUninitializedObject(T);
+            GetPropertyReferences(T).ForEach(r => MethodExtensions.TryInvoke(() => SetProperty(obj, ref instance, r, sender)));
+            return instance;
         }
 
         private TypeNotAllowedException CreateTypeException(ref TcpBase sender, string Type, bool isBlacklisted = false) {
             var exception = new TypeNotAllowedException(Type, isBlacklisted);
-            sender.InvokeOnError(sender.BaseConnection, exception);
+            sender.InvokeOnError(sender.Connection, exception);
             return exception;
         }
 
@@ -62,75 +60,74 @@ namespace SocketJack.Serialization {
             return CreateTypeException(ref sender, Type.AssemblyQualifiedName, isBlacklisted);
         }
 
+        private bool IsTypeAllowed(Type Type, TcpBase sender) {
+            if (sender.Options.Blacklist.Contains(Type)) {
+                if (Type == typeof(object) && this.Type != typeof(PeerRedirect).AssemblyQualifiedName)
+                    throw CreateTypeException(ref sender, Type, true);
+            } else if(!sender.Options.Whitelist.Contains(Type) ){
+                if(Type == typeof(object) && this.Type != typeof(PeerRedirect).AssemblyQualifiedName)
+                    throw CreateTypeException(ref sender, Type);
+            }
+            return true;
+        }
+
+        private bool IsTypeAllowed(object Obj, TcpBase sender) {
+            Type T = Obj.GetType();
+            if (T == typeof(PeerRedirect)) {
+                PeerRedirect peerRedirect = (PeerRedirect)Obj;
+                Type redirectType = System.Type.GetType(peerRedirect.Type);
+                if (redirectType == null) {
+                    Exception exception = new Exception("Type '" + redirectType.Name + "' is not found in any referenced assembly.");
+                    throw exception;
+                }
+                return IsTypeAllowed(redirectType, sender);
+            } else {
+                return IsTypeAllowed(T, sender);
+            }
+        }
+
         public object Unwrap(TcpBase sender) {
-            var tt = MethodExtensions.TryInvoke(() => System.Type.GetType(this.Type));
-            var Type = tt.Result;
-            if(tt.Success == false) {
+            Type Type = GetValueType();
+            if (this.Type == typeof(PingObject).AssemblyQualifiedName) return PingObject.StaticInstance;
+            bool isAllowed = IsTypeAllowed(Type, sender);
+            if (Type == null) {
+                Exception exception = new Exception("Type '" + Type.Name + "' is not found in any referenced assembly.");
+                throw exception;
+            } else if(!isAllowed) {
                 return null;
             }
-            var instance = FormatterServices.GetSafeUninitializedObject(Type);
-            var references = GetPropertyReferences(Type);
-            int index = 0;
+            if (Type.IsValueType | Type.IsArray) {
+                return sender.Options.Serializer.GetValue(Value, Type, true);
+            } else {
+                var instance = FormatterServices.GetSafeUninitializedObject(Type);
+                var references = GetPropertyReferences(Type);
+                int index = 0;
 
-            if (Type == typeof(PeerRedirect)) {
-                PropertyReference propertyRef = ObjectWrapper.GetPropertyReference(typeof(ObjectWrapper), "Type");
-                string redirectTypeString = (string)GetPropertyValue(sender, propertyRef);
-                Type redirectType = System.Type.GetType(redirectTypeString);
-
-                if (redirectType == null) {
-                    Exception exception = new Exception("Type '" + redirectTypeString + "' is not found in any referenced assembly.");
-                    sender.InvokeOnError(sender.BaseConnection, exception);
-                    return null;
-                }
-                if(BlacklistedRedirects.Contains(redirectType) || sender.Options.Blacklist.Contains(redirectType)) {
-                    CreateTypeException(ref sender, redirectType, true);
-                    return null;
-                }
-                if (!sender.Options.Whitelist.Contains(redirectType) && !TcpOptions.DefaultOptions.Whitelist.Contains(redirectType)) {
-                    CreateTypeException(ref sender, redirectType);
-                    return null;
-                }
-            }
-
-            for (int i = 0, loopTo = references.Count - 1; i <= loopTo; i++) {
-                index = i;
-                var reference = references[i];
-                try {
-                    if(sender.Options.Blacklist.Contains(reference.Info.PropertyType)) {
-                        CreateTypeException(ref sender, reference.Info.PropertyType, true);
-                        return null;
-                    } else if((reference.Info.PropertyType != typeof(object) && this.Type != "SocketJack.Networking.Shared.PeerRedirect") &
-                               !sender.Options.Whitelist.Contains(reference.Info.PropertyType)) {
-                        CreateTypeException(ref sender, reference.Info.PropertyType);
-                        return null;
-                    }
-                    SetProperty(ref instance, reference, sender);
-                } catch (Exception ex) {
-                    var r = references[index];
-                    if (ex.Message.Contains("Object of type 'System.Int64' cannot be converted to type 'System.Int32'.")) {
-                        var NotSupportedEx = new Int32NotSupportedException(instance.GetType().Name + "." + r.Info.Name);
-                        string errorMessage = "Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine + "     " + NotSupportedEx.Message +
-                                              (ex.StackTrace == string.Empty ? string.Empty : Environment.NewLine + ex.StackTrace);
-                        Debug.WriteLine(errorMessage);
-                        sender.InvokeOnError(sender.BaseConnection, NotSupportedEx);
-                        throw NotSupportedEx;
-                    } else {
-                        string errorMessage = "Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine + 
-                                              (ex.Message == string.Empty ? string.Empty : "     " + ex.Message) +
-                                              (ex.StackTrace == string.Empty ? string.Empty : Environment.NewLine + ex.StackTrace );
-                        Debug.WriteLine(errorMessage);
-                        Exception exception = new Exception(errorMessage + Environment.NewLine, ex);
-                        sender.InvokeOnError(sender.BaseConnection, exception);
-                        throw exception;
+                for (int i = 0, loopTo = references.Count - 1; i <= loopTo; i++) {
+                    index = i;
+                    var reference = references[i];
+                    try {
+                        if (IsTypeAllowed(reference.Info.PropertyType, sender))
+                            SetProperty(ref instance, reference, sender);
+                    } catch (Exception ex) {
+                        var r = references[index];
+                        if (ex.Message.Contains("Object of type 'System.Int64' cannot be converted to type 'System.Int32'.")) {
+                            throw new Int32NotSupportedException(instance.GetType().Name + "." + r.Info.Name);
+                        } else {
+                            string errorMessage = "Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine +
+                                                  (ex.Message == string.Empty ? string.Empty : "     " + ex.Message) +
+                                                  (ex.StackTrace == string.Empty ? string.Empty : Environment.NewLine + ex.StackTrace) + Environment.NewLine;
+                            Exception exception = new Exception(errorMessage, ex);
+                            throw exception;
+                        }
                     }
                 }
+                return instance;
             }
-            return instance;
-
         }
 
         public object GetPropertyValue(TcpBase sender, PropertyReference Reference) {
-            return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Data, Reference));
+            return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Value, Reference));
         }
 
         public void SetProperty(ref object Instance, PropertyReference Reference, TcpBase sender) {
@@ -138,9 +135,9 @@ namespace SocketJack.Serialization {
                 var v = GetPropertyValue(sender, Reference);
                 if (v == null) return;
                 string PropertyTypeName = Reference.Info.PropertyType.FullName;
-                if (v != null && v.GetType() == typeof(ObjectWrapper)) {
-                    var wrapper = (ObjectWrapper)v;
-                    if(wrapper.Type == null || wrapper.Data == null) {
+                if (v != null && v.GetType() == typeof(Wrapper)) {
+                    Wrapper wrapper = (Wrapper)v;
+                    if (wrapper.Type == null || wrapper.Value == null) {
                         return;
                     }
                     v = wrapper.Unwrap(sender);
@@ -149,7 +146,6 @@ namespace SocketJack.Serialization {
                     var enumType = Reference.Info.Module.Assembly.GetType(PropertyTypeName);
                     v = Enum.ToObject(enumType, v);
                 }
-
                 Reference.Info.SetValue(Instance, v, (object[])null);
             }
         }
@@ -160,7 +156,7 @@ namespace SocketJack.Serialization {
 
                 string PropertyTypeName = Reference.Info.PropertyType.FullName;
                 if (Reference.Info.PropertyType == typeof(object)) {
-                    var wrappedValue = Wrap(v, sender);
+                    var wrappedValue = new Wrapper(v, sender);
                     v = wrappedValue;
                 } else if (Reference.Info.PropertyType.IsEnum) {
                     var enumType = Reference.Info.Module.Assembly.GetType(PropertyTypeName);
@@ -173,7 +169,6 @@ namespace SocketJack.Serialization {
 
         public static string GetVariableName<T>(Expression<Func<T>> expr) {
             MemberExpression body = (MemberExpression)expr.Body;
-
             return body.Member.Name;
         }
 

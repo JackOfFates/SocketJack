@@ -4,9 +4,8 @@ using SocketJack.Extensions;
 
 namespace SocketJack {
     /// <summary>
-/// Segments add support transfering objects above the NIC's Maximum Transmission Unit size.
-/// </summary>
-    [Serializable]
+    /// Segments add support transfering objects above the network interface card's maximum transmission unit.
+    /// </summary>
     public class Segment {
 
         protected internal static Dictionary<string, List<Segment>> Cache = new Dictionary<string, List<Segment>>();

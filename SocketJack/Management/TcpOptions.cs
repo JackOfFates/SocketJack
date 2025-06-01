@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using SocketJack.Compression;
 using SocketJack.Networking.P2P;
@@ -34,7 +35,7 @@ namespace SocketJack.Management {
         public ICompression CompressionAlgorithm { get; set; } = new GZip2Compression();
 
         /// <summary>
-        /// Output events like OnConnected, OnDisconnected, OnConnectionFailed, OnClientTimedOut, and more to Console and Debug Output Window.
+        /// Output OnConnected, OnDisconnected, and OnConnectionFailed events to Console.
         /// Send and Receive events only logged when LogSendEvents or LogReceiveEvents are set to True.
         /// </summary>
         /// <returns></returns>
@@ -110,19 +111,21 @@ namespace SocketJack.Management {
         /// Maximum receiving bandwidth.
         /// </summary>
         /// <remarks>
-        /// <para>Default is 100Mbps. Set to 0 for unlimited.</para>
+        /// <para>Default is 100Mbps. Set to 0 to disable buffering.</para>
+        /// <para>Disabling buffer will not work with SSL.</para>
         /// </remarks>
         /// <value>Integer</value>
-        /// <remarks></remarks>
         public int MaximumDownloadMbps {
             get {
                 return _MaximumDownloadMbps;
             }
             set {
                 _MaximumDownloadMbps = value;
+                isDownloadBuffered = MaximumDownloadMbps > 0;
                 MaximumDownloadBytesPerSecond = MaximumDownloadMbps * 1024 * 1024 / 8;
             }
         }
+        internal bool isDownloadBuffered = true;
         protected internal int _MaximumDownloadMbps = 100;
         protected internal int MaximumDownloadBytesPerSecond = 13107200;
 
@@ -133,6 +136,7 @@ namespace SocketJack.Management {
         /// <remarks></remarks>
         /// </summary>
         public int DownloadBufferSize { get; set; } = 65536;
+       
 
         /// <summary>
         /// Maximum Upload bandwidth.
@@ -148,9 +152,11 @@ namespace SocketJack.Management {
             }
             set {
                 _MaximumUploadMbps = value;
+                isUploadBuffered = MaximumUploadMbps > 0;
                 MaximumUploadBytesPerSecond = MaximumUploadMbps * 1024 * 1024 / 8;
             }
         }
+        internal bool isUploadBuffered = true;
         protected internal int _MaximumUploadMbps = 100;
         protected internal int MaximumUploadBytesPerSecond = 13107200;
 
@@ -169,16 +175,23 @@ namespace SocketJack.Management {
         public bool UseCompression { get; set; } = false;
 
         /// <summary>
+        /// Use SSL for network transfer.
+        /// </summary>
+        public bool UseSsl { get; set; } = false;
+
+        /// <summary>
         /// Types that are allowed to be deserialized.
         /// </summary>
         public TypeList Whitelist { get; internal set; } = new TypeList(new[] {
             // SocketJack types,
             typeof(PeerAction),
-            typeof(PingObj),
+            typeof(PingObject),
             typeof(PeerIdentification),
+            typeof(PeerIdentification[]),
             typeof(PeerRedirect),
             typeof(PeerServer),
-            typeof(ObjectWrapper),
+            typeof(Wrapper),
+            typeof(Segment),
             // System serializable types
             typeof(string),
             typeof(int),
@@ -199,12 +212,11 @@ namespace SocketJack.Management {
             typeof(ulong),
             typeof(ushort),
             typeof(sbyte)
-            //typeof(Segment), Deprecated
         });
 
         /// <summary>
         /// Types that are not allowed to be deserialized.
         /// </summary>
-        public TypeList Blacklist { get; internal set; } = new TypeList();
+        public TypeList Blacklist { get; internal set; } = new TypeList(new[] { typeof(object) } );
     }
 }

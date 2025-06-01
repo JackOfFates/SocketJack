@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using SocketJack.Extensions;
 using SocketJack.Management;
+using SocketJack.Networking.P2P;
 using SocketJack.Networking.Shared;
 using SocketJack.Serialization;
 
@@ -32,19 +33,10 @@ namespace SocketJack.Networking.P2P {
         /// Accept the requested Peer to Peer connection.
         /// </summary>
         /// <param name="AutoReconnect">Reconnect automatically.</param>
-        /// <returns>New TcpClient if successful; <see langword="Nothing"/> if connection failed.</returns>
+        /// <returns>New TcpClient if successful; <see langword="null"/> if connection failed.</returns>
         public async Task<TcpClient> Accept(string Name = "TcpServer", bool AutoReconnect = false) {
-            return await Task.Run<TcpClient>(async () => {
-                if (HostPeer.ReferenceClient != null && HostPeer.ReferenceClient.Options.Logging) {
-                    HostPeer.ReferenceClient.LogFormatAsync(@"[{0}\{1}] Accepting {2} P2P Connection.", new[] { HostPeer.ReferenceClient.Name, HostPeer.ID.ToUpper(), RemotePeer.ID.ToUpper() });
-                }
-                var newClient = new TcpClient(HostPeer.ReferenceClient.Options, Name) { _PeerToPeerInstance = true };
-                // If TcpClient.P2P_Clients.ContainsKey(HostPeer.ID) AndAlso Not TcpClient.P2P_Clients(HostPeer.ID).isDisposed Then TcpClient.P2P_Clients(HostPeer.ID).Dispose()
-                if (await newClient.Connect(Host, (int)Port)) {
-                    TcpClient.P2P_Clients.AddOrUpdate(HostPeer.ID, newClient);
-                }
-                return newClient;
-            });
+            if (HostPeer.ReferenceClient == null) return null;
+            return await Accept(HostPeer.ReferenceClient.Options, Name, AutoReconnect);
         }
 
         /// <summary>
@@ -54,9 +46,10 @@ namespace SocketJack.Networking.P2P {
         /// <returns>New TcpClient if successful; <see langword="Nothing"/> if connection failed.</returns>
         public async Task<TcpClient> Accept(TcpOptions Options, string Name = "TcpServer", bool AutoReconnect = false) {
             return await Task.Run<TcpClient>(async () => {
-                if (HostPeer.ReferenceClient != null && HostPeer.ReferenceClient.Options.Logging) {
+                if (HostPeer.ReferenceClient == null) return null;
+                if (Options.Logging) 
                     HostPeer.ReferenceClient.LogFormatAsync(@"[{0}\{1}] Accepting {2} P2P Connection.", new[] { HostPeer.ReferenceClient.Name, HostPeer.ID.ToUpper(), RemotePeer.ID.ToUpper() });
-                }
+                
                 var newClient = new TcpClient(Options, Name) { _PeerToPeerInstance = true };
                 // If TcpClient.P2P_Clients.ContainsKey(HostPeer.ID) AndAlso Not TcpClient.P2P_Clients(HostPeer.ID).isDisposed Then TcpClient.P2P_Clients(HostPeer.ID).Dispose()
                 if (await newClient.Connect(Host, (int)Port)) {

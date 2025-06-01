@@ -14,7 +14,7 @@ namespace SocketJack.Extensions {
         /// <param name="Obj">Serializable Object to send to the client.</param>
         /// <param name="Except">The socket to exclude.</param>
         /// <remarks></remarks>
-        public static void SendBroadcast(this ConcurrentDictionary<Guid, ConnectedClient> Clients, object Obj, ConnectedClient Except) {
+        public static void SendBroadcast(this ConcurrentDictionary<Guid, TcpConnection> Clients, object Obj, TcpConnection Except) {
             for (int i = 0; i < Clients.Count; i++) {
                 var client = Clients.ElementAt(i);
                 if (!ReferenceEquals(client.Value, Except)) {
@@ -28,7 +28,7 @@ namespace SocketJack.Extensions {
         /// </summary>
         /// <param name="Obj">Serializable Object to send to the client.</param>
         /// <remarks></remarks>
-        public static void SendBroadcast(this ConcurrentDictionary<Guid, ConnectedClient> Clients, object Obj) {
+        public static void SendBroadcast(this ConcurrentDictionary<Guid, TcpConnection> Clients, object Obj) {
             Clients.SendBroadcast(Obj, null);
         }
     }
