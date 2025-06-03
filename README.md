@@ -168,18 +168,9 @@ public class MyApp {
 
 ### Peer to peer functionality
 
-Built for faster latency and direct communication between clients.
 
-
-P2P TcpServer is ***automatically*** `port forwarded` using `Mono.NAT` UPNP.
- 
-
-Send another client on the server an object `WITHOUT` extra code or exposing their IP address.
-
-
-PeerRedirect can be canceled on the server inside the `TcpServer.OnReceive` by setting `e.CancelPeerRedirect` to `True`.
-
-
+# Direct communication between clients
+*P2P TcpServer is ***automatically*** `port forwarded` using `Mono.NAT` UPNP.*
 `Connect to the main server then, anytime after the TcpClient.OnIdentified Event start a P2P server.`
 
  
@@ -223,6 +214,9 @@ PeerRedirect can be canceled on the server inside the `TcpServer.OnReceive` by s
 
  
 
+## Send another client on the server an object `WITHOUT` extra code or exposing their IP address.
+
+*PeerRedirect can be canceled on the server inside the `TcpServer.OnReceive` by setting `e.CancelPeerRedirect` to `True`.*
 ```cs
 
 TcpClient.Send(PeerIdentification, Object)
