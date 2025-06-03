@@ -171,6 +171,7 @@ public class MyApp {
 
 ### Direct communication between clients
 *P2P TcpServer is ***automatically*** `port forwarded` using `Mono.NAT` UPNP.*
+
 `Connect to the main server then, anytime after the TcpClient.OnIdentified Event start a P2P server.`
 
  
