@@ -94,7 +94,7 @@ namespace SocketJack.Extensions {
 
                 try {
                     return await client.GetStringAsync(URL);
-                } catch (Exception) {
+                } catch {
                     return string.Empty;
                 }
 

@@ -2,19 +2,17 @@
 Imports System.Threading
 Imports System.Windows.Threading
 Imports SocketJack.Extensions
-Imports SocketJack.Management
-Imports SocketJack.Networking
-Imports SocketJack.Networking.[Shared]
+Imports SocketJack.Net
 
 Public Class MaxClientsTest
     Implements ITest
 
     Public MaxClients As Integer = 10000
     Public Clients As New ConcurrentDictionary(Of Guid, TcpClient)
-    Public ServerPort As Integer = NIC.FindOpenPort(7500, 8000)
+    Public ServerPort As Integer = NIC.FindOpenPort(7500, 8000).Result
 
-    Public ServerOptions As New TcpOptions With {.Logging = False, .PeerToPeerEnabled = False, .UpdateConsoleTitle = True}
-    Public ClientOptions As New TcpOptions With {.Logging = False, .PeerToPeerEnabled = False, .UpdateConsoleTitle = False}
+    Public ServerOptions As New TcpOptions With {.Logging = False, .UsePeerToPeer = False, .UpdateConsoleTitle = True}
+    Public ClientOptions As New TcpOptions With {.Logging = False, .UsePeerToPeer = False, .UpdateConsoleTitle = False}
     Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = ServerOptions}
 
 #Region "Properties"

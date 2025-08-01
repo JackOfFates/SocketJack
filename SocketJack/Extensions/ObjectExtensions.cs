@@ -1,8 +1,6 @@
-﻿using SocketJack.Networking.Shared;
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 
 namespace SocketJack.Extensions {
     public static class ObjectExtensions {

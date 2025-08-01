@@ -2,10 +2,8 @@
 Imports System.Security.Cryptography.X509Certificates
 Imports Microsoft.SqlServer
 Imports SocketJack.Compression
-Imports SocketJack.Management
-Imports SocketJack.Networking
-Imports SocketJack.Networking.P2P
-Imports SocketJack.Networking.Shared
+Imports SocketJack.Net
+Imports SocketJack.Net.P2P
 
 ''' <summary>
 ''' This test simulates a simple chat application where two clients can send messages to each other through a server.
@@ -67,23 +65,23 @@ Public Class ChatTest
     End Sub
 
     Private Sub Clients_ReceivedMessage(args As ReceivedEventArgs(Of ChatMessage))
-        'LogMessage(args.From.Tag, args.Object.Text)
-        LogMessage(args.Object.From, args.Object.Text)
+        LogMessage(args.From.GetMetaData("Username"), args.Object.Text)
+        'LogMessage(args.Object.From, args.Object.Text)
     End Sub
 
     Private Sub Server_ClientLogin(e As ReceivedEventArgs(Of LoginObj))
         ' When the server receives a login object, we can set the tag for the connection.
         ' Usernames are just an example, you can use any identifier you want.
-        e.Connection.SetTag(e.Object.UserName)
+        e.Connection.SetMetaData("Username", e.Object.UserName)
     End Sub
 
-    Private Sub Client1_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client1.OnIdentified
+    Private Sub Client1_OnIdentified(ByRef LocalIdentity As Identifier) Handles Client1.OnIdentified
         ' When the client is identified, we can send the login object to the server.
         ' This is a dummy object for your login, you can replace it with your actual login logic.
         Client1.Send(New LoginObj With {.UserName = "Client1"})
     End Sub
 
-    Private Sub Client2_OnIdentified(ByRef LocalIdentity As PeerIdentification) Handles Client2.OnIdentified
+    Private Sub Client2_OnIdentified(ByRef LocalIdentity As Identifier) Handles Client2.OnIdentified
         ' When the client is identified, we can send the login object to the server.
         ' This is a dummy object for your login, you can replace it with your actual login logic.
         Client2.Send(New LoginObj With {.UserName = "Client2"})
@@ -206,7 +204,7 @@ Public Class ChatTest
     End Sub
 
     Private Sub SendButton1_Click() Handles SendButton1.Click
-        Dim OtherPeer As PeerIdentification = Client1.Peers.Where(Function(x) x.Value.ID <> Client1.RemoteIdentity.ID).FirstOrDefault().Value
+        Dim OtherPeer As Identifier = Client1.Peers.Where(Function(x) x.Value.ID <> Client1.RemoteIdentity.ID).FirstOrDefault().Value
         Dim msg As New ChatMessage With {.Text = ChatMessage1.Text, .From = "Client1"}
         Client1.Send(OtherPeer, msg)
         ChatMessage1.Text = Nothing
@@ -214,7 +212,7 @@ Public Class ChatTest
     End Sub
 
     Private Sub SendButton2_Click() Handles SendButton2.Click
-        Dim OtherPeer As PeerIdentification = Client2.Peers.Where(Function(x) x.Value.ID <> Client2.RemoteIdentity.ID).FirstOrDefault().Value
+        Dim OtherPeer As Identifier = Client2.Peers.Where(Function(x) x.Value.ID <> Client2.RemoteIdentity.ID).FirstOrDefault().Value
         Dim msg As New ChatMessage With {.Text = ChatMessage2.Text, .From = "Client2"}
         Client2.Send(OtherPeer, msg)
         ChatMessage2.Text = Nothing

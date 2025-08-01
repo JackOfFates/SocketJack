@@ -1,10 +1,9 @@
-﻿using SocketJack.Networking.P2P;
-using SocketJack.Networking.Shared;
+﻿using SocketJack.Net.P2P;
+using SocketJack.Net;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using SocketJack.Extensions;
-using System.Net;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
@@ -30,12 +29,15 @@ namespace SocketJack.Extensions {
             return Tasks;
         }
 
-        public static PeerIdentification[] ToArrayWithLocal<T, T2>(this ConcurrentDictionary<T, T2> Dict, TcpConnection LocalClient) where T2 : PeerIdentification {
-            var peers = Array.Empty<PeerIdentification>();
+        public static Identifier[] ToArrayWithLocal<T, T2>(this ConcurrentDictionary<T, T2> Dict, TcpConnection LocalClient) where T2 : Identifier {
+            var peers = Array.Empty<Identifier>();
             foreach (var keyValuePair in Dict) {
-                if (keyValuePair.Value is PeerIdentification peer) {
-                    if(peer.ID == LocalClient.RemoteIdentity.ID) {
-                        peer = PeerIdentification.Create(LocalClient.RemoteIdentity.ID, true, LocalClient.EndPoint.Address.ToString());
+                if (keyValuePair.Value is Identifier peer) {
+                    if(peer.ID == LocalClient.Identity.ID) {
+                        peer = Identifier.Create(LocalClient.Identity.ID, true, LocalClient.EndPoint.Address.ToString());
+                    } else {
+                        peer.IP = string.Empty;
+                        peer.Action = PeerAction.RemoteIdentity;
                     }
                     peers = peers.Add(peer);
                 }
@@ -51,11 +53,11 @@ namespace SocketJack.Extensions {
         /// <param name="Dict"></param>
         /// <param name="Key"></param>
         /// <returns><see langword="true"/> if removed successfully; <see langword="false"/> if does not exist</returns>
-        public static bool Remove<T, T2>(this ConcurrentDictionary<T, T2> Dict, object Key) {
+        public static bool Remove<T, T2>(this ConcurrentDictionary<T, T2> Dict, T Key) {
             T2 value = default;
-            Dict.TryGetValue((T)Key, out value);
-            if (Dict.ContainsKey((T)Key))
-                return Dict.Remove((T)Key, out value);
+            Dict.TryGetValue(Key, out value);
+            if (Dict.ContainsKey(Key))
+                return Dict.Remove(Key, out value);
             return false;
         }
 

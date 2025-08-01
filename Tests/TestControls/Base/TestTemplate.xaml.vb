@@ -1,8 +1,8 @@
 ﻿Imports System.Collections.Concurrent
 Imports System.Threading
 Imports System.Windows.Threading
-Imports SocketJack.Networking
-Imports SocketJack.Networking.[Shared]
+Imports SocketJack.Net
+Imports SocketJack.Net.[Shared]
 Imports SocketJack.Serialization
 Imports SocketJack.Extensions
 

@@ -21,11 +21,13 @@
 
   <ItemGroup>
     <PackageReference Include="MsgPack.Cli" Version="1.0.1" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="UI.SyntaxBox" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\NSpeex\NSpeex.csproj" />
     <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
   </ItemGroup>
 
@@ -34,6 +36,12 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Update="TestControls\Base\TestTemplate.xaml.vb">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Update="TestControls\WebSocketTest.xaml.vb">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Update="TestControls\HttpServerTest.xaml.vb">
       <SubType>Code</SubType>
     </Compile>
   </ItemGroup>

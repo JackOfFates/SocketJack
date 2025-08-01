@@ -1,28 +1,89 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.Serialization;
-using Microsoft.VisualBasic;
 using SocketJack.Extensions;
-using SocketJack.Management;
-using SocketJack.Networking.P2P;
-using SocketJack.Networking.Shared;
-using SocketJack.Serialization;
+using SocketJack.Net.P2P;
+using SocketJack.Net;
 using SocketJack.Serialization.Json;
+using System.Collections.Concurrent;
 
 namespace SocketJack.Serialization {
 
-    public class Wrapper{
+    public class Wrapper {
 
         public string Type { get; set; }
         public object Value { get; set; }
 
+        private ConcurrentDictionary<string, Type> TypeCache = new ConcurrentDictionary<string, Type>();
+
+        private static string RemoveNamespace(string fullTypeName) {
+            if (string.IsNullOrEmpty(fullTypeName))
+                return fullTypeName;
+
+            int lastDotIndex = fullTypeName.LastIndexOf('.');
+            if (lastDotIndex >= 0 && lastDotIndex < fullTypeName.Length - 1) {
+                return fullTypeName.Substring(lastDotIndex + 1);
+            }
+            return fullTypeName;
+        }
+
+        private static string GetNamespace(string fullTypeName) {
+            if (string.IsNullOrEmpty(fullTypeName))
+                return fullTypeName;
+
+            int lastDotIndex = fullTypeName.LastIndexOf('.');
+            if (lastDotIndex > 0) {
+                return fullTypeName.Substring(0, lastDotIndex);
+            }
+            return string.Empty;
+        }
+
         public Type GetValueType() {
-            return System.Type.GetType(Type);
+            var AssemblyName = GetNamespace(Type);
+            
+            if (!TypeCache.ContainsKey(Type))
+                TypeCache.AddOrUpdate(Type, GetValueType(Type));
+            return TypeCache[Type];
+        }
+
+        public static Type GetValueType(string FullTypeName) {
+            var loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+            var typeName = RemoveNamespace(FullTypeName);
+            int backtickIndex = FullTypeName.IndexOf('`');
+
+            if (FullTypeName.EndsWith("[]")) {
+                var elementTypeName = typeName.Substring(0, typeName.Length - 2);
+                var elementType = GetValueType(elementTypeName);
+                if (elementType != null)
+                    return elementType.MakeArrayType();
+            } else if(backtickIndex > 0) {
+                string genericTypeName = FullTypeName.Substring(0, backtickIndex);
+                int arity;
+                if (int.TryParse(FullTypeName.Substring(backtickIndex + 1), out arity)) {
+                    var genericType = loadedAssemblies
+                        .SelectMany(asm => asm.GetTypes())
+                        .FirstOrDefault(t => t.IsGenericTypeDefinition && $"{t.Name}" == genericTypeName && t.GetGenericArguments().Length == arity);
+                    if (genericType != null)
+                        return genericType;
+                }
+            } else {
+                var exTypes = Assembly.GetCallingAssembly().DefinedTypes;
+                Type exFoundType = exTypes.FirstOrDefault(t => $"{t.Name}" == typeName);
+                if(exFoundType == null) {
+                    Type foundType = loadedAssemblies.SelectMany(asm => asm.GetTypes()).FirstOrDefault(t => $"{t.Name}" == typeName);
+                    if (foundType != null)
+                        return foundType;
+                } else {
+                    return exFoundType;
+                }
+               
+            }
+
+            return default;
         }
 
         public static BindingFlags ReflectionFlags { get; set; } = BindingFlags.Instance | BindingFlags.Public;
@@ -30,48 +91,58 @@ namespace SocketJack.Serialization {
         public Wrapper() {
         }
 
-        public Wrapper(object Obj, TcpBase sender) {
+        public static string GetTypeName(object Obj) {
+            return GetTypeName(Obj.GetType());
+        }
+
+        public static string GetTypeName(Type type) {
+            return $"{type.Assembly.GetName().Name}.{type.Name}";
+        }
+
+        public Wrapper(object Obj, ISocket sender) {
             if (Obj == null) return;
             Type T = Obj.GetType();
-            Type = T.AssemblyQualifiedName;
+            Type = GetTypeName(T);
             if (IsTypeAllowed(Obj, sender)) {
                 if (T.IsArray || T.IsValueType) {
                     Value = Obj;
                 } else {
-                    object stripped = Strip(T, Obj, sender);
-                    Value = stripped;
+                    lock (Obj) {
+                        object stripped = Strip(T, Obj, sender);
+                        Value = stripped;
+                    }
                 }
             }
         }
 
-        private object Strip(Type T, object obj, TcpBase sender) {
+        private object Strip(Type T, object obj, ISocket sender) {
             var instance = FormatterServices.GetSafeUninitializedObject(T);
             GetPropertyReferences(T).ForEach(r => MethodExtensions.TryInvoke(() => SetProperty(obj, ref instance, r, sender)));
             return instance;
         }
 
-        private TypeNotAllowedException CreateTypeException(ref TcpBase sender, string Type, bool isBlacklisted = false) {
+        private TypeNotAllowedException CreateTypeException(ref ISocket sender, string Type, bool isBlacklisted = false) {
             var exception = new TypeNotAllowedException(Type, isBlacklisted);
             sender.InvokeOnError(sender.Connection, exception);
             return exception;
         }
 
-        private TypeNotAllowedException CreateTypeException(ref TcpBase sender, Type Type, bool isBlacklisted = false) {
-            return CreateTypeException(ref sender, Type.AssemblyQualifiedName, isBlacklisted);
+        private TypeNotAllowedException CreateTypeException(ref ISocket sender, Type Type, bool isBlacklisted = false) {
+            return CreateTypeException(ref sender, GetTypeName(Type), isBlacklisted);
         }
 
-        private bool IsTypeAllowed(Type Type, TcpBase sender) {
+        private bool IsTypeAllowed(Type Type, ISocket sender) {
             if (sender.Options.Blacklist.Contains(Type)) {
-                if (Type == typeof(object) && this.Type != typeof(PeerRedirect).AssemblyQualifiedName)
+                if (Type == typeof(object) && this.Type != GetTypeName(typeof(PeerRedirect)))
                     throw CreateTypeException(ref sender, Type, true);
             } else if(!sender.Options.Whitelist.Contains(Type) ){
-                if(Type == typeof(object) && this.Type != typeof(PeerRedirect).AssemblyQualifiedName)
+                if(Type == typeof(object) && this.Type != GetTypeName(typeof(PeerRedirect)))
                     throw CreateTypeException(ref sender, Type);
             }
             return true;
         }
 
-        private bool IsTypeAllowed(object Obj, TcpBase sender) {
+        private bool IsTypeAllowed(object Obj, ISocket sender) {
             Type T = Obj.GetType();
             if (T == typeof(PeerRedirect)) {
                 PeerRedirect peerRedirect = (PeerRedirect)Obj;
@@ -86,14 +157,14 @@ namespace SocketJack.Serialization {
             }
         }
 
-        public object Unwrap(TcpBase sender) {
+        public object Unwrap(ISocket sender) {
             Type Type = GetValueType();
-            if (this.Type == typeof(PingObject).AssemblyQualifiedName) return PingObject.StaticInstance;
             bool isAllowed = IsTypeAllowed(Type, sender);
             if (Type == null) {
-                Exception exception = new Exception("Type '" + Type.Name + "' is not found in any referenced assembly.");
+                Exception exception = new Exception("Type 'null' is not found in any referenced assembly.");
                 throw exception;
             } else if(!isAllowed) {
+                this.Type = Type.Name;
                 return null;
             }
             if (Type.IsValueType | Type.IsArray) {
@@ -126,11 +197,11 @@ namespace SocketJack.Serialization {
             }
         }
 
-        public object GetPropertyValue(TcpBase sender, PropertyReference Reference) {
+        public object GetPropertyValue(ISocket sender, PropertyReference Reference) {
             return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Value, Reference));
         }
 
-        public void SetProperty(ref object Instance, PropertyReference Reference, TcpBase sender) {
+        public void SetProperty(ref object Instance, PropertyReference Reference, ISocket sender) {
             if (Reference.Info.CanWrite) {
                 var v = GetPropertyValue(sender, Reference);
                 if (v == null) return;
@@ -150,7 +221,7 @@ namespace SocketJack.Serialization {
             }
         }
 
-        public void SetProperty(object ValueInstance, ref object Instance, PropertyReference Reference, TcpBase sender) {
+        public void SetProperty(object ValueInstance, ref object Instance, PropertyReference Reference, ISocket sender) {
             if (Reference.Info.CanWrite) {
                 var v = Reference.GetValue(ValueInstance); // GetValue(sender, ValueInstance, Reference)
 
@@ -289,38 +360,16 @@ namespace SocketJack.Serialization {
             if (!includeFunctions) {
                 foreach (MethodInfo m in objMethods) {
                     if (m.ReturnType is null) {
-                        /* TODO ERROR: Skipped IfDirectiveTrivia
-                        #If NET20 Then
-                        *//* TODO ERROR: Skipped DisabledTextTrivia
-                                                Dim all As String = Join(ExcludedMethods.ToArray, "").ToUpper
-                                                If Not CatchAllMethods AndAlso (all.IndexOf(m.Name.ToUpper) <> -1) Then Continue For
-                        *//* TODO ERROR: Skipped ElseDirectiveTrivia
-                        #Else
-                        */
                         if (!CatchAllMethods && ExcludedMethods.Contains(m.Name.ToUpper()))
                             continue;
-                        /* TODO ERROR: Skipped EndIfDirectiveTrivia
-                        #End If
-                        */
                         References.Add(new MethodReference(m, index));
                         index += 1;
                     }
                 }
             } else {
                 foreach (MethodInfo m in objMethods) {
-                    /* TODO ERROR: Skipped IfDirectiveTrivia
-                    #If NET20 Then
-                    *//* TODO ERROR: Skipped DisabledTextTrivia
-                                        Dim all As String = Join(ExcludedMethods.ToArray, "").ToUpper
-                                        If Not CatchAllMethods AndAlso (all.IndexOf(m.Name.ToUpper) <> -1) Then Continue For
-                    *//* TODO ERROR: Skipped ElseDirectiveTrivia
-                    #Else
-                    */
                     if (!CatchAllMethods && ExcludedMethods.Contains(m.Name.ToUpper()))
                         continue;
-                    /* TODO ERROR: Skipped EndIfDirectiveTrivia
-                    #End If
-                    */
                     References.Add(new MethodReference(m, index));
                     index += 1;
                 }

@@ -1,42 +1,26 @@
-﻿using SocketJack;
-using SocketJack.Networking.Shared;
-using SocketJack.Serialization;
-using SocketJack.Serialization.Json;
-using SocketJack.Serialization.Json.Converters;
+﻿using SocketJack.Serialization.Json.Converters;
 using System;
-using System.Data;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 
 namespace SocketJack.Serialization.Json {
     public class JsonSerializer : ISerializer {
 
         public JsonSerializer() {
-            JsonOptions.Converters.Add(new JsonTypeConverter());
+            JsonOptions.Converters.Add(new TypeConverter());
         }
 
         public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions() { DefaultBufferSize = 1048576 };
 
         public byte[] Serialize(object Obj) {
             string Json = System.Text.Json.JsonSerializer.Serialize(Obj, JsonOptions);
-            //if (Obj.GetType() == typeof(Wrapper)) {
-            //    Wrapper wrapper = (Wrapper)Obj;
-            //    if (wrapper.Type != "SocketJack.Networking.Shared.PingObject, SocketJack, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null") {
-            //        Json = Json;
-            //    }
-            //}
-                
             return Encoding.UTF8.GetBytes(Json);
         }
 
         public Wrapper Deserialize(byte[] bytes) {
             try {
                 return (Wrapper)System.Text.Json.JsonSerializer.Deserialize(Encoding.UTF8.GetString(bytes), typeof(Wrapper), JsonOptions);
-            } catch (Exception ex) {
-                string txt = UTF8Encoding.UTF8.GetString(bytes);
-                ex = ex;
+            } catch (Exception) {
                 return null;
             }
         }

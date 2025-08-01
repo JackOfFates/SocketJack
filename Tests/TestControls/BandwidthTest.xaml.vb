@@ -2,10 +2,9 @@
 Imports System.Threading
 Imports System.Windows.Threading
 Imports Newtonsoft.Json.Linq
+Imports SocketJack.Compression
 Imports SocketJack.Extensions
-Imports SocketJack.Management
-Imports SocketJack.Networking
-Imports SocketJack.Networking.[Shared]
+Imports SocketJack.Net
 Imports SocketJack.Serialization
 
 Public Class BandwidthTest
@@ -15,9 +14,27 @@ Public Class BandwidthTest
     '    Base.TestName = "Bandwidth"
     'End Sub
 
-    Public Property ServerPort As Integer = NIC.FindOpenPort(7500, 8000)
-    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = New TcpOptions With {.Logging = True}}
-    Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options = New TcpOptions With {.Logging = True, .UpdateConsoleTitle = True}}
+    Public ReadOnly Property BufferSize As Integer
+        Get
+            Return BandwidthObject.UnitSize
+        End Get
+    End Property ' buffer size equal to object size for high bandwidth
+    Public Property ServerPort As Integer = NIC.FindOpenPort(7500, 8000).Result
+    Public Property Compressor As New GZip2Compression(IO.Compression.CompressionLevel.Fastest)
+    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options =
+        New TcpOptions With {.Logging = True,
+                             .UseCompression = False,
+                             .UploadBufferSize = BufferSize,
+                             .DownloadBufferSize = BufferSize,
+                             .CompressionAlgorithm = Compressor}}
+
+    Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options =
+        New TcpOptions With {.Logging = True,
+                             .UpdateConsoleTitle = True,
+                             .UseCompression = False,
+                             .UploadBufferSize = BufferSize,
+                             .DownloadBufferSize = BufferSize,
+                             .CompressionAlgorithm = Compressor}}
 
 #Region "Properties"
     Public ReadOnly Property TestName As String = "Bandwidth Test" Implements ITest.TestName
@@ -147,6 +164,10 @@ Public Class BandwidthTest
 
     Private Sub SliderUnitSize_ValueChanged(sender As Object, e As RoutedPropertyChangedEventArgs(Of Double)) Handles SliderUnitSize.ValueChanged
         BandwidthObject.UnitSize = CInt(SliderUnitSize.Value)
+        Server.Options.UploadBufferSize = BufferSize
+        Server.Options.DownloadBufferSize = BufferSize
+        Client.Options.UploadBufferSize = BufferSize
+        Client.Options.DownloadBufferSize = BufferSize
     End Sub
 
     Private Sub Client_LogOutput(text As String) Handles Client.LogOutput

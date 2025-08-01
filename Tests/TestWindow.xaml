@@ -12,13 +12,17 @@
                     <RowDefinition/>
                 </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="1*"/>
+                    <ColumnDefinition Width="1*"/>
+                    <ColumnDefinition Width="1*"/>
+                    <ColumnDefinition Width="1*"/>
+                    <ColumnDefinition Width="1*"/>
                 </Grid.ColumnDefinitions>
                 <Button x:Name="ButtonMaxClients" Content="Max Clients" Margin="10,5,10,5" BorderBrush="#FF790000" Foreground="#FFEA0000"/>
                 <Button x:Name="ButtonBandwidth" Content="Bandwidth" Grid.Column="1" Margin="10,5,10,5" Foreground="#FFEA0000" BorderBrush="#FF790000"/>
                 <Button x:Name="ButtonChat" Content="P2P Chat" Grid.Column="2" Margin="10,5,10,5" Foreground="#FFEA0000" BorderBrush="#FF790000"/>
+                <Button x:Name="ButtonHttpServer" Content="HttpServer" Grid.Column="3" Margin="10,5,10,5" Foreground="#FFEA0000" BorderBrush="#FF790000"/>
+                <Button x:Name="ButtonWebSockets" Content="WebSockets" Grid.Column="4" Margin="10,5,10,5" Foreground="#FFEA0000" BorderBrush="#FF790000"/>
             </Grid>
         </TabItem>
     </TabControl>

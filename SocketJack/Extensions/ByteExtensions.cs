@@ -3,8 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using SocketJack.Networking;
-using SocketJack.Networking.Shared;
+using SocketJack.Net;
 
 namespace SocketJack.Extensions {
     public static class ByteExtensions {
@@ -89,6 +88,16 @@ namespace SocketJack.Extensions {
         /// </summary>
         /// <param name="SourceArray"></param>
         /// <param name="startIndex"></param>
+        /// <returns>Byte array between startIndex to the end of the array.</returns>
+        public static byte[] Part(this List<byte> sourceArray, int startIndex) {
+            return sourceArray.Part(startIndex, sourceArray.Count);
+        }
+
+        /// <summary>
+        /// Byte Array equivalent of Substring.
+        /// </summary>
+        /// <param name="SourceArray"></param>
+        /// <param name="startIndex"></param>
         /// <param name="Length"></param>
         /// <returns>Byte array From startIndex to Length.</returns>
         public static byte[] Part(this byte[] sourceArray, int startIndex, int endIndex) {
@@ -96,6 +105,31 @@ namespace SocketJack.Extensions {
             byte[] Bytes = new byte[newLength];
             Buffer.BlockCopy(sourceArray, startIndex, Bytes, 0, newLength);
             return Bytes;
+        }
+
+        /// <summary>
+        /// Byte Array equivalent of Substring.
+        /// </summary>
+        /// <param name="SourceArray"></param>
+        /// <param name="startIndex"></param>
+        /// <param name="Length"></param>
+        /// <returns>Byte array From startIndex to Length.</returns>
+        public static byte[] Part(this List<byte> sourceArray, int startIndex, int endIndex) {
+            int newLength = endIndex - startIndex;
+            byte[] Bytes = new byte[newLength];
+            sourceArray.CopyTo(startIndex, Bytes, 0, newLength);
+            //Buffer.BlockCopy(sourceArray, startIndex, Bytes, 0, newLength);
+            return Bytes;
+        }
+
+        /// <summary>
+        /// Searches for a byte array in the source array.
+        /// </summary>
+        /// <param name="sourceArray">Source byte array</param>
+        /// <param name="byteArray">Search byte array</param>
+        /// <returns></returns>
+        public static int IndexOf(this List<byte> sourceArray, byte[] byteArray) {
+            return sourceArray.IndexOf(byteArray, 0);
         }
 
         /// <summary>
@@ -119,6 +153,21 @@ namespace SocketJack.Extensions {
             return Array.IndexOf(sourceArray, @byte);
         }
 
+        public static int IndexOf(this List<byte> byteArray, byte[] subArray, int startIndex) {
+            for (int i = startIndex, loopTo = byteArray.Count - subArray.Length; i <= loopTo; i++) {
+                bool match = true;
+                for (int j = 0, loopTo1 = subArray.Length - 1; j <= loopTo1; j++) {
+                    if (byteArray[i + j] != subArray[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match)
+                    return i;
+            }
+            return -1;
+        }
+
         public static int IndexOf(this byte[] byteArray, byte[] subArray, int startIndex) {
             for (int i = startIndex, loopTo = byteArray.Length - subArray.Length; i <= loopTo; i++) {
                 bool match = true;
@@ -134,12 +183,40 @@ namespace SocketJack.Extensions {
             return -1;
         }
 
+
+        public static List<int> IndexOfAll(this List<byte> sourceArray, byte[] searchArray) {
+            return sourceArray.IndexOfAll(searchArray, 0);
+        }
+
+        public static List<int> IndexOfAll(this List<byte> sourceArray, byte[] searchArray, int StartIndex) {
+            if (sourceArray == null || searchArray is null)
+                throw new ArgumentNullException("Source or subarray cannot be null.");
+            if (searchArray.Length == 0 || searchArray.Length > sourceArray.Count)
+                return new List<int>();
+
+            var results = new ConcurrentBag<int>();
+
+            Parallel.For(StartIndex, sourceArray.Count - searchArray.Length + 1, i => {
+                bool match = true;
+                for (int j = 0, loopTo = searchArray.Length - 1; j <= loopTo; j++) {
+                    if (sourceArray[i + j] != searchArray[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match)
+                    results.Add(i);
+            });
+
+            return results.OrderBy(index => index).ToList();
+        }
+
         public static List<int> IndexOfAll(this byte[] sourceArray, byte[] searchArray) {
             return sourceArray.IndexOfAll(searchArray, 0);
         }
 
         public static List<int> IndexOfAll(this byte[] sourceArray, byte[] searchArray, int StartIndex) {
-            if (sourceArray == null|| searchArray is null)
+            if (sourceArray == null || searchArray is null)
                 throw new ArgumentNullException("Source or subarray cannot be null.");
             if (searchArray.Length == 0 || searchArray.Length > sourceArray.Length)
                 return new List<int>();
