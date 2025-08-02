@@ -206,6 +206,7 @@ namespace SocketJack.Net {
 
         private TcpConnection NewConnection(ref Socket handler) {
             var newConnection = new TcpConnection(this, handler);
+            newConnection.StartConnectionTester();
             newConnection.ID = Guid.NewGuid();
             _handshakeCompleted[newConnection.ID] = false;
             newConnection._Identity = Identifier.Create(Guid.NewGuid(), true, handler.RemoteEndPoint.ToString());

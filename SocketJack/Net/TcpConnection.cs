@@ -234,26 +234,29 @@ namespace SocketJack.Net {
         }
 
         protected internal void Close(ISocket sender, DisconnectionReason Reason = DisconnectionReason.LocalSocketClosed) {
-            if(!Closed) {
-                Closed = true;
-                InvokeDisconnected(sender, new DisconnectedEventArgs(sender, this, Reason));
-                MethodExtensions.TryInvoke(() => { Socket.Shutdown(SocketShutdown.Both); });
-                MethodExtensions.TryInvoke(() => { Socket.Close(); });
-                SendQueue.Clear();
-                _UploadBuffer.Clear();
-                _DownloadBuffer.Clear();
-                EndPoint = null;
-                if(Stream != null) {
-                    MethodExtensions.TryInvoke(Stream.Close);
-                    MethodExtensions.TryInvoke(Stream.Dispose);
-                    _Stream = null;
+            lock(this) {
+                if (!Closed) {
+                    Closed = true;
+                    var e = new DisconnectedEventArgs(sender, this, Reason);
+                    InvokeDisconnected(sender, e);
+                    MethodExtensions.TryInvoke(() => { Socket.Shutdown(SocketShutdown.Both); });
+                    MethodExtensions.TryInvoke(() => { Socket.Close(); });
+                    SendQueue.Clear();
+                    _UploadBuffer.Clear();
+                    _DownloadBuffer.Clear();
+                    EndPoint = null;
+                    if (Stream != null) {
+                        MethodExtensions.TryInvoke(Stream.Close);
+                        MethodExtensions.TryInvoke(Stream.Dispose);
+                        _Stream = null;
+                    }
+                    if (Socket != null) {
+                        MethodExtensions.TryInvoke(Socket.Close);
+                        MethodExtensions.TryInvoke(Socket.Dispose);
+                        _Socket = null;
+                    }
+                    UnsubscribePeerUpdate();
                 }
-                if(Socket != null) {
-                    MethodExtensions.TryInvoke(Socket.Close);
-                    MethodExtensions.TryInvoke(Socket.Dispose);
-                    _Socket = null;
-                }
-                UnsubscribePeerUpdate();
             }
         }
 

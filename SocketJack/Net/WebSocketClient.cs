@@ -387,12 +387,12 @@ namespace SocketJack.Net {
                             break;
                         }
                     case PeerAction.RemoteIdentity: {
-                            PeerConnected?.Invoke(this, peer);
+                            InvokePeerConnected(peer, peer);
                             Peers.AddOrUpdate(peer);
                             break;
                         }
                     case PeerAction.Dispose: {
-                            PeerDisconnected?.Invoke(this, peer);
+                            InvokePeerDisconnected(this, peer);
                             Peers.Remove(peer.ID);
                             P2P_Clients.TryRemove(peer.ID, out _);
                             P2P_ServerInformation.TryRemove(peer.ID, out _);
@@ -596,12 +596,6 @@ namespace SocketJack.Net {
             Peers = new PeerList(this);
             var argsClient = (ISocket)this;
             Globals.RegisterServer(ref argsClient);
-            PeerConnected += (sender, peer) => {
-                LogFormatAsync("[{0}] Peer connected: {1}", new[] { Name, peer.ID.ToUpper() });
-            };
-            PeerDisconnected += (sender, peer) => {
-                LogFormatAsync("[{0}] Peer disconnected: {1}", new[] { Name, peer.ID.ToUpper() });
-            };
         }
 
         public WebSocketClient(TcpOptions Options, string Name = "WebSocketClient") {
@@ -609,12 +603,6 @@ namespace SocketJack.Net {
             Peers = new PeerList(this); 
             var argsClient = (ISocket)this;
             Globals.RegisterServer(ref argsClient);
-            PeerConnected += (sender, peer) => {
-                LogFormatAsync("[{0}] Peer connected: {1}", new[] { Name, peer.ID.ToUpper() });
-            };
-            PeerDisconnected += (sender, peer) => {
-                LogFormatAsync("[{0}] Peer disconnected: {1}", new[] { Name, peer.ID.ToUpper() });
-            };
         }
 
         public async Task<bool> ConnectAsync(Uri uri, CancellationToken cancellationToken = default) {
