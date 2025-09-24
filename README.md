@@ -1,248 +1,176 @@
 
 # SocketJack
 
- 
+**SocketJack** is a high-performance, flexible networking library for .NET, designed to simplify the creation of robust client-server and peer-to-peer (P2P) applications. It provides a modern, extensible API for TCP and WebSocket communication, advanced serialization, and seamless P2P networking with metadata-driven peer discovery.
 
-Fast, Efficient, 100% Managed, Built-in Peer to Peer, Generic, Extensible TCP Client & Server that transmits .NET objects with Type Saftey.
+---
 
- 
+## Features
 
-`SocketJack` automatically serializes `Public Properties` utilizing a type `white-list` for security.
+- **Unified TCP & WebSocket Support**  
+  Easily create clients and servers using TCP or WebSockets with a consistent API.
 
- 
+- **Peer-to-Peer (P2P) Networking**  
+  Built-in P2P support allows direct peer connections, peer discovery, and metadata sharing.  
+  - Peers are identified, discovered, and described using The Identifier class w/metadata.
+  - Host and client roles are managed automatically.
+  - Peer redirection and relay are supported for NAT traversal scenarios AND typical centralized configurations.
 
-## SocketJack comes with System.Text.Json support built in.
+- **Advanced Serialization**  
+  - Serializer interface (`ISerializer`) with a fast, efficient JSON implementation.
+  - Custom converters for complex types (e.g., `Bitmap`).
+  - Type whitelisting/blacklisting for secure deserialization.
 
-SocketJack exposes the `ISerializer` interface which can be used to add another serializer.
+- **Efficient Data Handling**  
+  - Large buffer support (default 1MB) for high-throughput scenarios.
+  - Asynchronous, non-blocking I/O for scalability.
+  - Optimized for .NET Standard 2.1, .NET 6, .NET 8, and .NET 9.
 
- 
+- **Metadata-Driven Peer Management**  
+  - Attach arbitrary metadata to peers and connections.
+  - Query and filter peers by metadata for dynamic discovery and routing.
 
-## The `SocketJack.NewtonsoftJson` nuget package has been deprecated. 
-*It WILL NOT be updated and does `NOT` work with 1.0.2+.*
+- **Extensible Event System**  
+  - Events for connection, disconnection, peer updates, and data receipt.
+  - Customizable handling for peer redirection and connection requests.
 
- 
+- **Security & Control**  
+  - SSL/TLS support for secure connections.
+  - Fine-grained control over allowed types and connection policies.
 
-# v1.1.0.0 Release Notes
+---
 
-***Thoroughly tested all features, stable.***
+## Peer-to-Peer Implementations
 
+SocketJack's P2P system is designed for flexibility and ease of use:
 
-### In Progress [See GitHub Repo](https://github.com/JackOfFates/SocketJack)
-- Javascript WebSocketClient implementation
+- **Peer Discovery:**  
+  Use metadata to find peers with specific attributes (e.g., game lobbies, chat rooms).
 
-### Added
+- **Direct Peer Connections:**  
+  Peers can connect directly, bypassing the server when possible for low-latency communication.
 
-- WebSocketClient
-- WebSocketServer
-- Metadata system similar to Cookies in HTTP servers
-- HTTP Server
-- PeerIdentification.Send will now find it's reference TcpClient Automatically
-- SSL Support
-- Compression
-- Chat Test
-- Generic Callbacks
-- Blacklist
-- Upload buffer
+- **Peer Redirection:**  
+  If a direct connection is not possible, messages can be relayed through other peers or the server.
 
- 
+- **Host/Client Role Management:**  
+  The library automatically manages which peer acts as host or client, simplifying connection logic.
 
-### Fixed
+- **Metadata Propagation:**  
+  Metadata changes are propagated to all connected peers, enabling dynamic network topologies.
 
-- Download Buffering speed
-- Thread blocking
-- Segments were disabled by comments
-- PeerServer Accepting
-- Compression Options
-- DefaultOptions Initialization
-- PeerRedirect Type Checking
-- PeerRedirect Vulnerability
-- Non-Generic OnReceive not being called
-- Buffering
-- Race conditions
-- Re-introduced segments for stability
+---
 
- 
+## Efficiency
 
-### Updated
+- **High Throughput:**  
+  Large default buffer sizes and efficient serialization minimize overhead.
 
-- Tests UI
-- Tests compatibility w/ compression & SSL
-- Multi-CPU Support at Runtime
-- Host Caching for **Improved Connection Performance**
-- Standardized Type, Method, And Function Naming
-- Fully **Thread Safe** and **Concurrent** w\ThreadManager Class to handle all Tcp Threading
+- **Asynchronous Operations:**  
+  All networking is fully async, allowing thousands of concurrent connections.
 
-### Removed
-- RemoteIdentity.Tag ( *Replaced with MetaData* )
+- **Minimal Allocations:**  
+  Serialization and deserialization are optimized to reduce memory usage and GC pressure.
 
+- **Selective Serialization:**  
+  Only allowed types are serialized/deserialized, improving security and performance.
 
-# Getting Started
-*For a more comprehensive guide on feature-sets of SocketJack please check the Tests project on the [GitHub Repo](https://github.com/JackOfFates/SocketJack)*
+---
 
+## Possible Usages
 
-### Default Options
+SocketJack is ideal for a wide range of networking scenarios, including:
 
-`TcpClient` & `TcpServer` will inherit properties set to `SocketJack.Management.DefaultOptions` by default.
+- **Real-Time Multiplayer Games**  
+  Fast, low-latency communication between players with dynamic peer discovery.
 
- 
-### Your application will remain open in the background unless you dispose Clients & Servers, or can just do this on **Application Exit**
+- **Distributed Chat Applications**  
+  Peer-to-peer chat with metadata-driven room discovery and direct messaging.
 
- 
+- **IoT Device Networks**  
+  Efficient, secure communication between devices with flexible topology.
 
-```cs
+- **Remote Control & Automation**  
+  Secure, event-driven control of remote systems with custom data types.
 
-ThreadManager.Shutdown();
+- **Custom Protocols & Services**  
+  Build your own protocols on top of TCP/WebSocket with full control over serialization and peer management.
 
+---
+
+## Getting Started
+
+1. **Install via NuGet:**
+```
+   Install-Package SocketJack
 ```
 
-### Building an application with SocketJack
-
-```cs
-
-public class MyApp {
-
-    SocketJack.Networking.Client.TcpClient TcpClient = new Client.TcpClient();
-    SocketJack.Networking.Server.TcpServer TcpServer = new Server.TcpServer(Port);
-
-    private const string Host = "127.0.0.1";
-    private const int Port = 7474;
-
-    // Handle incoming objects
-    private void TcpServer_OnReceive(ref ReceivedEventArgs e) {
-        // Avoid switch cases or if statements when you have a lot of objects to handle.
-    }
-
- 
-
-    private void TcpClient_OnConnected(ConnectedEventArgs e) {
-        // Send the server an authorization request
-        TcpClient.Send(new AuthorizationRequest());
-
-    }
-
- 
-
-    private void Server_AuthorizationRequest(ReceivedEventArgs<AuthorizationRequest> args) {
-        // Handle the auth request on the server
-        // Note: This is just used as an example.
-        // Please refer to the Tests Project> Chat Test on github for a working example.
-
-    }
-
- 
-
-    private void Client_AuthorizationRequest(ReceivedEventArgs<AuthorizationRequest> args) {
-       // Handle the auth request on the client
-       // Note: This is just used as an example.
-    }
-
- 
-
-    public async void Start_MyApp() {
-        // Start the server.
-        TcpServer.RegisterCallback<AuthorizationRequest>(Server_AuthorizationRequest);
-        TcpServer.OnReceive += TcpServer_OnReceive;
-        TcpServer.Listen();
-
-        // Start the client.
-        TcpClient.RegisterCallback<AuthorizationRequest>(Client_AuthorizationRequest);
-        TcpClient.OnConnected += TcpClient_OnConnected;
-        // Connect function timeout is 3 seconds by default.
-        await TcpClient.Connect("127.0.0.1", Port);
-    }
-
-}
-
+2. **Create a Server:**
 ```
- 
-
-### Logging
-
-```cs
-    TcpClient.Logging = true;
-    TcpClient.LogToOutput = true;
-    TcpClient.LogReceiveEvents = true;
-    TcpClient.LogSendEvents = true;
-
+   var server = new TcpServer(port: 12345);
+   server.StartListening();
 ```
 
-### Peer to peer functionality
-
-Built for faster latency and direct communication between clients.
-
-
-P2P TcpServer is ***automatically*** `port forwarded` using `Mono.NAT` UPNP.
- 
-
-Send another client on the server an object `WITHOUT` extra code or exposing their IP address.
-
-
-PeerRedirect can be canceled on the server inside the `TcpServer.OnReceive` by setting `e.CancelPeerRedirect` to `True`.
-
-
-`Connect to the main server then, anytime after the TcpClient.OnIdentified Event start a P2P server.`
-
- 
-
-```cs
-    private async void MyTcpClient_PeerConnected(object sender, PeerIdentification RemotePeer) {
-
-    // Make sure it's not your own client.
-    if (MyTcpClient.RemoteIdentity != null && RemotePeer.ID != MyTcpClient.RemoteIdentity.ID) {
-        TcpOptions Options = new TcpOptions();
-        Options.Logging = true;
-        Options.LogReceiveEvents = true;
-        Options.LogSendEvents = true;
-
-        TcpServer P2P_Server = await RemotePeer.StartServer(Options, "ExampleServer");
-        P2P_Server.OnReceive += P2PServer_OnReceive;
-        P2P_Server.OnDisconnected += P2PServer_OnDisconnected;
-        P2P_Server.OnError += P2PServer_OnError;
-    }
-}
-
+3. **Connect a Client:**
+```
+   var client = new TcpClient();
+   await client.Connect("127.0.0.1", 12345);
 ```
 
-``Then, on the other Remote Client Accept by handling the TcpClient_PeerConnectionRequest Event.``
-
-```cs
-    private async void MyTcpClient_PeerConnectionRequest(object sender, P2PServer Server) {
-        // CHANGE THIS - Add UI which allows the user to accept the connection.
-        TcpOptions Options = new TcpOptions();
-        Options.Logging = true;
-        Options.LogReceiveEvents = true;
-        Options.LogSendEvents = true;
-
-        TcpClient P2P_Client = await Server.Accept(options, "ExampleClient");
-        P2P_Client.OnReceive += P2PClient_OnReceive;
-        P2P_Client.OnConnected += P2PClient_OnConnected;
-        P2P_Client.OnDisconnected += P2PClient_OnDisconnected;
-        P2P_Client.OnError += P2PClient_OnError;
-    }
+4. **Sending and Receiving:**
+```
+   client.Send("Hello, Server!");
+   server.OnReceived += (sender, args) => {
+       var message = args.Object as string;
+       // Handle message
+   };
 ```
 
- 
-
+5. **Setting up callbacks:**
 ```cs
+// Register a callback for a custom class
+server.RegisterCallback<CustomClass>((peer, customClassObject) =>
+{
+    Console.WriteLine($"Received: customClassObject");
 
-TcpClient.Send(PeerIdentification, Object)
-
+    // Echo back to the client
+    peer.Send("10-4");
+});
 ```
 
- 
+6. **Enabling options by default:**
+ *MUST be called before the instantiation of a Client or Server.*
+```
+   TcpOptions.Default.UsePeerToPeer = true;
+```
 
-## Contributing
+7. **Attach Metadata:**
+*This will ONLY work on the server authority.*
+*Use your own authentication to validate the clients.*
+```
+   client.Identifier.SetMetaData(client, "Room", "Lobby1");
+```
 
- 
+---
 
-Pull requests are welcome. For major changes, please open an issue first
+## Documentation
 
- 
+- [API Reference](https://github.com/JackOfFates/SocketJack)
+- [Examples & Tutorials](https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls)
 
-to discuss what you would like to change.
-
- 
+---
 
 ## License
 
-[MIT](https://choosealicense.com/licenses/mit/)
+SocketJack is open source and licensed under the MIT License.
+
+---
+
+## Contributing
+
+Contributions, bug reports, and feature requests are welcome!  
+See [CONTRIBUTING.md](https://github.com/JackOfFates/SocketJack/blob/master/CONTRIBUTING.md) for details.
+
+---
+
+**SocketJack** — Fast, flexible, and modern networking for .NET.
