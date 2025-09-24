@@ -31,7 +31,7 @@
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
     <Description>Fast, Efficient, 100% Managed, Peer to Peer, Non Generic, Extensible TCP Client &amp; Server with built in Serialization that can be used to transmit any object.</Description>
-    <IsPackable>False</IsPackable>
+    <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
     <Version>1.2.0.0</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
@@ -351,3 +351,4 @@
     <None Include=".github\workflows\nuget.yml" />
   </ItemGroup>
 </Project>
+
