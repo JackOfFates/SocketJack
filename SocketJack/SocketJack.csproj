@@ -340,15 +340,16 @@
     <Import Include="System.Text.Json.Serialization" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\..\..\Desktop\SocketJackIcon.png">
+    <None Include="\SocketJackIcon.png">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
-    <None Include="..\..\..\License.txt">
+    <None Include="\License.txt">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
     <None Include=".github\workflows\nuget.yml" />
   </ItemGroup>
 </Project>
+
 
