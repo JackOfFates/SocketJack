@@ -129,26 +129,34 @@ SocketJack is ideal for a wide range of networking scenarios, including:
 5. **Setting up callbacks:**
 ```cs
 // Register a callback for a custom class
-server.RegisterCallback<CustomClass>((peer, customClassObject) =>
+server.RegisterCallback<CustomClass>((customClassObject) =>
 {
     Console.WriteLine($"Received: customClassObject");
 
     // Echo back to the client
     peer.Send("10-4");
 });
+
+    // This is an example of handling a message with callbacks.
+    server.RegisterCallback<ChatMessage>((ReceivedEventArgs e) => {
+      //e.Object is type of ChatMessage
+      //e.From can be used in conjunction with MetaData to aquire useful information about the remote peer
+      // e.g. Await args.From.GetMetaData("Username");
+ });
 ```
 
 6. **Enabling options by default:**
  *MUST be called before the instantiation of a Client or Server.*
 ```
-   TcpOptions.Default.UsePeerToPeer = true;
+   TcpOptions.Default.UsePeerToPeer = false; //true by default
 ```
 
 7. **Attach Metadata:**
 *This will ONLY work on the server authority.*
-*Use your own authentication to validate the clients.*
+*Can be used to authenticate clients.*
 ```
-   client.Identifier.SetMetaData(client, "Room", "Lobby1");
+    TcpConnection firstClientOnServer = server.Clients.FirstOrDefault().Value;
+    firstClientOnServer.SetMetaData("Room", "Lobby1");
 ```
 
 ---
