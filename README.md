@@ -129,7 +129,7 @@ SocketJack is ideal for a wide range of networking scenarios, including:
 5. **Setting up callbacks:**
 ```cs
 // Register a callback for a custom class
-server.RegisterCallback<ChatMessage>((ReceivedEventArgs args) => {
+server.RegisterCallback<ChatMessage>((ReceivedEventArgs<ChatMessage> args) => {
       //args.Object is type of ChatMessage
       //args.From can be used in conjunction with MetaData to aquire useful information about the remote peer
       // e.g. Await args.From.GetMetaData("Username");
