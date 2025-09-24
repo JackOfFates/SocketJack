@@ -24,16 +24,16 @@ Public Class BandwidthTest
     Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options =
         New TcpOptions With {.Logging = True,
                              .UseCompression = False,
-                             .UploadBufferSize = BufferSize,
-                             .DownloadBufferSize = BufferSize,
+                             .UploadBufferSize = 0,
+                             .DownloadBufferSize = 0,
                              .CompressionAlgorithm = Compressor}}
 
     Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options =
         New TcpOptions With {.Logging = True,
                              .UpdateConsoleTitle = True,
                              .UseCompression = False,
-                             .UploadBufferSize = BufferSize,
-                             .DownloadBufferSize = BufferSize,
+                             .UploadBufferSize = 0,
+                             .DownloadBufferSize = 0,
                              .CompressionAlgorithm = Compressor}}
 
 #Region "Properties"
@@ -248,8 +248,8 @@ Public Class BandwidthTest
         AddReceivedBytes(e.BytesReceived)
     End Sub
 
-    Public Sub AddReceivedBytes(count As Integer)
-        _ReceivedBytes += count
+    Public Sub AddReceivedBytes(bytes As Integer)
+        Interlocked.Add(_ReceivedBytes, bytes)
         If LabelReceived Is Nothing Then Return
         Dispatcher.InvokeAsync(Sub() LabelReceived.Text = "Received" & vbCrLf & _ReceivedBytes.ByteToString(2))
     End Sub
@@ -261,7 +261,7 @@ Public Class BandwidthTest
     Private _ReceivedBytes As Long
 
     Public Sub AddSentBytes(bytes As Integer)
-        _SentBytes += bytes
+        Interlocked.Add(_SentBytes, bytes)
         If LabelSent Is Nothing Then Return
         Dispatcher.InvokeAsync(Sub() LabelSent.Text = "Sent" & vbCrLf & _SentBytes.ByteToString(2))
     End Sub

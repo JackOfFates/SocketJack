@@ -1,6 +1,8 @@
 ﻿using SocketJack.Extensions;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Net;
 using System.Reflection;
@@ -9,6 +11,8 @@ using System.Threading.Tasks;
 
 namespace SocketJack.Net.P2P {
     public class Identifier {
+
+        private static ConcurrentDictionary<string, ISocket> _identifiers = new ConcurrentDictionary<string, ISocket>();
 
         public string ID { get; set; }
 
@@ -20,10 +24,11 @@ namespace SocketJack.Net.P2P {
 
         /// <summary>
         /// Metadata is used to store additional information about the connection.
-        /// <para>Do not update this dictionary directly.</para>
-        /// <para>Instead, use SetMetaData.</para>
+        /// <para>Do not read/write this dictionary directly.</para>
+        /// <para>Instead, use GetMetaData/SetMetaData.</para>
         /// <remarks>Only changable from server.</remarks>
         /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public Dictionary<string, string> Metadata { get; set; } = new Dictionary<string, string>();
         private Dictionary<string, string> PrivateMetadata { get; set; } = new Dictionary<string, string>();
 
@@ -35,7 +40,7 @@ namespace SocketJack.Net.P2P {
         /// <param name="server"></param>
         /// <param name="key"></param>
         /// <param name="value">Value of key;Removes value if equal to null or String.Empty</param>
-        protected internal void SetMetaData(TcpServer server, string key, string value, bool Private = false) {
+        public void SetMetaData(TcpServer server, string key, string value, bool Private = false) {
             if (server != null) {
                 var metadata = Private ? PrivateMetadata : Metadata;
                 if (string.IsNullOrEmpty(value)) {
@@ -49,7 +54,7 @@ namespace SocketJack.Net.P2P {
                     }
                 }
 
-                var update = this.Clone<Identifier>();
+                var update = server.Peers[ID].Clone<Identifier>();
                 update.Action = PeerAction.MetadataUpdate;
                 update.Metadata = metadata;
                 update.IP = string.Empty;
@@ -65,7 +70,7 @@ namespace SocketJack.Net.P2P {
         /// <param name="server"></param>
         /// <param name="key"></param>
         /// <param name="value">Value of key;Removes value if equal to null or String.Empty</param>
-        protected internal void SetMetaData(WebSocketServer server, string key, string value, bool Private = false) {
+        public void SetMetaData(ISocket server, string key, string value, bool Private = false) {
             if (server != null) {
                 var metadata = Private ? PrivateMetadata : Metadata;
                 if (string.IsNullOrEmpty(value)) {
@@ -79,7 +84,7 @@ namespace SocketJack.Net.P2P {
                     }
                 }
 
-                var update = this.Clone<Identifier>();
+                var update = server.Peers[ID].Clone<Identifier>();
                 update.Action = PeerAction.MetadataUpdate;
                 update.Metadata = metadata;
                 update.IP = string.Empty;
@@ -89,14 +94,32 @@ namespace SocketJack.Net.P2P {
 
         /// <summary>
         /// Get metadata value by key for the connection.
-        /// <para>Can only be called from server.</para>
         /// <paramref name="key">Metadata Key.</paramref>
         /// <returns>Value as string.</returns>
         /// </summary>
-        public string GetMetaData(string key, bool Private = false) {
-            var metadata = Private ? PrivateMetadata : Metadata;
-            if(metadata.ContainsKey(key)) {
-                metadata.TryGetValue(key, out string value);
+        public async Task<string> GetMetaData(string key, bool Private = false, bool WaitForValueIfNull = true) {
+            var Key = key.ToLower();
+            var p = Parent.Peers.Where(p => p.Value.ID == ID).FirstOrDefault().Value;
+            if (Private ? p.PrivateMetadata.ContainsKey(Key) : p.Metadata.ContainsKey(Key)) {
+                string value = default;
+                    while (Private ? !p.PrivateMetadata.TryGetValue(Key, out value) : !p.Metadata.TryGetValue(Key, out value)) {
+                    await Task.Delay(50); // Wait 50ms before checking again
+                    p = Parent.Peers[ID];
+                    if (!Parent.Connected) return default;
+                }
+                return value;
+            } else if (WaitForValueIfNull) {
+                // Wait asynchronously until the key is present in the dictionary
+                while (Private ? !p.PrivateMetadata.ContainsKey(Key) : !p.Metadata.ContainsKey(Key)) {
+                    await Task.Delay(50); // Wait 50ms before checking again
+                    p = Parent.Peers[ID];
+                    if (!Parent.Connected) return default;
+                }
+                string value = default;
+                while (Private ? !p.PrivateMetadata.TryGetValue(Key, out value) : !p.Metadata.TryGetValue(Key, out value)) {
+                    await Task.Delay(50); // Wait 50ms before checking again
+                    if (!Parent.Connected) return default;
+                }
                 return value;
             } else {
                 return default;
@@ -109,8 +132,8 @@ namespace SocketJack.Net.P2P {
         /// <typeparam name="T">The type to deserialize to.</typeparam>
         /// <param name="key"></param>
         /// <returns>Value as T.</returns>
-        public T GetMetaData<T>(string key, bool Private = false) {
-            string value = GetMetaData(key, Private);
+        public async Task<T> GetMetaData<T>(string key, bool Private = false) {
+            string value = await GetMetaData(key, Private);
             if (string.IsNullOrEmpty(value)) {
                 return default(T);
             } else {
@@ -120,7 +143,29 @@ namespace SocketJack.Net.P2P {
 
         public PeerAction Action { get; set; }
 
-        protected internal ISocket Parent;
+        protected internal ISocket Parent {
+            get {
+                if(_Parent == null) {
+                    if (_identifiers.ContainsKey(ID)) {
+                        _Parent = _identifiers[ID];
+                    } else {
+                        ISocket parent = ThreadManager.TcpClients.Values.FirstOrDefault(client => client.Peers.ContainsKey(ID));
+                        if(parent == null) {
+                            parent = ThreadManager.TcpServers.Values.FirstOrDefault(server => server.Peers.ContainsKey(ID));
+                            if(parent == null) throw new Exception("No parent found for this Identifier.");
+                        }
+                        _Parent = parent;
+                        _identifiers.Add(ID, parent);
+                    }
+                }
+
+                return _Parent;
+            }
+            set {
+                _Parent = value;
+            }
+        }
+        private ISocket _Parent;
 
         public Identifier(string ID) {
             this.ID = ID;
@@ -165,7 +210,6 @@ namespace SocketJack.Net.P2P {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns></returns>
         public async Task<ISocket> StartServer(string Name = "TcpServer") {
-            if (Parent == null) FindClient();
             return await Parent.StartServer(this, Parent.Options, Name);
         }
 
@@ -176,22 +220,18 @@ namespace SocketJack.Net.P2P {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer</returns>
         public async Task<ISocket> StartServer(TcpOptions Options, string Name = "TcpServer") {
-            if( Parent == null) FindClient();
             return await Parent.StartServer(this, Options, Name);
-        }
-
-        private void FindClient() {
-            if (Parent == null) {
-                ThreadManager.TcpClients.Values.ToList().ForEach(client => {
-                    if (client.RemoteIdentity.ID == ID) {
-                        Parent = client;
-                    }
-                });
-            }
         }
 
         public Identifier WithParent(ISocket reference) {
             Parent = reference;
+            return this;
+        }
+
+        public Identifier RemoteReady(ISocket reference) {
+            Parent = reference;
+            IP = string.Empty;
+            Action = PeerAction.RemoteIdentity;
             return this;
         }
 

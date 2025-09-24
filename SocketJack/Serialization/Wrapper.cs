@@ -17,6 +17,7 @@ namespace SocketJack.Serialization {
 
         public string Type { get; set; }
         public object Value { get; set; }
+        protected static bool hasRecieved = false;
 
         private ConcurrentDictionary<string, Type> TypeCache = new ConcurrentDictionary<string, Type>();
 
@@ -26,7 +27,7 @@ namespace SocketJack.Serialization {
 
             int lastDotIndex = fullTypeName.LastIndexOf('.');
             if (lastDotIndex >= 0 && lastDotIndex < fullTypeName.Length - 1) {
-                return fullTypeName.Substring(lastDotIndex + 1);
+                fullTypeName = fullTypeName.Remove(0, lastDotIndex + 1);
             }
             return fullTypeName;
         }
@@ -37,26 +38,29 @@ namespace SocketJack.Serialization {
 
             int lastDotIndex = fullTypeName.LastIndexOf('.');
             if (lastDotIndex > 0) {
-                return fullTypeName.Substring(0, lastDotIndex);
+                return fullTypeName.Substring(0, lastDotIndex + 1);
             }
             return string.Empty;
         }
 
         public Type GetValueType() {
-            var AssemblyName = GetNamespace(Type);
+
             
             if (!TypeCache.ContainsKey(Type))
                 TypeCache.AddOrUpdate(Type, GetValueType(Type));
             return TypeCache[Type];
         }
 
+        private static Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+
         public static Type GetValueType(string FullTypeName) {
-            var loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            var typeName = RemoveNamespace(FullTypeName);
+            var typeName = FullTypeName;//RemoveNamespace(FullTypeName);
             int backtickIndex = FullTypeName.IndexOf('`');
 
             if (FullTypeName.EndsWith("[]")) {
-                var elementTypeName = typeName.Substring(0, typeName.Length - 2);
+                //var ns = GetNamespace(FullTypeName);
+                //var elementTypeName = typeName.Remove(typeName.Length - 2);
+                var elementTypeName = FullTypeName.Substring(0, FullTypeName.Length - 2);
                 var elementType = GetValueType(elementTypeName);
                 if (elementType != null)
                     return elementType.MakeArrayType();
@@ -66,15 +70,15 @@ namespace SocketJack.Serialization {
                 if (int.TryParse(FullTypeName.Substring(backtickIndex + 1), out arity)) {
                     var genericType = loadedAssemblies
                         .SelectMany(asm => asm.GetTypes())
-                        .FirstOrDefault(t => t.IsGenericTypeDefinition && $"{t.Name}" == genericTypeName && t.GetGenericArguments().Length == arity);
+                        .FirstOrDefault(t => t.IsGenericTypeDefinition && $"{t.FullName}" == genericTypeName && t.GetGenericArguments().Length == arity);
                     if (genericType != null)
                         return genericType;
                 }
             } else {
                 var exTypes = Assembly.GetCallingAssembly().DefinedTypes;
-                Type exFoundType = exTypes.FirstOrDefault(t => $"{t.Name}" == typeName);
+                Type exFoundType = exTypes.FirstOrDefault(t => $"{t.FullName}" == typeName);
                 if(exFoundType == null) {
-                    Type foundType = loadedAssemblies.SelectMany(asm => asm.GetTypes()).FirstOrDefault(t => $"{t.Name}" == typeName);
+                    Type foundType = loadedAssemblies.SelectMany(asm => asm.GetTypes()).FirstOrDefault(t => $"{t.FullName}" == typeName);
                     if (foundType != null)
                         return foundType;
                 } else {
@@ -96,7 +100,7 @@ namespace SocketJack.Serialization {
         }
 
         public static string GetTypeName(Type type) {
-            return $"{type.Assembly.GetName().Name}.{type.Name}";
+            return $"{type.FullName}";
         }
 
         public Wrapper(object Obj, ISocket sender) {
@@ -157,6 +161,46 @@ namespace SocketJack.Serialization {
             }
         }
 
+        public object Unwrap(Type Type, ISocket sender) {
+            bool isAllowed = IsTypeAllowed(Type, sender);
+            if (Type == null) {
+                Exception exception = new Exception("Type 'null' is not found in any referenced assembly.");
+                throw exception;
+            } else if (!isAllowed) {
+                this.Type = Type.Name;
+                return null;
+            }
+            if (Type.IsValueType | Type.IsArray) {
+                return sender.Options.Serializer.GetValue(Value, Type, true);
+            } else {
+                var instance = FormatterServices.GetSafeUninitializedObject(Type);
+                var references = GetPropertyReferences(Type);
+                int index = 0;
+
+                for (int i = 0, loopTo = references.Count - 1; i <= loopTo; i++) {
+                    index = i;
+                    var reference = references[i];
+                    try {
+                        bool isAllowedProperty = IsTypeAllowed(reference.Info.PropertyType, sender);
+                        if (isAllowedProperty)
+                            SetProperty(ref instance, reference, sender);
+                    } catch (Exception ex) {
+                        var r = references[index];
+                        if (ex.Message.Contains("Object of type 'System.Int64' cannot be converted to type 'System.Int32'.")) {
+                            throw new Int32NotSupportedException(instance.GetType().Name + "." + r.Info.Name);
+                        } else {
+                            string errorMessage = "Deserialization Error @ " + r.Index + " (" + instance.GetType().Name + "." + r.Info.Name + ")" + Environment.NewLine +
+                                                  (ex.Message == string.Empty ? string.Empty : "     " + ex.Message) +
+                                                  (ex.StackTrace == string.Empty ? string.Empty : Environment.NewLine + ex.StackTrace) + Environment.NewLine;
+                            Exception exception = new Exception(errorMessage, ex);
+                            sender.InvokeOnError(sender.Connection, exception);
+                        }
+                    }
+                }
+                return instance;
+            }
+        }
+
         public object Unwrap(ISocket sender) {
             Type Type = GetValueType();
             bool isAllowed = IsTypeAllowed(Type, sender);
@@ -178,7 +222,8 @@ namespace SocketJack.Serialization {
                     index = i;
                     var reference = references[i];
                     try {
-                        if (IsTypeAllowed(reference.Info.PropertyType, sender))
+                        bool isAllowedProperty = IsTypeAllowed(reference.Info.PropertyType, sender);    
+                        if (isAllowedProperty)
                             SetProperty(ref instance, reference, sender);
                     } catch (Exception ex) {
                         var r = references[index];
@@ -189,7 +234,7 @@ namespace SocketJack.Serialization {
                                                   (ex.Message == string.Empty ? string.Empty : "     " + ex.Message) +
                                                   (ex.StackTrace == string.Empty ? string.Empty : Environment.NewLine + ex.StackTrace) + Environment.NewLine;
                             Exception exception = new Exception(errorMessage, ex);
-                            throw exception;
+                            sender.InvokeOnError(sender.Connection, exception);
                         }
                     }
                 }
@@ -201,21 +246,88 @@ namespace SocketJack.Serialization {
             return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Value, Reference));
         }
 
+        //public object GetPropertyValueFromRedirect(ISocket sender, PropertyReference Reference, ref PeerRedirect Instance) {
+        //    Type T = System.Type.GetType(Instance.Type);
+        //    if (T == null) return null;
+        //    return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Value, Reference));
+        //}
+
         public void SetProperty(ref object Instance, PropertyReference Reference, ISocket sender) {
             if (Reference.Info.CanWrite) {
-                var v = GetPropertyValue(sender, Reference);
+                Type iType = Instance.GetType();
+                object v = null;
+                //if (iType == typeof(PeerRedirect)) {
+                //    var r = (PeerRedirect)Instance;
+                //    v = GetPropertyValueFromRedirect(sender, Reference, ref r);
+                //} else {
+                if (iType == typeof(Wrapper)) {
+                    v = ((Wrapper)GetPropertyValue(sender, Reference)).Unwrap(sender);
+                } else {
+                    v = GetPropertyValue(sender, Reference);
+                }
+                //}
+
                 if (v == null) return;
                 string PropertyTypeName = Reference.Info.PropertyType.FullName;
-                if (v != null && v.GetType() == typeof(Wrapper)) {
+                Type vType = v.GetType();
+                if (iType == typeof(PeerRedirect) && vType == typeof(Wrapper)) {
+                    PeerRedirect redirect = (PeerRedirect)v;
+                    Type redirectType = System.Type.GetType(redirect.Type);
+                    v = Unwrap(redirectType, sender);
+                } else if(vType == typeof(Wrapper)) {
                     Wrapper wrapper = (Wrapper)v;
                     if (wrapper.Type == null || wrapper.Value == null) {
                         return;
                     }
                     v = wrapper.Unwrap(sender);
                 }
-                if (Reference.Info.PropertyType.IsEnum) {
+                if (v.GetType() == typeof(Wrapper)) {
+                   
+                } else if (Reference.Info.PropertyType.IsEnum) {
                     var enumType = Reference.Info.Module.Assembly.GetType(PropertyTypeName);
                     v = Enum.ToObject(enumType, v);
+                    //} else if() {
+
+                }
+                    Reference.Info.SetValue(Instance, v, (object[])null);
+            }
+        }
+
+        public void SetProperty(ref object Instance,PeerRedirect redirect, PropertyReference Reference, ISocket sender) {
+            if (Reference.Info.CanWrite) {
+                Type iType = Instance.GetType();
+                object v = null;
+                //if (iType == typeof(PeerRedirect)) {
+                //    var r = (PeerRedirect)Instance;
+                //    v = GetPropertyValueFromRedirect(sender, Reference, ref r);
+                //} else {
+                if (iType == typeof(Wrapper)) {
+                    v = ((Wrapper)GetPropertyValue(sender, Reference)).Unwrap(sender);
+                } else {
+                    v = GetPropertyValue(sender, Reference);
+                }
+                //}
+
+                if (v == null) return;
+                string PropertyTypeName = Reference.Info.PropertyType.FullName;
+                Type vType = v.GetType();
+                if (iType == typeof(PeerRedirect) && vType == typeof(Wrapper)) {
+                    Type redirectType = System.Type.GetType(redirect.Type);
+                    v = Unwrap(redirectType, sender);
+                } else if (vType == typeof(Wrapper)) {
+                    Wrapper wrapper = (Wrapper)v;
+                    if (wrapper.Type == null || wrapper.Value == null) {
+                        return;
+                    }
+                    v = wrapper.Unwrap(sender);
+                }
+                if (v.GetType() == typeof(Wrapper)) {
+
+                } else if (Reference.Info.PropertyType.IsEnum) {
+                    var enumType = Reference.Info.Module.Assembly.GetType(PropertyTypeName);
+                    v = Enum.ToObject(enumType, v);
+                    //} else if() {
+
                 }
                 Reference.Info.SetValue(Instance, v, (object[])null);
             }
@@ -224,11 +336,18 @@ namespace SocketJack.Serialization {
         public void SetProperty(object ValueInstance, ref object Instance, PropertyReference Reference, ISocket sender) {
             if (Reference.Info.CanWrite) {
                 var v = Reference.GetValue(ValueInstance); // GetValue(sender, ValueInstance, Reference)
-
+                var isJson = sender.Options.Serializer.GetType() == typeof(JsonSerializer);
                 string PropertyTypeName = Reference.Info.PropertyType.FullName;
+                string valueTypeName = ValueInstance.GetType().Name;
+
                 if (Reference.Info.PropertyType == typeof(object)) {
-                    var wrappedValue = new Wrapper(v, sender);
-                    v = wrappedValue;
+                    if (isJson) {
+                        JsonSerializer serializer = (JsonSerializer)sender.Options.Serializer;
+                        if (!serializer.HasConverter(v.GetType())) {
+                            var wrappedValue = new Wrapper(v, sender);
+                            v = wrappedValue;
+                        }
+                    }
                 } else if (Reference.Info.PropertyType.IsEnum) {
                     var enumType = Reference.Info.Module.Assembly.GetType(PropertyTypeName);
                     v = Enum.ToObject(enumType, v);

@@ -15,6 +15,10 @@
             this.Type = Obj.GetType().AssemblyQualifiedName;
         }
 
+        public PeerRedirect() {
+
+        }
+
         public string CleanTypeName() {
             string name = Type.Contains(",") ? Type.Remove(Type.IndexOf(",")) : Type;
             if(name.Contains("+"))

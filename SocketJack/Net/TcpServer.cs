@@ -211,7 +211,13 @@ namespace SocketJack.Net {
         }
         private void TcpServer_InternalSendToClient(string Recipient, string Sender, object Obj, int BytesReceived) {
             if(Recipient == "#ALL#") {
-                SendBroadcast(new PeerRedirect(Sender, Recipient, Obj));
+                var SenderGuid = Guid.TryParse(Sender, out Guid senderGuid) ? senderGuid : default;
+                if (SenderGuid != default && Clients.ContainsKey(SenderGuid)) {
+                    var SenderClient = Clients[SenderGuid];
+                    SendBroadcast(new PeerRedirect(Sender, Recipient, Obj), SenderClient);
+                } else {
+                    SendBroadcast(new PeerRedirect(Sender, Recipient, Obj));
+                }
             } else {
                 Guid ClientID = default;
 
@@ -285,6 +291,7 @@ namespace SocketJack.Net {
                 LogFormat("[{0}] Shutdown Started *:{1}", new[] { Name, Port.ToString() });
                 Clients.ToList().ForEach((KeyValuePair<Guid, TcpConnection> kvp) => {
                     if (kvp.Value != null && !kvp.Value.Closed) {
+                        ClientDisconnected?.Invoke(new DisconnectedEventArgs(this, kvp.Value, DisconnectionReason.LocalSocketClosed));
                         CloseConnection(kvp.Value);
                     }
                 });
@@ -463,6 +470,19 @@ namespace SocketJack.Net {
         /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
         public new void Send(TcpConnection Client, object Obj) {
             if (Client != null && !Client.Closed && Client.Socket.Connected) {
+                base.Send(Client, Obj);
+            }
+        }
+
+        /// <summary>
+        /// Sends an object to a peer.
+        /// </summary>
+        /// <param name="Client">The Client's TcpConnection.</param>
+        /// <param name="Obj">Object to send to the client.</param>
+        /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+        public override void Send(Identifier Recipient, object Obj) {
+            if (Recipient != null) {
+                var Client = Clients.Where(Clients => Clients.Value.Identity != null && Clients.Value.Identity.ID == Recipient.ID).Select(Clients => Clients.Value).FirstOrDefault();
                 base.Send(Client, Obj);
             }
         }

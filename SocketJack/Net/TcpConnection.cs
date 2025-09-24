@@ -12,6 +12,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -39,8 +40,8 @@ namespace SocketJack.Net {
                 return SSL ? (Stream)SslStream : _Stream;
             }
         }
-        internal NetworkStream _Stream = null;
-        public SslStream SslStream { get; protected internal set; }
+        public NetworkStream _Stream = null;
+        public SslStream SslStream { get; set; }
 
         public static readonly byte[] Terminator = new[] { (byte)192, (byte)128};
 
@@ -82,7 +83,7 @@ namespace SocketJack.Net {
 
         public bool IsWebSocket {
             get {
-                return Parent is WebSocketClient || Parent is WebSocketServer;
+                return Parent.GetType().Name == "WebSocketClient" || Parent.GetType().Name == "WebSocketServer";
             }
         }
 
@@ -127,7 +128,7 @@ namespace SocketJack.Net {
                 return _Identity;
             }
         }
-        protected internal Identifier _Identity;
+        public Identifier _Identity;
 
         /// <summary>
         /// True if the connection is receiving data.
@@ -182,7 +183,7 @@ namespace SocketJack.Net {
             get {
                 return _Closed;
             }
-            protected internal set {
+            set {
                 _Closed = value;
             }
         }
@@ -217,8 +218,8 @@ namespace SocketJack.Net {
                     return false;
                 } else if (!Socket.Connected || Closed) {
                     return false;
-                } else if (!Active && Socket.Poll(1000, SelectMode.SelectRead) && Socket.Available == 0) {
-                    return false;
+                //} else if (!Active && Socket.Poll(10000, SelectMode.SelectRead) && Socket.Available == 0) {
+                 //   return false;
                 } else {
                     return true;
                 }
@@ -233,39 +234,43 @@ namespace SocketJack.Net {
             Close(Parent);
         }
 
-        protected internal void Close(ISocket sender, DisconnectionReason Reason = DisconnectionReason.LocalSocketClosed) {
+        public void Close(ISocket sender, DisconnectionReason Reason = DisconnectionReason.LocalSocketClosed) {
             lock(this) {
                 if (!Closed) {
-                    Closed = true;
                     var e = new DisconnectedEventArgs(sender, this, Reason);
+                    if(Socket != null && Socket.Connected) {
+                        MethodExtensions.TryInvoke(() => Socket.Shutdown(SocketShutdown.Both));
+                        MethodExtensions.TryInvoke(() => Socket.Close());
+                    }
                     InvokeDisconnected(sender, e);
-                    MethodExtensions.TryInvoke(() => { Socket.Shutdown(SocketShutdown.Both); });
-                    MethodExtensions.TryInvoke(() => { Socket.Close(); });
                     SendQueue.Clear();
                     _UploadBuffer.Clear();
                     _DownloadBuffer.Clear();
-                    EndPoint = null;
-                    if (Stream != null) {
-                        MethodExtensions.TryInvoke(Stream.Close);
-                        MethodExtensions.TryInvoke(Stream.Dispose);
-                        _Stream = null;
-                    }
-                    if (Socket != null) {
-                        MethodExtensions.TryInvoke(Socket.Close);
-                        MethodExtensions.TryInvoke(Socket.Dispose);
-                        _Socket = null;
-                    }
+                    sender.EndPoint = null;
+
                     UnsubscribePeerUpdate();
                 }
             }
         }
 
-        protected internal void StartConnectionTester() {
+        public void StartConnectionTester() {
             Task.Factory.StartNew(async () => {
+                if (Parent.GetType().Name == "WebSocketClient")
+                    return;
+
+                int failedPollCount = 0;
+                const int maxFailedPolls = 10;
+
                 while (!isDisposed && !Closed && Socket.Connected) {
                     bool pollResult = Poll();
                     if (!pollResult) {
-                        Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
+                        failedPollCount++;
+                        if (failedPollCount >= maxFailedPolls) {
+                            //Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
+                            break;
+                        }
+                    } else {
+                        failedPollCount = 0;
                     }
                     await Task.Delay(1000);
                 }
@@ -276,14 +281,14 @@ namespace SocketJack.Net {
 
         #region Peer To Peer
 
-        private void SetPeerID(object sender, Identifier RemotePeer) {
+        private void SetPeerID(ISocket sender, Identifier RemotePeer) {
             switch (RemotePeer.Action) {
                 case PeerAction.LocalIdentity: {
                         _Identity = RemotePeer;
                         TcpClient Client = (TcpClient)Parent;
                         if (Client != null) {
                             Client.LogFormat("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
-                            Client.InvokeOnIdentified(ref _Identity);
+                            Client.InvokeOnIdentified(sender, _Identity);
                         }
                         break;
                     }
@@ -319,17 +324,13 @@ namespace SocketJack.Net {
         public event ClientDisconnectedEventHandler OnDisconnected;
         public delegate void ClientDisconnectedEventHandler(TcpConnection sender, DisconnectedEventArgs e);
 
-        protected internal void InvokeDisconnected(object sender, DisconnectedEventArgs e) {
-            if (sender is TcpClient) 
-                ((TcpClient)sender).InvokeOnDisconnected(e);
-            if (sender is TcpServer) {
-                ((TcpServer)sender).InvokeOnDisconnected(e);
-            } if (sender is WebSocketServer) {
-                ((WebSocketServer)sender).InvokeOnDisconnected(e);
-            } if(sender is WebSocketClient) {
-                //((WebSocketClient)sender).InvokeOnDisconnected(e);
+        protected internal void InvokeDisconnected(ISocket sender, DisconnectedEventArgs e) {
+            if (e.Connection.Closed) return;
+            if (!(sender.GetType().Name == "WebSocketClient")  && !(sender.GetType().Name == "WebSocketClient") && !(sender is TcpServer) && !(sender.GetType().Name == "WebSocketServer")) {
+                ((ISocket)sender).InvokeOnDisconnected(sender, e.Connection);
+                e.Connection.Closed = true;
             }
-                
+
             OnDisconnected?.Invoke(this, e);
         }
 
@@ -494,74 +495,90 @@ namespace SocketJack.Net {
             if (Buffer != null && Buffer.Count > 0) {
 				if (Target.Options.UseTerminatedStreams) {
 					var TerminatorIndices = Buffer.IndexOfAll(Terminator);
-                  
-                    List<Task> tasks = new List<Task>();
-                    for (int i = 0, loopTo = TerminatorIndices.Count - 1; i <= loopTo; i++) {
-						int lastIndex = i > 0 ? TerminatorIndices[i - 1] : 0;
-						int Index = TerminatorIndices[i];
-						if (i == TerminatorIndices.Count - 1)
-							LastIndexOf = Index;
-                     
-                        tasks.Add(Task.Run(() => {
-							if (Buffer is null || Buffer.Count < Index || Buffer.Count < lastIndex)
-								return;
-							int MinusTerminator = lastIndex + Terminator.Length;
-							byte[] Bytes = Buffer.Part(lastIndex == 0 ? lastIndex : MinusTerminator, Index);
-							int Length = Bytes.Length;
-							if (Target.Options.UseCompression) {
-								var decompressionResult = MethodExtensions.TryInvoke(Target.Options.CompressionAlgorithm.Decompress, ref Bytes);
-								if (decompressionResult.Success) {
-									Bytes = decompressionResult.Result;
-								} else {
-                                    Target.CloseConnection(Sender, DisconnectionReason.CompressionError);
-                                    Target.InvokeOnError(Sender, decompressionResult.Exception);
-									return;
-								}
-							}
-							Wrapper wrapper = Target.Options.Serializer.Deserialize(Bytes);
-                            if (wrapper == null) {
-                                Target.InvokeOnError(Sender, new P2PException("Deserialized object returned null."));
+
+                    if (TerminatorIndices.Count > 0) {
+
+
+                        List<Task> tasks = new List<Task>();
+                        for (int i = 0, loopTo = TerminatorIndices.Count - 1; i <= loopTo; i++) {
+                            int lastIndex = i > 0 ? TerminatorIndices[i - 1] : 0;
+                            int Index = TerminatorIndices[i];
+                            if (i == TerminatorIndices.Count - 1)
+                                LastIndexOf = Index;
+
+                            tasks.Add(Task.Run(() => {
+                                if (Buffer is null || Buffer.Count < Index || Buffer.Count < lastIndex)
+                                    return;
+                                int MinusTerminator = lastIndex + Terminator.Length;
+                                byte[] Bytes = Buffer.Part(lastIndex == 0 ? lastIndex : MinusTerminator, Index);
+                                int Length = Bytes.Length;
+                                if (Target.Options.UseCompression) {
+                                    var decompressionResult = MethodExtensions.TryInvoke(Target.Options.CompressionAlgorithm.Decompress, ref Bytes);
+                                    if (decompressionResult.Success) {
+                                        Bytes = decompressionResult.Result;
+                                    } else {
+                                        Target.CloseConnection(Sender, DisconnectionReason.CompressionError);
+                                        Target.InvokeOnError(Sender, decompressionResult.Exception);
+                                        return;
+                                    }
+                                }
+                                Wrapper wrapper = Target.Options.Serializer.Deserialize(Bytes);
+                                string txt = System.Text.UTF8Encoding.UTF8.GetString(Bytes);
+                                if (wrapper == null) {
+                                    Target.InvokeOnError(Sender, new P2PException("Deserialized object returned null."));
+                                } else {
+                                    var valueType = wrapper.GetValueType();
+                                    if (wrapper.Value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
+                                        if (valueType == typeof(PeerRedirect)) {
+                                            Byte[] redirectBytes = null;
+                                            object val = wrapper.Value;
+                                            Type type = wrapper.Value.GetType();
+                                            if (type == typeof(string)) {
+                                                redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
+                                            } else if (type == typeof(JsonElement)) {
+                                                string json = ((JsonElement)val).GetRawText();
+                                                redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(json);
+                                            }
+                                            PeerRedirect redirect = Target.Options.Serializer.DeserializeRedirect(Target, redirectBytes);
+                                            Task.Run(() => { Target.HandleReceive(Sender, redirect, valueType, Length); });
+                                        } else {
+                                            object unwrapped = null;
+                                            try {
+                                                unwrapped = wrapper.Unwrap(Target);
+                                            } catch (Exception ex) {
+                                                Target.InvokeOnError(Sender, ex);
+                                            }
+                                            if (unwrapped != null)
+                                                Task.Run(() => { Target.HandleReceive(Sender, unwrapped, valueType, Length); });
+                                        }
+                                    }
+                                }
+                            }));
+                        }
+
+                        await Task.WhenAll(tasks);
+                        if (LastIndexOf > 0) {
+                            if (Buffer != null && (LastIndexOf + Terminator.Length) - Buffer.Count == 0) {
+                                Buffer.Clear();
+                                return Buffer;
                             } else {
-                                var valueType = wrapper.GetValueType();
-                                if (wrapper.Value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
-                                    object unwrapped = wrapper.Unwrap(Target);
-                                    if (unwrapped != null)
-                                        Task.Run(() => { Target.HandleReceive(Sender, unwrapped, valueType, Length); });
+                                int removeAt = LastIndexOf + Terminator.Length;
+                                if (Buffer.Count > removeAt) {
+                                    Buffer.RemoveRange(0, LastIndexOf + Terminator.Length);
+                                } else if (Buffer.Count == removeAt) {
+                                    Buffer.Clear();
                                 }
                             }
-						}));
-					}
-					await Task.WhenAll(tasks);
-					if (LastIndexOf > 0) {
-						if (Buffer != null && (LastIndexOf + Terminator.Length) - Buffer.Count == 0) {
-                            Buffer.Clear();
-                            return Buffer;
-                        } else {
-                            int removeAt = LastIndexOf + Terminator.Length;
-                            if (Buffer.Count > removeAt) {
-                                Buffer.RemoveRange(0, LastIndexOf + Terminator.Length);
-                            } else if (Buffer.Count == removeAt) {
-                                Buffer.Clear();
-                            }
-                              
-							//int bufferLength = Buffer != null ? Buffer.Count : 0;
-							//byte[] remainingBytes = new byte[LastIndexOf + Terminator.Length];
-							//int minusTerminator = LastIndexOf + Terminator.Length;
-       //                     // broken here.
-							////Array.Copy(Buffer, minusTerminator, remainingBytes, 0, bufferLength - (minusTerminator));
-       //                     Buffer.CopyTo(minusTerminator, remainingBytes, 0, minusTerminator);
-
-       //                     return remainingBytes.ToList();
-
-						}
+                    }
                     }
                     return Buffer;
                 } else {
-					Task.Run(() => { 
-                        Target.HandleReceive(Sender, Buffer, typeof(byte[]), Buffer.Count);
-                        Buffer = null;
-                    });
+                    var tempBuffer = new List<byte>(Buffer);
                     Buffer.Clear();
+                    Task.Run(() => { 
+                        Target.HandleReceive(Sender, tempBuffer, typeof(byte[]), tempBuffer.Count);
+                    });
+                    
                     return Buffer;
                 }
             } else { return Buffer; }
@@ -667,7 +684,7 @@ namespace SocketJack.Net {
                     sentSuccessful = true;
                     //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
                     Parent.InvokeInternalSendEvent(Item.Connection, type, Item.Object, TerminatedBytes.Length);
-                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, Item.Connection, TerminatedBytes.Length));
+                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, Item.Connection, type, TerminatedBytes.Length));
                     //}
 
                 } else if (SerializedBytes.Length > NIC.MTU) {
@@ -687,33 +704,6 @@ namespace SocketJack.Net {
         #endregion
 
         /// <summary>
-        /// Set metadata for the connection.
-        /// <para>WARNING: This information will be sent to all connected clients.</para>
-        /// <para>Set the `Private` <see langword="bool"/> parameter to <see langword="true"/> to retain private metadata only on server.</para>
-        /// <paramref name="key">Metadata Key.</paramref>
-        /// <paramref name="value">Metadata Value.</paramref>
-        /// <paramref name="Private"><see langword="true"/> to keep the metadata only on server; <see langword="false"/> shares with all peers.</paramref>
-        /// <paramref name="Restricted"><see langword="true"/> to restrict the client from updating the metadata value.</paramref>
-        /// </summary>
-        public void SetMetaData(string key, string value, bool Private = false, bool Restricted = false) {
-            if (Parent == null) return;
-            if (string.IsNullOrEmpty(key)) return;
-            if (Parent is TcpServer server) {
-                if (Restricted && !server.RestrictedMetadataKeys.Contains(key.ToLower())) 
-                    server.RestrictedMetadataKeys.Add(key);
-                Identity.SetMetaData(server, key, value, Private);
-            } else if (Parent is WebSocketServer wsServer) {
-                if (Restricted && !wsServer.RestrictedMetadataKeys.Contains(key.ToLower())) 
-                    wsServer.RestrictedMetadataKeys.Add(key);
-                Identity.SetMetaData(wsServer, key, value, Private);
-            } else if (Parent is TcpClient client) {
-                client.Send(new MetadataKeyValue() { Key = key, Value = value });
-            } else if (Parent is WebSocketClient wsClient) {
-                wsClient.Send(new MetadataKeyValue() { Key = key, Value = value });
-            }
-        }
-
-        /// <summary>
         /// Set metadata for the connection serialized with Json.
         /// <para>WARNING: This information will be sent to all connected clients.</para>
         /// <para>Set the `Private` <see langword="bool"/> parameter to <see langword="true"/> to retain private metadata only on server.</para>
@@ -721,14 +711,50 @@ namespace SocketJack.Net {
         /// <paramref name="value">Metadata Value.</paramref>
         /// <paramref name="Private"><see langword="true"/> to keep the metadata only on server; <see langword="false"/> shares with all peers.</paramref>
         /// <paramref name="Restricted"><see langword="true"/> to restrict the client from updating the metadata value.</paramref>
-        /// </summary>
-        public void SetMetaData<T>(string key, T value, bool Private = false, bool Restricted = false) {
-            if (Parent != null && Parent is TcpServer server) {
-                string jsonValue = System.Text.Json.JsonSerializer.Serialize(value);
-                SetMetaData(key, jsonValue, Private, Restricted);
+        public void SetMetaData(string key, string value, bool Private = false, bool Restricted = false) {
+            if (Parent == null) return;
+            if (string.IsNullOrEmpty(key)) return;
+            if (Parent is TcpServer server) {
+                if (Restricted && !server.RestrictedMetadataKeys.Contains(key.ToLower()))
+                    server.RestrictedMetadataKeys.Add(key.ToLower());
+                if (!Parent.Peers.ContainsKey(Identity.ID)) {
+                    Parent.Peers.AddOrUpdate(Identity.RemoteReady(Parent));
+                }
+                Parent.Peers[Identity.ID].SetMetaData(server, key.ToLower(), value, Private);
+                //Identity.SetMetaData(server, key.ToLower(), value, Private);
+            } else if (Parent.GetType().Name == "WebSocketServer") {
+                // Use reflection to locate the assembly, type, and members
+                var wsServerType = Parent.GetType();
+                var wsServerAssembly = wsServerType.Assembly;
+                var restrictedKeysProp = wsServerType.GetProperty("RestrictedMetadataKeys");
+                
+                if (restrictedKeysProp != null) {
+                    var restrictedKeys = restrictedKeysProp.GetValue(Parent) as List<string>;
+                    if (restrictedKeys != null && Restricted) {
+                        var containsMethod = restrictedKeys.GetType().GetMethod("Contains");
+                        var addMethod = restrictedKeys.GetType().GetMethod("Add");
+                        bool contains = false;
+                        if (containsMethod != null)
+                            contains = (bool)containsMethod.Invoke(restrictedKeys, new object[] { key.ToLower() });
+                        if (!contains && addMethod != null)
+                            addMethod.Invoke(restrictedKeys, new object[] { key.ToLower() });
+                    }
+                }
+                if(!Parent.Peers.ContainsKey(Identity.ID)) {
+                    Parent.Peers.AddOrUpdate(Identity.RemoteReady(Parent));
+                }
+                Parent.Peers[Identity.ID].SetMetaData(Parent, key.ToLower(), value, Private);
+                //Identity.SetMetaData(Parent, key.ToLower(), value, Private);
             } else if (Parent is TcpClient client) {
-                string jsonValue = System.Text.Json.JsonSerializer.Serialize(value);
-                client.Send(new MetadataKeyValue() { Key = key, Value = jsonValue });
+                client.Send(new MetadataKeyValue() { Key = key.ToLower(), Value = value });
+            } else if (Parent.GetType().Name == "WebSocketClient") {
+                // Use reflection to resolve and invoke Send on Parent
+                var sendMethod = Parent.GetType().GetMethod("Send", new[] { typeof(object) });
+                if (sendMethod != null) {
+                    sendMethod.Invoke(Parent, new object[] { new MetadataKeyValue() { Key = key.ToLower(), Value = value } });
+                } else {
+                    Parent.InvokeOnError(this, new MissingMethodException("Send method not found on WebSocketClient."));
+                }
             }
         }
 
@@ -738,20 +764,9 @@ namespace SocketJack.Net {
         /// <paramref name="key">Metadata Key.</paramref>
         /// <returns>Value as string.</returns>
         /// </summary>
-        public string GetMetaData(string key, bool Private = false) {
+        public async Task<string> GetMetaData(string key, bool Private = false, bool WaitForValueIfNull = true) {
             if (Identity == null) return default;
-            return Identity.GetMetaData(key, Private);
-        }
-
-        /// <summary>
-        /// Get metadata value by key for the connection and deserialize it using Json.
-        /// </summary>
-        /// <typeparam name="T">The type to deserialize to.</typeparam>
-        /// <param name="key"></param>
-        /// <returns>Value as T.</returns>
-        public T GetMetaData<T>(string key, bool Private = false) {
-            if (Identity == null) return default;
-            return Identity.GetMetaData<T>(key, Private);
+            return await Identity.GetMetaData(key, Private, WaitForValueIfNull);
         }
 
         public TcpConnection(ISocket Parent, Socket Socket) {
@@ -762,8 +777,10 @@ namespace SocketJack.Net {
             } else {
                 IsServer = true;
             }
-             _Socket = Socket;
-            EndPoint = (IPEndPoint)Socket.RemoteEndPoint;
+            if(Socket != null) {
+                _Socket = Socket;
+                EndPoint = (IPEndPoint)Socket.RemoteEndPoint;
+            }
         }
 
         public void Send(object Obj) {
@@ -789,7 +806,7 @@ namespace SocketJack.Net {
                                                                           "     ConnectedSocket.Identifier property cannot equal null." + Environment.NewLine +
                                                                           "     Invoke via TcpClient.OnIdentified Event instead of TcpClient.OnConnected."));
                     } else {
-                        Client.Send(Client.Connection, Obj);
+                        Client.Send(Recipient, Obj);
                     }
                 }
             }

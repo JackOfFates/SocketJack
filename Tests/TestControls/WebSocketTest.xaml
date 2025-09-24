@@ -48,12 +48,13 @@
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF656EFF" Pattern="^\[[^\]]*(?:S|s)erver[^\]]*\]"/>
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FFFFBF8A" Pattern="^\[[^\]]*(?:C|c)lient[^\]]*\]"/>
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF7DC1FF" Pattern="[\{\(]?[a-fA-F0-9]{8}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{12}[\}\)]?"/>
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF3BFFBC" Pattern="&lt;([^&gt;]*)&gt;"/>
                     </SyntaxBox:SyntaxConfig>
                 </SyntaxBox:SyntaxBox.SyntaxDrivers>
             </TextBox>
             <WebBrowser x:Name="wb1" Grid.Row="1" Grid.ColumnSpan="2"/>
         </Grid>
-        <Button x:Name="ButtonAddClient" Content="Add Test Client" Height="56" Margin="141,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126"/>
+        <Button x:Name="ButtonAddClient" Content="Add Test Client" Height="56" Margin="141,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126" IsEnabled="False"/>
         <Button x:Name="ButtonDcLast" Content="D/C Last Test Client" Height="56" Margin="272,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126" IsEnabled="False"/>
         <Button x:Name="ButtonDcAll" Content="D/C All Test Clients" Height="56" Margin="403,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126" IsEnabled="False"/>
 

@@ -1,8 +1,9 @@
-﻿using System;
-using SocketJack.Compression;
+﻿using SocketJack.Compression;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using SocketJack.Serialization.Json;
+using System;
+using System.Net.Sockets;
 
 namespace SocketJack.Net {
 
@@ -54,7 +55,7 @@ namespace SocketJack.Net {
         /// Log to Debug Output Window.
         /// </summary>
         /// <returns></returns>
-        public bool LogToOutput { get; set; } = false;
+        public bool LogToConsole { get; set; } = false;
 
         /// <summary>
         /// <para>Turns on or off Peer to Peer functionality.</para>
@@ -223,6 +224,6 @@ namespace SocketJack.Net {
         /// <summary>
         /// Types that are not allowed to be deserialized.
         /// </summary>
-        public TypeList Blacklist { get; internal set; } = new TypeList(new[] { typeof(object) } );
+        public TypeList Blacklist { get; internal set; } = new TypeList(new[] { typeof(object), typeof(Socket), typeof(TcpConnection) } );
     }
 }

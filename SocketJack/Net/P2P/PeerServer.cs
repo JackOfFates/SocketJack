@@ -2,6 +2,9 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using SocketJack.Extensions;
+#if !UNITY_WEBGL
+using SocketJack.Net.WebSockets;
+#endif
 using SocketJack.Serialization;
 
 namespace SocketJack.Net.P2P {
@@ -46,29 +49,33 @@ namespace SocketJack.Net.P2P {
         /// <param name="AutoReconnect">Reconnect automatically.</param>
         /// <returns>New TcpClient or WebSocketClient if successful; <see langword="Nothing"/> if connection failed.</returns>
         public async Task<ISocket> Accept(TcpOptions Options, string Name = "TcpClient", bool AutoReconnect = false) {
-            return await Task.Run<ISocket>(async () => {
-                if (LocalClient.Parent == null) return null;
-                if (Options.Logging)
-                    LocalClient.Parent.LogFormatAsync(@"[{0}\{1}] Accepting {2} P2P Connection.", new[] { LocalClient.Parent.Name, LocalClient.ID.ToUpper(), RemotePeer.ID.ToUpper() });
-                if (LocalClient.Parent.Connection.IsWebSocket) {
-                    var newClient = new WebSocketClient(Options, Name) { PeerToPeerInstance = true };
-                    if (await newClient.ConnectAsync(new Uri("ws://" + Host + ":" + (int)Port))) {
-                        LocalClient.Parent.P2P_Clients.AddOrUpdate(LocalClient.ID, newClient.Connection);
-                        return newClient;
-                    } else {
-                        return null;
-                    }
-                } else {
-                    var newClient = new TcpClient(Options, Name) { PeerToPeerInstance = true };
-                    if (await newClient.Connect(Host, (int)Port)) {
-                        LocalClient.Parent.P2P_Clients.AddOrUpdate(LocalClient.ID, newClient.Connection);
-                        return newClient;
-                    } else {
-                        return null;
+#if !UNITY_WEBGL
+                        return await Task.Run<ISocket>(async () => {
+                            if (LocalClient.Parent == null) return null;
+                            if (Options.Logging)
+                                LocalClient.Parent.LogFormatAsync(@"[{0}\{1}] Accepting {2} P2P Connection.", new[] { LocalClient.Parent.Name, LocalClient.ID.ToUpper(), RemotePeer.ID.ToUpper() });
+                            if (LocalClient.Parent.Connection.IsWebSocket) {
+                                var newClient = new WebSocketClient(Options, Name) { PeerToPeerInstance = true };
+                                if (await newClient.ConnectAsync(new Uri("ws://" + Host + ":" + (int)Port))) {
+                                    LocalClient.Parent.P2P_Clients.AddOrUpdate(LocalClient.ID, newClient.Connection);
+                                    return newClient;
+                                } else {
+                                    return null;
+                                }
+                            } else {
+                                var newClient = new TcpClient(Options, Name) { PeerToPeerInstance = true };
+                                if (await newClient.Connect(Host, (int)Port)) {
+                                    LocalClient.Parent.P2P_Clients.AddOrUpdate(LocalClient.ID, newClient.Connection);
+                                    return newClient;
+                                } else {
+                                    return null;
 
-                    }
-                }
-            });
+                                }
+                            }
+                        });
+#else
+            throw new NotImplementedException();
+#endif
         }
 
         /// <summary>

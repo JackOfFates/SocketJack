@@ -130,7 +130,7 @@ namespace SocketJack {
                         }
                     }
                     for (int i = AddVars.Count - 1; i >= 0; i -= 1) {
-                        string @var = i == 0 && !hasVars ? AddVars[i] : AddVars[i] + ",";
+                        string @var = AddVars[i] + ","; //i == 0 && !hasVars ?  : AddVars[i] + ",";
                         newConfig = newConfig.Insert(newConfig.IndexOf(ConfigPropertiesHeader) + ConfigPropertiesHeader.Length + 1, @var + Environment.NewLine);
                     }
                 } else if (newConfig.Contains(AfterIndex1, StringComparison.CurrentCultureIgnoreCase)) {

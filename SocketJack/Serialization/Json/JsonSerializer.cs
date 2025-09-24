@@ -1,16 +1,31 @@
-﻿using SocketJack.Serialization.Json.Converters;
+﻿using SocketJack.Net;
+using SocketJack.Net.P2P;
+using SocketJack.Serialization.Json.Converters;
 using System;
+using System.Collections.Generic;
+using System.Drawing;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SocketJack.Serialization.Json {
     public class JsonSerializer : ISerializer {
 
         public JsonSerializer() {
             JsonOptions.Converters.Add(new TypeConverter());
+#if NET6_0_OR_GREATER
+            JsonOptions.Converters.Add(new BitmapConverter());
+#endif
         }
 
         public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions() { DefaultBufferSize = 1048576 };
+        public bool HasConverter(Type type) {
+            foreach (var converter in JsonOptions.Converters) {
+                if (converter.CanConvert(type))
+                    return true;
+            }
+            return false;
+        }
 
         public byte[] Serialize(object Obj) {
             string Json = System.Text.Json.JsonSerializer.Serialize(Obj, JsonOptions);
@@ -19,7 +34,28 @@ namespace SocketJack.Serialization.Json {
 
         public Wrapper Deserialize(byte[] bytes) {
             try {
-                return (Wrapper)System.Text.Json.JsonSerializer.Deserialize(Encoding.UTF8.GetString(bytes), typeof(Wrapper), JsonOptions);
+                string json = Encoding.UTF8.GetString(bytes);
+                return (Wrapper)System.Text.Json.JsonSerializer.Deserialize(json, typeof(Wrapper), JsonOptions);
+            } catch (Exception) {
+                return null;
+            }
+        }
+
+        public PeerRedirect DeserializeRedirect(ISocket Target, byte[] bytes) {
+            string json = Encoding.UTF8.GetString(bytes);
+            try {
+                PeerRedirect redirect = (PeerRedirect)System.Text.Json.JsonSerializer.Deserialize(json, typeof(PeerRedirect), JsonOptions);
+                Type T = Type.GetType(redirect.Type);
+                if (Target.Options.Serializer.GetType() == typeof(JsonSerializer)) {
+                    JsonSerializer serializer = (JsonSerializer)Target.Options.Serializer;
+                    if(serializer.HasConverter(T)) {
+                        object obj = serializer.GetValue(redirect.value, T, true);
+                        if(obj.GetType() == typeof(string)) 
+                            redirect.value = System.Text.Json.JsonSerializer.Deserialize((JsonElement)redirect.value, T, JsonOptions);
+                        return redirect;
+                    } else { redirect.value = ((Wrapper)System.Text.Json.JsonSerializer.Deserialize(redirect.value.ToString(), typeof(Wrapper), JsonOptions)).Unwrap(Target); }
+                } else { redirect.value = ((Wrapper)System.Text.Json.JsonSerializer.Deserialize(redirect.value.ToString(), typeof(Wrapper), JsonOptions)).Unwrap(Target); }
+                return redirect;
             } catch (Exception) {
                 return null;
             }
@@ -30,7 +66,8 @@ namespace SocketJack.Serialization.Json {
                 return null;
             JsonElement jsonElement = (JsonElement)e.Value;
             if (jsonElement.TryGetProperty(e.Name, out jsonElement)) {
-                return GetValue(jsonElement, e.Reference.Info.PropertyType, true);
+                var v = GetValue(jsonElement, e.Reference.Info.PropertyType, true);
+                return v;
             }
 
             return default;
@@ -70,10 +107,21 @@ namespace SocketJack.Serialization.Json {
                         return jsonElement.GetBoolean();
                     }
                 case JsonValueKind.Object: {
-                        object obj = System.Text.Json.JsonSerializer.Deserialize(jsonElement.GetRawText(), typeof(Wrapper), JsonOptions);
+                        string jsonTxt = jsonElement.GetRawText();
+                        object obj = System.Text.Json.JsonSerializer.Deserialize(jsonTxt, typeof(Wrapper), JsonOptions);
                         Type objType = obj.GetType();
                         if (((Wrapper)obj).Type == null) {
-                            return System.Text.Json.JsonSerializer.Deserialize(jsonElement.GetRawText(), T, JsonOptions);
+#if !NETSTANDARD1_6_OR_GREATER
+                            return System.Text.Json.JsonSerializer.Deserialize(jsonTxt, T, JsonOptions);
+                            //foreach (var converterType in ConverterElementTypes) {
+                            //    if (converterType == T) {
+
+                            //    }
+                            //}
+                            //return System.Text.Json.JsonSerializer.Deserialize(jsonTxt, T, JsonOptions);
+#else
+                            return System.Text.Json.JsonSerializer.Deserialize(jsonTxt, T, JsonOptions);
+#endif
                         } else {
                             return obj;
                         }

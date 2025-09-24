@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>SocketJack.WebSocketServer</name>
+    </assembly>
+    <members>
+        <member name="P:SocketJack.Net.WebSockets.WebSocketServer.SslCertificate">
+            <summary>
+            Server certificate for SSL connections.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.WebSockets.WebSocketServer.PeerConnected">
+            <summary>
+            Fired when a user connects to the server.
+            /// </summary>
+            <param name="sender"></param>
+            <param name="Peer"></param>
+        </member>
+        <member name="E:SocketJack.Net.WebSockets.WebSocketServer.PeerDisconnected">
+            <summary>
+            Fired when a user disconnects from the server.
+            /// </summary>
+            <param name="sender"></param>
+            <param name="Peer"></param>
+        </member>
+        <member name="F:SocketJack.Net.WebSockets.WebSocketServer.RestrictedMetadataKeys">
+            <summary>
+            Stop the client from updating metadata keys that are restricted, such as `Username`.
+            <para>Not case sensitive.</para>
+            </summary>
+        </member>
+    </members>
+</doc>

@@ -17,21 +17,30 @@ namespace SocketJack.Net {
         /// </summary>
         /// <returns></returns>
         public bool CancelPeerRedirect { get; set; }
+        public bool IsPeerRedirect { get; set; }
         public ISocket sender { get; set; }
         public TcpConnection Connection { get; set; }
         public Type Type { get; set; }
         public int BytesReceived { get; set; }
         public object Obj { get; set; }
 
-        protected internal void Initialize(ISocket sender, TcpConnection Client, object obj, int BytesReceived, string From = null) {
+        public void Initialize(ISocket sender, TcpConnection Client, object obj, int BytesReceived, string From = null) {
             this.sender = sender;
             this.Connection = Client;
-            this.Obj = obj;
-            this.BytesReceived = BytesReceived;
             this.Type = obj.GetType();
+            IsPeerRedirect = Type == typeof(PeerRedirect);
+            if(IsPeerRedirect) {
+                var redirect = (PeerRedirect)obj;
+                this.Obj = redirect.value;
+                this.Type = redirect.value.GetType();
+            } else {
+                this.Obj = obj;
+            }
+
+            this.BytesReceived = BytesReceived;
+
             if (From != null)
                 this.From = Connection.Parent.Peers[From];
-
         }
 
         protected internal IReceivedEventArgs WithIdentity(string From) {
@@ -54,6 +63,7 @@ namespace SocketJack.Net {
         /// </summary>
         /// <returns></returns>
         public bool CancelPeerRedirect { get; set; }
+        public bool IsPeerRedirect { get; set; }
 
         public ISocket sender { get; set; }
         public TcpConnection Connection { get; set; }
@@ -71,8 +81,18 @@ namespace SocketJack.Net {
             this.sender = sender;
             this.Connection = Connection;
             this.Object = (T)obj;
+
+            this.Type = obj.GetType();
+            IsPeerRedirect = Type == typeof(PeerRedirect);
+            if (IsPeerRedirect) {
+                var redirect = (PeerRedirect)obj;
+                this.Object = (T)redirect.value;
+                this.Type = redirect.value.GetType();
+            } else {
+                this.Object = (T)obj;
+            }
+
             this.BytesReceived = BytesReceived;
-            this.Type = Object.GetType();
             if (From != null)
                 this.From = Connection.Parent.Peers[From];
         }
@@ -85,14 +105,16 @@ namespace SocketJack.Net {
     }
 
     public class SentEventArgs {
-        public SentEventArgs(ISocket sender, TcpConnection Connection, int BytesSent) {
+        public SentEventArgs(ISocket sender, TcpConnection Connection, Type Type, int BytesSent) {
             this.sender = sender;
             this.Connection = Connection;
             this.BytesSent = BytesSent;
+            this.Type = Type;
         }
         public ISocket sender { get; private set; }
         public TcpConnection Connection { get; private set; }
         public int BytesSent { get; private set; }
+        public Type Type { get; private set; }
     }
 
     public class DisconnectedEventArgs {

@@ -18,6 +18,13 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NSpeex", "NSpeex\NSpeex.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebSocketTestApplication", "WebSocketTestApplication\WebSocketTestApplication.csproj", "{CE30FC4D-463C-4917-BFCB-0DDA7794A66C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.Unity", "SocketJack.Unity\SocketJack.Unity.csproj", "{F16DE517-F8C5-FABA-EBED-4583C874861F}"
+	ProjectSection(ProjectDependencies) = postProject
+		{A9488B32-E02A-D73C-446B-780E35191A15} = {A9488B32-E02A-D73C-446B-780E35191A15}
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.WebSocketServer", "SocketJack.WebSocketServer\SocketJack.WebSocketServer.csproj", "{56640E53-A10E-8B85-CBA3-7B8306916B98}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -44,6 +51,14 @@ Global
 		{CE30FC4D-463C-4917-BFCB-0DDA7794A66C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CE30FC4D-463C-4917-BFCB-0DDA7794A66C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CE30FC4D-463C-4917-BFCB-0DDA7794A66C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F16DE517-F8C5-FABA-EBED-4583C874861F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F16DE517-F8C5-FABA-EBED-4583C874861F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F16DE517-F8C5-FABA-EBED-4583C874861F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F16DE517-F8C5-FABA-EBED-4583C874861F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{56640E53-A10E-8B85-CBA3-7B8306916B98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{56640E53-A10E-8B85-CBA3-7B8306916B98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{56640E53-A10E-8B85-CBA3-7B8306916B98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{56640E53-A10E-8B85-CBA3-7B8306916B98}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -5,6 +5,7 @@ Imports SocketJack
 Imports SocketJack.Extensions
 Imports SocketJack.Net
 Imports SocketJack.Net.P2P
+Imports SocketJack.Net.WebSockets
 
 
 Public Class WebSocketTest
@@ -12,25 +13,7 @@ Public Class WebSocketTest
 
     Private ServerPort As Integer = 8096
 
-
-#Region "Server"
-
-    Public WithEvents Server As WebSocketServer
-    Public Sub InitServer()
-        Server = New WebSocketServer(ServerPort, "Server")
-        With Server.Options
-            .Logging = True
-            .LogReceiveEvents = True
-            .UseCompression = True
-            .CompressionAlgorithm.CompressionLevel = IO.Compression.CompressionLevel.SmallestSize
-        End With
-        Server.RegisterCallback(Of TextObject)(AddressOf LogServer_ReceivedTextObject)
-    End Sub
-#End Region
-    Private Sub RunTask(T As Action)
-        Task.Run(T).ConfigureAwait(False)
-    End Sub
-
+#Region "Test"
     Public Sub New()
 
         ' This call is required by the designer.
@@ -39,8 +22,6 @@ Public Class WebSocketTest
         ' Add any initialization after the InitializeComponent() call.
         InitServer()
     End Sub
-
-#Region "UI"
 
     Public ReadOnly Property TestName As String Implements ITest.TestName
         Get
@@ -68,19 +49,46 @@ Public Class WebSocketTest
         End Set
     End Property
     Private _Running As Boolean
+#End Region
 
-    Private Sub LogServer_ReceivedTextObject(e As ReceivedEventArgs(Of TextObject))
-        Log("[" & e.sender.Name & "] " & e.sender.Connection.GetMetaData("Username") & ": " & e.Object.Text)
+#Region "Server"
+
+    Public WithEvents Server As WebSocketServer
+    Public Sub InitServer()
+        Server = New WebSocketServer(ServerPort, "Server")
+        With Server.Options
+            .Logging = True
+            .LogReceiveEvents = True
+            .UseCompression = True
+            .CompressionAlgorithm.CompressionLevel = IO.Compression.CompressionLevel.SmallestSize
+        End With
+        Server.RegisterCallback(Of WelcomeMessage)(AddressOf Server_ReceivedTextObject)
     End Sub
-    Private Sub LogClient_ReceivedTextObject(e As ReceivedEventArgs(Of TextObject))
-        Log("[" & e.sender.Name & "] " & e.From.Metadata("Username") & ": " & e.Object.Text)
+#End Region
+
+    Private Sub RunTask(T As Action)
+        Task.Run(T).ConfigureAwait(False)
     End Sub
+
+    Private Function RunTaskAsync(T As Action) As Task
+        Return Task.Run(T)
+    End Function
+
+
+#Region "UI"
+    Private Sub Server_ReceivedTextObject(e As ReceivedEventArgs(Of WelcomeMessage))
+    End Sub
+    Private Async Sub Client_ReceivedWelcomeMessage(e As ReceivedEventArgs(Of WelcomeMessage))
+        Log(String.Format("[{0}] '{1}' from {2}", {e.Connection.Parent.Name, e.Object.Text, Await e.From.GetMetaData("Username")}))
+    End Sub
+
     Private Sub ITest_StartTest() Implements ITest.StartTest
         If Not Running Then
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
             ButtonStartStop.Content = "Starting.."
             If Server.Listen() Then
+                ButtonAddClient.IsEnabled = True
                 Running = True
                 ButtonStartStop.IsEnabled = True
                 ButtonStartStop.Content = "Stop Test"
@@ -95,6 +103,7 @@ Public Class WebSocketTest
 
     Private Sub ITest_StopTest() Implements ITest.StopTest
         If Running Then
+            clientCount = 1
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
             ButtonStartStop.Content = "Stopping.."
@@ -122,7 +131,6 @@ Public Class WebSocketTest
     End Sub
 
     Private clientCount As Integer = 1
-    Private clients As New ConcurrentDictionary(Of Guid, TcpConnection)
     Private Sub ButtonAddClient_Click(sender As Object, e As RoutedEventArgs) Handles ButtonAddClient.Click
         RunTask(
             Async Sub()
@@ -132,39 +140,45 @@ Public Class WebSocketTest
                     .Options.LogReceiveEvents = Server.Options.LogReceiveEvents
                     .Options.UseCompression = Server.Options.UseCompression
                     .Options.CompressionAlgorithm = Server.Options.CompressionAlgorithm
-                    .RegisterCallback(Of TextObject)(AddressOf LogClient_ReceivedTextObject)
+                    .RegisterCallback(Of WelcomeMessage)(AddressOf Client_ReceivedWelcomeMessage)
                 End With
                 AddHandler newClient.LogOutput, AddressOf Log
                 clientCount += 1
+                AddHandler newClient.OnIdentified, AddressOf newClient_Identified
+                AddHandler newClient.PeerConnected, AddressOf newClient_PeerConnected
                 Await newClient.ConnectAsync(New Uri("ws://localhost:" & ServerPort))
-                RunTask(Async Sub()
-                            Await Task.Delay(500)
-                            newClient.SendPeerBroadcast(New TextObject() With {.Text = "TEST"})
-                        End Sub)
             End Sub)
     End Sub
 
-    Private Sub ButtonDcLast_Click(sender As Object, e As RoutedEventArgs) Handles ButtonDcLast.Click
-        If clients.Count > 0 Then
-            Dim lastClient As TcpConnection = clients.Last().Value
-            lastClient.CloseConnection()
-            clients.Remove(lastClient.ID)
+    Private Sub newClient_PeerConnected(sender As ISocket, Peer As Identifier)
+        If Peer.Action <> PeerAction.LocalIdentity Then
+            sender.Send(Peer, New WelcomeMessage() With {.Text = "TEST"})
         End If
-        If clients.Count = 0 Then
+    End Sub
+
+    Private Sub newClient_Identified(sender As ISocket, Peer As Identifier)
+        'sender.SendBroadcast(New WelcomeMessage() With {.Text = "TEST"})
+    End Sub
+
+    Private Sub ButtonDcLast_Click(sender As Object, e As RoutedEventArgs) Handles ButtonDcLast.Click
+        If Server.Clients.Count > 0 Then
+            Dim lastClient As TcpConnection = Server.Clients.Last().Value
+            lastClient.CloseConnection()
+        End If
+        If Server.Clients.Count = 0 Then
             ButtonDcLast.IsEnabled = False
             ButtonDcAll.IsEnabled = False
         End If
     End Sub
 
     Private Sub ButtonDcAll_Click(sender As Object, e As RoutedEventArgs) Handles ButtonDcAll.Click
-        If clients.Count > 0 Then
-            Dim clientArray As TcpConnection() = clients.Values.ToArray()
+        If Server.Clients.Count > 0 Then
+            Dim clientArray As TcpConnection() = Server.Clients.Values.ToArray()
             For Each client In clientArray
                 client.CloseConnection()
-                clients.Remove(client.ID)
             Next
         End If
-        If clients.Count = 0 Then
+        If Server.Clients.Count = 0 Then
             Dispatcher.Invoke(
                 Sub()
                     ButtonDcLast.IsEnabled = False
@@ -174,9 +188,8 @@ Public Class WebSocketTest
     End Sub
 
     Private Sub Server_ClientConnected(e As ConnectedEventArgs) Handles Server.ClientConnected
-        clients.Add(e.Connection.ID, e.Connection)
         e.Connection.SetMetaData("Username", "Client" & clientCount - 1)
-        If clients.Count > 0 Then
+        If Server.Clients.Count > 0 Then
             Dispatcher.Invoke(
             Sub()
                 ButtonDcLast.IsEnabled = True
@@ -186,8 +199,7 @@ Public Class WebSocketTest
     End Sub
 
     Private Sub Server_ClientDisconnected(e As DisconnectedEventArgs) Handles Server.ClientDisconnected
-        clients.Remove(e.Connection.ID)
-        If clients.Count = 0 Then
+        If Server.Clients.Count = 0 Then
             Dispatcher.Invoke(
                 Sub()
                     ButtonDcLast.IsEnabled = False
@@ -196,11 +208,17 @@ Public Class WebSocketTest
         End If
     End Sub
 
+    Private Sub Server_OnStoppedListening() Handles Server.OnStoppedListening
+        ButtonAddClient.IsEnabled = False
+        ButtonDcAll.IsEnabled = False
+        ButtonDcLast.IsEnabled = False
+    End Sub
+
 
 #End Region
 
 End Class
 
-Public Class TextObject
+Public Class WelcomeMessage
     Public Property Text As String = "test"
 End Class

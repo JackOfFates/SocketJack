@@ -1,14 +1,15 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
-using System.Threading;
-using System.Threading.Tasks;
-using Mono.Nat;
+﻿using Mono.Nat;
 using SocketJack.Extensions;
 using SocketJack.Net.P2P;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net;
 using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SocketJack.Net {
 
@@ -126,7 +127,7 @@ namespace SocketJack.Net {
             }
         }
 
-        private void C_PeerServerShutdown(object sender, PeerServer Server) {
+        private void C_PeerServerShutdown(ISocket sender, PeerServer Server) {
             if (P2P_Clients.ContainsKey(Server.LocalClient.ID)) {
                 LogFormat("[{0}] Shutdown Server -> {1}:{2}", new[] { string.Format(@"{0}\P2P\{1}", new[] { Name, Server.LocalClient.ID }), Server.Host, Server.Port.ToString() });
                 P2P_Clients[Server.LocalClient.ID].Dispose();
@@ -137,7 +138,7 @@ namespace SocketJack.Net {
 
         protected internal bool isPeerUpdateSubscribed = false;
 
-        private void TcpClient_PeerUpdate(object sender, Identifier Peer) {
+        private void TcpClient_PeerUpdate(ISocket sender, Identifier Peer) {
             switch (Peer.Action) {
                 case PeerAction.MetadataUpdate: {
                         Peers.UpdateMetaData(Peer);
@@ -170,11 +171,11 @@ namespace SocketJack.Net {
             }
         }
 
-        private void TcpClient_InternalPeerConnectionRequest(object sender, ref PeerServer Server) {
+        private void TcpClient_InternalPeerConnectionRequest(ISocket sender, ref PeerServer Server) {
             Server.LocalClient = Server.LocalClient.WithParent(this);
         }
 
-        private void TcpClient_PeerConnectionRequest(object sender, PeerServer Server) {
+        private void TcpClient_PeerConnectionRequest(ISocket sender, PeerServer Server) {
             if (Options.Logging) {
                 LogFormat(@"[{0}\{1}] Requested Connection -> {2}:{3}", new[] { Name, Server.LocalClient.ID.ToUpper(), Server.Host, Server.Port.ToString() });
             }
@@ -197,6 +198,13 @@ namespace SocketJack.Net {
             }
         }
         private string _Name = "TcpClient";
+
+        public override Socket Socket { get { return _Socket; } set { } }
+        private Socket _Socket = null;
+        public override Stream Stream { get { return _Stream; } set { } }
+        private Stream _Stream = null;
+        public override IPEndPoint EndPoint { get { return (IPEndPoint)Socket?.RemoteEndPoint; } set { } }
+        
 
         public override bool Connected {
             get {
@@ -258,12 +266,12 @@ namespace SocketJack.Net {
         private async Task<bool> DoConnect(EndPoint EndPoint, string Host, int Port) {
             _CurrentHost = Host;
             LogFormat("[{0}] Connecting -> {1}:{2}...", new[] { Name, Host, Port.ToString() });
-            Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            Socket.NoDelay = true;
-            Socket.ReceiveBufferSize = int.MaxValue;
-            Socket.SendBufferSize = int.MaxValue;
-            Socket.ReceiveTimeout = -1;
-            Socket.SendTimeout = -1;
+            _Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            _Socket.NoDelay = true;
+            _Socket.ReceiveBufferSize = int.MaxValue;
+            _Socket.SendBufferSize = int.MaxValue;
+            _Socket.ReceiveTimeout = -1;
+            _Socket.SendTimeout = -1;
 
             Connection = new TcpConnection(this, Socket);
             
@@ -272,6 +280,7 @@ namespace SocketJack.Net {
                 if (await ConnectAsync(Socket, EndPoint, Options.ConnectionTimeout)) {
                     _Connected = true;
                     Connection._Stream = new NetworkStream(Connection.Socket);
+                    _Stream = Connection._Stream;
                     if (Options.UseSsl)
                         Connection.InitializeSslStream(SslTargetHost);
                     StartReceiving();
@@ -317,7 +326,6 @@ namespace SocketJack.Net {
                     return IPv4Addresses.ToArray();
                 }
             }
-
         }
 
         #endregion
@@ -344,7 +352,7 @@ namespace SocketJack.Net {
         /// <param name="Host"></param>
         /// <param name="Port"></param>
         public event ConnectionFailedEventHandler ConnectionFailed;
-        public delegate void ConnectionFailedEventHandler(object sender, string Host, int Port);
+        public delegate void ConnectionFailedEventHandler(ISocket sender, string Host, int Port);
 
         /// <summary>
         /// Fired when a user's metadata changes.
@@ -352,19 +360,54 @@ namespace SocketJack.Net {
         /// <param name="sender"></param>
         /// <param name="Peer"></param>
         public event PeerConnectedEventHandler PeerMetaDataChanged;
-        public delegate void PeerMetaDataChangedEventHandler(object sender, Identifier Peer);
+        public delegate void PeerMetaDataChangedEventHandler(ISocket sender, Identifier Peer);
 
         /// <summary>
         /// Fired when the local client is identified.
         /// </summary>
         public event OnIdentifiedEventHandler OnIdentified;
-        public delegate void OnIdentifiedEventHandler(ref Identifier LocalIdentity);
+        public delegate void OnIdentifiedEventHandler(ISocket sender, Identifier LocalIdentity);
 
-        protected internal void InvokeOnIdentified(ref Identifier Identity) {
-            OnIdentified?.Invoke(ref Identity);
+        public override void InvokeOnDisconnected(ISocket sender, TcpConnection Connection) {
+            
+#if UNITY
+            MainThread.Run(() => {
+                OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
+            });
+#else
+        OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
+#endif
+        }
+
+        public override void InvokeOnConnected(ISocket sender, TcpConnection Connection) {
+            
+#if UNITY
+            MainThread.Run(() => {
+                OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
+            });
+#else
+            OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
+#endif
+        }
+        protected internal void InvokeOnIdentified(ISocket sender, Identifier Identity) {
+
+#if UNITY
+            MainThread.Run(() => {
+                OnIdentified?.Invoke(sender, Identity);
+            });
+#else
+            OnIdentified?.Invoke(sender, Identity);
+#endif
         }
         protected internal void InvokeOnDisconnected(DisconnectedEventArgs e) {
+#if UNITY
+            MainThread.Run(() => {
+                OnDisconnected?.Invoke(e);
+            });
+#else
             OnDisconnected?.Invoke(e);
+#endif
+
         }
         private void TcpClient_InternalPeerRedirect(string Recipient, string Sender, object Obj, int ReceivedBytes) {
             Type RedirectType = Obj.GetType();
@@ -372,7 +415,8 @@ namespace SocketJack.Net {
 
             var receivedEventArgs = ((IReceivedEventArgs)Activator.CreateInstance(genericType));
             receivedEventArgs.Initialize(this, Connection, Obj, ReceivedBytes, Sender);
-            InvokeOnReceive(receivedEventArgs);
+            //InvokeOnReceive(receivedEventArgs);
+
 
             InvokeAllCallbacks(RedirectType, Obj, receivedEventArgs);
             InvokeOnReceive(new ReceivedEventArgs<object>(this, Connection, Obj, ReceivedBytes, Sender));
@@ -419,7 +463,7 @@ namespace SocketJack.Net {
             }
         }
 
-        #endregion
+#endregion
 
         #region Static Methods
         /// <summary>
@@ -592,13 +636,14 @@ namespace SocketJack.Net {
         /// </summary>
         /// <param name="Recipient"></param>
         /// <param name="Obj"></param>
-        public void Send(Identifier Recipient, object Obj) {
+        public override void Send(Identifier Recipient, object Obj) {
             if (RemoteIdentity is null) {
                 InvokeOnError(Connection, new P2PException("P2P Client not yet initialized." + Environment.NewLine + 
                                                            "    ConnectedSocket.Identifier property cannot equal null." + Environment.NewLine +
                                                            "    Invoke via TcpClient.OnIdentified Event instead of TcpClient.OnConnected."));
             } else {
-                Send(new PeerRedirect(RemoteIdentity.ID, Recipient.ID, Obj));
+                base.Send(Recipient, Obj);
+                //Send(new PeerRedirect(RemoteIdentity.ID, Recipient.ID, Obj));
             }
         }
 

@@ -1,14 +1,17 @@
-﻿using SocketJack.Extensions;
+﻿using SocketJack;
+using SocketJack.Extensions;
+using SocketJack.Net;
 using SocketJack.Net.P2P;
+using SocketJack.Net.WebSockets;
 using SocketJack.Serialization;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Net.WebSockets;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -16,15 +19,14 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
-using static SocketJack.Net.TcpBase;
 
-namespace SocketJack.Net {
+namespace SocketJack.Net.WebSockets {
     public class WebSocketServer : IDisposable, ISocket {
 
         #region Internal
         private readonly int _port;
         private Socket _listenerSocket;
-        private CancellationTokenSource _cts;
+        private CancellationToken _ct;
         private bool _isListening = false;
         public Guid InternalID {
             get {
@@ -38,6 +40,11 @@ namespace SocketJack.Net {
         #endregion
 
         #region Properties
+        public Socket Socket { get { return _Socket; } set { } }
+        private Socket _Socket = null;
+        public Stream Stream { get { return _Stream; } set { } }
+        private Stream _Stream = null;
+        public IPEndPoint EndPoint { get { return (IPEndPoint)Socket?.RemoteEndPoint; } set { } }
         public bool isDisposed { get; internal set; } = false;
         public bool PeerToPeerInstance { get; internal set; }
         /// <summary>
@@ -56,9 +63,10 @@ namespace SocketJack.Net {
 
         private ConcurrentDictionary<Guid, bool> _handshakeCompleted = new ConcurrentDictionary<Guid, bool>();
 
-        private async Task HandleRawSocketClient(TcpConnection connection, Socket clientSocket) {
+        private async Task HandleRawSocketClient(TcpConnection connection) {
             if (connection._Stream == null) {
-                connection._Stream = new NetworkStream(clientSocket, ownsSocket: false);
+                connection._Stream = new NetworkStream(connection.Socket, ownsSocket: false);
+                _Stream = connection._Stream;
             }
             if (Options.UseSsl) {
                 if (SslCertificate == null)
@@ -82,7 +90,7 @@ namespace SocketJack.Net {
             }
             string request = requestBuilder.ToString();
             if (!request.StartsWith("GET") || !request.Contains("Upgrade: websocket", StringComparison.OrdinalIgnoreCase)) {
-                clientSocket.Close();
+                connection.Socket.Close();
                 return;
             }
             string secWebSocketKey = null;
@@ -93,7 +101,7 @@ namespace SocketJack.Net {
                 }
             }
             if (string.IsNullOrEmpty(secWebSocketKey)) {
-                clientSocket.Close();
+                connection.Socket.Close();
                 return;
             }
             string acceptKey = ComputeWebSocketAcceptKey(secWebSocketKey);
@@ -107,7 +115,8 @@ namespace SocketJack.Net {
             await connection.Stream.WriteAsync(responseBytes, 0, responseBytes.Length);
 
             ClientConnected?.Invoke(new ConnectedEventArgs(this, connection));
-            await HandleWebSocketFrames(connection, clientSocket, connection.Stream);
+            InitializePeer(connection);
+            await HandleWebSocketFrames(connection);
         }
 
         private static string ComputeWebSocketAcceptKey(string secWebSocketKey) {
@@ -124,36 +133,53 @@ namespace SocketJack.Net {
             return read == 1 ? buffer[0] : -1;
         }
 
-        private async Task HandleWebSocketFrames(TcpConnection connection, Socket socket, Stream stream) {
+        // Add constants for opcodes
+        private const int TextFrameOpcode = 0x1;
+        private const int BinaryFrameOpcode = 0x2;
+        private const int CloseFrameOpcode = 0x8;
+        private const int BrowserClientOpcode = 0xB; // 0xB is unused in RFC6455
+
+        private async Task HandleWebSocketFrames(TcpConnection connection) {
             var buffer = new byte[Options.DownloadBufferSize];
+
             try {
-                while (socket.Connected) {
-                    int header = await ReadByteAsync(stream);
+                bool exitLoop = false;
+                while (connection.Socket.Connected && !connection.Closed) {
+                    using var cts = new CancellationTokenSource();
+                    var monitorTask = Task.Run(async () => {
+                        while (connection.Socket != null && connection.Socket.Connected && !connection.Closed) {
+                            await Task.Delay(100);
+                        }
+                        cts.Cancel();
+                        CloseConnection(connection, DisconnectionReason.RemoteSocketClosed);
+                    });
+
+                    int header = await ReadByteAsync(connection.Stream, cts.Token);
                     if (header == -1) break;
                     bool fin = (header & 0x80) != 0;
                     int opcode = header & 0x0F;
-                    int lengthByte = await ReadByteAsync(stream);
+                    int lengthByte = await ReadByteAsync(connection.Stream, cts.Token);
                     if (lengthByte == -1) break;
                     bool mask = (lengthByte & 0x80) != 0;
                     int payloadLen = lengthByte & 0x7F;
                     if (payloadLen == 126) {
                         var ext = new byte[2];
-                        await stream.ReadAsync(ext, 0, 2);
-                        payloadLen = (ext[0] << 8) | ext[1];
+                        await connection.Stream.ReadAsync(ext, 0, 2, cts.Token);
+                        payloadLen = ext[0] << 8 | ext[1];
                     } else if (payloadLen == 127) {
                         var ext = new byte[8];
-                        await stream.ReadAsync(ext, 0, 8);
+                        await connection.Stream.ReadAsync(ext, 0, 8, cts.Token);
                         payloadLen = (int)BitConverter.ToUInt64(ext, 0);
                     }
                     byte[] maskingKey = null;
                     if (mask) {
                         maskingKey = new byte[4];
-                        await stream.ReadAsync(maskingKey, 0, 4);
+                        await connection.Stream.ReadAsync(maskingKey, 0, 4, cts.Token);
                     }
                     int read = 0;
                     var payload = new byte[payloadLen];
-                    while (read < payloadLen) {
-                        int r = await stream.ReadAsync(payload, read, payloadLen - read);
+                    while (read < payloadLen && !cts.Token.IsCancellationRequested) {
+                        int r = await connection.Stream.ReadAsync(payload, read, payloadLen - read, cts.Token);
                         if (r <= 0) break;
                         read += r;
                     }
@@ -161,46 +187,57 @@ namespace SocketJack.Net {
                         for (int i = 0; i < payload.Length; i++)
                             payload[i] ^= maskingKey[i % 4];
                     }
-                    if (opcode == 0x8) // Close
-                        break;
-                    // Handle text (0x1) and binary (0x2) opcodes
-                    if (opcode == 0x1 || opcode == 0x2) {
-                        _handshakeCompleted[connection.ID] = true;
 
-                        byte[] data = payload;
-                        if (Options.UseCompression && opcode == 0x2) {
-                            data = Options.CompressionAlgorithm.Decompress(data);
-                        }
-                        var message = Encoding.UTF8.GetString(data);
-                        var serializer = Options.Serializer;
-                        var wrapper = serializer.Deserialize(Encoding.UTF8.GetBytes(message));
-                        if (wrapper != null) {
-                            var obj = wrapper.Unwrap(this);
-                            if (obj == null) {
-                                if (Options.Logging)
-                                    LogAsync($"[{Name}] Type of '{wrapper.Type}' is not allowed.");
-                                continue;
-                            } else {
-                                Type objType = obj.GetType();
-                                if (Options.Logging && Options.LogReceiveEvents) {
-                                    if (ReferenceEquals(objType, typeof(PeerRedirect))) {
-                                        LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)obj).CleanTypeName()), payload.Length.ByteToString() });
-                                    } else {
-                                        LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, objType.Name, payload.Length.ByteToString() });
-                                    }
-                                }
-                                HandleReceive(connection, obj, objType, payload.Length);
+                    switch (opcode) {
+                        case CloseFrameOpcode: // Close
+                            exitLoop = true;
+                            break;
+                        case BrowserClientOpcode:
+                            SendConstructors(ref connection);
+                            continue;
+                        case TextFrameOpcode:
+                        case BinaryFrameOpcode:
+                            _handshakeCompleted[connection.ID] = true;
+
+                            byte[] data = payload;
+                            if (Options.UseCompression && opcode == BinaryFrameOpcode) {
+                                data = Options.CompressionAlgorithm.Decompress(data);
                             }
-                        }
+                            var message = Encoding.UTF8.GetString(data);
+                            var serializer = Options.Serializer;
+                            var wrapper = serializer.Deserialize(Encoding.UTF8.GetBytes(message));
+                            if (wrapper != null) {
+                                var obj = wrapper.Unwrap(this);
+                                if (obj == null) {
+                                    if (Options.Logging)
+                                        LogAsync($"[{Name}] Type of '{wrapper.Type}' is not allowed.");
+                                    continue;
+                                } else {
+                                    Type objType = obj.GetType();
+                                    if (Options.Logging && Options.LogReceiveEvents) {
+                                        if (ReferenceEquals(objType, typeof(PeerRedirect))) {
+                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)obj).CleanTypeName()), payload.Length.ByteToString() });
+                                        } else {
+                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, objType.Name, payload.Length.ByteToString() });
+                                        }
+                                    }
+                                    HandleReceive(connection, obj, objType, payload.Length);
+                                }
+                            }
+                            break;
+                        default:
+                            // Unknown or unsupported opcode, ignore
+                            break;
+                    }
+                    if(exitLoop || cts.IsCancellationRequested) {
+                        break;
                     }
                 }
             } catch (Exception ex) {
-                if (Options.Logging && socket.Connected) {
-                    LogAsync($"[{Name}] ERROR: {ex.Message}");
+                if (connection.Socket != null && Options.Logging && connection.Socket.Connected) {
+                    InvokeOnError(ex);
                     InvokeOnError(connection, ex);
                 }
-            } finally {
-                connection.CloseConnection();
             }
         }
 
@@ -211,8 +248,6 @@ namespace SocketJack.Net {
             _handshakeCompleted[newConnection.ID] = false;
             newConnection._Identity = Identifier.Create(Guid.NewGuid(), true, handler.RemoteEndPoint.ToString());
             Clients.AddOrUpdate(newConnection.ID, newConnection);
-            InitializePeer(newConnection);
-            SendConstructors(ref newConnection);
             return newConnection;
         }
 
@@ -273,13 +308,13 @@ namespace SocketJack.Net {
         public delegate void OnErrorEventHandler(ErrorEventArgs e);
 
         public event PeerConnectionRequestEventHandler PeerConnectionRequest;
-        public delegate void PeerConnectionRequestEventHandler(object sender, PeerServer Server);
+        public delegate void PeerConnectionRequestEventHandler(ISocket sender, PeerServer Server);
 
         protected internal event InternalPeerConnectionRequestEventHandler Internal_PeerConnectionRequest;
-        protected internal delegate void InternalPeerConnectionRequestEventHandler(object sender, ref PeerServer Server);
+        protected internal delegate void InternalPeerConnectionRequestEventHandler(ISocket sender, ref PeerServer Server);
 
         public event PeerServerShutdownEventHandler PeerServerShutdown;
-        public delegate void PeerServerShutdownEventHandler(object sender, PeerServer Server);
+        public delegate void PeerServerShutdownEventHandler(ISocket sender, PeerServer Server);
 
         public event BytesPerSecondUpdateEventHandler BytesPerSecondUpdate;
         public delegate void BytesPerSecondUpdateEventHandler(int ReceivedPerSecond, int SentPerSecond);
@@ -288,10 +323,13 @@ namespace SocketJack.Net {
         public delegate void LogOutputEventHandler(string text);
 
         protected internal event PeerRefusedConnectionEventHandler PeerRefusedConnection;
-        protected internal delegate void PeerRefusedConnectionEventHandler(object sender, ConnectionRefusedArgs e);
+        protected internal delegate void PeerRefusedConnectionEventHandler(ISocket sender, ConnectionRefusedArgs e);
 
         protected internal event PeerUpdateEventHandler PeerUpdate;
-        protected internal delegate void PeerUpdateEventHandler(object sender, Identifier Peer);
+        protected internal delegate void PeerUpdateEventHandler(ISocket sender, Identifier Peer);
+
+        public event ClientIdentifiedEventHandler ClientIdentified;
+        public delegate void ClientIdentifiedEventHandler(ConnectedEventArgs e);
 
         public event ClientConnectedEventHandler ClientConnected;
         public delegate void ClientConnectedEventHandler(ConnectedEventArgs e);
@@ -305,7 +343,7 @@ namespace SocketJack.Net {
         /// <param name="sender"></param>
         /// <param name="Peer"></param>
         public event PeerConnectedEventHandler PeerConnected;
-        public delegate void PeerConnectedEventHandler(object sender, Identifier Peer);
+        public delegate void PeerConnectedEventHandler(ISocket sender, Identifier Peer);
 
         /// <summary>
         /// Fired when a user disconnects from the server.
@@ -313,7 +351,7 @@ namespace SocketJack.Net {
         /// <param name="sender"></param>
         /// <param name="Peer"></param>
         public event PeerDisconnectedEventHandler PeerDisconnected;
-        public delegate void PeerDisconnectedEventHandler(object sender, Identifier Peer);
+        public delegate void PeerDisconnectedEventHandler(ISocket sender, Identifier Peer);
 
         protected internal event InternalPeerRedirectEventHandler InternalPeerRedirect;
         protected internal delegate void InternalPeerRedirectEventHandler(string Recipient, string Sender, object Obj, int BytesReceived);
@@ -333,22 +371,22 @@ namespace SocketJack.Net {
         void ISocket.InvokeBytesPerSecondUpdate(TcpConnection connection) {
             InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
         }
-        public void InvokePeerConnectionRequest(object sender, ref PeerServer Server) {
+        public void InvokePeerConnectionRequest(ISocket sender, ref PeerServer Server) {
             Internal_PeerConnectionRequest?.Invoke(sender, ref Server);
         }
         public void InvokeBytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
             BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
         }
-        public void InvokePeerServerShutdown(object sender, PeerServer Server) {
+        public void InvokePeerServerShutdown(ISocket sender, PeerServer Server) {
             PeerServerShutdown?.Invoke(sender, Server);
         }
-        public void InvokePeerUpdate(object sender, Identifier Peer) {
+        public void InvokePeerUpdate(ISocket sender, Identifier Peer) {
             PeerUpdate?.Invoke(sender, Peer);
         }
-        public void InvokePeerConnected(object sender, Identifier Peer) {
+        public void InvokePeerConnected(ISocket sender, Identifier Peer) {
             PeerConnected?.Invoke(sender, Peer);
         }
-        public void InvokePeerDisconnected(object sender, Identifier Peer) {
+        public void InvokePeerDisconnected(ISocket sender, Identifier Peer) {
             PeerDisconnected?.Invoke(sender, Peer);
         }
         public void InvokeInternalReceivedByteCounter(TcpConnection Connection, int BytesReceived) {
@@ -372,8 +410,14 @@ namespace SocketJack.Net {
         public void InvokeOnError(TcpConnection Connection, Exception e) {
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
         }
+
+        public void InvokeOnError(Exception e) {
+            LogAsync(e.Message + Environment.NewLine + e.StackTrace);
+            OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+        }
         protected internal void InvokeOnDisconnected(DisconnectedEventArgs e) {
             if (e.Connection == null) return;
+            if (e.Connection.Identity == null) return;
             Identifier dcPeer = Identifier.Create(e.Connection.Identity.ID, false);
             dcPeer.Action = PeerAction.Dispose;
             SendBroadcast(dcPeer, e.Connection);
@@ -386,11 +430,32 @@ namespace SocketJack.Net {
             if (e.Connection != Connection) ClientDisconnected?.Invoke(e);
         }
         public void CloseConnection(TcpConnection Connection, DisconnectionReason Reason) {
-            Connection.Close(this, Reason);
+            try {
+                if (Connection.Socket != null && Connection.Socket.Connected) {
+                    // Send close frame
+                    byte[] closeFrame = new byte[] { 0x88, 0x00 };
+                    Connection.Stream.Write(closeFrame, 0, closeFrame.Length);
+                    Connection.Socket.Shutdown(SocketShutdown.Both);
+                    Connection.Socket.Close();
+                }
+                Connection.Stream?.Dispose();
+                InvokeOnDisconnected(new DisconnectedEventArgs(this, Connection, Reason));
+            } catch (Exception ex) {
+                InvokeOnError(ex);
+            }
         }
         public void InvokeOnDisposing() {
             OnDisposing?.Invoke();
         }
+
+        public virtual void InvokeOnDisconnected(ISocket sender, TcpConnection Connection) {
+            throw new NotImplementedException();
+        }
+
+        public virtual void InvokeOnConnected(ISocket sender, TcpConnection Connection) {
+            throw new NotImplementedException();
+        }
+
 
         #endregion
 
@@ -409,12 +474,17 @@ namespace SocketJack.Net {
         private void InitializePeer(TcpConnection newConnection) {
             if (Options.UsePeerToPeer) {
                 var peer = newConnection._Identity;
-                Peers.AddOrUpdate(peer);
-                PeerUpdate?.Invoke(this, peer);
+                if (!Peers.ContainsKey(newConnection.Identity.ID)) {
+                    Peers.AddOrUpdate(peer);
+                } else {
+                    peer = Peers[newConnection.Identity.ID];
+                    newConnection._Identity = peer;
+                }
                 PeerConnected?.Invoke(this, peer);
                 var peerArray = Peers.ToArrayWithLocal(newConnection);
                 Send(newConnection, peerArray);
-                SendBroadcast(Identifier.Create(peer.ID, false), newConnection);
+                SendBroadcast(peer.RemoteReady(this), newConnection);
+                ClientIdentified?.Invoke(new ConnectedEventArgs(this, newConnection));
             }
         }
 
@@ -467,14 +537,14 @@ namespace SocketJack.Net {
             };
             ClientDisconnected += (e) => {
                 if (Options.Logging) {
-                    LogAsync($"[{Name}] Client Disconnected -> {e.Connection.Identity.ID.ToUpper()} ({e.Connection.Socket.RemoteEndPoint})");
+                    LogAsync($"[{Name}] Client Disconnected -> {e.Connection.Identity.ID.ToUpper()} ({e.Connection.EndPoint.ToString()})");
                 }
             };
         }
         public void Log(string[] lines) {
             if (Options.Logging) {
                 string Output = string.Join(Environment.NewLine, lines) + Environment.NewLine;
-                if (Options.LogToOutput && Debugger.IsAttached)
+                if (Options.LogToConsole && Debugger.IsAttached)
                     Debug.Write(Output);
                 Console.Write(Output);
                 LogOutput?.Invoke(Output);
@@ -493,7 +563,7 @@ namespace SocketJack.Net {
             if (Options.Logging) {
                 Task.Run(() => {
                     string Output = string.Join(Environment.NewLine, lines) + Environment.NewLine;
-                    if (Options.LogToOutput && Debugger.IsAttached)
+                    if (Options.LogToConsole && Debugger.IsAttached)
                         Debug.Write(Output);
                     Console.Write(Output);
                     LogOutput?.Invoke(Output);
@@ -509,11 +579,6 @@ namespace SocketJack.Net {
         public void LogFormatAsync(string[] lines, string[] args) {
             LogAsync(new[] { string.Format(string.Join(Environment.NewLine, lines), args) });
         }
-        public void LogError(Exception e) {
-            if (Options.Logging) {
-                InvokeOnError(Connection, e);
-            }
-        }
         #endregion
 
         #region Sending
@@ -522,10 +587,15 @@ namespace SocketJack.Net {
             if (Client == null || Client.Closed || Client.Socket == null || !Client.Socket.Connected) return;
             if (Client.Stream == null) Client._Stream = new NetworkStream(Client.Socket, ownsSocket: false);
             Task.Run(() => {
-                while (!_handshakeCompleted.TryGetValue(Client.ID, out var completed) || !completed || Client.IsSending) {
-                    Thread.Sleep(100);
-                }
                 try {
+                    if(Obj == null) return;
+                    Type objType = Obj.GetType();
+                    if(Options.Blacklist.Contains(objType)) {
+                        if (Options.Logging) {
+                            InvokeOnError(Client, new Exception($"Attempted to send blacklisted type {objType.Name}"));
+                        }
+                        return;
+                    }
                     Client.IsSending = true;
                     var wrapper = new Wrapper(Obj, this);
                     byte[] payload = Options.Serializer.Serialize(wrapper);
@@ -537,24 +607,24 @@ namespace SocketJack.Net {
                     frame.Add(useBinaryFrame ? (byte)0x82 : (byte)0x81); // 0x82 = FIN+binary, 0x81 = FIN+text
                     if (payload.Length <= 125) {
                         frame.Add((byte)payload.Length);
-                    } else if (payload.Length <= 65535) {
+                    } else if (payload.Length <= 8192) {
                         frame.Add(126);
-                        frame.Add((byte)((payload.Length >> 8) & 0xFF));
+                        frame.Add((byte)(payload.Length >> 8 & 0xFF));
                         frame.Add((byte)(payload.Length & 0xFF));
                     } else {
                         frame.Add(127);
                         ulong len = (ulong)payload.Length;
                         for (int i = 7; i >= 0; i--)
-                            frame.Add((byte)((len >> (8 * i)) & 0xFF));
+                            frame.Add((byte)(len >> 8 * i & 0xFF));
                     }
                     frame.AddRange(payload);
 
                     if (Client.Stream == null) return;
                     Client.Stream.Write(frame.ToArray(), 0, frame.Count);
                     Client.Stream.Flush();
-                    Type objType = Obj.GetType();
+                   
                     InvokeInternalSendEvent(Client, objType, Obj, payload.Length);
-                    InvokeOnSent(new SentEventArgs(this, Client, payload.Length));
+                    InvokeOnSent(new SentEventArgs(this, Client, objType, payload.Length));
 
                     if (Options.Logging && Options.LogSendEvents) {
                         if (ReferenceEquals(objType, typeof(PeerRedirect))) {
@@ -572,10 +642,11 @@ namespace SocketJack.Net {
             });
         }
 
-        public void Send(TcpConnection Client, Identifier recipient, object Obj) {
+        public void Send(Identifier recipient, object Obj) {
             if (recipient == null) return;
-            var redirect = new PeerRedirect(Client?.ID.ToString(), recipient.ID, Obj);
-            Send(Client, redirect);
+            var client = Clients.Values.FirstOrDefault(c => c.Identity.ID == recipient.ID);
+            var redirect = new PeerRedirect(client?.ID.ToString(), recipient.ID, Obj);
+            Send(client, redirect);
         }
 
         public void SendSegmented(TcpConnection Client, object Obj) {
@@ -634,32 +705,51 @@ namespace SocketJack.Net {
                 var redirect = (PeerRedirect)obj;
                 redirect.Sender = connection.Identity.ID.ToString();
                 if (redirect.Recipient == "#ALL#") {
-                    var e = new ReceivedEventArgs<PeerRedirect>(this, Connection, redirect, Length);
-                    IReceivedEventArgs args = e;
+                    //var e = new ReceivedEventArgs<PeerRedirect>(this, Connection, redirect, Length);
+                    //IReceivedEventArgs args = e;
 
-                    args.From = Peers[redirect.Sender];
-                    OnReceive?.Invoke(ref args);
+                    // args.From = Peers[redirect.Sender];
 
-                    if (!e.CancelPeerRedirect) {
+                    // FIX THIS
+                    Type redirectType = Type.GetType(redirect.Type);
+                    var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
+                    var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
+                    var from = Peers[redirect.Sender];
+                    receivedEventArgs.From = from;
+                    receivedEventArgs.Initialize(this, connection, obj, Length);
+                    IReceivedEventArgs NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, obj, Length);
+                    NonGenericEventArgs.From = from;
+                    InvokeOnReceive(ref NonGenericEventArgs);
+                    InvokeAllCallbacks(receivedEventArgs);
+
+                    //OnReceive?.Invoke(ref args);
+                    if (receivedEventArgs.IsPeerRedirect && !NonGenericEventArgs.CancelPeerRedirect && !receivedEventArgs.CancelPeerRedirect) {
                         SendBroadcast(redirect, connection);
                     }
-                        
                 } else {
-                    if (P2P_Clients.TryGetValue(redirect.Recipient, out var recipientConnection)) {
-                        if (recipientConnection.Socket.Connected) {
-                            var e = new ReceivedEventArgs<PeerRedirect>(this, Connection, redirect, Length);
-                            IReceivedEventArgs args = e;
-                            args.From = connection.Identity;
-                            OnReceive?.Invoke(ref args);
+                    var recipientConnection = Clients.Where((p) => p.Value.Identity.ID == redirect.Recipient && p.Value.Identity.ID != redirect.Sender)?.FirstOrDefault().Value;
+                    if(recipientConnection != null) {
+                        //var e = new ReceivedEventArgs<PeerRedirect>(this, Connection, redirect, Length);
+                        //IReceivedEventArgs args = e;
 
-                            if (!e.CancelPeerRedirect) {
-                                Send(recipientConnection, redirect);
-                            }
-                        } else {
-                            if (Options.Logging) LogAsync($"[{Name}] Recipient {redirect.Recipient} is not connected.");
+                        // args.From = Peers[redirect.Sender];
+
+                        // FIX THIS
+                        Type redirectType = Type.GetType(redirect.Type);
+                        var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
+                        var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
+                        var from = Peers[redirect.Sender];
+                        receivedEventArgs.From = from;
+                        receivedEventArgs.Initialize(this, connection, obj, Length);
+                        IReceivedEventArgs NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, obj, Length);
+                        NonGenericEventArgs.From = from;
+                        InvokeOnReceive(ref NonGenericEventArgs);
+                        InvokeAllCallbacks(receivedEventArgs);
+
+                        //OnReceive?.Invoke(ref args);
+                        if (receivedEventArgs.IsPeerRedirect && !NonGenericEventArgs.CancelPeerRedirect && !receivedEventArgs.CancelPeerRedirect) {
+                            Send(recipientConnection, redirect);
                         }
-                    } else {
-                        if (Options.Logging) LogAsync($"[{Name}] Recipient {redirect.Recipient} not found.");
                     }
                 }
             } else {
@@ -676,11 +766,11 @@ namespace SocketJack.Net {
         /// <para>Not case sensitive.</para>
         /// </summary>
         public List<string> RestrictedMetadataKeys = new List<string>();
-        private void OnReceived_MetadataKeyValue(ReceivedEventArgs<MetadataKeyValue> Args) {
-            if (string.IsNullOrEmpty(Args.Object.Key)) return;
-            if (!RestrictedMetadataKeys.Contains(Args.Object.Key.ToLower())) {
-                Clients[Args.Connection.ID].SetMetaData(Args.Object.Key, Args.Object.Value);
-                Peers[Args.Connection.Identity.ID].SetMetaData(this, Args.Object.Key, Args.Object.Value);
+        private void OnReceived_MetadataKeyValue(ReceivedEventArgs<MetadataKeyValue> e) {
+            if (string.IsNullOrEmpty(e.Object.Key)) return;
+            if (!RestrictedMetadataKeys.Contains(e.Object.Key.ToLower())) {
+                Clients[e.Connection.ID].SetMetaData(e.Object.Key, e.Object.Value);
+                Peers[e.Connection.Identity.ID].SetMetaData(this, e.Object.Key, e.Object.Value);
             }
         }
         #endregion
@@ -691,7 +781,7 @@ namespace SocketJack.Net {
             _port = port;
             var argServer = (ISocket)this;
             Globals.RegisterServer(ref argServer);
-            RegisterCallback(new Action<ReceivedEventArgs<MetadataKeyValue>>(OnReceived_MetadataKeyValue));
+            RegisterCallback<MetadataKeyValue>(OnReceived_MetadataKeyValue);
             WireUpConnectionEvents();
         }
 
@@ -700,15 +790,17 @@ namespace SocketJack.Net {
             _port = port;
             var argServer = (ISocket)this;
             Globals.RegisterServer(ref argServer);
-            RegisterCallback(new Action<ReceivedEventArgs<MetadataKeyValue>>(OnReceived_MetadataKeyValue));
+            RegisterCallback<MetadataKeyValue>(OnReceived_MetadataKeyValue);
             WireUpConnectionEvents();
         }
 
+        private bool AcceptNextConnection = true;
         public bool Listen() {
-            _cts = new CancellationTokenSource();
+            _ct = new CancellationToken(IsListening);
             _listenerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            _Socket = _listenerSocket;
             var connection = new TcpConnection(this, _listenerSocket);
-            this.Connection = connection;
+            Connection = connection;
             _listenerSocket.Bind(new IPEndPoint(IPAddress.Any, _port));
             _listenerSocket.Listen(Options.Backlog > 0 ? Options.Backlog : 100);
             _isListening = true;
@@ -716,26 +808,46 @@ namespace SocketJack.Net {
             if (Options.Logging) {
                 LogAsync($"{Name} started listening on port {_port}.");
             }
-            Task.Run(async () => {
-                try {
-                    while (!_cts.Token.IsCancellationRequested) {
-                        var clientSocket = await _listenerSocket.AcceptAsync();
-                        var newConnection = NewConnection(ref clientSocket);
-                        _ = Task.Run(async () => await HandleRawSocketClient(newConnection, clientSocket));
-                    }
-                } catch { StopListening(); }
-            });
+            Task.Run(() => Listener());
             return _isListening;
+        }
+
+        private void Listener() {
+            while (!_ct.IsCancellationRequested || !IsListening) {
+                if (AcceptNextConnection && _listenerSocket != null) {
+                    AcceptNextConnection = false;
+                    _listenerSocket.BeginAccept(async (ar) => {
+                        AcceptNextConnection = true;
+                        if (_listenerSocket == null) return;
+                        try {
+                            Socket handler = _listenerSocket.EndAccept(ar);
+                            var newConnection = NewConnection(ref handler);
+                            await HandleRawSocketClient(newConnection);
+                        } catch (Exception ex) {
+                            InvokeOnError(ex);
+                        }
+                    }, null);
+                } else {
+                    Thread.Sleep(1);
+                }
+            }
         }
 
         public void StopListening() {
             if (_isListening) {
-                var argServer = (ISocket)this;
-                argServer.CloseConnection(argServer.Connection, DisconnectionReason.LocalSocketClosed);
+                //var argServer = (ISocket)this;
+                //argServer.CloseConnection(argServer.Connection, DisconnectionReason.LocalSocketClosed);
+                lock (Clients.Values) {
+                    foreach (var client in Clients.Values) {
+                        client.Close(this, DisconnectionReason.LocalSocketClosed);
+                        MethodExtensions.TryInvoke(client.Socket.Close);
+                    }
+                }
                 Peers.Clear();
                 Clients.Clear();
-                _cts?.Cancel();
+                Connection.Close(this, DisconnectionReason.LocalSocketClosed);
                 _listenerSocket?.Close();
+                _listenerSocket = null;
                 _handshakeCompleted.Clear();
                 _isListening = false;
                 LogAsync(new[] { $"[{Name}] stopped listening." });

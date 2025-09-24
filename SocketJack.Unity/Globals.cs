@@ -5,8 +5,6 @@ using SocketJack.Net;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using SocketJack;
-using System.Net.Sockets;
-using System.Net;
 
 namespace SocketJack {
 
@@ -18,7 +16,7 @@ namespace SocketJack {
         public static ThreadManager threadManager { get; } = new ThreadManager();
 
         //public static TypeList IgnoreLoggedTypes { get; } = new TypeList(new[]{ typeof(PingObject) });
-        public static List<Type> BlacklistedRedirects = new List<Type>() { typeof(Identifier), typeof(PeerServer), typeof(PeerRedirect), typeof(Socket), typeof(TcpConnection) };
+        public static List<Type> BlacklistedRedirects = new List<Type>() { typeof(Identifier), typeof(PeerServer), typeof(PeerRedirect) };
 
         public static void RegisterClient(ref ISocket Client) {
             ThreadManager.TcpClients.AddOrUpdate(Client.InternalID, Client);

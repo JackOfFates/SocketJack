@@ -14,7 +14,7 @@ namespace SocketJack.Net.P2P {
                 lock (Parent.Peers.Values) {
                     vals = Parent.Peers.Values.ToList();
                 }
-                var connections = vals.Where(Peer => Peer.Metadata.ContainsKey(key) && Peer.Metadata[key] == value);
+                var connections = vals.Where(Peer => Peer.Metadata.ContainsKey(key.ToLower()) && Peer.Metadata[key.ToLower()] == value);
                 if (connections.Count() > 0)
                     return connections.ToArray();
             }
@@ -26,7 +26,7 @@ namespace SocketJack.Net.P2P {
                 lock (Parent.Peers.Values) {
                     vals = Parent.Peers.Values.ToList();
                 }
-                var peer = vals.Where(Peer => Peer.Metadata.ContainsKey(key) && Peer.Metadata[key] == value).FirstOrDefault();
+                var peer = vals.Where(Peer => Peer.Metadata.ContainsKey(key.ToLower()) && Peer.Metadata[key.ToLower()].ToLower() == value.ToLower()).FirstOrDefault();
                 return peer;
             }
             return null;
@@ -89,7 +89,7 @@ namespace SocketJack.Net.P2P {
         public PeerList(ISocket Parent) {
             this.Parent = Parent;
         }
-        public bool Add( Identifier identifier) {
+        public bool Add(Identifier identifier) {
             return ConcurrentDictionaryExtensions.Add(this, identifier.ID, identifier);
         }
 
@@ -106,10 +106,10 @@ namespace SocketJack.Net.P2P {
         }
 
         public void UpdateMetaData(Identifier p) {
-            if (ContainsKey(p.ID))
+            if (Contains(p))
                 this[p.ID].Metadata = p.Metadata;
             else
-                TryAdd(p.ID, p);
+                AddOrUpdate(p);
         }
 
     }

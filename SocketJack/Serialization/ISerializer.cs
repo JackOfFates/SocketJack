@@ -1,4 +1,6 @@
-﻿using System;
+﻿using SocketJack.Net;
+using SocketJack.Net.P2P;
+using System;
 
 namespace SocketJack.Serialization {
 
@@ -9,6 +11,7 @@ namespace SocketJack.Serialization {
 
         byte[] Serialize(object Obj);
         Wrapper Deserialize(byte[] Data);
+        PeerRedirect DeserializeRedirect(ISocket Target, byte[] Data);
         object GetPropertyValue(PropertyValueArgs e);
 
         object GetValue(object source, Type asType, bool Parse);

@@ -83,10 +83,12 @@ namespace SocketJack.Extensions {
         /// <param name="Key"></param>
         /// <param name="Value"></param>
         public static void AddOrUpdate<T, T2>(this ConcurrentDictionary<T, T2> Dict, T Key, T2 Value) {
-            if (Dict.ContainsKey(Key)) {
-                Dict[Key] = Value;
-            } else {
-                Add(Dict, Key, Value);
+            lock(Dict) {
+                if (Dict.ContainsKey(Key)) {
+                    Dict[Key] = Value;
+                } else {
+                    Add(Dict, Key, Value);
+                }
             }
         }
     }

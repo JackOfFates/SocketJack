@@ -1,9 +1,39 @@
 <?xml version="1.0"?>
 <doc>
     <assembly>
-        <name>SocketJack</name>
+        <name>SocketJack.Unity</name>
     </assembly>
     <members>
+        <member name="P:SocketJack.Globals.threadManager">
+            <summary>  
+            ThreadManager.Shutdown will dispose all Tcp Client and Servers thus ending active threads.  
+            </summary>  
+        </member>
+        <member name="T:SocketJack.ThreadManager">
+            <summary>
+            Manages all Tcp Client and Server threads.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.TcpClients">
+            <summary>
+            All TcpClient instances.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.TcpServers">
+            <summary>
+            All TcpServer instances.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.Timeout">
+            <summary>
+            Time in Milliseconds to wait before timing out.
+            </summary>
+        </member>
+        <member name="M:SocketJack.ThreadManager.Shutdown">
+            <summary>
+            Must be called on application shutdown to ensure all threads are closed.
+            </summary>
+        </member>
         <member name="M:SocketJack.Compression.ICompression.Compress(System.Byte[])">
             <summary>
             Compresses the input data.
@@ -145,11 +175,6 @@
             </summary>
             <param name="Obj">Serializable Object to send to the client.</param>
             <remarks></remarks>
-        </member>
-        <member name="P:SocketJack.Globals.threadManager">
-            <summary>  
-            ThreadManager.Shutdown will dispose all Tcp Client and Servers thus ending active threads.  
-            </summary>  
         </member>
         <member name="P:SocketJack.Net.IReceivedEventArgs.From">
             <summary>
@@ -1119,31 +1144,6 @@
             This property should be type of Int64.
             </summary>
             <returns></returns>
-        </member>
-        <member name="T:SocketJack.ThreadManager">
-            <summary>
-            Manages all Tcp Client and Server threads.
-            </summary>
-        </member>
-        <member name="P:SocketJack.ThreadManager.TcpClients">
-            <summary>
-            All TcpClient instances.
-            </summary>
-        </member>
-        <member name="P:SocketJack.ThreadManager.TcpServers">
-            <summary>
-            All TcpServer instances.
-            </summary>
-        </member>
-        <member name="P:SocketJack.ThreadManager.Timeout">
-            <summary>
-            Time in Milliseconds to wait before timing out.
-            </summary>
-        </member>
-        <member name="M:SocketJack.ThreadManager.Shutdown">
-            <summary>
-            Must be called on application shutdown to ensure all threads are closed.
-            </summary>
         </member>
     </members>
 </doc>
