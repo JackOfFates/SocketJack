@@ -129,18 +129,9 @@ SocketJack is ideal for a wide range of networking scenarios, including:
 5. **Setting up callbacks:**
 ```cs
 // Register a callback for a custom class
-server.RegisterCallback<CustomClass>((customClassObject) =>
-{
-    Console.WriteLine($"Received: customClassObject");
-
-    // Echo back to the client
-    peer.Send("10-4");
-});
-
-    // This is an example of handling a message with callbacks.
-    server.RegisterCallback<ChatMessage>((ReceivedEventArgs e) => {
-      //e.Object is type of ChatMessage
-      //e.From can be used in conjunction with MetaData to aquire useful information about the remote peer
+server.RegisterCallback<ChatMessage>((ReceivedEventArgs args) => {
+      //args.Object is type of ChatMessage
+      //args.From can be used in conjunction with MetaData to aquire useful information about the remote peer
       // e.g. Await args.From.GetMetaData("Username");
  });
 ```
