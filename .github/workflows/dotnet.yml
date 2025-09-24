@@ -1,33 +1,27 @@
-# This workflow will build a .NET project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
+name: "Deploy to nuget"
+on: ["push"]
 
-name: .NET
-
-on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
-
-jobs:
-  build:
+jobs: 
+ deploy:
+    name: "Deploy"
     runs-on: windows-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: "Checkout"
+      uses: actions/checkout@v2
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'  # or whatever version you're using
+    - name: "Setup .NET"
+      uses: actions/setup-dotnet@v1
+      with:
+         dotnet-version: "8.0.x"
 
-      - name: Update .NET workloads
-        run: dotnet workload update
+    - name: "Restore dependencies"
+      run: dotnet restore ./SocketJack/SocketJack.csproj
 
-      - name: Restore dependencies
-        run: dotnet restore
+    - name: "Build"
+      run: dotnet build ./SocketJack/SocketJack.csproj --configuration Release --no-restore
 
-      - name: Build only selected projects
-        run: |
-          dotnet build ./SocketJack/SocketJack.csproj --configuration Release --no-restore
+    - name: "Pack Project"
+      run: dotnet pack ./SocketJack/SocketJack.csproj --configuration Release --no-build --include-symbols -o ./nupkg
+
+    - name: "Push to NuGet"
+      run: dotnet nuget push ./nupkg/*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json
