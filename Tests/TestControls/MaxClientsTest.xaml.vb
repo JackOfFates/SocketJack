@@ -147,13 +147,10 @@ Public Class MaxClientsTest
                 Clients.Clear()
                 Log("Starting test.", True)
                 ButtonStartStop.Content = "Stop Test"
-                Dim t As New Thread(Async Sub()
-                                        For i As Integer = 0 To MaxClients
-                                            If cancelTest Then Exit For
-                                            Await CreateClientAndConnect(i)
-                                        Next
-                                    End Sub)
-                t.Start()
+                Parallel.For(1, MaxClients, Sub(index)
+                                                If cancelTest Then Return
+                                                CreateClientAndConnect(index).ConfigureAwait(False)
+                                            End Sub)
                 'Parallel.For(1, MaxClients, Async Sub(index)
                 '                                Await CreateClientAndConnect(index)
                 '                            End Sub)

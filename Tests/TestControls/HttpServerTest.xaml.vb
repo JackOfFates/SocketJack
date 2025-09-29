@@ -51,13 +51,13 @@ Public Class HttpServerTest
 
     Public Property Running As Boolean Implements ITest.Running
         Get
-            Return Server.isListening
+            Return Server.IsListening
         End Get
         Set(value As Boolean)
             If Server Is Nothing Then Return
-            If value AndAlso Not Server.isListening Then
+            If value AndAlso Not Server.IsListening Then
                 ITest_StartTest()
-            ElseIf Not value AndAlso Server.isListening Then
+            ElseIf Not value AndAlso Server.IsListening Then
                 ITest_StopTest()
             End If
         End Set

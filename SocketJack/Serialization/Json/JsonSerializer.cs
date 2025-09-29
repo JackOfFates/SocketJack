@@ -13,6 +13,7 @@ namespace SocketJack.Serialization.Json {
 
         public JsonSerializer() {
             JsonOptions.Converters.Add(new TypeConverter());
+            JsonOptions.Converters.Add(new ByteArrayConverter());
 #if NET6_0_OR_GREATER
             JsonOptions.Converters.Add(new BitmapConverter());
 #endif
@@ -88,6 +89,8 @@ namespace SocketJack.Serialization.Json {
                             return jsonElement.GetDateTime();
                         } else if (T == typeof(Guid)) {
                             return jsonElement.GetGuid();
+                        } else if (T == typeof(byte[])) { 
+                            return jsonElement.GetBytesFromBase64();
                         } else {
                             return jsonElement.GetString();
                         }

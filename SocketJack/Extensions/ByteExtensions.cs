@@ -9,16 +9,18 @@ namespace SocketJack.Extensions {
     public static class ByteExtensions {
 
         public static Segment[] GetSegments(this byte[] Bytes) {
+            int MTU = 4000;// NIC.MTU <= 0 ? 4096 : NIC.MTU;
             var Segments = new List<Segment>();
-            double SegmentCountDbl = Bytes.Length / (double)NIC.MTU;
+
+            double SegmentCountDbl = (double)((double)Bytes.Length / (double)MTU);
             int SegmentCount = (int)Math.Round(Math.Floor(SegmentCountDbl));
             bool AddExtra = SegmentCountDbl - SegmentCount > 0d;
             if (AddExtra)
                 SegmentCount += 1;
             string ID = Guid.NewGuid().ToString().ToUpper();
             for (int i = 0, loopTo = SegmentCount - 1; i <= loopTo; i++) {
-                int ByteIndex = i * NIC.MTU;
-                int Length = ByteIndex + NIC.MTU > Bytes.Length ? Bytes.Length - ByteIndex : NIC.MTU;
+                int ByteIndex = i * MTU;
+                int Length = ByteIndex + MTU > Bytes.Length ? Bytes.Length - ByteIndex : MTU;
 
                 byte[] CroppedData = new byte[Length];
                 Buffer.BlockCopy(Bytes, ByteIndex, CroppedData, 0, Length);
@@ -194,20 +196,34 @@ namespace SocketJack.Extensions {
             if (searchArray.Length == 0 || searchArray.Length > sourceArray.Count)
                 return new List<int>();
 
+            int range = sourceArray.Count - searchArray.Length + 1;
+            int processorCount = Environment.ProcessorCount;
+            int chunkSize = Math.Max(range / processorCount, 1);
+
             var results = new ConcurrentBag<int>();
+            var tasks = new List<Task>();
 
-            Parallel.For(StartIndex, sourceArray.Count - searchArray.Length + 1, i => {
-                bool match = true;
-                for (int j = 0, loopTo = searchArray.Length - 1; j <= loopTo; j++) {
-                    if (sourceArray[i + j] != searchArray[j]) {
-                        match = false;
-                        break;
+            for (int t = 0; t < processorCount; t++) {
+                int chunkStart = StartIndex + t * chunkSize;
+                int chunkEnd = (t == processorCount - 1) ? range : chunkStart + chunkSize;
+                if (chunkStart >= range) break;
+
+                tasks.Add(Task.Run(() => {
+                    for (int i = chunkStart; i < chunkEnd && i < range; i++) {
+                        bool match = true;
+                        for (int j = 0; j < searchArray.Length; j++) {
+                            if (sourceArray[i + j] != searchArray[j]) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match)
+                            results.Add(i);
                     }
-                }
-                if (match)
-                    results.Add(i);
-            });
+                }));
+            }
 
+            Task.WaitAll(tasks.ToArray());
             return results.OrderBy(index => index).ToList();
         }
 

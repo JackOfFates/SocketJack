@@ -181,6 +181,10 @@ namespace SocketJack.Net.P2P {
 
         }
 
+        public void Send(object Obj) {
+            Parent.Send(this, Obj);
+        }
+
         /// <summary>
         /// Start a connection with a Remote Client.
         /// </summary>

@@ -39,7 +39,7 @@ namespace SocketJack.Net {
         /// </summary>
         public X509Certificate SslCertificate { get; set; }
 
-        public bool isListening { get; set; } = false;
+        public bool IsListening { get; set; } = false;
 
         /// <summary>
         /// Connected Clients.
@@ -276,7 +276,7 @@ namespace SocketJack.Net {
         }
         protected internal void StartServerLoop() {
             Task.Factory.StartNew(async () => {
-                while (isListening) {
+                while (IsListening) {
                     int AcceptNext = Options.Backlog - PendingConnections;
                     if (AcceptNext > 0) {
                         Parallel.For(1, AcceptNext, (i) => {
@@ -302,7 +302,7 @@ namespace SocketJack.Net {
             }, TaskCreationOptions.LongRunning );
         }
         protected internal void AcceptCallback(IAsyncResult ar) {
-            if (!isListening)
+            if (!IsListening)
                 return;
             var tryResult = MethodExtensions.TryInvoke(Socket.EndAccept, ref ar);
             if (PendingConnections >= 1) Interlocked.Decrement(ref PendingConnections);
@@ -356,7 +356,7 @@ namespace SocketJack.Net {
             StopListening();
             var argServer = (ISocket)this;
             Globals.UnregisterServer(ref argServer);
-            isListening = false;
+            IsListening = false;
             base.Dispose(disposing);
         }
 
@@ -410,7 +410,7 @@ namespace SocketJack.Net {
         /// Starts listening on the specified Port.
         /// </summary>
         public bool Listen() {
-            if (!isListening) {
+            if (!IsListening) {
                 PendingConnections = 0;
                 Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 {
@@ -432,7 +432,7 @@ namespace SocketJack.Net {
                     } else {
                         Socket.Listen(Options.Backlog);
                         LogFormat("[{0}] Listening on port {1}.", new[] { Name, Port.ToString() });
-                        isListening = true;
+                        IsListening = true;
                         StartServerLoop();
                         return true;
                     }
@@ -450,8 +450,8 @@ namespace SocketJack.Net {
         /// Stops listening.
         /// </summary>
         public void StopListening() {
-            if (isListening) {
-                isListening = false;
+            if (IsListening) {
+                IsListening = false;
                 Connection.Close(this);
                 StoppedListening?.Invoke(this);
                 Peers.Clear();

@@ -146,8 +146,13 @@ Public Class WebSocketTest
                 clientCount += 1
                 AddHandler newClient.OnIdentified, AddressOf newClient_Identified
                 AddHandler newClient.PeerConnected, AddressOf newClient_PeerConnected
+                AddHandler newClient.OnDisconnected, AddressOf newClient_Disconnected
                 Await newClient.ConnectAsync(New Uri("ws://localhost:" & ServerPort))
             End Sub)
+    End Sub
+
+    Private Sub newClient_Disconnected(e As DisconnectedEventArgs)
+
     End Sub
 
     Private Sub newClient_PeerConnected(sender As ISocket, Peer As Identifier)

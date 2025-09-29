@@ -26,6 +26,9 @@ Public Class BandwidthTest
                              .UseCompression = False,
                              .UploadBufferSize = 0,
                              .DownloadBufferSize = 0,
+                             .MaximumBufferSize = 65535,
+                             .MaximumDownloadMbps = 0,
+                             .MaximumUploadMbps = 0,
                              .CompressionAlgorithm = Compressor}}
 
     Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options =
@@ -34,6 +37,9 @@ Public Class BandwidthTest
                              .UseCompression = False,
                              .UploadBufferSize = 0,
                              .DownloadBufferSize = 0,
+                             .MaximumBufferSize = 65535,
+                             .MaximumDownloadMbps = 0,
+                             .MaximumUploadMbps = 0,
                              .CompressionAlgorithm = Compressor}}
 
 #Region "Properties"

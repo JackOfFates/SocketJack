@@ -17,7 +17,7 @@ namespace SocketJack {
         /// </summary>  
         public static ThreadManager threadManager { get; } = new ThreadManager();
 
-        //public static TypeList IgnoreLoggedTypes { get; } = new TypeList(new[]{ typeof(PingObject) });
+        public static List<Type> IgnoreLoggedTypes { get; } = new List<Type>(new[]{ typeof(Segment) });
         public static List<Type> BlacklistedRedirects = new List<Type>() { typeof(Identifier), typeof(PeerServer), typeof(PeerRedirect), typeof(Socket), typeof(TcpConnection) };
 
         public static void RegisterClient(ref ISocket Client) {

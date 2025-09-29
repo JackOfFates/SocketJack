@@ -51,7 +51,7 @@ SocketJack's P2P system is designed for flexibility and ease of use:
   Peers can connect directly, bypassing the server when possible for low-latency communication.
 
 - **Peer Redirection:**  
-  If a direct connection is not possible, messages can be relayed through other peers or the server.
+  If a direct connection is not possible, messages can be relayed through the server.
 
 - **Host/Client Role Management:**  
   The library automatically manages which peer acts as host or client, simplifying connection logic.
@@ -119,7 +119,7 @@ SocketJack is ideal for a wide range of networking scenarios, including:
 
 4. **Sending and Receiving:**
 ```
-   client.Send("Hello, Server!");
+   client.Send(new customMessage("Hello!"));
    server.OnReceived += (sender, args) => {
        var message = args.Object as string;
        // Handle message
@@ -128,13 +128,13 @@ SocketJack is ideal for a wide range of networking scenarios, including:
 
 5. **Setting up callbacks:**
 ```cs
-// Register a callback for a custom class
-server.RegisterCallback<CustomClass>((peer, customClassObject) =>
+// Register a callback for a custom message class
+server.RegisterCallback<CustomMessage>((customMessage) =>
 {
-    Console.WriteLine($"Received: customClassObject");
+    Console.WriteLine($"Received: customMessage ({customMessage.Message})");
 
     // Echo back to the client
-    peer.Send("10-4");
+    args.From.Send(new customEchoObject("10-4"));
 });
 ```
 

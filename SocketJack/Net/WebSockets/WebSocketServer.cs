@@ -7,6 +7,7 @@ using SocketJack.Serialization;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -16,6 +17,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -203,25 +205,57 @@ namespace SocketJack.Net.WebSockets {
                             if (Options.UseCompression && opcode == BinaryFrameOpcode) {
                                 data = Options.CompressionAlgorithm.Decompress(data);
                             }
-                            var message = Encoding.UTF8.GetString(data);
                             var serializer = Options.Serializer;
-                            var wrapper = serializer.Deserialize(Encoding.UTF8.GetBytes(message));
-                            if (wrapper != null) {
-                                var obj = wrapper.Unwrap(this);
-                                if (obj == null) {
-                                    if (Options.Logging)
-                                        LogAsync($"[{Name}] Type of '{wrapper.Type}' is not allowed.");
-                                    continue;
-                                } else {
-                                    Type objType = obj.GetType();
-                                    if (Options.Logging && Options.LogReceiveEvents) {
-                                        if (ReferenceEquals(objType, typeof(PeerRedirect))) {
-                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)obj).CleanTypeName()), payload.Length.ByteToString() });
-                                        } else {
-                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, objType.Name, payload.Length.ByteToString() });
+
+                            Wrapper wrapper = serializer.Deserialize(data);
+                            if (wrapper == null) {
+                                PeerRedirect redirect = serializer.DeserializeRedirect(this, data);
+                                if (redirect != null) {
+                                    Task.Run(() => {
+                                        if (Options.Logging && Options.LogReceiveEvents) {
+                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName()), payload.Length.ByteToString() });
                                         }
+                                        HandleReceive(connection, redirect, redirect.GetType(), payload.Length);
+                                    });
+                                } else {
+                                    InvokeOnError(connection, new P2PException("Deserialized object returned null."));
+                                }
+
+                            } else {
+                                var valueType = wrapper.GetValueType();
+                                if (wrapper.Value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
+                                    if (valueType == typeof(PeerRedirect)) {
+                                        Byte[] redirectBytes = null;
+                                        object val = wrapper.Value;
+                                        Type type = wrapper.Value.GetType();
+                                        if (type == typeof(string)) {
+                                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
+                                        } else if (type == typeof(JsonElement)) {
+                                            string json = ((JsonElement)val).GetRawText();
+                                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(json);
+                                        }
+                                        PeerRedirect redirect = serializer.DeserializeRedirect(this, redirectBytes);
+                                        Task.Run(() => {
+                                            if (Options.Logging && Options.LogReceiveEvents) {
+                                                LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName()), payload.Length.ByteToString() });
+                                            }
+                                            HandleReceive(connection, redirect, valueType, payload.Length); 
+                                        });
+                                    } else {
+                                        object unwrapped = null;
+                                        try {
+                                            unwrapped = wrapper.Unwrap(this);
+                                        } catch (Exception ex) {
+                                            InvokeOnError(connection, ex);
+                                        }
+                                        if (unwrapped != null)
+                                            Task.Run(() => {
+                                                if (Options.Logging && Options.LogReceiveEvents && !Globals.IgnoreLoggedTypes.Contains(valueType)) {
+                                                     LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, valueType.Name, payload.Length.ByteToString() });
+                                                }
+                                                HandleReceive(connection, unwrapped, valueType, payload.Length);
+                                            });
                                     }
-                                    HandleReceive(connection, obj, objType, payload.Length);
                                 }
                             }
                             break;
@@ -584,21 +618,28 @@ namespace SocketJack.Net.WebSockets {
         #region Sending
 
         public void Send(TcpConnection Client, object Obj) {
+            SendAsync(Client, Obj);
+        }
+
+        public async Task SendAsync(TcpConnection Client, object Obj) {
             if (Client == null || Client.Closed || Client.Socket == null || !Client.Socket.Connected) return;
             if (Client.Stream == null) Client._Stream = new NetworkStream(Client.Socket, ownsSocket: false);
-            Task.Run(() => {
-                try {
-                    if(Obj == null) return;
-                    Type objType = Obj.GetType();
-                    if(Options.Blacklist.Contains(objType)) {
-                        if (Options.Logging) {
-                            InvokeOnError(Client, new Exception($"Attempted to send blacklisted type {objType.Name}"));
-                        }
-                        return;
+            try {
+                if (Obj == null) return;
+                Type objType = Obj.GetType();
+                if (Options.Blacklist.Contains(objType)) {
+                    if (Options.Logging) {
+                        InvokeOnError(Client, new Exception($"Attempted to send blacklisted type {objType.Name}"));
                     }
+                    return;
+                }
+
+                byte[] payload = objType == typeof(PeerRedirect) ? Options.Serializer.Serialize(Obj) : Options.Serializer.Serialize(new Wrapper(Obj, this));
+
+                if (payload.Length > 8192) {
+                    await Task.Run(() => SendSegmented(Client, payload, objType, Obj));
+                } else {
                     Client.IsSending = true;
-                    var wrapper = new Wrapper(Obj, this);
-                    byte[] payload = Options.Serializer.Serialize(wrapper);
                     bool useBinaryFrame = Options.UseCompression;
                     if (useBinaryFrame) {
                         payload = Options.CompressionAlgorithm.Compress(payload);
@@ -620,13 +661,13 @@ namespace SocketJack.Net.WebSockets {
                     frame.AddRange(payload);
 
                     if (Client.Stream == null) return;
-                    Client.Stream.Write(frame.ToArray(), 0, frame.Count);
-                    Client.Stream.Flush();
-                   
+                    await Client.Stream.WriteAsync(frame.ToArray(), 0, frame.Count);
+                    await Client.Stream.FlushAsync();
+
                     InvokeInternalSendEvent(Client, objType, Obj, payload.Length);
                     InvokeOnSent(new SentEventArgs(this, Client, objType, payload.Length));
 
-                    if (Options.Logging && Options.LogSendEvents) {
+                    if (Options.Logging && Options.LogSendEvents && !Globals.IgnoreLoggedTypes.Contains(objType)) {
                         if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                             LogFormatAsync("[{0}] Sent {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)Obj).CleanTypeName()), payload.Length.ByteToString() });
                         } else {
@@ -635,28 +676,58 @@ namespace SocketJack.Net.WebSockets {
                     }
 
                     Client.IsSending = false;
-                } catch (Exception ex) {
-                    Client.IsSending = false;
-                    InvokeOnError(Client, ex);
                 }
-            });
+            } catch (Exception ex) {
+                Client.IsSending = false;
+                InvokeOnError(Client, ex);
+            }
         }
 
+
         public void Send(Identifier recipient, object Obj) {
+            SendAsync(recipient, Obj);
+        }
+
+        public async Task SendAsync(Identifier recipient, object Obj) {
             if (recipient == null) return;
             var client = Clients.Values.FirstOrDefault(c => c.Identity.ID == recipient.ID);
             var redirect = new PeerRedirect(client?.ID.ToString(), recipient.ID, Obj);
-            Send(client, redirect);
+            await SendAsync(client, redirect);
         }
 
         public void SendSegmented(TcpConnection Client, object Obj) {
-            Task.Run(() => {
-                byte[] SerializedBytes = Options.Serializer.Serialize(new Wrapper(Obj, this));
-                Segment[] SegmentedObject = SerializedBytes.GetSegments();
-                Parallel.ForEach(SegmentedObject, (s) => {
-                    Send(Client, s);
-                });
-            });
+            SendSegmentedAsync(Client, Obj);
+        }
+
+        public async Task SendSegmentedAsync(TcpConnection Client, object Obj) {
+            byte[] SerializedBytes = Options.Serializer.Serialize(new Wrapper(Obj, this));
+            Segment[] SegmentedObject = SerializedBytes.GetSegments();
+            var sendTasks = new List<Task>();
+            foreach (var s in SegmentedObject) {
+                sendTasks.Add(SendAsync(Client, s));
+            }
+            await Task.WhenAll(sendTasks);
+        }
+
+        public void SendSegmented(TcpConnection Client, byte[] SerializedBytes, Type objType, object obj) {
+            SendSegmentedAsync(Client, SerializedBytes, objType, obj);
+        }
+
+        public async Task SendSegmentedAsync(TcpConnection Client, byte[] SerializedBytes, Type objType, object obj) {
+            Segment[] SegmentedObject = SerializedBytes.GetSegments();
+            var sendTasks = new List<Task>();
+            foreach (var s in SegmentedObject) {
+                sendTasks.Add(SendAsync(Client, s));
+            }
+            await Task.WhenAll(sendTasks);
+            if (objType == typeof(PeerRedirect)) {
+                PeerRedirect redirect = (PeerRedirect)obj;
+                LogFormatAsync("[{0}] Sent {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", (redirect.CleanTypeName())), SerializedBytes.Length.ByteToString() });
+            } else {
+                LogFormatAsync("[{0}] Sent {1} - {2}", new[] { Name, objType.Name, SerializedBytes.Length.ByteToString() });
+
+            }
+           
         }
 
         public void SendBroadcast(object Obj) {
@@ -701,16 +772,62 @@ namespace SocketJack.Net.WebSockets {
                         PeerConnectionRequest?.Invoke(this, pServer);
                     }
                 }
+            } else if(objType == typeof(Segment)) {
+                Segment s = (Segment)obj;
+                if (Segment.Cache.ContainsKey(s.SID)) {
+                    Segment.Cache[s.SID].Add(s);
+                    if (Segment.SegmentComplete(s)) {
+                        byte[] RebuiltSegments = Segment.Rebuild(s);
+                        try {
+                            Wrapper wrapper = Options.Serializer.Deserialize(RebuiltSegments);
+                            if (wrapper == null) {
+                                InvokeOnError(connection, new P2PException("Deserialized object returned null."));
+                            } else {
+                                var valueType = wrapper.GetValueType();
+                                if (wrapper.Value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
+                                    if (valueType == typeof(PeerRedirect)) {
+                                        Byte[] redirectBytes = null;
+                                        object val = wrapper.Value;
+                                        Type type = wrapper.Value.GetType();
+                                        if (type == typeof(string)) {
+                                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
+                                        } else if (type == typeof(JsonElement)) {
+                                            string json = ((JsonElement)val).GetRawText();
+                                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(json);
+                                        }
+                                        PeerRedirect redirect = Options.Serializer.DeserializeRedirect(this, redirectBytes);
+                                        if (Options.Logging && Options.LogReceiveEvents) {
+                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", redirect.CleanTypeName()), RebuiltSegments.Length.ByteToString() });
+                                        }
+                                        HandleReceive(connection, redirect, valueType, Length);
+                                    } else {
+                                        object unwrapped = null;
+                                        try {
+                                            unwrapped = wrapper.Unwrap(this);
+                                        } catch (Exception ex) {
+                                            InvokeOnError(connection, ex);
+                                        }
+                                        if (unwrapped != null) {
+                                            if (Options.Logging && Options.LogReceiveEvents) {
+                                                LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("{0}", (unwrapped.GetType().Name), RebuiltSegments.Length.ByteToString()) });
+                                            }
+                                            HandleReceive(connection, unwrapped, valueType, Length);
+                                        }
+                                            
+                                    }
+                                }
+                            }
+                        } catch (Exception) {
+                            InvokeOnError(Connection, new Exception("Failed to deserialize segment."));
+                        }
+                    }
+                } else {
+                    Segment.Cache.Add(s.SID, new List<Segment>() { s });
+                }
             } else if(objType == typeof(PeerRedirect)) {
                 var redirect = (PeerRedirect)obj;
                 redirect.Sender = connection.Identity.ID.ToString();
                 if (redirect.Recipient == "#ALL#") {
-                    //var e = new ReceivedEventArgs<PeerRedirect>(this, Connection, redirect, Length);
-                    //IReceivedEventArgs args = e;
-
-                    // args.From = Peers[redirect.Sender];
-
-                    // FIX THIS
                     Type redirectType = Type.GetType(redirect.Type);
                     var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
                     var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
@@ -722,19 +839,12 @@ namespace SocketJack.Net.WebSockets {
                     InvokeOnReceive(ref NonGenericEventArgs);
                     InvokeAllCallbacks(receivedEventArgs);
 
-                    //OnReceive?.Invoke(ref args);
                     if (receivedEventArgs.IsPeerRedirect && !NonGenericEventArgs.CancelPeerRedirect && !receivedEventArgs.CancelPeerRedirect) {
                         SendBroadcast(redirect, connection);
                     }
                 } else {
                     var recipientConnection = Clients.Where((p) => p.Value.Identity.ID == redirect.Recipient && p.Value.Identity.ID != redirect.Sender)?.FirstOrDefault().Value;
                     if(recipientConnection != null) {
-                        //var e = new ReceivedEventArgs<PeerRedirect>(this, Connection, redirect, Length);
-                        //IReceivedEventArgs args = e;
-
-                        // args.From = Peers[redirect.Sender];
-
-                        // FIX THIS
                         Type redirectType = Type.GetType(redirect.Type);
                         var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
                         var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
@@ -746,7 +856,6 @@ namespace SocketJack.Net.WebSockets {
                         InvokeOnReceive(ref NonGenericEventArgs);
                         InvokeAllCallbacks(receivedEventArgs);
 
-                        //OnReceive?.Invoke(ref args);
                         if (receivedEventArgs.IsPeerRedirect && !NonGenericEventArgs.CancelPeerRedirect && !receivedEventArgs.CancelPeerRedirect) {
                             Send(recipientConnection, redirect);
                         }
@@ -847,6 +956,7 @@ namespace SocketJack.Net.WebSockets {
                 Clients.Clear();
                 Connection.Close(this, DisconnectionReason.LocalSocketClosed);
                 _listenerSocket?.Close();
+                _listenerSocket.Dispose();
                 _listenerSocket = null;
                 _handshakeCompleted.Clear();
                 _isListening = false;

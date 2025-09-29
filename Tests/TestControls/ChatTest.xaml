@@ -20,8 +20,8 @@
             <Image x:Name="Img1" Margin="0,0,0,36" Grid.Row="1"/>
             <Image x:Name="Img2" Margin="0,0,0,36" Grid.Row="1" Grid.Column="1"/>
             <TextBox x:Name="ChatLog" IsReadOnly="True" TextWrapping="Wrap" Background="#26000000" Foreground="#FFC1C1C1" BorderBrush="#FF484848" Margin="0,0,0,35" Grid.Row="1" Grid.ColumnSpan="2"/>
-            <TextBox x:Name="ChatMessage1" AcceptsReturn="True" TextWrapping="Wrap" VerticalAlignment="Bottom" Height="35" Margin="0,0,100,0" Background="#FF272727" Foreground="White" BorderBrush="#FF4E4E4E" BorderThickness="0,0,0,0" IsEnabled="False" Grid.Row="1"/>
-            <TextBox x:Name="ChatMessage2" AcceptsReturn="True" TextWrapping="Wrap" VerticalAlignment="Bottom" Height="35" Margin="620,0,100,0" Background="#FF272727" Foreground="White" BorderBrush="#FF4E4E4E" BorderThickness="0,0,0,0" IsEnabled="False" Grid.Row="1" Grid.ColumnSpan="2"/>
+            <TextBox x:Name="ChatMessage1" AcceptsReturn="True" TextWrapping="Wrap" VerticalAlignment="Bottom" Height="35" Margin="0,0,140,0" Background="#FF272727" Foreground="White" BorderBrush="#FF4E4E4E" BorderThickness="0,0,0,0" IsEnabled="False" Grid.Row="1"/>
+            <TextBox x:Name="ChatMessage2" AcceptsReturn="True" TextWrapping="Wrap" VerticalAlignment="Bottom" Height="35" Margin="620,0,141,0" Background="#FF272727" Foreground="White" BorderBrush="#FF4E4E4E" BorderThickness="0,0,0,0" IsEnabled="False" Grid.Row="1" Grid.ColumnSpan="2"/>
             <Button x:Name="SendButton1" Content="Send" Height="35" Margin="0,0,1,0" VerticalAlignment="Bottom" HorizontalAlignment="Right" Width="59" IsEnabled="False" Grid.Row="1"/>
             <Button x:Name="SendButton2" Content="Send" Height="35" VerticalAlignment="Bottom" HorizontalAlignment="Right" Width="59" Grid.Column="1" IsEnabled="False" Grid.Row="1"/>
             <Button x:Name="SendButton1_Pic" Content="IMG" Height="35" Margin="0,0,60,0" VerticalAlignment="Bottom" HorizontalAlignment="Right" Width="40" IsEnabled="False" Grid.Row="1"/>
@@ -59,10 +59,14 @@
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FFFFBF8A" Pattern="^\[[^\]]*(?:C|c)lient[^\]]*\]"/>
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF7DC1FF" Pattern="[\{\(]?[a-fA-F0-9]{8}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{12}[\}\)]?"/>
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF3BFFBC" Pattern="&lt;([^&gt;]*)&gt;"/>
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF6F6F6F" Pattern="\w*(?=&lt;)"/>
                     </SyntaxBox:SyntaxConfig>
                 </SyntaxBox:SyntaxBox.SyntaxDrivers>
             </TextBox>
+            <Button x:Name="SendButton1_File" Content="File" Height="35" Margin="0,0,100,0" VerticalAlignment="Bottom" HorizontalAlignment="Right" Width="40" IsEnabled="False" Grid.Row="1"/>
+            <Button x:Name="SendButton2_File" Content="File" Height="35" VerticalAlignment="Bottom" HorizontalAlignment="Right" Width="41" Grid.Column="1" IsEnabled="False" Grid.Row="1" Margin="0,0,100,0"/>
         </Grid>
+        <CheckBox x:Name="WebSocket_Enabled" Content="Use Websockets" HorizontalAlignment="Left" Margin="141,589,0,0" VerticalAlignment="Top" Foreground="White" FontFamily="Segoe UI Light" IsChecked="True"/>
 
     </Grid>
 </UserControl>

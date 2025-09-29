@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using SocketJack.Extensions;
 
 namespace SocketJack {
@@ -8,9 +10,9 @@ namespace SocketJack {
     /// </summary>
     public class Segment {
 
-        protected internal static Dictionary<string, List<Segment>> Cache = new Dictionary<string, List<Segment>>();
+        public static ConcurrentDictionary<string, List<Segment>> Cache = new ConcurrentDictionary<string, List<Segment>>();
 
-        protected internal static bool SegmentComplete(Segment segment) {
+        public static bool SegmentComplete(Segment segment) {
             if (Cache.ContainsKey(segment.SID)) {
                 return Cache[segment.SID].Count == segment.Count;
             } else {
@@ -18,10 +20,11 @@ namespace SocketJack {
             }
         }
 
-        protected internal static byte[] Rebuild(Segment segment) {
+        public static byte[] Rebuild(Segment segment) {
             byte[] Combined = new byte[] { };
-            for (int i = 0, loopTo = Cache[segment.SID].Count - 1; i <= loopTo; i++) {
-                var s = Cache[segment.SID][i];
+            var orderedSegments = Cache[segment.SID].OrderBy(s => s.Index).ToList();
+            for (int i = 0, loopTo = orderedSegments.Count - 1; i <= loopTo; i++) {
+                var s = orderedSegments[i];
                 byte[] Data = System.Text.Encoding.UTF8.GetBytes(s.Data);
                 Combined = ByteExtensions.Concat(new[] { Combined, Data });
             }

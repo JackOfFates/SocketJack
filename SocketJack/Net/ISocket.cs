@@ -27,6 +27,9 @@ namespace SocketJack.Net {
         public Identifier RemoteIdentity { get; set; }
         public bool isDisposed { get; set; }
         public bool Connected { get; }
+        public void RegisterCallback<T>(Action<ReceivedEventArgs<T>> Action);
+        public void RemoveCallback<T>(Action<ReceivedEventArgs<T>> Action);
+        public void RemoveCallback<T>();
         public void HandleReceive(TcpConnection Connection, object obj, Type objType, int Length);
         public void InvokeOnError(TcpConnection Connection, Exception e);
         public void CloseConnection(TcpConnection Connection, DisconnectionReason Reason = DisconnectionReason.Unknown);

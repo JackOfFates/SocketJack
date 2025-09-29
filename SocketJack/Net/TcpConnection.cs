@@ -25,7 +25,7 @@ namespace SocketJack.Net {
         /// <summary>
         /// The socket associated to the connection.
         /// </summary>
-        public Socket Socket { 
+        public Socket Socket {
             get {
                 return _Socket;
             }
@@ -43,12 +43,13 @@ namespace SocketJack.Net {
         public NetworkStream _Stream = null;
         public SslStream SslStream { get; set; }
 
-        public static readonly byte[] Terminator = new[] { (byte)192, (byte)128};
+        public static readonly byte[] Terminator = new[] { (byte)192, (byte)128 };
 
         /// <summary>
         /// Whether or not data is compressed.
         /// </summary>
-        public bool Compressed { get {
+        public bool Compressed {
+            get {
                 return Parent.Options.UseCompression;
             }
         }
@@ -56,7 +57,8 @@ namespace SocketJack.Net {
         /// <summary>
         /// Whether or not data is encrypted.
         /// </summary>
-        public bool SSL { get {
+        public bool SSL {
+            get {
                 return Parent.Options.UseSsl;
             }
         }
@@ -218,8 +220,8 @@ namespace SocketJack.Net {
                     return false;
                 } else if (!Socket.Connected || Closed) {
                     return false;
-                //} else if (!Active && Socket.Poll(10000, SelectMode.SelectRead) && Socket.Available == 0) {
-                 //   return false;
+                    //} else if (!Active && Socket.Poll(10000, SelectMode.SelectRead) && Socket.Available == 0) {
+                    //   return false;
                 } else {
                     return true;
                 }
@@ -235,10 +237,10 @@ namespace SocketJack.Net {
         }
 
         public void Close(ISocket sender, DisconnectionReason Reason = DisconnectionReason.LocalSocketClosed) {
-            lock(this) {
+            lock (this) {
                 if (!Closed) {
                     var e = new DisconnectedEventArgs(sender, this, Reason);
-                    if(Socket != null && Socket.Connected) {
+                    if (Socket != null && Socket.Connected) {
                         MethodExtensions.TryInvoke(() => Socket.Shutdown(SocketShutdown.Both));
                         MethodExtensions.TryInvoke(() => Socket.Close());
                     }
@@ -284,14 +286,14 @@ namespace SocketJack.Net {
         private void SetPeerID(ISocket sender, Identifier RemotePeer) {
             switch (RemotePeer.Action) {
                 case PeerAction.LocalIdentity: {
-                        _Identity = RemotePeer;
-                        TcpClient Client = (TcpClient)Parent;
-                        if (Client != null) {
-                            Client.LogFormat("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
-                            Client.InvokeOnIdentified(sender, _Identity);
-                        }
-                        break;
+                    _Identity = RemotePeer;
+                    TcpClient Client = (TcpClient)Parent;
+                    if (Client != null) {
+                        Client.LogFormat("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
+                        Client.InvokeOnIdentified(sender, _Identity);
                     }
+                    break;
+                }
             }
         }
         private void ResetPeerID(DisconnectedEventArgs args) {
@@ -326,7 +328,7 @@ namespace SocketJack.Net {
 
         protected internal void InvokeDisconnected(ISocket sender, DisconnectedEventArgs e) {
             if (e.Connection.Closed) return;
-            if (!(sender.GetType().Name == "WebSocketClient")  && !(sender.GetType().Name == "WebSocketClient") && !(sender is TcpServer) && !(sender.GetType().Name == "WebSocketServer")) {
+            if (!(sender.GetType().Name == "WebSocketClient") && !(sender.GetType().Name == "WebSocketClient") && !(sender is TcpServer) && !(sender.GetType().Name == "WebSocketServer")) {
                 ((ISocket)sender).InvokeOnDisconnected(sender, e.Connection);
                 e.Connection.Closed = true;
             }
@@ -340,7 +342,7 @@ namespace SocketJack.Net {
 
         private bool isDisposed = false;
         public void Dispose() {
-            if(!isDisposed) {
+            if (!isDisposed) {
                 isDisposed = true;
                 UnsubscribePeerUpdate();
                 Close(Parent);
@@ -469,11 +471,11 @@ namespace SocketJack.Net {
                     if (Stream is null) return;
                     int bytesRead = await Stream.ReadAsync(temp, 0, AvailableBytes);
                     if (bytesRead != temp.Length) Array.Resize(ref temp, bytesRead);
-                    
+
                     if (bytesRead > 0) {
-                        if (_DownloadBuffer == null) 
+                        if (_DownloadBuffer == null)
                             _DownloadBuffer = new List<byte>(temp);
-                         else 
+                        else
                             _DownloadBuffer.AddRange(temp);
                         temp = null;
                         Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
@@ -491,10 +493,10 @@ namespace SocketJack.Net {
             IsReceiving = false;
         }
         private static async Task<List<byte>> ParseBuffer(List<byte> Buffer, TcpConnection Sender, ISocket Target) {
-			int LastIndexOf = 0;
+            int LastIndexOf = 0;
             if (Buffer != null && Buffer.Count > 0) {
-				if (Target.Options.UseTerminatedStreams) {
-					var TerminatorIndices = Buffer.IndexOfAll(Terminator);
+                if (Target.Options.UseTerminatedStreams) {
+                    var TerminatorIndices = Buffer.IndexOfAll(Terminator);
 
                     if (TerminatorIndices.Count > 0) {
 
@@ -523,7 +525,6 @@ namespace SocketJack.Net {
                                     }
                                 }
                                 Wrapper wrapper = Target.Options.Serializer.Deserialize(Bytes);
-                                string txt = System.Text.UTF8Encoding.UTF8.GetString(Bytes);
                                 if (wrapper == null) {
                                     Target.InvokeOnError(Sender, new P2PException("Deserialized object returned null."));
                                 } else {
@@ -569,16 +570,16 @@ namespace SocketJack.Net {
                                     Buffer.Clear();
                                 }
                             }
-                    }
+                        }
                     }
                     return Buffer;
                 } else {
                     var tempBuffer = new List<byte>(Buffer);
                     Buffer.Clear();
-                    Task.Run(() => { 
+                    Task.Run(() => {
                         Target.HandleReceive(Sender, tempBuffer, typeof(byte[]), tempBuffer.Count);
                     });
-                    
+
                     return Buffer;
                 }
             } else { return Buffer; }
@@ -617,7 +618,7 @@ namespace SocketJack.Net {
                     if (Socket == null || !Socket.Connected || Closed)
                         break;
                     if (item != null) {
-                        if(await TrySendQueueItem(item)) {
+                        if (await TrySendQueueItem(item)) {
                             item.Complete = true;
                         }
                     }
@@ -727,7 +728,7 @@ namespace SocketJack.Net {
                 var wsServerType = Parent.GetType();
                 var wsServerAssembly = wsServerType.Assembly;
                 var restrictedKeysProp = wsServerType.GetProperty("RestrictedMetadataKeys");
-                
+
                 if (restrictedKeysProp != null) {
                     var restrictedKeys = restrictedKeysProp.GetValue(Parent) as List<string>;
                     if (restrictedKeys != null && Restricted) {
@@ -740,7 +741,7 @@ namespace SocketJack.Net {
                             addMethod.Invoke(restrictedKeys, new object[] { key.ToLower() });
                     }
                 }
-                if(!Parent.Peers.ContainsKey(Identity.ID)) {
+                if (!Parent.Peers.ContainsKey(Identity.ID)) {
                     Parent.Peers.AddOrUpdate(Identity.RemoteReady(Parent));
                 }
                 Parent.Peers[Identity.ID].SetMetaData(Parent, key.ToLower(), value, Private);
@@ -771,13 +772,13 @@ namespace SocketJack.Net {
 
         public TcpConnection(ISocket Parent, Socket Socket) {
             _Parent = Parent;
-            if(Parent is TcpClient) {
+            if (Parent is TcpClient) {
                 SubscribePeerUpdate();
                 IsServer = false;
             } else {
                 IsServer = true;
             }
-            if(Socket != null) {
+            if (Socket != null) {
                 _Socket = Socket;
                 EndPoint = (IPEndPoint)Socket.RemoteEndPoint;
             }
