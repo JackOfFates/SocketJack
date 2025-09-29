@@ -31,7 +31,7 @@
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
     <Description>Fast, Efficient, 100% Managed, Peer to Peer, Non Generic, Extensible TCP Client &amp; Server with built in Serialization that can be used to transmit any object.</Description>
-    <IsPackable>False</IsPackable>
+    <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
     <Version>1.2.0.92925</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
@@ -327,10 +327,6 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
-    <None Update="Readme_Gen.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
@@ -340,13 +336,21 @@
     <Import Include="System.Text.Json.Serialization" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\..\..\Desktop\SocketJackIcon.png">
+    <None Include="SocketJackIcon.png">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
-    <None Include="..\..\..\License.txt">
+    <None Include="Readme_Gen.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="License.txt">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
   </ItemGroup>
 </Project>
+
+
+
+

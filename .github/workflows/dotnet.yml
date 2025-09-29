@@ -18,10 +18,10 @@ jobs:
       run: dotnet restore ./SocketJack/SocketJack.csproj
 
     - name: "Build"
-      run: dotnet build ./SocketJack/SocketJack.csproj --configuration Release --no-restore
+      run: dotnet build ./SocketJack/SocketJack.csproj --configuration Release --no-restore -p:NoWarn=true
 
     - name: "Pack Project"
       run: dotnet pack ./SocketJack/SocketJack.csproj --configuration Release --no-build --include-symbols -o ./nupkg
 
     - name: "Push to NuGet"
-      run: dotnet nuget push ./nupkg/*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json
+      run: dotnet nuget push D:\a\SocketJack\SocketJack\nupkg\*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate
