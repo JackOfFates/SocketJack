@@ -25,21 +25,22 @@
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
     <Copyright>Copyright © JackOfFates 2025</Copyright>
-    <AssemblyVersion>1.2.0.92925</AssemblyVersion>
-    <FileVersion>1.2.0.92925</FileVersion>
+    <AssemblyVersion>1.2.0.10325</AssemblyVersion>
+    <FileVersion>1.2.0.10325</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
     <Description>Fast, Efficient, 100% Managed, Peer to Peer, Non Generic, Extensible TCP Client &amp; Server with built in Serialization that can be used to transmit any object.</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.2.0.92925</Version>
+    <Version>1.2.0.10325</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes>Hotfix</PackageReleaseNotes>
+    <PackageReleaseNotes>WebSocket deserialization fix
+Peer to peer</PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
     <PackageIcon>SocketJackIcon.png</PackageIcon>
     <PackageReadmeFile>Readme_Gen.md</PackageReadmeFile>

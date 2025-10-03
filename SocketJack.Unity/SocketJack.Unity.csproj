@@ -288,6 +288,7 @@
     <Compile Include="..\SocketJack\Extensions\ConnectedClientExtensions.cs" Link="Extensions\ConnectedClientExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\DiagnosticExtensions.cs" Link="Extensions\DiagnosticExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\HttpClientExtensions.cs" Link="Extensions\HttpClientExtensions.cs" />
+    <Compile Include="..\SocketJack\Extensions\ISocketExtensions.cs" Link="Extensions\ISocketExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\LibraryExtensions.cs" Link="Extensions\LibraryExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\MethodExtensions.cs" Link="Extensions\MethodExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\ObjectExtensions.cs" Link="Extensions\ObjectExtensions.cs" />
@@ -313,6 +314,7 @@
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketClient.cs" Link="Net\WebSockets\WebSocketClient.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketServer.cs" Link="Net\WebSockets\WebSocketServer.cs" />
     <Compile Include="..\SocketJack\Serialization\ISerializer.cs" Link="Serialization\ISerializer.cs" />
+    <Compile Include="..\SocketJack\Serialization\Json\Converters\ByteArrayConverter.cs" Link="Serialization\Json\Converters\ByteArrayConverter.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Converters\TypeConverter.cs" Link="Serialization\Json\Converters\TypeConverter.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Int32NotSupportedException.cs" Link="Serialization\Json\Int32NotSupportedException.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\JsonSerializer.cs" Link="Serialization\Json\JsonSerializer.cs" />
@@ -372,7 +374,6 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Compression\" />
-    <Folder Include="Extensions\" />
     <Folder Include="Net\P2P\" />
     <Folder Include="Serialization\Json\Converters\" />
   </ItemGroup>

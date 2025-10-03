@@ -442,7 +442,7 @@ namespace SocketJack.Net.WebSockets {
             }
             if (objType == typeof(PeerRedirect)) {
                 PeerRedirect redirect = (PeerRedirect)obj;
-                LogFormatAsync("[{0}] Sent PeerRedirect<{1}> - {2}", new[] { Name, redirect.CleanTypeName(), SerializedBytes.Length.ByteToString() });
+                LogFormatAsync("[{0}] Sent PeerRedirect<{1}> - {2}", new[] { Name, redirect.CleanTypeName, SerializedBytes.Length.ByteToString() });
             } else {
                 LogFormatAsync("[{0}] Sent {1} - {2}", new[] { Name, objType.Name, SerializedBytes.Length.ByteToString() });
             }
@@ -467,8 +467,16 @@ namespace SocketJack.Net.WebSockets {
                     if (Segment.SegmentComplete(s)) {
                         byte[] RebuiltSegments = Segment.Rebuild(s);
                         try {
-                            var segObj = ((Wrapper)Options.Serializer.Deserialize(RebuiltSegments)).Unwrap(this);
-                            HandleReceive(connection, segObj, segObj.GetType(), RebuiltSegments.Length);
+                            var wrapper = (Wrapper)Options.Serializer.Deserialize(RebuiltSegments);
+                            object segObj = null;
+                            if (wrapper.value == null) {
+                                PeerRedirect redirect = (PeerRedirect)Options.Serializer.DeserializeRedirect(this, RebuiltSegments);
+                                segObj = redirect.Value;
+                                HandleReceive(connection, redirect, redirect.GetType(), RebuiltSegments.Length);
+                            } else {
+                               segObj = wrapper.Unwrap(this);
+                                HandleReceive(connection, segObj, segObj.GetType(), RebuiltSegments.Length);
+                            }
                             if (Options.Logging && Options.LogReceiveEvents) {
                                 LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("{0}", segObj.GetType().Name), RebuiltSegments.Length.ByteToString() });
                             }
@@ -479,7 +487,7 @@ namespace SocketJack.Net.WebSockets {
                             } else {
                                 HandleReceive(connection, redirect, redirect.GetType(), RebuiltSegments.Length);
                                 if (Options.Logging && Options.LogReceiveEvents) {
-                                    LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", redirect.CleanTypeName()), RebuiltSegments.Length.ByteToString() });
+                                    LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", redirect.CleanTypeName), RebuiltSegments.Length.ByteToString() });
                                 }
                             }  
                         }
@@ -505,8 +513,8 @@ namespace SocketJack.Net.WebSockets {
                         var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
                         var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
                         receivedEventArgs.From = From;
-                        receivedEventArgs.Initialize(this, Connection, redirect.value, Length);
-                        IReceivedEventArgs NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, redirect.value, Length);
+                        receivedEventArgs.Initialize(this, Connection, redirect.Value, Length);
+                        IReceivedEventArgs NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, redirect.Value, Length);
                         NonGenericEventArgs.From = From;
                         InvokeOnReceive(ref NonGenericEventArgs);
                         InvokeAllCallbacks(receivedEventArgs);
@@ -679,7 +687,7 @@ namespace SocketJack.Net.WebSockets {
                     InvokeOnSent(new SentEventArgs(this, Connection, objType, serializedBytes.Length));
                     if( objType == typeof(PeerRedirect)) {
                         PeerRedirect redirect = (PeerRedirect)obj;
-                        LogFormatAsync("[{0}] Sent PeerRedirect<{1}> - {2}", new[] { Name, redirect.CleanTypeName(), serializedBytes.Length.ByteToString() });
+                        LogFormatAsync("[{0}] Sent PeerRedirect<{1}> - {2}", new[] { Name, redirect.CleanTypeName, serializedBytes.Length.ByteToString() });
                     } else {
                         LogFormatAsync("[{0}] Sent {1} - {2}", new[] { Name, objType.Name, serializedBytes.Length.ByteToString() });
                     }
@@ -769,14 +777,13 @@ namespace SocketJack.Net.WebSockets {
                 }
                 if(data.Length == 0) 
                     return null;
-                string txt = System.Text.UTF8Encoding.UTF8.GetString(data);
                 Wrapper wrapper = Options.Serializer.Deserialize(data);
 
                 var serializer = Options.Serializer;
-                if (wrapper == null) {
+                if (wrapper == null || wrapper.value == null) {
                     PeerRedirect redirect = serializer.DeserializeRedirect(this, data);
                     if (Options.Logging && Options.LogReceiveEvents) {
-                        LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName()), payload.Length.ByteToString() });
+                        LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName), payload.Length.ByteToString() });
                     }
                     if (redirect == null) {
                         InvokeOnError(Connection, new P2PException("Deserialized object returned null."));
@@ -785,11 +792,11 @@ namespace SocketJack.Net.WebSockets {
                     }
                 } else {
                     var valueType = wrapper.GetValueType();
-                    if (wrapper.Value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
+                    if (wrapper.value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
                         if (valueType == typeof(PeerRedirect)) {
                             Byte[] redirectBytes = null;
-                            object val = wrapper.Value;
-                            Type type = wrapper.Value.GetType();
+                            object val = wrapper.value;
+                            Type type = wrapper.value.GetType();
                             if (type == typeof(string)) {
                                 redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
                             } else if (type == typeof(JsonElement)) {
@@ -798,7 +805,7 @@ namespace SocketJack.Net.WebSockets {
                             }
                             PeerRedirect redirect = serializer.DeserializeRedirect(this, redirectBytes);
                             if (Options.Logging && Options.LogReceiveEvents) {
-                                LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName()), payload.Length.ByteToString() });
+                                LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName), payload.Length.ByteToString() });
                             }
                             return new WscObject(redirect, payload.Length);
                         } else {
@@ -957,7 +964,7 @@ namespace SocketJack.Net.WebSockets {
                                 Type objType = receivedObject.Object.GetType();
                                 if (Options.Logging && Options.LogReceiveEvents && !SkipLoggingTypes.Contains(objType)) {
                                     if (ReferenceEquals(objType, typeof(PeerRedirect))) {
-                                        LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)receivedObject.Object).CleanTypeName()), receivedObject.Length.ByteToString() });
+                                        LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)receivedObject.Object).CleanTypeName), receivedObject.Length.ByteToString() });
                                     } else if(!Globals.IgnoreLoggedTypes.Contains(objType)) {
                                         LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, objType.Name, receivedObject.Length.ByteToString() });
                                     }

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -19,7 +20,7 @@ namespace SocketJack.Serialization.Json {
 #endif
         }
 
-        public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions() { DefaultBufferSize = 1048576 };
+        public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions() { DefaultBufferSize = 1048576, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
         public bool HasConverter(Type type) {
             foreach (var converter in JsonOptions.Converters) {
                 if (converter.CanConvert(type))
@@ -50,14 +51,25 @@ namespace SocketJack.Serialization.Json {
                 if (Target.Options.Serializer.GetType() == typeof(JsonSerializer)) {
                     JsonSerializer serializer = (JsonSerializer)Target.Options.Serializer;
                     if(serializer.HasConverter(T)) {
-                        object obj = serializer.GetValue(redirect.value, T, true);
+                        object obj = serializer.GetValue(redirect.Value, T, true);
                         if(obj.GetType() == typeof(string)) 
-                            redirect.value = System.Text.Json.JsonSerializer.Deserialize((JsonElement)redirect.value, T, JsonOptions);
+                            redirect.Value = System.Text.Json.JsonSerializer.Deserialize((JsonElement)redirect.Value, T, JsonOptions);
                         return redirect;
-                    } else { redirect.value = ((Wrapper)System.Text.Json.JsonSerializer.Deserialize(redirect.value.ToString(), typeof(Wrapper), JsonOptions)).Unwrap(Target); }
-                } else { redirect.value = ((Wrapper)System.Text.Json.JsonSerializer.Deserialize(redirect.value.ToString(), typeof(Wrapper), JsonOptions)).Unwrap(Target); }
+                    } else {
+                        //var txt = ((JsonElement)redirect.value).GetRawText();
+                        var js = (JsonElement)redirect.Value;
+                        if(js.TryGetProperty("Type", out var t )){
+                            Type valueType = Wrapper.GetValueType(t.GetString());
+                            redirect.Value = System.Text.Json.JsonSerializer.Deserialize(js.GetProperty("value").GetRawText(), valueType, JsonOptions);
+                        } else {
+                            redirect.Value = System.Text.Json.JsonSerializer.Deserialize(js.GetRawText(), T, JsonOptions);
+                        }
+                    }
+                } else {
+                    redirect.Value = ((Wrapper)System.Text.Json.JsonSerializer.Deserialize(redirect.Value.ToString(), typeof(Wrapper), JsonOptions)).Unwrap(Target);
+                }
                 return redirect;
-            } catch (Exception) {
+            } catch (Exception ex) {
                 return null;
             }
         }

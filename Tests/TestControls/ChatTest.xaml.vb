@@ -9,6 +9,7 @@ Imports System.Xml.Schema
 Imports Microsoft.SqlServer
 Imports Mono.Nat
 Imports SocketJack.Compression
+Imports SocketJack.Extensions
 Imports SocketJack.Net
 Imports SocketJack.Net.P2P
 Imports SocketJack.Net.WebSockets
@@ -29,17 +30,6 @@ Public Class ChatTest
     Public WithEvents Client2 As ISocket
     Public ServerOptions As New TcpOptions()
     Public ClientOptions As New TcpOptions()
-
-    Public Function GetClient1As(Of T)() As T
-        Return CType(Client1, T)
-    End Function
-    Public Function GetClient2As(Of T)() As T
-        Return CType(Client2, T)
-    End Function
-
-    Public Function GetServerAs(Of T)() As T
-        Return CType(Server, T)
-    End Function
 
     Private Sub Setup()
         With ServerOptions
@@ -157,8 +147,8 @@ Public Class ChatTest
     End Function
 
     Private Sub Clients_ReceivedBitmap(args As ReceivedEventArgs(Of Bitmap))
-        Dispatcher.Invoke(Async Function())
-        Dim fromUser As String = Await args.From.GetMetaData("Username")
+        Dispatcher.Invoke(Async Function()
+                              Dim fromUser As String = Await args.From.GetMetaData("Username")
                               Select Case fromUser
                                   Case "Client1"
                                       Img2.Source = BitmapToBitmapImage(args.Object)
@@ -181,9 +171,9 @@ Public Class ChatTest
         Dim isChecked = False
         Dispatcher.Invoke(Sub() isChecked = WebSocket_Enabled.IsChecked)
         If isChecked Then
-            GetClient1As(Of WebSocketClient).Send(New LoginObj With {.UserName = "Client1"})
+            Client1.AsWsClient.Send(New LoginObj With {.UserName = "Client1"})
         Else
-            GetClient1As(Of TcpClient).Send(New LoginObj With {.UserName = "Client1"})
+            Client1.AsTcpClient.Send(New LoginObj With {.UserName = "Client1"})
         End If
 
         Dispatcher.Invoke(Sub()
@@ -201,17 +191,17 @@ Public Class ChatTest
         Dim isChecked = False
         Dispatcher.Invoke(Sub() isChecked = WebSocket_Enabled.IsChecked)
         If isChecked Then
-            GetClient2As(Of WebSocketClient).Send(New LoginObj With {.UserName = "Client2"})
+            Client2.AsWsClient.Send(New LoginObj With {.UserName = "Client2"})
         Else
-            GetClient2As(Of TcpClient).Send(New LoginObj With {.UserName = "Client2"})
-                              End If
-                              Dispatcher.Invoke(Sub()
-                                                    ChatMessage2.IsEnabled = True
-                                                    SendButton2.IsEnabled = True
-                                                    SendButton2_Pic.IsEnabled = True
-                                                    SendButton2_File.IsEnabled = True
-                                                End Sub)
-                          End Sub
+            Client2.AsTcpClient.Send(New LoginObj With {.UserName = "Client2"})
+        End If
+        Dispatcher.Invoke(Sub()
+                              ChatMessage2.IsEnabled = True
+                              SendButton2.IsEnabled = True
+                              SendButton2_Pic.IsEnabled = True
+                              SendButton2_File.IsEnabled = True
+                          End Sub)
+    End Sub
 
 
 #Region "Chat Classes"
@@ -249,7 +239,7 @@ Public Class ChatTest
         End Get
         Set(value As Boolean)
             If Server Is Nothing Then Return
-            Dim isListening As Boolean = If(WebSocket_Enabled.IsChecked, GetServerAs(Of WebSocketServer)().IsListening, GetServerAs(Of TcpServer)().IsListening)
+            Dim isListening As Boolean = If(WebSocket_Enabled.IsChecked, Server.AsWsServer().IsListening, Server.AsTcpServer().IsListening)
             If value AndAlso Not isListening Then
                 ITest_StartTest()
             ElseIf Not value AndAlso isListening Then
@@ -264,14 +254,15 @@ Public Class ChatTest
             Setup()
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
+            WebSocket_Enabled.IsEnabled = False
             ButtonStartStop.Content = "Starting.."
-            If If(WebSocket_Enabled.IsChecked, GetServerAs(Of WebSocketServer)().Listen(), GetServerAs(Of TcpServer)().Listen()) Then
+            If If(WebSocket_Enabled.IsChecked, Server.AsWsServer().Listen(), Server.AsTcpServer().Listen()) Then
                 If WebSocket_Enabled.IsChecked Then
-                    Await GetClient1As(Of WebSocketClient).Connect("127.0.0.1", ServerPort)
-                    Await GetClient2As(Of WebSocketClient).Connect("127.0.0.1", ServerPort)
+                    Await Client1.AsWsClient.Connect("127.0.0.1", ServerPort)
+                    Await Client2.AsWsClient.Connect("127.0.0.1", ServerPort)
                 Else
-                    Await GetClient1As(Of TcpClient).Connect("127.0.0.1", ServerPort)
-                    Await GetClient2As(Of TcpClient).Connect("127.0.0.1", ServerPort)
+                    Await Client1.AsTcpClient.Connect("127.0.0.1", ServerPort)
+                    Await Client2.AsTcpClient.Connect("127.0.0.1", ServerPort)
                 End If
 
                 ButtonStartStop.IsEnabled = True
@@ -287,8 +278,9 @@ Public Class ChatTest
         If Running Then
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
+            WebSocket_Enabled.IsEnabled = True
             ButtonStartStop.Content = "Stopping.."
-            GetServerAs(Of Object)().StopListening()
+            Server.As(Of Object)().StopListening()
             ButtonStartStop.Content = "Start Test"
             ButtonStartStop.IsEnabled = True
         End If
@@ -344,9 +336,9 @@ Public Class ChatTest
     Private Sub SendButton1_Click() Handles SendButton1.Click
         Dim msg As New ChatMessage With {.Text = ChatMessage1.Text}
         If WebSocket_Enabled.IsChecked Then
-            GetClient1As(Of WebSocketClient).Send(GetOtherPeer(ClientNumber.Client1), msg)
+            Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), msg)
         Else
-            GetClient1As(Of TcpClient).Send(GetOtherPeer(ClientNumber.Client1), msg)
+            Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), msg)
         End If
         ChatMessage1.Text = Nothing
         ChatMessage1.Focus()
@@ -355,9 +347,9 @@ Public Class ChatTest
     Private Sub SendButton2_Click() Handles SendButton2.Click
         Dim msg As New ChatMessage With {.Text = ChatMessage2.Text}
         If WebSocket_Enabled.IsChecked Then
-            GetClient2As(Of WebSocketClient).Send(GetOtherPeer(ClientNumber.Client2), msg)
+            Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), msg)
         Else
-            GetClient2As(Of TcpClient).Send(GetOtherPeer(ClientNumber.Client2), msg)
+            Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), msg)
         End If
         ChatMessage2.Text = Nothing
         ChatMessage2.Focus()
@@ -408,9 +400,9 @@ Public Class ChatTest
                 Try
                     Dim bmp As New Bitmap(filePath)
                     If WebSocket_Enabled.IsChecked Then
-                        GetClient1As(Of WebSocketClient).Send(GetOtherPeer(ClientNumber.Client1), bmp)
+                        Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), bmp)
                     Else
-                        GetClient1As(Of TcpClient).Send(GetOtherPeer(ClientNumber.Client1), bmp)
+                        Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), bmp)
                     End If
                 Catch ex As Exception
                     Log(" ERROR: " & filePath & " is not a valid image file or is corrupt.")
@@ -429,9 +421,9 @@ Public Class ChatTest
                 Try
                     Dim bmp As New Bitmap(filePath)
                     If WebSocket_Enabled.IsChecked Then
-                        GetClient2As(Of WebSocketClient).Send(GetOtherPeer(ClientNumber.Client2), bmp)
+                        Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), bmp)
                     Else
-                        GetClient2As(Of TcpClient).Send(GetOtherPeer(ClientNumber.Client2), bmp)
+                        Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), bmp)
                     End If
                 Catch ex As Exception
                     Log(" ERROR: " & filePath & " is not a valid image file or is corrupt.")
@@ -449,9 +441,9 @@ Public Class ChatTest
             If (IO.File.Exists(filePath)) Then
                 Dim fi As New FileContainer(filePath)
                 If WebSocket_Enabled.IsChecked Then
-                    GetClient1As(Of WebSocketClient).Send(GetOtherPeer(ClientNumber.Client1), fi)
+                    Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), fi)
                 Else
-                    GetClient1As(Of TcpClient).Send(GetOtherPeer(ClientNumber.Client1), fi)
+                    Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), fi)
                 End If
             End If
         End If
@@ -466,9 +458,9 @@ Public Class ChatTest
             If (IO.File.Exists(filePath)) Then
                 Dim fi As New FileContainer(filePath)
                 If WebSocket_Enabled.IsChecked Then
-                    GetClient2As(Of WebSocketClient).Send(GetOtherPeer(ClientNumber.Client2), fi)
+                    Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), fi)
                 Else
-                    GetClient2As(Of TcpClient).Send(GetOtherPeer(ClientNumber.Client2), fi)
+                    Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), fi)
                 End If
             End If
         End If

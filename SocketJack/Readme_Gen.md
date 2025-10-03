@@ -148,7 +148,7 @@ server.RegisterCallback<CustomMessage>((customMessage) =>
 *This will ONLY work on the server authority.*
 *Use your own authentication to validate the clients.*
 ```
-   client.Identifier.SetMetaData(client, "Room", "Lobby1");
+   client.Identifier.SetMetaData("Room", "Lobby1");
 ```
 
 ---

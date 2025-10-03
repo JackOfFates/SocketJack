@@ -31,8 +31,8 @@ namespace SocketJack.Net {
             IsPeerRedirect = Type == typeof(PeerRedirect);
             if(IsPeerRedirect) {
                 var redirect = (PeerRedirect)obj;
-                this.Obj = redirect.value;
-                this.Type = redirect.value.GetType();
+                this.Obj = redirect.Value;
+                this.Type = redirect.Value.GetType();
             } else {
                 this.Obj = obj;
             }
@@ -86,8 +86,8 @@ namespace SocketJack.Net {
             IsPeerRedirect = Type == typeof(PeerRedirect);
             if (IsPeerRedirect) {
                 var redirect = (PeerRedirect)obj;
-                this.Object = (T)redirect.value;
-                this.Type = redirect.value.GetType();
+                this.Object = (T)redirect.Value;
+                this.Type = redirect.Value.GetType();
             } else {
                 this.Object = (T)obj;
             }

@@ -529,11 +529,11 @@ namespace SocketJack.Net {
                                     Target.InvokeOnError(Sender, new P2PException("Deserialized object returned null."));
                                 } else {
                                     var valueType = wrapper.GetValueType();
-                                    if (wrapper.Value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
+                                    if (wrapper.value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
                                         if (valueType == typeof(PeerRedirect)) {
                                             Byte[] redirectBytes = null;
-                                            object val = wrapper.Value;
-                                            Type type = wrapper.Value.GetType();
+                                            object val = wrapper.value;
+                                            Type type = wrapper.value.GetType();
                                             if (type == typeof(string)) {
                                                 redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
                                             } else if (type == typeof(JsonElement)) {

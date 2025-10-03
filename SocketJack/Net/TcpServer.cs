@@ -85,7 +85,7 @@ namespace SocketJack.Net {
             if (Options.LogReceiveEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
-                    LogFormat("[{0}] Received {1} - {2}", new[] { Name + @"\" + Connection.Identity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.CleanTypeName()), BytesReceived.ByteToString() });
+                    LogFormat("[{0}] Received {1} - {2}", new[] { Name + @"\" + Connection.Identity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.CleanTypeName), BytesReceived.ByteToString() });
                 } else {
                     LogFormat("[{0}] Received {1} - {2}", new[] { Name + @"\" + Connection.Identity.ID.ToUpper(), objType.Name, BytesReceived.ByteToString() });
                 }
@@ -98,7 +98,7 @@ namespace SocketJack.Net {
             if (Options.LogSendEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
-                    LogFormat("[{0}] Sent {1} - {2}", new[] { Name + @"\" + Connection.Identity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.CleanTypeName()), BytesSent.ByteToString() });
+                    LogFormat("[{0}] Sent {1} - {2}", new[] { Name + @"\" + Connection.Identity.ID.ToUpper(), string.Format("PeerRedirect<{0}>", Redirect.CleanTypeName), BytesSent.ByteToString() });
                 } else {
                     LogFormat("[{0}] Sent {1} - {2}", new[] { Name + @"\" + Connection.Identity.ID.ToUpper(), objType.Name, BytesSent.ByteToString() });
                 }

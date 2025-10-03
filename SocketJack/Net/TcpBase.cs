@@ -370,7 +370,7 @@ namespace SocketJack.Net {
                             //    OnReceive?.Invoke(ref args);
                         } else {
                             InternalReceiveEvent?.Invoke(Connection, objType, obj, Length);
-                            InternalPeerRedirect?.Invoke(redirect.Recipient, redirect.Sender, redirect.value, Length);
+                            InternalPeerRedirect?.Invoke(redirect.Recipient, redirect.Sender, redirect.Value, Length);
                         }
                         //if (!e.CancelPeerRedirect) {
                         //    //if (Options.LogReceiveEvents && !Globals.IgnoreLoggedTypes.Contains(objType))

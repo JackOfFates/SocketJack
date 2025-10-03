@@ -16,7 +16,7 @@ namespace SocketJack.Serialization {
     public class Wrapper {
 
         public string Type { get; set; }
-        public object Value { get; set; }
+        public object value { get; set; }
         protected static bool hasRecieved = false;
 
         private ConcurrentDictionary<string, Type> TypeCache = new ConcurrentDictionary<string, Type>();
@@ -43,6 +43,16 @@ namespace SocketJack.Serialization {
             return string.Empty;
         }
 
+        private static string RemoveAssembly(string fullTypeName) {
+            if (string.IsNullOrEmpty(fullTypeName))
+                return fullTypeName;
+            int commaIndex = fullTypeName.IndexOf(',');
+            if (commaIndex > 0) {
+                return fullTypeName.Substring(0, commaIndex);
+            }
+            return fullTypeName;
+        }
+
         public Type GetValueType() {
 
             
@@ -54,7 +64,7 @@ namespace SocketJack.Serialization {
         private static Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
 
         public static Type GetValueType(string FullTypeName) {
-            var typeName = FullTypeName;//RemoveNamespace(FullTypeName);
+            var typeName = RemoveAssembly(FullTypeName);//RemoveNamespace(FullTypeName);
             int backtickIndex = FullTypeName.IndexOf('`');
 
             if (FullTypeName.EndsWith("[]")) {
@@ -76,9 +86,19 @@ namespace SocketJack.Serialization {
                 }
             } else {
                 var exTypes = Assembly.GetCallingAssembly().DefinedTypes;
-                Type exFoundType = exTypes.FirstOrDefault(t => $"{t.FullName}" == typeName);
+                Type exFoundType = exTypes.FirstOrDefault(t => $"{RemoveAssembly(t.FullName)}" == typeName);
                 if(exFoundType == null) {
-                    Type foundType = loadedAssemblies.SelectMany(asm => asm.GetTypes()).FirstOrDefault(t => $"{t.FullName}" == typeName);
+                    Type foundType = null;
+                    foreach (var assembly in loadedAssemblies) {
+                        if (assembly.IsDynamic) continue;
+                        try {
+                            foundType = assembly.GetType(typeName);
+                        } catch (ReflectionTypeLoadException ex) {
+                            continue;
+                        }
+                        if (foundType != null)
+                            break;
+                    }
                     if (foundType != null)
                         return foundType;
                 } else {
@@ -109,13 +129,15 @@ namespace SocketJack.Serialization {
             Type = GetTypeName(T);
             if (IsTypeAllowed(Obj, sender)) {
                 if (T.IsArray || T.IsValueType) {
-                    Value = Obj;
+                    value = Obj;
                 } else {
                     lock (Obj) {
                         object stripped = Strip(T, Obj, sender);
-                        Value = stripped;
+                        value = stripped;
                     }
                 }
+            } else {
+                return;
             }
         }
 
@@ -171,7 +193,7 @@ namespace SocketJack.Serialization {
                 return null;
             }
             if (Type.IsValueType | Type.IsArray) {
-                return sender.Options.Serializer.GetValue(Value, Type, true);
+                return sender.Options.Serializer.GetValue(value, Type, true);
             } else {
                 var instance = FormatterServices.GetSafeUninitializedObject(Type);
                 var references = GetPropertyReferences(Type);
@@ -212,7 +234,7 @@ namespace SocketJack.Serialization {
                 return null;
             }
             if (Type.IsValueType | Type.IsArray) {
-                return sender.Options.Serializer.GetValue(Value, Type, true);
+                return sender.Options.Serializer.GetValue(value, Type, true);
             } else {
                 var instance = FormatterServices.GetSafeUninitializedObject(Type);
                 var references = GetPropertyReferences(Type);
@@ -243,7 +265,7 @@ namespace SocketJack.Serialization {
         }
 
         public object GetPropertyValue(ISocket sender, PropertyReference Reference) {
-            return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, Value, Reference));
+            return sender.Options.Serializer.GetPropertyValue(new PropertyValueArgs(Reference.Info.Name, value, Reference));
         }
 
         //public object GetPropertyValueFromRedirect(ISocket sender, PropertyReference Reference, ref PeerRedirect Instance) {
@@ -276,7 +298,7 @@ namespace SocketJack.Serialization {
                     v = Unwrap(redirectType, sender);
                 } else if(vType == typeof(Wrapper)) {
                     Wrapper wrapper = (Wrapper)v;
-                    if (wrapper.Type == null || wrapper.Value == null) {
+                    if (wrapper.Type == null || wrapper.value == null) {
                         return;
                     }
                     v = wrapper.Unwrap(sender);
@@ -316,7 +338,7 @@ namespace SocketJack.Serialization {
                     v = Unwrap(redirectType, sender);
                 } else if (vType == typeof(Wrapper)) {
                     Wrapper wrapper = (Wrapper)v;
-                    if (wrapper.Type == null || wrapper.Value == null) {
+                    if (wrapper.Type == null || wrapper.value == null) {
                         return;
                     }
                     v = wrapper.Unwrap(sender);
