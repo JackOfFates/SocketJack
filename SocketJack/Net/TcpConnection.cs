@@ -4,6 +4,7 @@ using SocketJack.Serialization;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -15,6 +16,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Xml.Linq;
 
 namespace SocketJack.Net {
@@ -120,6 +122,23 @@ namespace SocketJack.Net {
         protected internal int _ReceivedBytesPerSecond = 0;
         protected internal int ReceivedBytesCounter = 0;
 
+        public long TotalBytesSent {
+            get {
+                return _TotalBytesSent;
+            }
+        }
+        protected internal long _TotalBytesSent = 0;
+        protected internal long _TotalBytesSent_l = 0;
+
+        public long TotalBytesReceived {
+            get {
+                return _TotalBytesReceived;
+            }
+        }
+        protected internal long _TotalBytesReceived = 0;
+        protected internal long _TotalBytesReceived_l = 0;
+        DateTime LastFrame = DateTime.UtcNow;
+
         /// <summary>
         /// Remote Peer identifier for peer to peer interactions used to determine the Server's Client GUID.
         /// </summary>
@@ -187,15 +206,29 @@ namespace SocketJack.Net {
             }
             set {
                 _Closed = value;
+                if (Closed) {
+                    _TotalBytesReceived = 0;
+                    _TotalBytesSent = 0;
+                }
             }
         }
 
+        /// <summary>
+        /// True if the connection is closing.
+        /// </summary>
+        public bool Closing {
+            get {
+                return _Closing;
+            }
+        }
         #endregion
 
         #region Internal
         private bool _Closed = false;
+        public bool _Closing = false;
 
         protected internal ConcurrentQueue<SendQueueItem> SendQueue = new ConcurrentQueue<SendQueueItem>();
+        protected internal List<byte> SendQueueRaw = new List<byte>();
 
         /// <summary>
         /// <see langword="True"/> if created by a TcpServer.
@@ -218,10 +251,10 @@ namespace SocketJack.Net {
             try {
                 if (Socket == null) {
                     return false;
-                } else if (!Socket.Connected || Closed) {
+                } else if (!Socket.Connected || Closed || Closing) {
                     return false;
-                    //} else if (!Active && Socket.Poll(10000, SelectMode.SelectRead) && Socket.Available == 0) {
-                    //   return false;
+                } else if (!Active && Socket.Poll(10000, SelectMode.SelectRead) && Socket.Available == 0) {
+                    return false;
                 } else {
                     return true;
                 }
@@ -238,7 +271,8 @@ namespace SocketJack.Net {
 
         public void Close(ISocket sender, DisconnectionReason Reason = DisconnectionReason.LocalSocketClosed) {
             lock (this) {
-                if (!Closed) {
+                if (!Closed && !Closing) {
+                    _Closing = true;
                     var e = new DisconnectedEventArgs(sender, this, Reason);
                     if (Socket != null && Socket.Connected) {
                         MethodExtensions.TryInvoke(() => Socket.Shutdown(SocketShutdown.Both));
@@ -246,10 +280,10 @@ namespace SocketJack.Net {
                     }
                     InvokeDisconnected(sender, e);
                     SendQueue.Clear();
+                    SendQueueRaw.Clear();
                     _UploadBuffer.Clear();
                     _DownloadBuffer.Clear();
                     sender.EndPoint = null;
-
                     UnsubscribePeerUpdate();
                 }
             }
@@ -261,20 +295,26 @@ namespace SocketJack.Net {
                     return;
 
                 int failedPollCount = 0;
-                const int maxFailedPolls = 10;
+                const int maxFailedPolls = 3;
 
-                while (!isDisposed && !Closed && Socket.Connected) {
-                    bool pollResult = Poll();
-                    if (!pollResult) {
+                while (!isDisposed && (!Closed || Closing) && Socket.Connected) {
+                    if (!Poll()) {
                         failedPollCount++;
                         if (failedPollCount >= maxFailedPolls) {
-                            //Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
+                            if (Closing || !Closed) {
+                                _Closing = true;
+                                Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
+                            }
                             break;
                         }
                     } else {
                         failedPollCount = 0;
                     }
                     await Task.Delay(1000);
+                }
+                if (Closing || !Closed) {
+                    _Closing = true;
+                    Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
                 }
             }, TaskCreationOptions.LongRunning);
         }
@@ -286,14 +326,14 @@ namespace SocketJack.Net {
         private void SetPeerID(ISocket sender, Identifier RemotePeer) {
             switch (RemotePeer.Action) {
                 case PeerAction.LocalIdentity: {
-                    _Identity = RemotePeer;
-                    TcpClient Client = (TcpClient)Parent;
-                    if (Client != null) {
-                        Client.LogFormat("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
-                        Client.InvokeOnIdentified(sender, _Identity);
+                        _Identity = RemotePeer;
+                        TcpClient Client = (TcpClient)Parent;
+                        if (Client != null) {
+                            Client.LogFormat("[{0}] Local Identity = {1}", new[] { Client.Name, RemotePeer.ID.ToUpper() });
+                            Client.InvokeOnIdentified(sender, _Identity);
+                        }
+                        break;
                     }
-                    break;
-                }
             }
         }
         private void ResetPeerID(DisconnectedEventArgs args) {
@@ -332,8 +372,19 @@ namespace SocketJack.Net {
                 ((ISocket)sender).InvokeOnDisconnected(sender, e.Connection);
                 e.Connection.Closed = true;
             }
-
+#if UNITY
+            MainThread.Run(() => {
+		        OnDisconnected?.Invoke(this, e);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnDisconnected?.Invoke(this, e);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnDisconnected?.Invoke(this, e);
+#endif
         }
 
         #endregion
@@ -400,9 +451,25 @@ namespace SocketJack.Net {
 
         protected internal void StartReceiving() {
             Task.Factory.StartNew(async () => {
+                //while (!isDisposed && !Closed && Socket.Connected) {
+                //    await Receive();
+                //}
+
+                DateTime Time = DateTime.UtcNow;
                 while (!isDisposed && !Closed && Socket.Connected) {
-                    await Receive();
+                    if (Parent.Options.Fps > 0) {
+                        var now = DateTime.UtcNow;
+                        if (now >= Time.AddMilliseconds(Parent.Options.timeout)) {
+                            Time = DateTime.UtcNow;
+                            await Receive();
+                        } else {
+                            await Task.Delay(1);
+                        }
+                    } else {
+                        await Receive();
+                    }
                 }
+
             }, TaskCreationOptions.LongRunning);
         }
 
@@ -423,6 +490,87 @@ namespace SocketJack.Net {
         }
 
         private async Task ReceiveData(bool DataAvailable) {
+            if (DataAvailable) {
+                // Read message length header (15 bytes) then read body in buffered chunks
+                byte[] LengthData = new byte[15];
+                int lengthRead = 0;
+                try {
+                    lengthRead = await Stream.ReadAsync(LengthData, 0, 15);
+                    Interlocked.Add(ref _TotalBytesReceived, lengthRead);
+                } catch (Exception ex) {
+                    var Reason = ex.Interpret();
+                    if (Reason.ShouldLogReason())
+                        Parent.InvokeOnError(this, ex);
+                    Parent.CloseConnection(this, Reason);
+                    IsReceiving = false;
+                    return;
+                }
+
+                if (lengthRead <= 0) {
+                    IsReceiving = false;
+                    return;
+                }
+
+                string lengthStr = Encoding.UTF8.GetString(LengthData, 0, lengthRead).Trim('\0', ' ', '\r', '\n');
+                if (!int.TryParse(lengthStr, out int Length)) {
+                    Parent.InvokeOnError(this, new FormatException("Failed to parse message length."));
+                    Parent.CloseConnection(this, DisconnectionReason.Unknown);
+                    IsReceiving = false;
+                    return;
+                }
+
+                byte[] Body = new byte[Length];
+                int totalRead = 0;
+                try {
+                    while (totalRead < Length) {
+                        if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
+                            if (!Closed) Parent.CloseConnection(this);
+                            IsReceiving = false;
+                            return;
+                        }
+
+                        long diff = ((TotalBytesReceived - _TotalBytesReceived_l)) - Parent.Options.MaximumDownloadBytesPerSecond;
+                        if (diff > 0) {
+                            var now = DateTime.UtcNow;
+                            var timeDiff = now - LastFrame;
+                            _ReceivedBytesPerSecond = (int)(TotalBytesReceived - _TotalBytesReceived_l);
+                            _TotalBytesReceived_l = TotalBytesReceived;
+                            LastFrame = now;
+                            if (timeDiff > TimeSpan.FromSeconds(1)) {
+                                await Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff*10)));
+                            }
+                        }
+
+                        int chunkSize = Parent.Options.isDownloadBuffered ? Parent.Options.DownloadBufferSize : (Length - totalRead);
+                        chunkSize = Math.Min(chunkSize, Length - totalRead);
+
+                        int bytesRead = await Stream.ReadAsync(Body, totalRead, chunkSize);
+                        if (bytesRead <= 0) break;
+                        totalRead += bytesRead;
+                        Interlocked.Add(ref _TotalBytesReceived, bytesRead);
+                        Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
+                    }
+                } catch (Exception ex) {
+                    var Reason = ex.Interpret();
+                    if (Reason.ShouldLogReason())
+                        Parent.InvokeOnError(this, ex);
+                    Parent.CloseConnection(this, Reason);
+                    IsReceiving = false;
+                    return;
+                }
+
+                if (totalRead == Length) {
+                    ParseBuffer(Body, this, Parent);
+                } else {
+                    Parent.InvokeOnError(this, new IOException("Unexpected end of stream while reading message body."));
+                    Parent.CloseConnection(this, DisconnectionReason.RemoteSocketClosed);
+                }
+
+                IsReceiving = false;
+            }
+        }
+
+        private async Task ReceiveData_old(bool DataAvailable) {
             DateTime DownloadStartTime = DateTime.UtcNow;
             long TotalBytesRead = 0L;
 
@@ -492,6 +640,50 @@ namespace SocketJack.Net {
             }
             IsReceiving = false;
         }
+
+        private static void ParseBuffer(byte[] Bytes, TcpConnection Sender, ISocket Target) {
+            if (Target.Options.UseCompression) {
+                var decompressionResult = MethodExtensions.TryInvoke(Target.Options.CompressionAlgorithm.Decompress, ref Bytes);
+                if (decompressionResult.Success) {
+                    Bytes = decompressionResult.Result;
+                } else {
+                    Target.CloseConnection(Sender, DisconnectionReason.CompressionError);
+                    Target.InvokeOnError(Sender, decompressionResult.Exception);
+                    return;
+                }
+            }
+            Wrapper wrapper = Target.Options.Serializer.Deserialize(Bytes);
+            if (wrapper == null) {
+                Target.InvokeOnError(Sender, new P2PException("Deserialized object returned null."));
+            } else {
+                var valueType = wrapper.GetValueType();
+                if (wrapper.value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
+                    if (valueType == typeof(PeerRedirect)) {
+                        Byte[] redirectBytes = null;
+                        object val = wrapper.value;
+                        Type type = wrapper.value.GetType();
+                        if (type == typeof(string)) {
+                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
+                        } else if (type == typeof(JsonElement)) {
+                            string json = ((JsonElement)val).GetRawText();
+                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(json);
+                        }
+                        PeerRedirect redirect = Target.Options.Serializer.DeserializeRedirect(Target, redirectBytes);
+                        Task.Run(() => { Target.HandleReceive(Sender, redirect, valueType, Bytes.Length); });
+                    } else {
+                        object unwrapped = null;
+                        try {
+                            unwrapped = wrapper.Unwrap(Target);
+                        } catch (Exception ex) {
+                            Target.InvokeOnError(Sender, ex);
+                        }
+                        if (unwrapped != null)
+                            Task.Run(() => { Target.HandleReceive(Sender, unwrapped, valueType, Bytes.Length); });
+                    }
+                }
+            }
+        }
+
         private static async Task<List<byte>> ParseBuffer(List<byte> Buffer, TcpConnection Sender, ISocket Target) {
             int LastIndexOf = 0;
             if (Buffer != null && Buffer.Count > 0) {
@@ -591,44 +783,170 @@ namespace SocketJack.Net {
 
         protected internal void StartSending() {
             Task.Factory.StartNew(async () => {
+                DateTime Time = DateTime.UtcNow;
                 while (!isDisposed && !Closed && Socket.Connected) {
-                    await ProcessQueue();
+                    if(Parent.Options.Fps > 0) {
+                        var now = DateTime.UtcNow;
+                        if (now >= Time.AddMilliseconds(Parent.Options.timeout)) {
+                            Time = DateTime.UtcNow;
+                            await ProcessQueue();
+                        } else {
+                            await Task.Delay(1);
+                        }
+                    } else {
+                        await ProcessQueue();
+                    }
                 }
             }, TaskCreationOptions.LongRunning);
         }
 
         protected async internal Task ProcessQueue() {
-            if (Socket != null && Stream != null && (Socket.Connected) && !Closed && !IsSending && SendQueue.Count > 0) {
+            if (Socket != null && Stream != null && (Socket.Connected) && !Closed && !IsSending && SendQueueRaw.Count > 0) {
                 IsSending = true;
-                var Items = new List<SendQueueItem>();
-                while (SendQueue.Count > 0) {
-                    SendQueueItem Item;
-                    SendQueue.TryDequeue(out Item);
-                    if (Item != null)
-                        Items.Add(Item);
+                byte[] chunk = default;
+                lock (SendQueueRaw) {
+                    chunk = SendQueueRaw.ToArray();
+                    SendQueueRaw.Clear();
                 }
 
-                if (Items.Count == 0) {
-                    IsSending = false;
-                    return;
-                }
-
-                for (int i = 0; i < Items.Count; i++) {
-                    var item = Items[i];
-                    if (Socket == null || !Socket.Connected || Closed)
-                        break;
-                    if (item != null) {
-                        if (await TrySendQueueItem(item)) {
-                            item.Complete = true;
-                        }
-                    }
-                }
+#if UNITY
+                        MainThread.Run(() => {
+                           SendSerializedBytes(chunk);
+                           IsSending = false;
+                        });
+#endif
+#if WINDOWS
+                await Application.Current.Dispatcher.InvokeAsync(async () => { bool o = await SendSerializedBytes(chunk); IsSending = false; return o; });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+                await SendSerializedBytes(chunk);
                 IsSending = false;
+#endif
+
+
+
+
             } else {
                 await Task.Delay(1);
             }
         }
 
+        //        protected async internal Task ProcessQueue() {
+        //            if (Socket != null && Stream != null && (Socket.Connected) && !Closed && !IsSending && SendQueue.Count > 0) {
+        //                IsSending = true;
+        //                var Items = new List<SendQueueItem>();
+        //                while (SendQueue.Count > 0) {
+        //                    SendQueueItem Item;
+        //                    SendQueue.TryDequeue(out Item);
+        //                    if (Item != null)
+        //                        Items.Add(Item);
+        //                }
+        //                if (Items.Count == 0) {
+        //                    IsSending = false;
+        //                    return;
+        //                }
+        //                for (int i = 0; i < Items.Count; i++) {
+        //                    var item = Items[i];
+        //                    if (Socket == null || !Socket.Connected || Closed)
+        //                        break;
+        //                    if (item != null) {
+        //                        bool okay = false;
+        //#if UNITY
+        //                        MainThread.Run(() => {
+        //                            okay = TrySendQueueItem(item).Result;
+        //                        });
+        //#endif
+        //#if WINDOWS
+        //                       okay = await Application.Current.Dispatcher.InvokeAsync(async () => { return await TrySendQueueItem(item); }).Result;
+        //#endif
+        //#if NETSTANDARD1_0_OR_GREATER && !UNITY
+        //            okay = await TrySendQueueItem(item);
+        //#endif
+        //                        if (okay) {
+        //                            item.Complete = true;
+        //                        }
+        //                    }
+        //                }
+        //                IsSending = false;
+        //            } else {
+        //                await Task.Delay(1);
+        //            }
+        //        }
+
+        protected internal async Task<bool> SendSerializedBytes(byte[] SerializedBytes) {
+            return await Task.Run(async () => {
+                if (isDisposed || Stream == null || Closed) return false;
+                bool sentSuccessful = false;
+                try {
+                    if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
+                        // Object smaller than MTU.
+                        byte[] ProcessedBytes = SerializedBytes;
+                        int totalBytes = ProcessedBytes.Length;
+
+                        // If upload buffering is disabled or UploadBufferSize is invalid, write whole buffer at once
+                        if (!Parent.Options.isUploadBuffered || Parent.Options.UploadBufferSize <= 0) {
+                            if (SSL) {
+                                SslStream.Write(ProcessedBytes, 0, totalBytes);
+                            } else {
+                                Stream.Write(ProcessedBytes, 0, totalBytes);
+                            }
+                            Parent.InvokeInternalSentByteCounter(this, totalBytes);
+                        } else {
+                            int chunkUnit = Math.Max(1, Parent.Options.UploadBufferSize);
+
+                            for (int offset = 0; offset < totalBytes; offset += chunkUnit) {
+                                if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
+                                    SerializedBytes = null;
+                                    ProcessedBytes = null;
+                                    if (!Closed) Parent.CloseConnection(this);
+                                    return false;
+                                }
+
+                                long diff = ((TotalBytesSent - _TotalBytesSent_l)) - Parent.Options.MaximumDownloadBytesPerSecond;
+                                if (diff > 0) {
+                                    var now = DateTime.UtcNow;
+                                    var timeDiff = now - LastFrame;
+                                    _ReceivedBytesPerSecond = (int)(TotalBytesSent - _TotalBytesSent_l);
+                                    _TotalBytesSent_l = TotalBytesSent;
+                                    LastFrame = now;
+                                    if (timeDiff > TimeSpan.FromSeconds(1)) {
+                                        await Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff * 10)));
+                                    }
+
+                                }
+
+                                int chunkSize = Math.Min(chunkUnit, totalBytes - offset);
+                                if (SSL) {
+                                    SslStream.Write(ProcessedBytes, offset, chunkSize);
+                                } else {
+                                    Stream.Write(ProcessedBytes, offset, chunkSize);
+                                }
+
+                                Interlocked.Add(ref _TotalBytesSent, chunkSize);
+                                Parent.InvokeInternalSentByteCounter(this, chunkSize);
+                            }
+                        }
+                        sentSuccessful = true;
+                        //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
+                        Parent.InvokeInternalSendEvent(this, typeof(byte[]), "[CHUNK]", ProcessedBytes.Length);
+                        Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, typeof(byte[]), ProcessedBytes.Length));
+                        //}
+
+                    } else if (SerializedBytes.Length > NIC.MTU) {
+                        // Object larger than MTU, we have to Segment the object.
+                        Parent.SendSegmented(this, SerializedBytes);
+                    }
+                } catch (Exception ex) {
+                    if (Closed) return false;
+                    var Reason = ex.Interpret();
+                    if (Reason.ShouldLogReason()) {
+                        Parent.InvokeOnError(this, ex);
+                    }
+                    Parent.CloseConnection(this, Reason);
+                }
+                return sentSuccessful;
+            });
+        }
         protected internal async Task<bool> TrySendQueueItem(SendQueueItem Item) {
             if (isDisposed || Stream == null || Closed || Item.Complete) return false;
             bool sentSuccessful = false;
@@ -641,57 +959,48 @@ namespace SocketJack.Net {
                     wrapped = new Wrapper(Item.Object, Parent);
                     SerializedBytes = Parent.Options.Serializer.Serialize(wrapped);
                 }
-                if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
+               // if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
                     //    Object smaller than MTU.
-                    byte[] TerminatedBytes = Item.Connection.Compressed ? Parent.Options.CompressionAlgorithm.Compress(SerializedBytes).Terminate() : SerializedBytes.Terminate();
-                    int totalBytes = TerminatedBytes.Length;
+                    byte[] ProcessedBytes = Item.Connection.Compressed ? Parent.Options.CompressionAlgorithm.Compress(SerializedBytes).Terminate() : SerializedBytes.Terminate();
+                    int totalBytes = ProcessedBytes.Length;
                     TcpConnection Client = Item.Connection;
-                    DateTime UploadStartTime = DateTime.UtcNow;
                     byte[] SentBytes = new byte[totalBytes];
-                    string sentTxt = string.Empty;
 
                     if (Parent.Options.isUploadBuffered) {
-                        for (int offset = 0, loopTo = TerminatedBytes.Length - 1; Parent.Options.UploadBufferSize >= 0 ? offset <= loopTo : offset >= loopTo; offset += Parent.Options.UploadBufferSize) {
+                        for (int offset = 0, loopTo = ProcessedBytes.Length - 1; Parent.Options.UploadBufferSize >= 0 ? offset <= loopTo : offset >= loopTo; offset += Parent.Options.UploadBufferSize) {
                             if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
                                 SerializedBytes = null;
-                                TerminatedBytes = null;
+                                ProcessedBytes = null;
                                 wrapped = null;
                                 if (!Closed) Parent.CloseConnection(this);
                                 return false;
                             }
-                            // Not fully implemented.
-                            //if (Options.MaximumUploadMbps > 0) {
-                            //    // Limit upload bandwidth.
-                            //    while (LimitUploadBandwidth(TotalUploadedBytes, UploadStartTime))
-                            //        Thread.Sleep(1);
-                            //    UploadStartTime = DateTime.UtcNow;
-                            //}
-                            int chunkSize = Math.Min(Parent.Options.UploadBufferSize, totalBytes - offset);
+                        int chunkSize = Math.Min(Parent.Options.UploadBufferSize, totalBytes - offset);
                             if (SSL) {
-                                await SslStream.WriteAsync(TerminatedBytes, offset, chunkSize);
+                                await SslStream.WriteAsync(ProcessedBytes, offset, chunkSize);
                             } else {
-                                await Stream.WriteAsync(TerminatedBytes, offset, chunkSize);
+                                await Stream.WriteAsync(ProcessedBytes, offset, chunkSize);
                             }
                             Parent.InvokeInternalSentByteCounter(Item.Connection, chunkSize);
                         }
                     } else {
                         if (SSL) {
-                            await SslStream.WriteAsync(TerminatedBytes, 0, TerminatedBytes.Length);
+                            await SslStream.WriteAsync(ProcessedBytes, 0, ProcessedBytes.Length);
                         } else {
-                            await Stream.WriteAsync(TerminatedBytes, 0, TerminatedBytes.Length);
+                            await Stream.WriteAsync(ProcessedBytes, 0, ProcessedBytes.Length);
                         }
-                        Parent.InvokeInternalSentByteCounter(Item.Connection, TerminatedBytes.Length);
+                        Parent.InvokeInternalSentByteCounter(Item.Connection, ProcessedBytes.Length);
                     }
                     sentSuccessful = true;
                     //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
-                    Parent.InvokeInternalSendEvent(Item.Connection, type, Item.Object, TerminatedBytes.Length);
-                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, Item.Connection, type, TerminatedBytes.Length));
+                    Parent.InvokeInternalSendEvent(Item.Connection, type, Item.Object, ProcessedBytes.Length);
+                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, Item.Connection, type, ProcessedBytes.Length));
                     //}
 
-                } else if (SerializedBytes.Length > NIC.MTU) {
-                    // Object larger than MTU, we have to Segment the object.
-                    Item.Connection.Parent.SendSegmented(Item.Connection, SerializedBytes);
-                }
+                //} else if (SerializedBytes.Length > NIC.MTU) {
+                //    // Object larger than MTU, we have to Segment the object.
+                //    Item.Connection.Parent.SendSegmented(Item.Connection, SerializedBytes);
+               // }
             } catch (Exception ex) {
                 if (Closed) return false;
                 var Reason = ex.Interpret();
@@ -702,6 +1011,35 @@ namespace SocketJack.Net {
             }
             return sentSuccessful;
         }
+        public void Send(object Obj) {
+            if (Parent is TcpServer Server) {
+                if (Server is null) return;
+                Server.Send(this, Obj);
+            } else if (Parent is TcpClient Client) {
+                Client.Send(Obj);
+            }
+        }
+
+        /// <summary>
+        /// Send an object to a Remote Client on the server.
+        /// <para>This will <see langword="NOT"/> expose your remote IP.</para>
+        /// </summary>
+        /// <param name="Recipient"></param>
+        /// <param name="Obj"></param>
+        public void Send(Identifier Recipient, object Obj) {
+            if (!IsServer) {
+                if (Parent is TcpClient Client) {
+                    if (ID == default) {
+                        Client.InvokeOnError(this, new P2PException("P2P Client not yet initialized." + Environment.NewLine +
+                                                                          "     ConnectedSocket.Identifier property cannot equal null." + Environment.NewLine +
+                                                                          "     Invoke via TcpClient.OnIdentified Event instead of TcpClient.OnConnected."));
+                    } else {
+                        Client.Send(Recipient, Obj);
+                    }
+                }
+            }
+        }
+    
         #endregion
 
         /// <summary>
@@ -766,7 +1104,13 @@ namespace SocketJack.Net {
         /// <returns>Value as string.</returns>
         /// </summary>
         public async Task<string> GetMetaData(string key, bool Private = false, bool WaitForValueIfNull = true) {
-            if (Identity == null) return default;
+            if (Identity == null && !WaitForValueIfNull) {
+                return default;
+            } else if (Identity == null && WaitForValueIfNull) {
+                while (Identity == null) {
+                    await Task.Delay(50);
+                }
+            }
             return await Identity.GetMetaData(key, Private, WaitForValueIfNull);
         }
 
@@ -781,35 +1125,6 @@ namespace SocketJack.Net {
             if (Socket != null) {
                 _Socket = Socket;
                 EndPoint = (IPEndPoint)Socket.RemoteEndPoint;
-            }
-        }
-
-        public void Send(object Obj) {
-            if (Parent is TcpServer Server) {
-                if (Server is null) return;
-                Server.Send(this, Obj);
-            } else if (Parent is TcpClient Client) {
-                Client.Send(Obj);
-            }
-        }
-
-        /// <summary>
-        /// Send an object to a Remote Client on the server.
-        /// <para>This will <see langword="NOT"/> expose your remote IP.</para>
-        /// </summary>
-        /// <param name="Recipient"></param>
-        /// <param name="Obj"></param>
-        public void Send(Identifier Recipient, object Obj) {
-            if (!IsServer) {
-                if (Parent is TcpClient Client) {
-                    if (ID == default) {
-                        Client.InvokeOnError(this, new P2PException("P2P Client not yet initialized." + Environment.NewLine +
-                                                                          "     ConnectedSocket.Identifier property cannot equal null." + Environment.NewLine +
-                                                                          "     Invoke via TcpClient.OnIdentified Event instead of TcpClient.OnConnected."));
-                    } else {
-                        Client.Send(Recipient, Obj);
-                    }
-                }
             }
         }
     }

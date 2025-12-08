@@ -18,6 +18,7 @@ Public Class HttpServerTest
 
         ' Add any initialization after the InitializeComponent() call.
         Server = New HttpServer(ServerPort, "HttpServer")
+
         With Server.Options
             .Logging = True
             .LogReceiveEvents = True
@@ -113,6 +114,26 @@ Public Class HttpServerTest
     Private Sub Server_OnHttpRequest(Connection As TcpConnection, ByRef context As HttpContext, cancellationToken As CancellationToken) Handles Server.OnHttpRequest
         context.Response.Body = New HelloObj()
     End Sub
+
+    Private Async Sub HttpServerTest_Loaded(sender As Object, e As RoutedEventArgs) Handles Me.Loaded
+        If NIC.InterfaceDiscovered Then
+            Await Forward()
+        Else
+            AddHandler NIC.OnInterfaceDiscovered, Async Sub() Forward()
+        End If
+
+    End Sub
+
+    Public Async Function Forward() As Task(Of Boolean)
+        Dim forwarded As Boolean = Await NIC.ForwardPort(80)
+        If forwarded Then
+            Log("Port 80 forwarded successfully via UPnP." & Environment.NewLine)
+        Else
+            Log("Port forwarding via UPnP failed or not available." & Environment.NewLine)
+        End If
+        Return forwarded
+    End Function
+
 
 #End Region
 

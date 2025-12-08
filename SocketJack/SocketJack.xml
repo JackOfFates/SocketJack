@@ -255,6 +255,24 @@
             <param name="ForwardPortIfAvailable"></param>
             <returns></returns>
         </member>
+        <member name="M:SocketJack.Net.NIC.ForwardPort(System.Int32)">
+            <summary>
+            <para>Check if a port is available.</para>
+            <para>Optionally forward the port if available.</para>
+            </summary>
+            <param name="port"></param>
+            <param name="ForwardPortIfAvailable"></param>
+            <returns></returns>
+        </member>
+        <member name="M:SocketJack.Net.NIC.ForwardPorts(System.Int32[])">
+            <summary>
+            <para>Check if a port is available.</para>
+            <para>Optionally forward the port if available.</para>
+            </summary>
+            <param name="port"></param>
+            <param name="ForwardPortIfAvailable"></param>
+            <returns></returns>
+        </member>
         <member name="M:SocketJack.Net.NIC.FindOpenPort(System.Int32,System.Int32,System.Boolean)">
             <summary>
             <para>Find an open port within a range.</para>
@@ -727,6 +745,11 @@
             True if the connection is closed.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.TcpConnection.Closing">
+            <summary>
+            True if the connection is closing.
+            </summary>
+        </member>
         <member name="F:SocketJack.Net.TcpConnection.IsServer">
             <summary>
             <see langword="True"/> if created by a TcpServer.
@@ -757,6 +780,14 @@
             </summary>
             <param name="targetHost">Target host name (required for client-side).</param>
         </member>
+        <member name="M:SocketJack.Net.TcpConnection.Send(SocketJack.Net.P2P.Identifier,System.Object)">
+            <summary>
+            Send an object to a Remote Client on the server.
+            <para>This will <see langword="NOT"/> expose your remote IP.</para>
+            </summary>
+            <param name="Recipient"></param>
+            <param name="Obj"></param>
+        </member>
         <!-- Badly formed XML comment ignored for member "M:SocketJack.Net.TcpConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)" -->
         <member name="M:SocketJack.Net.TcpConnection.GetMetaData(System.String,System.Boolean,System.Boolean)">
             <summary>
@@ -765,14 +796,6 @@
             <paramref name="key">Metadata Key.</paramref>
             <returns>Value as string.</returns>
             </summary>
-        </member>
-        <member name="M:SocketJack.Net.TcpConnection.Send(SocketJack.Net.P2P.Identifier,System.Object)">
-            <summary>
-            Send an object to a Remote Client on the server.
-            <para>This will <see langword="NOT"/> expose your remote IP.</para>
-            </summary>
-            <param name="Recipient"></param>
-            <param name="Obj"></param>
         </member>
         <member name="T:SocketJack.Net.TcpOptions">
             <summary>
@@ -916,6 +939,14 @@
             <summary>
             Use SSL for network transfer.
             </summary>
+        </member>
+        <member name="P:SocketJack.Net.TcpOptions.Fps">
+            <summary>
+            Gets or sets the frame rate, in frames per second, for processing operations.
+            </summary>
+            <remarks>Setting this property adjusts the timing interval used for frame updates. The value
+            should be a positive integer to ensure correct timing behavior.
+            0 or less = disabled.</remarks>
         </member>
         <member name="P:SocketJack.Net.TcpOptions.Whitelist">
             <summary>

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using SocketJack.Extensions;
 using SocketJack.Net;
@@ -216,6 +217,7 @@ namespace SocketJack {
 
         protected internal static Thread CounterThread;
         private static DateTime LastCount = DateTime.UtcNow;
+        // Use a 1 second interval so counters represent bytes-per-second
         private static TimeSpan OneSecond = TimeSpan.FromSeconds(1);
         protected internal static void CounterLoop() {
             while (Alive) {
@@ -236,7 +238,15 @@ namespace SocketJack {
                     MethodExtensions.TryInvoke(() => {
                         if (TcpServers.Count - 1 < i) return;
                         var Server = TcpServers.Values.ElementAt(i);
-                        if (Server.Connected && Server.Connection != null) {
+                        if (Server.Connection != null) {
+                            if (Server.GetType() == typeof(TcpServer)) {
+                                var clients = Server.AsTcpServer().Clients.Values;
+                                foreach (var c in clients) {
+                                    Server.Connection.SentBytesCounter += c.SentBytesCounter;
+                                    Server.Connection.ReceivedBytesCounter += c.ReceivedBytesCounter;
+                                }
+                            }
+
                             Server.Connection._SentBytesPerSecond = Server.Connection.SentBytesCounter;
                             Server.Connection._ReceivedBytesPerSecond = Server.Connection.ReceivedBytesCounter;
                             Server.Connection.SentBytesCounter = 0;

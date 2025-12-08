@@ -20,7 +20,7 @@ namespace SocketJack.Serialization.Json {
 #endif
         }
 
-        public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions() { DefaultBufferSize = 1048576, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        public JsonSerializerOptions JsonOptions { get; set; } = new JsonSerializerOptions() { DefaultBufferSize = 1048576, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, MaxDepth = 0 };
         public bool HasConverter(Type type) {
             foreach (var converter in JsonOptions.Converters) {
                 if (converter.CanConvert(type))

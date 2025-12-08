@@ -24,7 +24,7 @@ namespace SocketJack.Net {
         Socket Socket { get; set; }
         Stream Stream { get; set; }
         Guid InternalID { get; }
-        public Identifier RemoteIdentity { get; set; }
+        public Identifier RemoteIdentity { get; set; } 
         public bool isDisposed { get; set; }
         public bool Connected { get; }
         public void RegisterCallback<T>(Action<ReceivedEventArgs<T>> Action);

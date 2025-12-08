@@ -1,15 +1,10 @@
-﻿using SocketJack;
-using SocketJack.Extensions;
+﻿using SocketJack.Extensions;
+using System.Collections.Generic;
+using System;
 using SocketJack.Net;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Net;
-using System.Net.Sockets;
-using System.Reflection;
-using System.Security.Cryptography;
+using SocketJack;
 
 namespace SocketJack {
 
@@ -20,16 +15,8 @@ namespace SocketJack {
         /// </summary>  
         public static ThreadManager threadManager { get; } = new ThreadManager();
 
-        public static List<Type> IgnoreLoggedTypes { get; } = new List<Type>(new[]{ typeof(Segment) });
-        public static List<Type> BlacklistedRedirects = new List<Type>() { typeof(Identifier), typeof(PeerServer), typeof(PeerRedirect), typeof(Socket), typeof(TcpConnection) };
-
-        static string HashAssembly(Assembly a) {
-            var path = string.IsNullOrEmpty(a.Location) ? "<no file on disk>" : a.Location;
-            var bytes = File.ReadAllBytes(path);
-            var sha256 = BitConverter.ToString(SHA256.Create().ComputeHash(bytes))
-                         .Replace("-", "").ToUpperInvariant();
-            return sha256;
-        }
+        public static TypeList IgnoreLoggedTypes { get; } = new TypeList(new[]{ typeof(Segment) });
+        public static List<Type> BlacklistedRedirects = new List<Type>() { typeof(Identifier), typeof(PeerServer), typeof(PeerRedirect) };
 
         public static void RegisterClient(ref ISocket Client) {
             ThreadManager.TcpClients.AddOrUpdate(Client.InternalID, Client);

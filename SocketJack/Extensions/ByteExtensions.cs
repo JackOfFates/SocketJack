@@ -1,9 +1,10 @@
-﻿using System;
+﻿using SocketJack.Net;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
-using SocketJack.Net;
 
 namespace SocketJack.Extensions {
     public static class ByteExtensions {
@@ -29,13 +30,40 @@ namespace SocketJack.Extensions {
             }
             return Segments.ToArray();
         }
+        public static Segment[] GetTerminatedSegments(this byte[] Bytes) {
+            int MTU = 4000;// NIC.MTU <= 0 ? 4096 : NIC.MTU;
+            var Segments = new List<Segment>();
+
+            double SegmentCountDbl = (double)((double)Bytes.Length / (double)MTU);
+            int SegmentCount = (int)Math.Round(Math.Floor(SegmentCountDbl));
+            bool AddExtra = SegmentCountDbl - SegmentCount > 0d;
+            if (AddExtra)
+                SegmentCount += 1;
+            string ID = Guid.NewGuid().ToString().ToUpper();
+            for (int i = 0, loopTo = SegmentCount - 1; i <= loopTo; i++) {
+                int ByteIndex = i * MTU;
+                int Length = ByteIndex + MTU > Bytes.Length ? Bytes.Length - ByteIndex : MTU;
+
+                byte[] CroppedData = new byte[Length].Terminate();
+                Buffer.BlockCopy(Bytes, ByteIndex, CroppedData, 0, Length);
+                var s = new Segment(ID, CroppedData, i + 1, SegmentCount);
+                Segments.Add(s);
+            }
+            return Segments.ToArray();
+        }
 
         public static Segment[] GetSegments<T>(this byte[] SerializedBytes) {
             return SerializedBytes.GetSegments();
         }
 
+        public static Segment[] GetTerminatedSegments<T>(this byte[] SerializedBytes) {
+            return SerializedBytes.GetTerminatedSegments();
+        }
+
         public static byte[] Terminate(this byte[] Data) {
-            return ByteExtensions.Concat(new[] { Data, TcpConnection.Terminator });
+            var length = Data.Length.ToString().PadLeft(15, (char)0);
+            return Encoding.UTF8.GetBytes(length).Concat(Data);
+            //return ByteExtensions.Concat(new[] { Data, TcpConnection.Terminator });
         }
 
         /// <summary>

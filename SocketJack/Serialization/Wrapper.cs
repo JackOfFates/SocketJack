@@ -363,7 +363,7 @@ namespace SocketJack.Serialization {
                 string valueTypeName = ValueInstance.GetType().Name;
 
                 if (Reference.Info.PropertyType == typeof(object)) {
-                    if (isJson) {
+                    if (isJson && v != null) {
                         JsonSerializer serializer = (JsonSerializer)sender.Options.Serializer;
                         if (!serializer.HasConverter(v.GetType())) {
                             var wrappedValue = new Wrapper(v, sender);

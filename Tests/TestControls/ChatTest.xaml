@@ -66,7 +66,19 @@
             <Button x:Name="SendButton1_File" Content="File" Height="35" Margin="0,0,100,0" VerticalAlignment="Bottom" HorizontalAlignment="Right" Width="40" IsEnabled="False" Grid.Row="1"/>
             <Button x:Name="SendButton2_File" Content="File" Height="35" VerticalAlignment="Bottom" HorizontalAlignment="Right" Width="41" Grid.Column="1" IsEnabled="False" Grid.Row="1" Margin="0,0,100,0"/>
         </Grid>
-        <CheckBox x:Name="WebSocket_Enabled" Content="Use Websockets" HorizontalAlignment="Left" Margin="141,589,0,0" VerticalAlignment="Top" Foreground="White" FontFamily="Segoe UI Light" IsChecked="True"/>
-
+        <CheckBox x:Name="WebSocket_Enabled" Content="Use Websockets" HorizontalAlignment="Left" Margin="141,0,0,5" VerticalAlignment="Bottom" Foreground="White" FontFamily="Segoe UI Light" IsChecked="True"/>
+        <TextBox x:Name="UserList" VerticalScrollBarVisibility="Visible" Margin="247,0,0,5" IsReadOnly="True" TextWrapping="Wrap" Text="" VerticalAlignment="Bottom" Height="56" Background="#FF2F2F2F" Foreground="White" BorderBrush="#FF3E3E3E" HorizontalAlignment="Left" Width="125"/>
+        <Button x:Name="ButtonC1" Content="Disconnected" Height="56" Margin="377,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126" IsEnabled="False"/>
+        <Button x:Name="ButtonC2" Content="Disconnected" Height="56" Margin="508,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126" IsEnabled="False"/>
+        <Border x:Name="BC1" BorderBrush="White" BorderThickness="1" HorizontalAlignment="Left" VerticalAlignment="Top" Width="4" Height="4"/>
+        <Border x:Name="BC2" BorderBrush="#FF00E2FF" BorderThickness="1" HorizontalAlignment="Left" VerticalAlignment="Top" Width="4" Height="4"/>
+        <Slider x:Name="C1BW" HorizontalAlignment="Left" Margin="651,0,0,13" VerticalAlignment="Bottom" Width="100" Maximum="1" Value="0.024" Minimum="0.02" TickFrequency="0.02" Delay="0" SmallChange="0.02" LargeChange="0.01" AutoToolTipPlacement="BottomRight"/>
+        <TextBlock HorizontalAlignment="Left" Margin="651,0,0,36" TextWrapping="Wrap" Text="Client 1 Bandwidth" VerticalAlignment="Bottom" Foreground="White"/>
+        <Slider x:Name="C2BW" HorizontalAlignment="Left" Margin="756,0,0,13" VerticalAlignment="Bottom" Width="100" Maximum="1" Value="0.024" Minimum="0.02" TickFrequency="0.02" Delay="0" SmallChange="0.02" LargeChange="0.01" AutoToolTipPlacement="BottomRight"/>
+        <TextBlock HorizontalAlignment="Left" Margin="756,0,0,36" TextWrapping="Wrap" Text="Client 2 Bandwidth" VerticalAlignment="Bottom" Foreground="White"/>
+        <Slider x:Name="SBW" HorizontalAlignment="Left" Margin="861,0,0,13" VerticalAlignment="Bottom" Width="100" Maximum="1" Value="0.024" Minimum="0.02" TickFrequency="0.02" Delay="0" SmallChange="0.02" LargeChange="0.01" AutoToolTipPlacement="BottomRight"/>
+        <TextBlock HorizontalAlignment="Left" Margin="861,0,0,36" TextWrapping="Wrap" Text="Server Bandwidth" VerticalAlignment="Bottom" Foreground="White"/>
+        <Slider x:Name="rRate" HorizontalAlignment="Left" Margin="959,0,0,13" VerticalAlignment="Bottom" Width="100" Maximum="60" Value="60" Minimum="0.02" Delay="0" SmallChange="0.02" ValueChanged="rRate_ValueChanged" TickFrequency="0.02" LargeChange="10" AutoToolTipPlacement="BottomRight"/>
+        <TextBlock HorizontalAlignment="Left" Margin="959,0,0,36" TextWrapping="Wrap" Text="Refresh Rate" VerticalAlignment="Bottom" Foreground="White"/>
     </Grid>
 </UserControl>

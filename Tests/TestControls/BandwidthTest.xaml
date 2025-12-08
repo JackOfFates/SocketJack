@@ -56,9 +56,17 @@
                 <TextBlock x:Name="LabelReceived" Text="Received" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
                 <TextBlock x:Name="LabelReceivedObjects" Text="Objects" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center"/>
                 <Grid x:Name="UnitGrid" Width="375">
-                    <TextBlock Text="Unit Size" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0"/>
-                    <Slider x:Name="SliderUnitSize" Thumb.DragStarted="Slider_DragStarted" Thumb.DragCompleted="Slider_DragCompleted" Maximum="4000000" Value="250" SmallChange="1" LargeChange="25000" Margin="0,24,0,0" IsMoveToPointEnabled="True" AutoToolTipPlacement="TopLeft" Delay="0"/>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="259*"/>
+                        <ColumnDefinition Width="116*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Unit Size" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,0,0"/>
+                    <Slider x:Name="SliderUnitSize" Thumb.DragStarted="Slider_DragStarted" Thumb.DragCompleted="Slider_DragCompleted" Maximum="2500" Value="250" SmallChange="50" LargeChange="250" Margin="0,24,9,0" IsMoveToPointEnabled="True" AutoToolTipPlacement="TopLeft" Delay="0" HorizontalAlignment="Right" Width="240" Minimum="250" TickFrequency="50"/>
+                    
+                    <TextBlock Text="Bandwidth (/100)" Foreground="White" Height="{Binding Content.ActualHeight, ElementName=gb1, Mode=OneWay}" TextAlignment="Center" Margin="5,0,5,0" Grid.Column="1"/>
+                    <Slider x:Name="SliderBwSize" Thumb.DragStarted="Slider_DragStarted" Thumb.DragCompleted="Slider_DragCompleted" Maximum="100" Value="2" SmallChange="1" LargeChange="25000" Margin="5,24,0,0" IsMoveToPointEnabled="True" AutoToolTipPlacement="TopLeft" Delay="0" Grid.Column="1" Minimum="2"/>
                 </Grid>
+
             </StackPanel>
         </GroupBox>
 

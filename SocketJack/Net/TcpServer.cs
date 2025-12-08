@@ -1,14 +1,16 @@
-﻿using System;
+﻿using SocketJack.Extensions;
+using SocketJack.Net.P2P;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-using SocketJack.Extensions;
-using SocketJack.Net.P2P;
+using System.Windows;
 
 namespace SocketJack.Net {
 
@@ -74,11 +76,25 @@ namespace SocketJack.Net {
         public event PortUnavailableEventHandler PortUnavailable;
         public delegate void PortUnavailableEventHandler(ref TcpServer Server, int Port);
 
-        protected internal event StoppedListeningEventHandler StoppedListening;
-        protected internal delegate void StoppedListeningEventHandler(TcpServer sender);
+        public event StoppedListeningEventHandler StoppedListening;
+        public delegate void StoppedListeningEventHandler(TcpServer sender);
 
         protected internal void InvokeOnDisconnected(DisconnectedEventArgs e) {
-            if (e.Connection != Connection) ClientDisconnected?.Invoke(e);
+            if (e.Connection != Connection) {
+#if UNITY
+            MainThread.Run(() => {
+		        ClientDisconnected?.Invoke(e);
+            });
+#endif
+#if WINDOWS
+                Application.Current.Dispatcher.Invoke(() => {
+                    ClientDisconnected?.Invoke(e);
+                });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            ClientDisconnected?.Invoke(e);
+#endif
+            }
         }
 
         private void TcpServer_InternalReceiveEvent(TcpConnection Connection, Type objType, object obj, int BytesReceived) {
@@ -424,18 +440,23 @@ namespace SocketJack.Net {
                 Connection = new TcpConnection(this, Socket);
                 try {
                     Bind(Port);
-                    if (!NIC.InterfaceDiscovered) {
-                        Log("Waiting for Network Interface Card..");
-                        DelayListen = true;
-                        NIC.OnInterfaceDiscovered += this.DelayListenDelegate;
-                        return false;
-                    } else {
-                        Socket.Listen(Options.Backlog);
-                        LogFormat("[{0}] Listening on port {1}.", new[] { Name, Port.ToString() });
-                        IsListening = true;
-                        StartServerLoop();
-                        return true;
-                    }
+                    //if (!NIC.InterfaceDiscovered) {
+                    //    Log("Waiting for Network Interface Card..");
+                    //    DelayListen = true;
+                    //    NIC.OnInterfaceDiscovered += this.DelayListenDelegate;
+                    //    return false;
+                    //} else {
+                    //    Socket.Listen(Options.Backlog);
+                    //    LogFormat("[{0}] Listening on port {1}.", new[] { Name, Port.ToString() });
+                    //    IsListening = true;
+                    //    StartServerLoop();
+                    //    return true;
+                    //}
+                    Socket.Listen(Options.Backlog);
+                    LogFormat("[{0}] Listening on port {1}.", new[] { Name, Port.ToString() });
+                    IsListening = true;
+                    StartServerLoop();
+                    return true;
                 } catch (Exception ex) {
                     InvokeOnError(Connection, ex);
                     return false;
@@ -453,7 +474,19 @@ namespace SocketJack.Net {
             if (IsListening) {
                 IsListening = false;
                 Connection.Close(this);
+#if UNITY
+            MainThread.Run(() => {
+		        StoppedListening?.Invoke(this);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 StoppedListening?.Invoke(this);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+                StoppedListening?.Invoke(this);
+#endif
                 Peers.Clear();
                 GC.Collect();
                 GC.WaitForPendingFinalizers();

@@ -1,0 +1,7 @@
+﻿[*.vb]
+
+# BC42356: This async method lacks 'Await' operators and so will run synchronously
+dotnet_diagnostic.BC42356.severity = none
+
+# BC42358: Because this call is not awaited, execution of the current method continues before the call is completed
+dotnet_diagnostic.BC42358.severity = none

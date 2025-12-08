@@ -14,6 +14,13 @@ namespace SocketJack.Serialization.Json.Converters {
         public override void Write(Utf8JsonWriter writer, byte[] value, JsonSerializerOptions options) {
             if (value == null) {
                 writer.WriteNullValue();
+            } else if (value.Length > 2097152) {
+                int iterations = value.Length / 2097152;
+                long written = 0;
+                for (int i = 0; i < iterations; i++) {
+                    writer.WriteStringValue(Convert.ToBase64String(value.AsSpan(i * 2097152, 2097152)));
+                    written += value.Length - written;
+                }
             } else {
                 writer.WriteStringValue(Convert.ToBase64String(value));
             }

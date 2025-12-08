@@ -20,6 +20,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Xml.Linq;
 
 namespace SocketJack.Net.WebSockets {
@@ -146,14 +147,19 @@ namespace SocketJack.Net.WebSockets {
 
             try {
                 bool exitLoop = false;
-                while (connection.Socket.Connected && !connection.Closed) {
+                while (connection.Socket.Connected && (!connection.Closed || connection.Closing)) {
                     using var cts = new CancellationTokenSource();
                     var monitorTask = Task.Run(async () => {
                         while (connection.Socket != null && connection.Socket.Connected && !connection.Closed) {
                             await Task.Delay(100);
                         }
                         cts.Cancel();
-                        CloseConnection(connection, DisconnectionReason.RemoteSocketClosed);
+                        if (!(connection.Socket.Connected && (!connection.Closed || connection.Closing))) {
+                            return;
+                        }
+                        //if (!connection.Closed || connection.Closing)
+                            //connection._Closing = true;
+                            //CloseConnection(connection, DisconnectionReason.RemoteSocketClosed);
                     });
 
                     int header = await ReadByteAsync(connection.Stream, cts.Token);
@@ -321,6 +327,34 @@ namespace SocketJack.Net.WebSockets {
             }
         }
 
+        internal void SafeInvoke(Action action) {
+#if UNITY
+            MainThread.Run(() => {
+                action.Invoke();
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.InvokeAsync(() => {
+                action.Invoke();
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            action.Invoke();
+#endif
+        }
+
+        internal async Task<IAsyncResult> SafeInvokeAsync(Action action) {
+#if UNITY
+            return Task.Run(() => { MainThread.Run(action); });
+#endif
+#if WINDOWS
+            return Application.Current.Dispatcher.InvokeAsync(action).Task;
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+           return action.BeginInvoke(null, null);
+#endif
+        }
+
         #endregion
 
         #region Events
@@ -402,55 +436,240 @@ namespace SocketJack.Net.WebSockets {
         protected internal delegate void InternalSendEventEventHandler(TcpConnection Connection, Type objType, object obj, int BytesSent);
 
         void ISocket.InvokeBytesPerSecondUpdate(TcpConnection connection) {
+#if UNITY
+            MainThread.Run(() => {
+                InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
+#endif
         }
         public void InvokePeerConnectionRequest(ISocket sender, ref PeerServer Server) {
+#if UNITY
+            var s = Server;
+            MainThread.Run(() => {
+                Internal_PeerConnectionRequest?.Invoke(sender, ref s);
+            });
+#endif
+#if WINDOWS
+            var s = Server;
+            Application.Current.Dispatcher.Invoke(() => {
+               Internal_PeerConnectionRequest?.Invoke(sender, ref s); 
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             Internal_PeerConnectionRequest?.Invoke(sender, ref Server);
+#endif
         }
         public void InvokeBytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
+#if UNITY
+            MainThread.Run(() => {
+                BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
+#endif
         }
         public void InvokePeerServerShutdown(ISocket sender, PeerServer Server) {
+#if UNITY
+            MainThread.Run(() => {
+                PeerServerShutdown?.Invoke(sender, Server);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                PeerServerShutdown?.Invoke(sender, Server);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             PeerServerShutdown?.Invoke(sender, Server);
+#endif
         }
         public void InvokePeerUpdate(ISocket sender, Identifier Peer) {
+#if UNITY
+            MainThread.Run(() => {
+                PeerUpdate?.Invoke(sender, Peer);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                PeerUpdate?.Invoke(sender, Peer);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             PeerUpdate?.Invoke(sender, Peer);
+#endif
         }
         public void InvokePeerConnected(ISocket sender, Identifier Peer) {
+#if UNITY
+            MainThread.Run(() => {
+                PeerConnected?.Invoke(sender, Peer);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                PeerConnected?.Invoke(sender, Peer);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             PeerConnected?.Invoke(sender, Peer);
+#endif
         }
         public void InvokePeerDisconnected(ISocket sender, Identifier Peer) {
+#if UNITY
+            MainThread.Run(() => {
+                PeerDisconnected?.Invoke(sender, Peer);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                PeerDisconnected?.Invoke(sender, Peer);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             PeerDisconnected?.Invoke(sender, Peer);
+#endif
         }
         public void InvokeInternalReceivedByteCounter(TcpConnection Connection, int BytesReceived) {
+#if UNITY
+            MainThread.Run(() => {
+                InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
+#endif
         }
         public void InvokeInternalSentByteCounter(TcpConnection connection, int chunkSize) {
+#if UNITY
+            MainThread.Run(() => {
+                InternalSentByteCounter?.Invoke(connection, chunkSize);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                InternalSentByteCounter?.Invoke(connection, chunkSize);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             InternalSentByteCounter?.Invoke(connection, chunkSize);
+#endif
         }
         public void InvokeInternalSendEvent(TcpConnection connection, Type type, object @object, int length) {
+#if UNITY
+            MainThread.Run(() => {
+                InternalSendEvent?.Invoke(connection, type, @object, length);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                InternalSendEvent?.Invoke(connection, type, @object, length);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             InternalSendEvent?.Invoke(connection, type, @object, length);
+#endif
         }
         public void InvokeOnReceive(ref IReceivedEventArgs e) {
+#if UNITY
+            var eArgs = e;
+            MainThread.Run(() => {
+                OnReceive?.Invoke(ref eArgs);
+            });
+#endif
+#if WINDOWS
+            var eArgs = e;
+            Application.Current.Dispatcher.Invoke(() => {
+                OnReceive?.Invoke(ref eArgs);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnReceive?.Invoke(ref e);
+#endif
         }
         public void InvokeOnSent(SentEventArgs sentEventArgs) {
+#if UNITY
+            MainThread.Run(() => {
+                OnSent?.Invoke(sentEventArgs);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnSent?.Invoke(sentEventArgs);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnSent?.Invoke(sentEventArgs);
+#endif
         }
         public void InvokeLogOutput(string text) {
+#if UNITY
+            MainThread.Run(() => {
+                LogOutput?.Invoke(text);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                LogOutput?.Invoke(text);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             LogOutput?.Invoke(text);
+#endif
         }
         public void InvokeOnError(TcpConnection Connection, Exception e) {
+#if UNITY
+            MainThread.Run(() => {
+                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+#endif
         }
 
         public void InvokeOnError(Exception e) {
             LogAsync(e.Message + Environment.NewLine + e.StackTrace);
+#if UNITY
+            MainThread.Run(() => {
+                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+#endif
         }
         protected internal void InvokeOnDisconnected(DisconnectedEventArgs e) {
             if (e.Connection == null) return;
             if (e.Connection.Identity == null) return;
+            if (e.Connection.Closed) return;
             Identifier dcPeer = Identifier.Create(e.Connection.Identity.ID, false);
             dcPeer.Action = PeerAction.Dispose;
             SendBroadcast(dcPeer, e.Connection);
@@ -460,11 +679,26 @@ namespace SocketJack.Net.WebSockets {
             if(Clients.ContainsKey(e.Connection.ID)) {
                 Clients.Remove(e.Connection.ID);
             }
-            if (e.Connection != Connection) ClientDisconnected?.Invoke(e);
+            if (e.Connection != Connection) {
+#if UNITY
+                MainThread.Run(() => {
+                    ClientDisconnected?.Invoke(e);
+                });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                ClientDisconnected?.Invoke(e);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            ClientDisconnected?.Invoke(e);
+#endif
+            }
         }
         public void CloseConnection(TcpConnection Connection, DisconnectionReason Reason) {
             try {
                 if (Connection.Socket != null && Connection.Socket.Connected) {
+                    Connection._Closing = true;
                     // Send close frame
                     byte[] closeFrame = new byte[] { 0x88, 0x00 };
                     Connection.Stream.Write(closeFrame, 0, closeFrame.Length);
@@ -473,12 +707,25 @@ namespace SocketJack.Net.WebSockets {
                 }
                 Connection.Stream?.Dispose();
                 InvokeOnDisconnected(new DisconnectedEventArgs(this, Connection, Reason));
+                Connection.CloseConnection();
             } catch (Exception ex) {
                 InvokeOnError(ex);
             }
         }
         public void InvokeOnDisposing() {
+#if UNITY
+            MainThread.Run(() => {
+                OnDisposing?.Invoke();
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnDisposing?.Invoke();
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnDisposing?.Invoke();
+#endif
         }
 
         public virtual void InvokeOnDisconnected(ISocket sender, TcpConnection Connection) {
@@ -498,7 +745,7 @@ namespace SocketJack.Net.WebSockets {
         ConcurrentDictionary<string, PeerServer> ISocket.P2P_ServerInformation { get => P2P_ServerInformation; set => P2P_ServerInformation = value; }
         ConcurrentDictionary<string, TcpConnection> ISocket.P2P_Servers { get => P2P_Servers; set => P2P_Servers = value; }
         ConcurrentDictionary<string, TcpConnection> ISocket.P2P_Clients { get => P2P_Clients; set => P2P_Clients = value; }
-        Identifier ISocket.RemoteIdentity { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
+        Identifier ISocket.RemoteIdentity { get => null; set => throw new NotImplementedException(); }
 
         protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new ConcurrentDictionary<string, PeerServer>();
         protected internal ConcurrentDictionary<string, TcpConnection> P2P_Servers = new ConcurrentDictionary<string, TcpConnection>();
@@ -554,8 +801,22 @@ namespace SocketJack.Net.WebSockets {
 
         protected internal void InvokeAllCallbacks(IReceivedEventArgs e) {
             if (TypeCallbacks.TryGetValue(e.Type, out var list)) {
-                foreach (var cb in list)
-                    cb(e);
+                foreach (var cb in list) {
+#if UNITY
+                    MainThread.Run(() => {
+                        cb(e);
+                    });
+#endif
+#if WINDOWS
+                    
+                    Application.Current.Dispatcher.Invoke(() => {
+                        cb(e);
+                    });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+                cb(e);
+#endif
+                }
             }
         }
         #endregion
@@ -620,8 +881,22 @@ namespace SocketJack.Net.WebSockets {
             SendAsync(Client, Obj);
         }
 
-        public async Task SendAsync(TcpConnection Client, object Obj) {
+        public async Task SendAsync(TcpConnection Client, object Object) {
             if (Client == null || Client.Closed || Client.Socket == null || !Client.Socket.Connected) return;
+            var Obj = Object;
+#if UNITY
+            MainThread.Run(() => {
+		        Obj = Object;
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.InvokeAsync(() => {
+                Obj = Object;
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            Obj = Object;
+#endif
             if (Client.Stream == null) Client._Stream = new NetworkStream(Client.Socket, ownsSocket: false);
             try {
                 if (Obj == null) return;
@@ -730,23 +1005,30 @@ namespace SocketJack.Net.WebSockets {
         }
 
         public void SendBroadcast(object Obj) {
-            lock (Clients.Values) {
-                Parallel.ForEach(Clients.Values, (client) => {
-                    if (client != null && !client.Closed && client.Socket.Connected) {
-                        Send(client, Obj);
-                    }
-                });
+            TcpConnection[] clients = null;
+            lock (Clients.Values) { clients = Clients.Values.ToArray(); }
+
+            foreach (var client in clients) {
+                if (client != null && !client.Closed && client.Socket.Connected) {
+                    SafeInvokeAsync(() => { Send(client, Obj); });
+                    
+                }
             }
+            //Parallel.ForEach(Clients.Values, (client) => {
+            //    if (client != null && !client.Closed && client.Socket.Connected) {
+            //        Send(client, Obj);
+            //    }
+            //});
+
         }
 
         public void SendBroadcast(TcpConnection[] Clients, object Obj, TcpConnection Except) {
-            lock (Clients) {
-                Parallel.ForEach(Clients, (client) => {
-                    if (client != null && client.Socket != null && client.Socket.Connected && client != Except) {
-                        Send(client, Obj);
-                    }
-                });
-            }
+            Parallel.ForEach(Clients, (client) => {
+                if (client != null && client.Socket != null && client.Socket.Connected && client != Except) {
+                    Send(client, Obj);
+                }
+            });
+
         }
 
         public void SendBroadcast(object Obj, TcpConnection Except) {
@@ -947,8 +1229,10 @@ namespace SocketJack.Net.WebSockets {
                 //argServer.CloseConnection(argServer.Connection, DisconnectionReason.LocalSocketClosed);
                 lock (Clients.Values) {
                     foreach (var client in Clients.Values) {
-                        client.Close(this, DisconnectionReason.LocalSocketClosed);
-                        MethodExtensions.TryInvoke(client.Socket.Close);
+                        if(!client.Closed) {
+                            client.Close(this, DisconnectionReason.LocalSocketClosed);
+                            MethodExtensions.TryInvoke(client.Socket.Close);
+                        }
                     }
                 }
                 Peers.Clear();

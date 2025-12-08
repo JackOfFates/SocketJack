@@ -113,19 +113,23 @@ namespace SocketJack.Net {
         /// <para>Disabling buffer will not work with SSL.</para>
         /// </remarks>
         /// <value>Integer</value>
-        public int MaximumDownloadMbps {
+        public double MaximumDownloadMbps {
             get {
                 return _MaximumDownloadMbps;
             }
             set {
                 _MaximumDownloadMbps = value;
                 isDownloadBuffered = MaximumDownloadMbps > 0;
-                MaximumDownloadBytesPerSecond = MaximumDownloadMbps * 1024 * 1024 / 8;
+                // Calculate bytes per second from Mbps
+                MaximumDownloadBytesPerSecond = (int)(MaximumDownloadMbps * 1024 * 1024 / 8);
+                // Set buffer to 0.1s worth of data, minimum 32 bytes
+                DownloadBufferSize = Math.Max((int)Math.Round(MaximumDownloadBytesPerSecond * 0.6), 32);
             }
         }
         internal bool isDownloadBuffered = true;
-        protected internal int _MaximumDownloadMbps = 100;
-        protected internal int MaximumDownloadBytesPerSecond = 13107200;
+        // Default to 1 Mbps. 1 Mbps = 1 * 1024 * 1024 bits/s -> /8 = 131072 bytes/s
+        protected internal double _MaximumDownloadMbps = 1.0; // 1 Mbps
+        protected internal int MaximumDownloadBytesPerSecond = 131072;
 
         /// <summary>
         /// Download buffer size.
@@ -133,8 +137,7 @@ namespace SocketJack.Net {
         /// <value>Integer</value>
         /// <remarks></remarks>
         /// </summary>
-        public int DownloadBufferSize { get; set; } = 65536;
-       
+        public int DownloadBufferSize { get; set; } = 13107;
 
         /// <summary>
         /// Maximum Upload bandwidth.
@@ -144,19 +147,23 @@ namespace SocketJack.Net {
         /// <value>Integer</value>
         /// <remarks></remarks>
         /// </summary>
-        public int MaximumUploadMbps {
+        public double MaximumUploadMbps {
             get {
                 return _MaximumUploadMbps;
             }
             set {
                 _MaximumUploadMbps = value;
                 isUploadBuffered = MaximumUploadMbps > 0;
-                MaximumUploadBytesPerSecond = MaximumUploadMbps * 1024 * 1024 / 8;
+                // Calculate bytes per second from Mbps
+                MaximumUploadBytesPerSecond = (int)(MaximumUploadMbps * 1024 * 1024 / 8);
+                // Set buffer to 0.1s worth of data, minimum 32 bytes
+                UploadBufferSize = Math.Max((int)(MaximumUploadBytesPerSecond * 0.6), 32);
             }
         }
         internal bool isUploadBuffered = true;
-        protected internal int _MaximumUploadMbps = 100;
-        protected internal int MaximumUploadBytesPerSecond = 13107200;
+        // Default to 1 Mbps.
+        protected internal double _MaximumUploadMbps = 1.0; // 1 Mbps
+        protected internal int MaximumUploadBytesPerSecond = 131072;
 
         /// <summary>
         /// Upload buffer size.
@@ -164,7 +171,7 @@ namespace SocketJack.Net {
         /// <value>Integer</value>
         /// <remarks></remarks>
         /// </summary>
-        public int UploadBufferSize { get; set; } = 65536;
+        public int UploadBufferSize { get; set; } = 13107;
 
         /// <summary>
         /// <para>Use compression for network transfer.</para>
@@ -184,6 +191,30 @@ namespace SocketJack.Net {
         /// Use SSL for network transfer.
         /// </summary>
         public bool UseSsl { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the frame rate, in frames per second, for processing operations.
+        /// </summary>
+        /// <remarks>Setting this property adjusts the timing interval used for frame updates. The value
+        /// should be a positive integer to ensure correct timing behavior.
+        /// 0 or less = disabled.</remarks>
+        public int Fps {
+            get {
+                return _Fps;
+            }
+            set {
+                _Fps = value;
+                if(value <= 0)
+                    _timeout = 0;
+                else
+                    _timeout = 1000.0 / _Fps;
+            }
+        }
+        private int _Fps = 0;
+        public double timeout {
+            get { return _timeout; }
+        }
+        private double _timeout = 0;
 
         /// <summary>
         /// Types that are allowed to be deserialized.

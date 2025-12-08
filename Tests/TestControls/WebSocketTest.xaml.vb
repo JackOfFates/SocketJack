@@ -63,6 +63,8 @@ Public Class WebSocketTest
             .CompressionAlgorithm.CompressionLevel = IO.Compression.CompressionLevel.SmallestSize
         End With
         Server.RegisterCallback(Of WelcomeMessage)(AddressOf Server_ReceivedTextObject)
+        Server.Options.Whitelist.Add(GetType(WebSocketTest))
+        Server.Options.Whitelist.Add((GetType(WelcomeMessage)))
     End Sub
 #End Region
 
@@ -155,9 +157,9 @@ Public Class WebSocketTest
 
     End Sub
 
-    Private Sub newClient_PeerConnected(sender As ISocket, Peer As Identifier)
+    Private Async Sub newClient_PeerConnected(sender As ISocket, Peer As Identifier)
         If Peer.Action <> PeerAction.LocalIdentity Then
-            sender.Send(Peer, New WelcomeMessage() With {.Text = "TEST"})
+            sender.Send(Peer, New WelcomeMessage() With {.Text = "I Am " & Await Peer.GetMetaData("Username")})
         End If
     End Sub
 

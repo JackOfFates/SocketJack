@@ -60,7 +60,7 @@ namespace SocketJack.Net {
                 return _InterfaceDiscovered;
             }
         }
-        private static bool _InterfaceDiscovered = true;
+        private static bool _InterfaceDiscovered = false;
 
         /// <summary>
         /// Network Address Translation
@@ -85,9 +85,13 @@ namespace SocketJack.Net {
             }
         }
 
-        private static void OnNatDeviceFound(object sender, DeviceEventArgs args) {
+        private static async void OnNatDeviceFound(object sender, DeviceEventArgs args) {
             _NAT = args.Device;
             NatDiscovered?.Invoke();
+            var lIP = LocalIP();
+            _InterfaceDiscovered = true;
+            _MTU = await GetMTU(lIP) - _SegmentOverhead;
+            OnInterfaceDiscovered?.Invoke(MTU, lIP);
         }
 
         /// <summary>
@@ -178,7 +182,7 @@ namespace SocketJack.Net {
                         await portMapTask; 
                         PortForwarded = true;
                     } else {
-                        throw new TimeoutException("Port mapping timed out.");
+                        PortForwarded = false;
                     }
                     await NAT.CreatePortMapAsync(new Mapping(Protocol.Tcp, port, port));
                     //NAT.CreatePortMap();
@@ -189,6 +193,51 @@ namespace SocketJack.Net {
                 return isAvailable && PortForwarded;
             } else {
                 return isAvailable;
+            }
+        }
+
+        /// <summary>
+        /// <para>Check if a port is available.</para>
+        /// <para>Optionally forward the port if available.</para>
+        /// </summary>
+        /// <param name="port"></param>
+        /// <param name="ForwardPortIfAvailable"></param>
+        /// <returns></returns>
+        public static async Task<bool> ForwardPort(int port) {
+            if (InterfaceDiscovered && _NAT != null) {
+                bool PortForwarded = false;
+                try {
+                    var portMapTask = NAT.CreatePortMapAsync(new Mapping(Protocol.Tcp, port, port));
+                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+                    var completedTask = await Task.WhenAny(portMapTask, timeoutTask);
+                    if (completedTask == portMapTask) {
+                        await portMapTask;
+                        PortForwarded = true;
+                    } else {
+                        PortForwarded = false;
+                    }
+                    await NAT.CreatePortMapAsync(new Mapping(Protocol.Tcp, port, port));
+                    //NAT.CreatePortMap();
+                    PortForwarded = true;
+                } catch (Exception ex) {
+                    OnError?.Invoke(ex);
+                }
+                return PortForwarded;
+            } else {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// <para>Check if a port is available.</para>
+        /// <para>Optionally forward the port if available.</para>
+        /// </summary>
+        /// <param name="port"></param>
+        /// <param name="ForwardPortIfAvailable"></param>
+        /// <returns></returns>
+        public static void ForwardPorts(int[] ports) {
+            for (int i = 0; i < ports.Length; i++) {
+                ForwardPort(ports[i]).ConfigureAwait(false);
             }
         }
 
@@ -214,12 +263,6 @@ namespace SocketJack.Net {
         protected internal static async void Initialize() {
             if (_NAT is null)
                 DiscoverNAT();
-            if (!InterfaceDiscovered) {
-                var lIP = LocalIP();
-                _InterfaceDiscovered = true;
-                _MTU = await GetMTU(lIP) - _SegmentOverhead;
-                OnInterfaceDiscovered?.Invoke(MTU, lIP);
-            }
         }
 
     }

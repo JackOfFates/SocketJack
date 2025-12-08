@@ -10,6 +10,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace SocketJack.Net {
 
@@ -369,33 +370,48 @@ namespace SocketJack.Net {
         public delegate void OnIdentifiedEventHandler(ISocket sender, Identifier LocalIdentity);
 
         public override void InvokeOnDisconnected(ISocket sender, TcpConnection Connection) {
-            
 #if UNITY
             MainThread.Run(() => {
+		        OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
             });
-#else
-        OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
 #endif
         }
 
         public override void InvokeOnConnected(ISocket sender, TcpConnection Connection) {
-            
 #if UNITY
             MainThread.Run(() => {
                 OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
 #endif
         }
         protected internal void InvokeOnIdentified(ISocket sender, Identifier Identity) {
-
 #if UNITY
             MainThread.Run(() => {
                 OnIdentified?.Invoke(sender, Identity);
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnIdentified?.Invoke(sender, Identity);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnIdentified?.Invoke(sender, Identity);
 #endif
         }
@@ -404,10 +420,15 @@ namespace SocketJack.Net {
             MainThread.Run(() => {
                 OnDisconnected?.Invoke(e);
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnDisconnected?.Invoke(e);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnDisconnected?.Invoke(e);
 #endif
-
         }
         private void TcpClient_InternalPeerRedirect(string Recipient, string Sender, object Obj, int ReceivedBytes) {
             Type RedirectType = Obj.GetType();
@@ -474,7 +495,7 @@ namespace SocketJack.Net {
         /// <param name="Timeout">Timeout in milliseconds.</param>
         /// <returns>True if Port is Open, False if Closed.</returns>
         public static async Task<bool> CheckPort(string Host, int Port, int Timeout = 500) {
-            TcpOptions opts = new TcpOptions();
+            TcpOptions opts = TcpOptions.DefaultOptions.Clone<TcpOptions>();
             opts.ConnectionTimeout = TimeSpan.FromMilliseconds(Timeout);
             var PortChecker = new TcpClient(opts, "PortChecker");
             var success = await PortChecker.Connect(Host, Port);
@@ -562,14 +583,14 @@ namespace SocketJack.Net {
                 throw new ObjectDisposedException(Name + " is disposed, cannot connect.");
             if (Connecting)
                 return false;
-            if (!NIC.InterfaceDiscovered) {
-                DelayConnect = true;
-                NIC.OnInterfaceDiscovered += this.DelayDelegate;
-                DelayHost = Host;
-                DelayPort = Port;
+            //if (!NIC.InterfaceDiscovered) {
+            //    DelayConnect = true;
+            //    NIC.OnInterfaceDiscovered += this.DelayDelegate;
+            //    DelayHost = Host;
+            //    DelayPort = Port;
 
-                return false;
-            } else {
+            //    return false;
+            //} else {
                 string cachedHost = string.Format("{0}:{1}", new object[] { Host, Port });
                 if (CachedHosts.ContainsKey(cachedHost)) {
                     await DoConnect(CachedHosts[cachedHost], Host, Port);
@@ -593,7 +614,7 @@ namespace SocketJack.Net {
                     }
                 }
                 return Socket.Connected;
-            }
+            //}
 
         }
 

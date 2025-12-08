@@ -93,12 +93,12 @@ namespace SocketJack.Net {
             }
 
             this.BytesReceived = BytesReceived;
-            if (From != null)
+            if (From != null && Connection.Parent.Peers.ContainsKey(From))
                 this.From = Connection.Parent.Peers[From];
         }
 
         protected internal ReceivedEventArgs<T> WithIdentity(string From) {
-            if (From != null)
+            if (From != null && Connection.Parent.Peers.ContainsKey(From))
                 this.From = Connection.Parent.Peers[From];
             return this;
         }

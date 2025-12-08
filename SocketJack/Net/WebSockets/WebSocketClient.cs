@@ -19,6 +19,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace SocketJack.Net.WebSockets {
 
@@ -166,17 +167,28 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
 #endif
         }
         public void InvokeOnConnected(ISocket sender, TcpConnection Connection) {
-            
 #if UNITY
             MainThread.Run(() => {
                 OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
 #endif
         }
@@ -189,50 +201,80 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 Internal_PeerConnectionRequest?.Invoke(sender, ref s);
             });
-#else
-           Internal_PeerConnectionRequest?.Invoke(sender, ref Server);
+#endif
+#if WINDOWS
+            var s = Server;
+            Application.Current.Dispatcher.Invoke(() => {
+                Internal_PeerConnectionRequest?.Invoke(sender, ref s);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            Internal_PeerConnectionRequest?.Invoke(sender, ref Server);
 #endif
 
         }
         public void InvokeBytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
-            
 #if UNITY
             MainThread.Run(() => {
                 BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
             });
-#else
-           BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
 #endif
         }
         public void InvokePeerServerShutdown(ISocket sender, PeerServer Server) {
 #if UNITY
-            var s = Server;
             MainThread.Run(() => {
+		        PeerServerShutdown?.Invoke(sender, Server);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 PeerServerShutdown?.Invoke(sender, Server);
             });
-#else
-           PeerServerShutdown?.Invoke(sender, Server);
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            PeerServerShutdown?.Invoke(sender, Server);
 #endif
         }
         public void InvokePeerUpdate(ISocket sender, Identifier Peer) {
 #if UNITY
             MainThread.Run(() => {
+		        PeerUpdate?.Invoke(sender, Peer);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 PeerUpdate?.Invoke(sender, Peer);
             });
-#else
-           PeerUpdate?.Invoke(sender, Peer);
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            PeerUpdate?.Invoke(sender, Peer);
 #endif
         }
         public void InvokePeerConnected(ISocket sender, Identifier Peer) {
             if (Options.Logging) {
                 LogFormat(@"[{0}\{1}] Connected To Server.", new[] { Name, Peer.ID.ToUpper() });
             }
+            
 #if UNITY
             MainThread.Run(() => {
+		        PeerConnected?.Invoke(sender, Peer);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 PeerConnected?.Invoke(sender, Peer);
             });
-#else
-           PeerConnected?.Invoke(sender, Peer);
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            PeerConnected?.Invoke(sender, Peer);
 #endif
         }
         public void InvokePeerDisconnected(ISocket sender, Identifier Peer) {
@@ -241,10 +283,16 @@ namespace SocketJack.Net.WebSockets {
             }
 #if UNITY
             MainThread.Run(() => {
+		        PeerDisconnected?.Invoke(sender, Peer);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 PeerDisconnected?.Invoke(sender, Peer);
             });
-#else
-           PeerDisconnected?.Invoke(sender, Peer);
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            PeerDisconnected?.Invoke(sender, Peer);
 #endif
         }
         protected internal bool InvokeOnDisconnected(DisconnectedEventArgs e) {
@@ -259,11 +307,17 @@ namespace SocketJack.Net.WebSockets {
                 }
                 Peers.Clear();
 #if UNITY
-                MainThread.Run(() => {
+            MainThread.Run(() => {
+		        OnDisconnected?.Invoke(e);
+            });
+#endif
+#if WINDOWS
+                Application.Current.Dispatcher.Invoke(() => {
                     OnDisconnected?.Invoke(e);
                 });
-#else
-           OnDisconnected?.Invoke(e);
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            OnDisconnected?.Invoke(e);
 #endif
                 return true;
             }
@@ -272,38 +326,62 @@ namespace SocketJack.Net.WebSockets {
         protected internal void InvokeOnConnected(ConnectedEventArgs e) {
             if (e.Connection != null) {
 #if UNITY
-                MainThread.Run(() => {
+            MainThread.Run(() => {
+		        OnConnected?.Invoke(e);
+            });
+#endif
+#if WINDOWS
+                Application.Current.Dispatcher.Invoke(() => {
                     OnConnected?.Invoke(e);
                 });
-#else
-           OnConnected?.Invoke(e);
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            OnConnected?.Invoke(e);
 #endif
             }
         }
         public void InvokeInternalReceivedByteCounter(TcpConnection Connection, int BytesReceived) {
 #if UNITY
             MainThread.Run(() => {
+		        InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
             });
-#else
-           InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
 #endif
         }
         public void InvokeInternalSentByteCounter(TcpConnection connection, int chunkSize) {
 #if UNITY
             MainThread.Run(() => {
+		        InternalSentByteCounter?.Invoke(connection, chunkSize);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 InternalSentByteCounter?.Invoke(connection, chunkSize);
             });
-#else
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             InternalSentByteCounter?.Invoke(connection, chunkSize);
 #endif
         }
         public void InvokeInternalSendEvent(TcpConnection connection, Type type, object @object, int length) {
 #if UNITY
             MainThread.Run(() => {
+		        InternalSendEvent?.Invoke(connection, type, @object, length);
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
                 InternalSendEvent?.Invoke(connection, type, @object, length);
             });
-#else
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             InternalSendEvent?.Invoke(connection, type, @object, length);
 #endif
         }
@@ -311,9 +389,16 @@ namespace SocketJack.Net.WebSockets {
 #if UNITY
             var eArgs = e;
             MainThread.Run(() => {
+		        OnReceive?.Invoke(ref eArgs);
+            });
+#endif
+#if WINDOWS
+            var eArgs = e;
+            Application.Current.Dispatcher.Invoke(() => {
                 OnReceive?.Invoke(ref eArgs);
             });
-#else
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnReceive?.Invoke(ref e);
 #endif
         }
@@ -322,7 +407,13 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 OnSent?.Invoke(sentEventArgs);
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnSent?.Invoke(sentEventArgs);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnSent?.Invoke(sentEventArgs);
 #endif
         }
@@ -331,16 +422,29 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 LogOutput?.Invoke(text);
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                LogOutput?.Invoke(text);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             LogOutput?.Invoke(text);
 #endif
         }
         public void InvokeOnError(TcpConnection Connection, Exception e) {
+            LogAsync(e.Message + Environment.NewLine + e.StackTrace);
 #if UNITY
             MainThread.Run(() => {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
 #endif
         }
@@ -350,7 +454,13 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
 #endif
         }
@@ -360,7 +470,14 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 OnIdentified?.Invoke(sender, p);
             });
-#else
+#endif
+#if WINDOWS
+            var p = Peer;
+            Application.Current.Dispatcher.Invoke(() => {
+                OnIdentified?.Invoke(sender, p);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnIdentified?.Invoke(sender, Peer);
 #endif
         }
@@ -369,7 +486,13 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
 #endif
         }
@@ -379,7 +502,13 @@ namespace SocketJack.Net.WebSockets {
             MainThread.Run(() => {
                 OnDisposing?.Invoke();
             });
-#else
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                OnDisposing?.Invoke();
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
             OnDisposing?.Invoke();
 #endif
         }
@@ -412,6 +541,7 @@ namespace SocketJack.Net.WebSockets {
         }
 
         public void Send(Identifier recipient, object obj) {
+            if (recipient == null) return;
             var redirect = new PeerRedirect(Connection?.ID.ToString(), recipient.ID, obj);
             SendAsync(redirect);
         }
@@ -422,10 +552,10 @@ namespace SocketJack.Net.WebSockets {
             Send(new PeerRedirect("#ALL#", Obj));
         }
         public void SendBroadcast(TcpConnection[] Clients, object Obj, TcpConnection Except) {
-            throw new NotImplementedException();
+            throw new NotImplementedException("You can only access SendBroadcast(TcpConnection Clients, object Obj, TcpConnection Except) from WebSocketServer.");
         }
         public void SendBroadcast(object Obj, TcpConnection Except) {
-            throw new NotImplementedException();
+            throw new NotImplementedException("You can only access SendBroadcast(object Obj, TcpConnection Except) from WebSocketServer.");
         }
         public void SendSegmented(TcpConnection Client, object Obj) {
             byte[] SerializedBytes = Options.Serializer.Serialize(new Wrapper(Obj, this));
@@ -670,8 +800,22 @@ namespace SocketJack.Net.WebSockets {
         public void Send(object obj) {
             SendAsync(obj, default);
         }
-        protected internal async Task SendAsync(object obj, CancellationToken cancellationToken = default) {
+        protected internal async Task SendAsync(object Object, CancellationToken cancellationToken = default) {
             if (!Connected) return;
+            object obj = Object;
+#if UNITY
+            MainThread.Run(() => {
+		        obj = Object;
+            });
+#endif
+#if WINDOWS
+            Application.Current.Dispatcher.Invoke(() => {
+                obj = Object;
+            });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+            obj = Object;
+#endif
             byte[] serializedBytes = Options.Serializer.Serialize(new Wrapper(obj, this));
             if (Options.UseCompression) {
                 serializedBytes = Options.CompressionAlgorithm.Compress(serializedBytes);
@@ -862,8 +1006,21 @@ namespace SocketJack.Net.WebSockets {
         }
         protected internal void InvokeAllCallbacks(IReceivedEventArgs e) {
             if (TypeCallbacks.TryGetValue(e.Type, out var list)) {
-                foreach (var cb in list)
-                    Task.Run(() => cb(e));
+                foreach (var cb in list) {
+#if UNITY
+            MainThread.Run(() => {
+                cb(e);
+            });
+#endif
+#if WINDOWS
+                    Application.Current.Dispatcher.Invoke(() => {
+                        cb(e);
+                    });
+#endif
+#if NETSTANDARD1_0_OR_GREATER && !UNITY
+                cb(e);
+#endif
+                }
             }
         }
         #endregion

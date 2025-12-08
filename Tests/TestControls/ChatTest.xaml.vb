@@ -3,6 +3,7 @@ Imports System.IO
 Imports System.IO.Compression
 Imports System.Security.Cryptography.X509Certificates
 Imports System.Security.Principal
+Imports System.Threading
 Imports System.Windows.Forms
 Imports System.Windows.Interop
 Imports System.Xml.Schema
@@ -34,18 +35,30 @@ Public Class ChatTest
     Private Sub Setup()
         With ServerOptions
             .Logging = True
-            .LogReceiveEvents = True
-            .LogSendEvents = True
-            .UseCompression = False
+            .LogReceiveEvents = False
+            .LogSendEvents = False
+            .LogToConsole = True
+            .UseCompression = True
+            .UpdateConsoleTitle = True
+            .MaximumDownloadMbps = SBW.Value
+            .MaximumUploadMbps = SBW.Value
+            .Fps = rRate.Value
             .CompressionAlgorithm.CompressionLevel = CompressionLevel.SmallestSize
             '.UseSsl = True
         End With
         With ClientOptions
-            .Logging = True
-            .LogReceiveEvents = True
-            .LogSendEvents = True
-            .UseCompression = False
-            .CompressionAlgorithm.CompressionLevel = CompressionLevel.SmallestSize
+            .Logging = ServerOptions.Logging
+            .LogReceiveEvents = ServerOptions.LogReceiveEvents
+            .LogSendEvents = ServerOptions.LogSendEvents
+            .LogToConsole = ServerOptions.LogToConsole
+            .UseCompression = ServerOptions.UseCompression
+            .UploadBufferSize = ServerOptions.UploadBufferSize
+            .DownloadBufferSize = ServerOptions.DownloadBufferSize
+            .MaximumBufferSize = ServerOptions.MaximumBufferSize
+            .MaximumDownloadMbps = ServerOptions.MaximumDownloadMbps
+            .MaximumUploadMbps = ServerOptions.MaximumUploadMbps
+            .Fps = ServerOptions.Fps
+            .CompressionAlgorithm.CompressionLevel = ServerOptions.CompressionAlgorithm.CompressionLevel
             '.UseSsl = True
         End With
         Dim KeyHostName As String = "MY-KEY-HOSTNAME.com" ' Replace with your actual SSL certificate hostname
@@ -58,15 +71,29 @@ Public Class ChatTest
             Client1 = c1
             Client2 = c2
 
+            ' Logging
             AddHandler s.LogOutput, AddressOf Log
             AddHandler c1.LogOutput, AddressOf Log
             AddHandler c2.LogOutput, AddressOf Log
 
             AddHandler c1.OnDisconnected, AddressOf Client1_OnDisconnected
             AddHandler c2.OnDisconnected, AddressOf Client2_OnDisconnected
+            AddHandler c1.OnConnected, AddressOf Client1_OnConnected
+            AddHandler c2.OnConnected, AddressOf Client2_OnConnected
 
+            ' Setup remote identity
             AddHandler c1.OnIdentified, AddressOf Client1_OnIdentified
             AddHandler c2.OnIdentified, AddressOf Client2_OnIdentified
+
+            ' Peer list updates
+            AddHandler c1.OnConnected, AddressOf RefreshUserList
+            AddHandler c2.OnConnected, AddressOf RefreshUserList
+            AddHandler c1.OnDisconnected, AddressOf RefreshUserList
+            AddHandler c2.OnDisconnected, AddressOf RefreshUserList
+            AddHandler c1.PeerConnected, AddressOf RefreshUserList
+            AddHandler c1.PeerDisconnected, AddressOf RefreshUserList
+            AddHandler c2.PeerConnected, AddressOf RefreshUserList
+            AddHandler c2.PeerDisconnected, AddressOf RefreshUserList
         Else
             ' Set the SSL certificate for the server. 
             ' Make sure to replace the path and password with your actual certificate details.
@@ -75,20 +102,34 @@ Public Class ChatTest
             Dim s As New TcpServer(ServerPort, "ChatServer") With {.Options = ServerOptions, .SslTargetHost = KeyHostName}
             Dim c1 As New TcpClient("ChatClient1") With {.Options = ClientOptions, .SslTargetHost = KeyHostName}
             Dim c2 As New TcpClient("ChatClient2") With {.Options = ClientOptions, .SslTargetHost = KeyHostName}
-
             Server = s
             Client1 = c1
             Client2 = c2
+            AddHandler Server.AsTcpServer().StoppedListening, AddressOf Server_StoppedListening
 
+            ' Logging
             AddHandler s.LogOutput, AddressOf Log
             AddHandler c1.LogOutput, AddressOf Log
             AddHandler c2.LogOutput, AddressOf Log
 
             AddHandler c1.OnDisconnected, AddressOf Client1_OnDisconnected
             AddHandler c2.OnDisconnected, AddressOf Client2_OnDisconnected
+            AddHandler c1.OnConnected, AddressOf Client1_OnConnected
+            AddHandler c2.OnConnected, AddressOf Client2_OnConnected
 
+            ' Setup remote identity
             AddHandler c1.OnIdentified, AddressOf Client1_OnIdentified
             AddHandler c2.OnIdentified, AddressOf Client2_OnIdentified
+
+            ' Peer list updates
+            AddHandler c1.OnConnected, AddressOf RefreshUserList
+            AddHandler c2.OnConnected, AddressOf RefreshUserList
+            AddHandler c1.OnDisconnected, AddressOf RefreshUserList
+            AddHandler c2.OnDisconnected, AddressOf RefreshUserList
+            AddHandler c1.PeerConnected, AddressOf RefreshUserList
+            AddHandler c1.PeerDisconnected, AddressOf RefreshUserList
+            AddHandler c2.PeerConnected, AddressOf RefreshUserList
+            AddHandler c2.PeerDisconnected, AddressOf RefreshUserList
         End If
 
         Server.RegisterCallback(Of LoginObj)(AddressOf Server_ClientLogin)
@@ -105,6 +146,10 @@ Public Class ChatTest
         Client1.RegisterCallback(Of FileContainer)(AddressOf Clients_ReceivedFile)
         Client2.RegisterCallback(Of FileContainer)(AddressOf Clients_ReceivedFile)
 
+        ' Mouse Movements
+        Client1.RegisterCallback(Of pPos)(AddressOf Clients_ReceivedMouseMove1)
+        Client2.RegisterCallback(Of pPos)(AddressOf Clients_ReceivedMouseMove2)
+
 
         ' Add the ChatMessage type to the whitelist since the server is just redirecting and not handling it
         ' For doing things like blocking other users or filtering messages you should handle it on the server.
@@ -112,6 +157,65 @@ Public Class ChatTest
         Server.Options.Whitelist.Add(GetType(ChatMessage))
         Server.Options.Whitelist.Add(GetType(Bitmap))
         Server.Options.Whitelist.Add(GetType(FileContainer))
+        Server.Options.Whitelist.Add(GetType(pPos))
+    End Sub
+
+    Private Sub Clients_ReceivedMouseMove1(e As ReceivedEventArgs(Of pPos))
+        Dispatcher.InvokeAsync(Sub() BC1.Margin = New Thickness(e.Object.X, e.Object.Y / 2, 0, 0))
+    End Sub
+    Private Sub Clients_ReceivedMouseMove2(e As ReceivedEventArgs(Of pPos))
+        Dispatcher.InvokeAsync(Sub() BC2.Margin = New Thickness(e.Object.X, (e.Object.Y / 2) + (Me.ActualHeight / 2), 0, 0))
+    End Sub
+
+
+    Public Class pPos
+        Public Property X As Integer
+        Public Property Y As Integer
+    End Class
+
+    Private Sub Server_StoppedListening(sender As TcpServer)
+        ButtonC1.IsEnabled = False
+        ButtonC2.IsEnabled = False
+    End Sub
+
+    Private Sub Client1_OnConnected(e As ConnectedEventArgs)
+        ButtonC1.Content = "Disconnect"
+        ButtonC1.IsEnabled = True
+    End Sub
+
+    Private Sub Client2_OnConnected(e As ConnectedEventArgs)
+        ButtonC2.Content = "Disconnect"
+        ButtonC2.IsEnabled = True
+    End Sub
+
+    Private Async Sub RefreshUserList()
+        Dim isWebsocket = False
+        Dispatcher.Invoke(Sub() isWebsocket = WebSocket_Enabled.IsChecked)
+        If isWebsocket Then
+            Try
+                Dim Output As String = String.Empty
+                For Each client In Server.As(Of WebSocketServer)().Clients.Values
+                    Dim username As String = Await client.GetMetaData("Username")
+                    Output &= username & Environment.NewLine
+                Next
+
+                Dispatcher.Invoke(Sub() UserList.Text = Output)
+            Catch ex As Exception
+
+            End Try
+        Else
+            Try
+                Dim Output As String = String.Empty
+                For Each client In Server.As(Of TcpServer)().Clients.Values
+                    Dim username As String = Await client.GetMetaData("Username")
+                    Output &= username & Environment.NewLine
+                Next
+
+                Dispatcher.Invoke(Sub() UserList.Text = Output)
+            Catch ex As Exception
+
+            End Try
+        End If
     End Sub
 
     Private Sub Clients_ReceivedFile(args As ReceivedEventArgs(Of FileContainer))
@@ -251,7 +355,7 @@ Public Class ChatTest
 
     Private Async Sub ITest_StartTest() Implements ITest.StartTest
         If Not Running Then
-            Setup()
+            Dispatcher.Invoke(AddressOf Setup)
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
             WebSocket_Enabled.IsEnabled = False
@@ -261,10 +365,24 @@ Public Class ChatTest
                     Await Client1.AsWsClient.Connect("127.0.0.1", ServerPort)
                     Await Client2.AsWsClient.Connect("127.0.0.1", ServerPort)
                 Else
+                    Dim s As TcpServer = Server.AsTcpServer()
+                    Dim t As New Thread(Sub()
+                                            While s.IsListening
+                                                If Client1.Connection IsNot Nothing AndAlso Client2.Connection IsNot Nothing Then
+                                                    Dispatcher.Invoke(Sub()
+                                                                          Application.Current.MainWindow.Title = "SocketJack Chat Test - D: " & (Client1.Connection.BytesPerSecondReceived + Client2.Connection.BytesPerSecondReceived + s.Connection.BytesPerSecondReceived).ByteToString() & "/s | U: " & (Client1.Connection.BytesPerSecondSent + Client2.Connection.BytesPerSecondSent + s.Connection.BytesPerSecondSent).ByteToString() & "/s"
+                                                                      End Sub)
+                                                    Thread.Sleep(50)
+                                                End If
+
+                                            End While
+                                        End Sub)
+                    t.Start()
                     Await Client1.AsTcpClient.Connect("127.0.0.1", ServerPort)
                     Await Client2.AsTcpClient.Connect("127.0.0.1", ServerPort)
                 End If
-
+                ButtonC1.IsEnabled = True
+                ButtonC2.IsEnabled = True
                 ButtonStartStop.IsEnabled = True
                 ButtonStartStop.Content = "Stop Test"
             Else
@@ -361,8 +479,9 @@ Public Class ChatTest
                               SendButton1.IsEnabled = False
                               SendButton1_Pic.IsEnabled = False
                               SendButton1_File.IsEnabled = False
+                              ButtonC1.Content = "Connect"
+                              If Running Then ButtonC1.IsEnabled = True
                           End Sub)
-
     End Sub
 
     Private Sub Client2_OnDisconnected(e As DisconnectedEventArgs)
@@ -371,6 +490,8 @@ Public Class ChatTest
                               SendButton2.IsEnabled = False
                               SendButton2_Pic.IsEnabled = False
                               SendButton2_File.IsEnabled = False
+                              ButtonC2.Content = "Connect"
+                              If Running Then ButtonC2.IsEnabled = True
                           End Sub)
     End Sub
 
@@ -464,6 +585,125 @@ Public Class ChatTest
                 End If
             End If
         End If
+    End Sub
+
+    Private Async Sub ButtonC1_Click(sender As Object, e As RoutedEventArgs) Handles ButtonC1.Click
+        If WebSocket_Enabled.IsChecked Then
+            If Client1.Connected Then
+                Client1.AsWsClient().CloseConnection()
+            Else
+                Await Client1.AsWsClient.Connect("127.0.0.1", ServerPort)
+            End If
+        Else
+            If Client1.Connected Then
+                Client1.AsTcpClient().Disconnect()
+            Else
+                Await Client1.AsTcpClient.Connect("127.0.0.1", ServerPort)
+            End If
+        End If
+    End Sub
+
+    Private Async Sub ButtonC2_Click(sender As Object, e As RoutedEventArgs) Handles ButtonC2.Click
+        If WebSocket_Enabled.IsChecked Then
+            If Client2.Connected Then
+                Client2.AsWsClient().CloseConnection()
+            Else
+                Await Client2.AsWsClient.Connect("127.0.0.1", ServerPort)
+            End If
+        Else
+            If Client2.Connected Then
+                Client2.AsTcpClient().Disconnect()
+            Else
+                Await Client2.AsTcpClient.Connect("127.0.0.1", ServerPort)
+            End If
+        End If
+    End Sub
+    Dim sending As Boolean = False
+    Dim lastTimeout As DateTime = DateTime.UtcNow
+
+    Private Sub ChatTest_PreviewMouseMove(sender As Object, e As Input.MouseEventArgs) Handles Me.PreviewMouseMove
+        If Not sending AndAlso Client1 IsNot Nothing AndAlso Client2 IsNot Nothing AndAlso Client1.Connected AndAlso Client2.Connected AndAlso
+            Client1.RemoteIdentity IsNot Nothing AndAlso Client2.RemoteIdentity IsNot Nothing AndAlso
+            DateTime.UtcNow >= lastTimeout.AddMilliseconds(Client1.Options.timeout) Then
+            lastTimeout = DateTime.UtcNow
+            sending = True
+            'Task.Run(Sub()
+            Dispatcher.InvokeAsync(Sub()
+                                       If WebSocket_Enabled.IsChecked Then
+                                           Dim pos As pPos = New pPos With {.X = CInt(e.GetPosition(Me).X), .Y = CInt(e.GetPosition(Me).Y)}
+                                           Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), pos)
+                                           Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), pos)
+                                       Else
+                                           Dim pos As pPos = New pPos With {.X = CInt(e.GetPosition(Me).X), .Y = CInt(e.GetPosition(Me).Y)}
+                                           Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), pos)
+                                           Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), pos)
+                                       End If
+                                       sending = False
+                                   End Sub)
+            '      End Sub)
+        End If
+    End Sub
+
+    Private Sub C1BW_ValueChanged(sender As Object, e As RoutedPropertyChangedEventArgs(Of Double)) Handles C1BW.ValueChanged
+        If Not WebSocket_Enabled.IsChecked AndAlso Server IsNot Nothing AndAlso Server.Options IsNot Nothing AndAlso Client1 IsNot Nothing AndAlso Client1.Options IsNot Nothing AndAlso Client2 IsNot Nothing AndAlso Client2.Options IsNot Nothing AndAlso Client2.Connected Then
+            Client1.Options.MaximumDownloadMbps = C1BW.Value
+            Client1.Options.MaximumUploadMbps = C1BW.Value
+            If C1BW.ToolTip Is Nothing Then
+                C1BW.ToolTip = New System.Windows.Controls.ToolTip() With {.Content = C1BW.Value & " Mbps", .IsOpen = True, .StaysOpen = False}
+            Else
+                DirectCast(C1BW.ToolTip, Controls.ToolTip).Content = C1BW.Value & " Mbps"
+                DirectCast(C1BW.ToolTip, Controls.ToolTip).IsOpen = True
+            End If
+        End If
+    End Sub
+
+    Private Sub C2BW_ValueChanged(sender As Object, e As RoutedPropertyChangedEventArgs(Of Double)) Handles C2BW.ValueChanged
+        If Not WebSocket_Enabled.IsChecked AndAlso Server IsNot Nothing AndAlso Server.Options IsNot Nothing AndAlso Client1 IsNot Nothing AndAlso Client1.Options IsNot Nothing AndAlso Client2 IsNot Nothing AndAlso Client2.Options IsNot Nothing AndAlso Client2.Connected Then
+            Client2.Options.MaximumDownloadMbps = C2BW.Value
+            Client2.Options.MaximumUploadMbps = C2BW.Value
+            If C2BW.ToolTip Is Nothing Then
+                C2BW.ToolTip = New System.Windows.Controls.ToolTip() With {.Content = C2BW.Value & " Mbps", .IsOpen = True, .StaysOpen = False}
+            Else
+                DirectCast(C2BW.ToolTip, Controls.ToolTip).Content = C2BW.Value & " Mbps"
+                DirectCast(C2BW.ToolTip, Controls.ToolTip).IsOpen = True
+            End If
+        End If
+    End Sub
+
+    Private Sub SBW_ValueChanged(sender As Object, e As RoutedPropertyChangedEventArgs(Of Double)) Handles SBW.ValueChanged
+        If Not WebSocket_Enabled.IsChecked AndAlso Server IsNot Nothing AndAlso Server.Options IsNot Nothing AndAlso Client1 IsNot Nothing AndAlso Client1.Options IsNot Nothing AndAlso Client2 IsNot Nothing AndAlso Client2.Options IsNot Nothing Then
+            Server.Options.MaximumDownloadMbps = SBW.Value
+            Server.Options.MaximumUploadMbps = SBW.Value
+            If SBW.ToolTip Is Nothing Then
+                SBW.ToolTip = New System.Windows.Controls.ToolTip() With {.Content = SBW.Value & " Mbps", .IsOpen = True, .StaysOpen = False}
+            Else
+                DirectCast(SBW.ToolTip, Controls.ToolTip).Content = SBW.Value & " Mbps"
+                DirectCast(SBW.ToolTip, Controls.ToolTip).IsOpen = True
+            End If
+        End If
+
+    End Sub
+
+    Private Sub rRate_ValueChanged()
+        If Not WebSocket_Enabled.IsChecked AndAlso Server IsNot Nothing AndAlso Server.Options IsNot Nothing AndAlso Client1 IsNot Nothing AndAlso Client1.Options IsNot Nothing AndAlso Client2 IsNot Nothing AndAlso Client2.Options IsNot Nothing Then
+            Server.Options.Fps = rRate.Value
+            Client1.Options.Fps = rRate.Value
+            Client2.Options.Fps = rRate.Value
+            If rRate.ToolTip Is Nothing Then
+                rRate.ToolTip = New System.Windows.Controls.ToolTip() With {.Content = rRate.Value & " FPS", .IsOpen = True, .StaysOpen = False}
+            Else
+                DirectCast(rRate.ToolTip, Controls.ToolTip).Content = rRate.Value & " FPS"
+                DirectCast(rRate.ToolTip, Controls.ToolTip).IsOpen = True
+            End If
+
+        End If
+    End Sub
+
+    Private Sub SBW_ManipulationCompleted(sender As Object, e As ManipulationCompletedEventArgs) Handles SBW.ManipulationCompleted, C2BW.ManipulationCompleted, C1BW.ManipulationCompleted
+        If sender.ToolTip IsNot Nothing Then
+            DirectCast(sender.ToolTip, Controls.ToolTip).IsOpen = False
+        End If
+
     End Sub
 
 

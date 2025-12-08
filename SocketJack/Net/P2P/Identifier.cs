@@ -1,4 +1,5 @@
 ﻿using SocketJack.Extensions;
+using SocketJack.Net.WebSockets;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -99,7 +100,50 @@ namespace SocketJack.Net.P2P {
         /// </summary>
         public async Task<string> GetMetaData(string key, bool Private = false, bool WaitForValueIfNull = true) {
             var Key = key.ToLower();
-            var p = Parent.Peers.Where(p => p.Value.ID == ID).FirstOrDefault().Value;
+            Identifier p = null;
+            while (p == null) {
+                
+                await Task.Delay(50); // Wait 50ms before checking again
+                if(Parent == null && WaitForValueIfNull) {
+                    foreach(var client in ThreadManager.TcpClients.Values) {
+                        if(client.RemoteIdentity == null) continue;
+                        if (client.RemoteIdentity.ID == ID) {
+                            Parent = client;
+                            break;
+                        }
+                    }
+                    if(Parent == null) {
+                        foreach (var client in ThreadManager.TcpServers.Values) {
+                            if (client.RemoteIdentity == null) continue;
+                            if (client.RemoteIdentity.ID == ID) {
+                                Parent = client;
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                } else if(Parent == null && !WaitForValueIfNull) {
+                    foreach (var client in ThreadManager.TcpClients.Values) {
+                        if (client.RemoteIdentity == null) continue;
+                        if (client.RemoteIdentity.ID == ID) {
+                            Parent = client;
+                            break;
+                        }
+                    }
+                    if (Parent == null) {
+                        foreach (var client in ThreadManager.TcpServers.Values) {
+                            if (client.RemoteIdentity == null) continue;
+                            if (client.RemoteIdentity.ID == ID) {
+                                Parent = client;
+                                break;
+                            }
+                        }
+                        return default;
+                    }
+                }
+                p = Parent.Peers.Where(p => p.Value.ID == ID).FirstOrDefault().Value;
+                if (!Parent.Connected && !(Parent is TcpServer)) return default;
+            }
             if (Private ? p.PrivateMetadata.ContainsKey(Key) : p.Metadata.ContainsKey(Key)) {
                 string value = default;
                     while (Private ? !p.PrivateMetadata.TryGetValue(Key, out value) : !p.Metadata.TryGetValue(Key, out value)) {
@@ -112,7 +156,12 @@ namespace SocketJack.Net.P2P {
                 // Wait asynchronously until the key is present in the dictionary
                 while (Private ? !p.PrivateMetadata.ContainsKey(Key) : !p.Metadata.ContainsKey(Key)) {
                     await Task.Delay(50); // Wait 50ms before checking again
-                    p = Parent.Peers[ID];
+                  
+                    if (Parent.Peers.ContainsKey(ID)) {
+                        p = Parent.Peers[ID];
+                    } else {
+                        return default;
+                    }
                     if (!Parent.Connected) return default;
                 }
                 string value = default;
@@ -149,13 +198,39 @@ namespace SocketJack.Net.P2P {
                     if (_identifiers.ContainsKey(ID)) {
                         _Parent = _identifiers[ID];
                     } else {
-                        ISocket parent = ThreadManager.TcpClients.Values.FirstOrDefault(client => client.Peers.ContainsKey(ID));
-                        if(parent == null) {
-                            parent = ThreadManager.TcpServers.Values.FirstOrDefault(server => server.Peers.ContainsKey(ID));
-                            if(parent == null) throw new Exception("No parent found for this Identifier.");
+                        var parent = null as ISocket;
+                        foreach (var client in ThreadManager.TcpClients.Values) {
+                            if(client.RemoteIdentity == null) continue;
+                            if (client.RemoteIdentity.ID == ID) {
+                                parent = client;
+                            }
                         }
+                        if(parent == null) {
+                            foreach (var server in ThreadManager.TcpServers.Values) {
+                                if (server.GetType() == typeof(TcpServer)) {
+                                    if (server.AsTcpServer().Clients.ContainsKey(Guid.Parse(ID))) {
+                                        parent = server;
+                                        break;
+                                    }
+                                } else if (server.GetType() == typeof(WebSocketServer)) {
+                                    if (server.AsWsServer().Clients.ContainsKey(Guid.Parse(ID))) {
+                                        parent = server;
+                                        break;
+                                    }
+                                }
+
+                            }
+                        }
+
+                        //if(parent == null) {
+                        //    parent = ThreadManager.TcpServers.Values.FirstOrDefault(server => server.AsTcpServer().Clients.ContainsKey(Guid.Parse(ID)));
+                        //    if (parent == null) {
+                        //        throw new Exception("No parent found for this Identifier.");
+                        //    }
+                        //}
                         _Parent = parent;
                         _identifiers.Add(ID, parent);
+                        return _Parent;
                     }
                 }
 

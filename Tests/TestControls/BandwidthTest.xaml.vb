@@ -20,26 +20,20 @@ Public Class BandwidthTest
         End Get
     End Property ' buffer size equal to object size for high bandwidth
     Public Property ServerPort As Integer = NIC.FindOpenPort(7500, 8000).Result
-    Public Property Compressor As New GZip2Compression(IO.Compression.CompressionLevel.Fastest)
+    Public Property Compressor As New GZip2Compression(IO.Compression.CompressionLevel.SmallestSize)
     Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options =
         New TcpOptions With {.Logging = True,
                              .UseCompression = False,
-                             .UploadBufferSize = 0,
-                             .DownloadBufferSize = 0,
-                             .MaximumBufferSize = 65535,
-                             .MaximumDownloadMbps = 0,
-                             .MaximumUploadMbps = 0,
+                             .MaximumDownloadMbps = 0.2,
+                             .MaximumUploadMbps = 0.2,
                              .CompressionAlgorithm = Compressor}}
 
     Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options =
         New TcpOptions With {.Logging = True,
                              .UpdateConsoleTitle = True,
-                             .UseCompression = False,
-                             .UploadBufferSize = 0,
-                             .DownloadBufferSize = 0,
-                             .MaximumBufferSize = 65535,
-                             .MaximumDownloadMbps = 0,
-                             .MaximumUploadMbps = 0,
+                             .UseCompression = Server.Options.UseCompression,
+                             .MaximumDownloadMbps = 0.2,
+                             .MaximumUploadMbps = 0.2,
                              .CompressionAlgorithm = Compressor}}
 
 #Region "Properties"
@@ -168,12 +162,17 @@ Public Class BandwidthTest
         End If
     End Sub
 
+    Private Sub SliderBwSize_ValueChanged(sender As Object, e As RoutedPropertyChangedEventArgs(Of Double)) Handles SliderBwSize.ValueChanged
+        If Running Then
+            Server.Options.MaximumUploadMbps = SliderBwSize.Value / 100
+            Server.Options.MaximumDownloadMbps = SliderBwSize.Value / 100
+            Client.Options.MaximumUploadMbps = SliderBwSize.Value / 100
+            Client.Options.MaximumDownloadMbps = SliderBwSize.Value / 100
+        End If
+    End Sub
+
     Private Sub SliderUnitSize_ValueChanged(sender As Object, e As RoutedPropertyChangedEventArgs(Of Double)) Handles SliderUnitSize.ValueChanged
         BandwidthObject.UnitSize = CInt(SliderUnitSize.Value)
-        Server.Options.UploadBufferSize = BufferSize
-        Server.Options.DownloadBufferSize = BufferSize
-        Client.Options.UploadBufferSize = BufferSize
-        Client.Options.DownloadBufferSize = BufferSize
     End Sub
 
     Private Sub Client_LogOutput(text As String) Handles Client.LogOutput
@@ -295,6 +294,10 @@ Public Class BandwidthTest
     Private _ReceivedObjects As Integer
 
     Public Sub ResetValues()
+        Server.Options.MaximumUploadMbps = SliderBwSize.Value / 100
+        Server.Options.MaximumDownloadMbps = SliderBwSize.Value / 100
+        Client.Options.MaximumUploadMbps = SliderBwSize.Value / 100
+        Client.Options.MaximumDownloadMbps = SliderBwSize.Value / 100
         ResetReceivedObjects()
         ResetSentBytes()
         ResetReceivedBytes()
