@@ -883,15 +883,18 @@ namespace SocketJack.Net.WebSockets {
             var rented = ArrayPool<byte>.Shared.Rent(frameLen);
 
             try {
-                var span = rented.AsSpan(0, frameLen);
-                var writtenHeader = WriteWebSocketHeader(span, opcode, payload.Length);
+                // Avoid Span locals in async methods for netstandard2.1 compatibility.
+                var headerBuf = new byte[10];
+                var writtenHeader = WriteWebSocketHeader(headerBuf, opcode, payload.Length);
+                Buffer.BlockCopy(headerBuf, 0, rented, 0, writtenHeader);
 
-                var maskKeySpan = span.Slice(writtenHeader, maskLen);
-                RandomNumberGenerator.Fill(maskKeySpan);
+                var maskKey = new byte[maskLen];
+                RandomNumberGenerator.Fill(maskKey);
+                Buffer.BlockCopy(maskKey, 0, rented, writtenHeader, maskLen);
 
-                var maskedPayload = span.Slice(writtenHeader + maskLen, payload.Length);
+                var payloadOffset = writtenHeader + maskLen;
                 for (int i = 0; i < payload.Length; i++) {
-                    maskedPayload[i] = (byte)(payload[i] ^ maskKeySpan[i % 4]);
+                    rented[payloadOffset + i] = (byte)(payload[i] ^ maskKey[i % 4]);
                 }
 
                 await _stream.WriteAsync(rented, 0, frameLen, cancellationToken);

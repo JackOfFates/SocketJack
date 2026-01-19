@@ -952,9 +952,11 @@ namespace SocketJack.Net.WebSockets {
                     var frameLen = headerLen + payload.Length;
                     var rented = ArrayPool<byte>.Shared.Rent(frameLen);
                     try {
-                        var span = rented.AsSpan(0, frameLen);
-                        var writtenHeader = WriteWebSocketHeader(span, useBinaryFrame, payload.Length);
-                        payload.CopyTo(span.Slice(writtenHeader));
+                        // Avoid Span locals in async methods for netstandard2.1 compatibility.
+                        var headerBuf = new byte[10];
+                        var headerWritten = WriteWebSocketHeader(headerBuf, useBinaryFrame, payload.Length);
+                        Buffer.BlockCopy(headerBuf, 0, rented, 0, headerWritten);
+                        Buffer.BlockCopy(payload, 0, rented, headerWritten, payload.Length);
 
                         await Client.Stream.WriteAsync(rented, 0, frameLen);
                     }
