@@ -92,7 +92,7 @@ namespace SocketJack.Net {
                 });
 #endif
 #if NETSTANDARD1_0_OR_GREATER && !UNITY
-            ClientDisconnected?.Invoke(e);
+                ClientDisconnected?.Invoke(e);
 #endif
             }
         }
@@ -126,7 +126,7 @@ namespace SocketJack.Net {
         private void TcpServer_BytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
             if (Environment.UserInteractive && Options.UpdateConsoleTitle) {
                 try {
-                    Console.Title = string.Format("{0} - Sent {1}/s Received {2}/s", new[] { Name, Connection.BytesPerSecondSent.ByteToString(2), 
+                    Console.Title = string.Format("{0} - Sent {1}/s Received {2}/s", new[] { Name, Connection.BytesPerSecondSent.ByteToString(2),
                                                                                                    Connection.BytesPerSecondReceived.ByteToString(2) });
                 } catch (Exception) {
                 }
@@ -226,7 +226,7 @@ namespace SocketJack.Net {
 
         }
         private void TcpServer_InternalSendToClient(string Recipient, string Sender, object Obj, int BytesReceived) {
-            if(Recipient == "#ALL#") {
+            if (Recipient == "#ALL#") {
                 var SenderGuid = Guid.TryParse(Sender, out Guid senderGuid) ? senderGuid : default;
                 if (SenderGuid != default && Clients.ContainsKey(SenderGuid)) {
                     var SenderClient = Clients[SenderGuid];
@@ -313,9 +313,9 @@ namespace SocketJack.Net {
                 });
                 CloseConnection(Connection);
                 while (Clients.Count != 0)
-                   await Task.Delay(1);
+                    await Task.Delay(1);
                 LogFormat("[{0}] Shutdown Complete *:{1}", new[] { Name, Port.ToString() });
-            }, TaskCreationOptions.LongRunning );
+            }, TaskCreationOptions.LongRunning);
         }
         protected internal void AcceptCallback(IAsyncResult ar) {
             if (!IsListening)

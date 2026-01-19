@@ -14,6 +14,17 @@ using System.Collections.Concurrent;
 namespace SocketJack.Serialization {
 
     public class Wrapper {
+        private static readonly ConcurrentDictionary<string, Type?> ResolvedTypeCache = new(StringComparer.Ordinal);
+
+        internal static Type? ResolveTypeCached(string typeName) {
+            if (string.IsNullOrWhiteSpace(typeName))
+                return null;
+            if (ResolvedTypeCache.TryGetValue(typeName, out var t))
+                return t;
+            t = System.Type.GetType(typeName);
+            ResolvedTypeCache[typeName] = t;
+            return t;
+        }
 
         public string Type { get; set; }
         public object value { get; set; }
@@ -172,9 +183,9 @@ namespace SocketJack.Serialization {
             Type T = Obj.GetType();
             if (T == typeof(PeerRedirect)) {
                 PeerRedirect peerRedirect = (PeerRedirect)Obj;
-                Type redirectType = System.Type.GetType(peerRedirect.Type);
+                Type redirectType = ResolveTypeCached(peerRedirect.Type);
                 if (redirectType == null) {
-                    Exception exception = new Exception("Type '" + redirectType.Name + "' is not found in any referenced assembly.");
+                    Exception exception = new Exception("Type '" + peerRedirect.Type + "' is not found in any referenced assembly.");
                     throw exception;
                 }
                 return IsTypeAllowed(redirectType, sender);

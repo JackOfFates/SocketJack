@@ -239,7 +239,7 @@ namespace SocketJack.Net {
             });
 #endif
 #if NETSTANDARD1_0_OR_GREATER && !UNITY
-             OnReceive?.Invoke(ref e);
+            OnReceive?.Invoke(ref e);
 #endif
         }
         void ISocket.InvokeOnSent(SentEventArgs sentEventArgs) {
@@ -372,7 +372,7 @@ namespace SocketJack.Net {
             });
 #endif
 #if NETSTANDARD1_0_OR_GREATER && !UNITY
-            l.ElementAt(i).Invoke(e);
+                    l.ElementAt(i).Invoke(e);
 #endif
                 }
             }
@@ -394,7 +394,7 @@ namespace SocketJack.Net {
                     });
 #endif
 #if NETSTANDARD1_0_OR_GREATER && !UNITY
-            l.ElementAt(i).Invoke(e);
+                    l.ElementAt(i).Invoke(e);
 #endif
                 }
             }
@@ -433,12 +433,12 @@ namespace SocketJack.Net {
                                 PeerUpdate?.Invoke(this, item);
                             }
                         }
-                            
+
                         break;
                     }
                 case var case1 when case1 == typeof(PeerServer): {
                         PeerServer pServer = (PeerServer)obj;
-                        if (this.Connection.IsServer) 
+                        if (this.Connection.IsServer)
                             pServer.LocalClient.IP = Connection.EndPoint.ToString();
                         if (Options.UsePeerToPeer) {
                             if (pServer.Shutdown) {
@@ -490,7 +490,7 @@ namespace SocketJack.Net {
                             Type redirectType = Type.GetType(redirect.Type);
                             var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
                             var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
-                            if(!Peers.ContainsKey(Connection.Identity.ID)) return;
+                            if (!Peers.ContainsKey(Connection.Identity.ID)) return;
                             var from = Peers[Connection.Identity.ID];
                             receivedEventArgs.From = from;
                             receivedEventArgs.Initialize(this, Connection, obj, Length);
@@ -500,7 +500,7 @@ namespace SocketJack.Net {
                             InvokeAllCallbacks(receivedEventArgs);
 
                             if (receivedEventArgs.IsPeerRedirect && !NonGenericEventArgs.CancelPeerRedirect && !receivedEventArgs.CancelPeerRedirect) {
-                                if(Peers.ContainsKey(redirect.Recipient)) {
+                                if (Peers.ContainsKey(redirect.Recipient)) {
                                     Identifier rID = Peers[redirect.Recipient];
                                     Send(rID, redirect);
                                     //SendBroadcast(redirect, Connection);
@@ -524,7 +524,7 @@ namespace SocketJack.Net {
                     }
                 default: {
                         //if (Options.LogReceiveEvents && !Globals.IgnoreLoggedTypes.Contains(objType))
-                            InternalReceiveEvent?.Invoke(Connection, objType, obj, Length);
+                        InternalReceiveEvent?.Invoke(Connection, objType, obj, Length);
                         var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(obj.GetType());
 
                         var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
@@ -594,7 +594,7 @@ namespace SocketJack.Net {
             if (Connection.Socket == null)
                 return;
             if (Connection.Socket.Connected) {
-               var wrapped = new Wrapper(Obj, Connection.Parent);
+                var wrapped = new Wrapper(Obj, Connection.Parent);
                 var Bytes = Connection.Parent.Options.Serializer.Serialize(wrapped);
                 byte[] ProcessedBytes = Connection.Compressed ? Options.CompressionAlgorithm.Compress(Bytes) : Bytes;
                 var SerializedBytes = ProcessedBytes.Terminate();
@@ -743,7 +743,7 @@ namespace SocketJack.Net {
         /// <returns></returns>
         public bool PeerToPeerInstance { get; internal set; }
 
-        public bool isReceiving { 
+        public bool isReceiving {
             get {
                 return Connection != null && Connection.IsReceiving;
             }
@@ -776,7 +776,7 @@ namespace SocketJack.Net {
             Options.Whitelist.Add(Type);
             if (TypeCallbacks.ContainsKey(Type)) {
                 TypeCallbacks[Type].Add(e => Action((ReceivedEventArgs<T>)e));
-                
+
             } else {
                 var l = new List<Action<IReceivedEventArgs>>() {
                     e => Action((ReceivedEventArgs<T>)e)
@@ -848,9 +848,9 @@ namespace SocketJack.Net {
                 Segment[] SegmentedObject = SerializedBytes.GetSegments();
                 Parallel.ForEach(SegmentedObject, (s) => {
                     //var state = new SendQueueItem(s, Client);
-                  
+
                     lock (Client.SendQueueRaw) {
-                       Client.SendQueueRaw.AddRange(Options.Serializer.Serialize(s));
+                        Client.SendQueueRaw.AddRange(Options.Serializer.Serialize(s));
                     }
                 });
             });

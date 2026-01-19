@@ -1,5 +1,7 @@
 ﻿using SocketJack.Net;
 using System;
+using System.IO;
+using System.Net.Sockets;
 
 namespace SocketJack.Extensions
 {
@@ -7,6 +9,23 @@ namespace SocketJack.Extensions
 
         internal static DisconnectionReason Interpret(this Exception ex) {
             var Reason = DisconnectionReason.Unknown;
+            if (ex is IOException ioEx && ioEx.InnerException is SocketException innerSock)
+                ex = innerSock;
+
+            if (ex is SocketException sock)
+            {
+                if (sock.SocketErrorCode == SocketError.ConnectionReset)
+                    return DisconnectionReason.RemoteSocketClosed;
+                if (sock.SocketErrorCode == SocketError.ConnectionAborted)
+                    return DisconnectionReason.LocalSocketClosed;
+                if (sock.SocketErrorCode == SocketError.Shutdown)
+                    return DisconnectionReason.LocalSocketClosed;
+                if (sock.SocketErrorCode == SocketError.OperationAborted)
+                    return DisconnectionReason.LocalSocketClosed;
+                if (sock.SocketErrorCode == SocketError.NotConnected)
+                    return DisconnectionReason.LocalSocketClosed;
+            }
+
             string msg = ex.Message.ToLower();
             if (msg.Contains("the i/o operation has been aborted because of either a thread exit or an application request")) {
                 Reason = DisconnectionReason.LocalSocketClosed;

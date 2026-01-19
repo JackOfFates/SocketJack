@@ -22,9 +22,43 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Xml.Linq;
+using System.Buffers;
 
 namespace SocketJack.Net.WebSockets {
     public class WebSocketServer : IDisposable, ISocket {
+
+        private static int GetWebSocketHeaderLength(int payloadLength) {
+            if (payloadLength <= 125)
+                return 2;
+            if (payloadLength <= 65535)
+                return 4;
+            return 10;
+        }
+
+        private static int WriteWebSocketHeader(Span<byte> dest, bool useBinaryFrame, int payloadLength) {
+            dest[0] = useBinaryFrame ? (byte)0x82 : (byte)0x81;
+            if (payloadLength <= 125) {
+                dest[1] = (byte)payloadLength;
+                return 2;
+            }
+            if (payloadLength <= 65535) {
+                dest[1] = 126;
+                dest[2] = (byte)((payloadLength >> 8) & 0xFF);
+                dest[3] = (byte)(payloadLength & 0xFF);
+                return 4;
+            }
+            dest[1] = 127;
+            ulong len = (ulong)payloadLength;
+            dest[2] = (byte)((len >> 56) & 0xFF);
+            dest[3] = (byte)((len >> 48) & 0xFF);
+            dest[4] = (byte)((len >> 40) & 0xFF);
+            dest[5] = (byte)((len >> 32) & 0xFF);
+            dest[6] = (byte)((len >> 24) & 0xFF);
+            dest[7] = (byte)((len >> 16) & 0xFF);
+            dest[8] = (byte)((len >> 8) & 0xFF);
+            dest[9] = (byte)(len & 0xFF);
+            return 10;
+        }
 
         #region Internal
         private readonly int _port;
@@ -136,6 +170,17 @@ namespace SocketJack.Net.WebSockets {
             return read == 1 ? buffer[0] : -1;
         }
 
+        private static async ValueTask<bool> ReadExactAsync(Stream stream, Memory<byte> buffer, CancellationToken token = default) {
+            int readTotal = 0;
+            while (readTotal < buffer.Length) {
+                var read = await stream.ReadAsync(buffer.Slice(readTotal), token).ConfigureAwait(false);
+                if (read <= 0)
+                    return false;
+                readTotal += read;
+            }
+            return true;
+        }
+
         // Add constants for opcodes
         private const int TextFrameOpcode = 0x1;
         private const int BinaryFrameOpcode = 0x2;
@@ -143,58 +188,42 @@ namespace SocketJack.Net.WebSockets {
         private const int BrowserClientOpcode = 0xB; // 0xB is unused in RFC6455
 
         private async Task HandleWebSocketFrames(TcpConnection connection) {
-            var buffer = new byte[Options.DownloadBufferSize];
-
             try {
                 bool exitLoop = false;
                 while (connection.Socket.Connected && (!connection.Closed || connection.Closing)) {
-                    using var cts = new CancellationTokenSource();
-                    var monitorTask = Task.Run(async () => {
-                        while (connection.Socket != null && connection.Socket.Connected && !connection.Closed) {
-                            await Task.Delay(100);
-                        }
-                        cts.Cancel();
-                        if (!(connection.Socket.Connected && (!connection.Closed || connection.Closing))) {
-                            return;
-                        }
-                        //if (!connection.Closed || connection.Closing)
-                            //connection._Closing = true;
-                            //CloseConnection(connection, DisconnectionReason.RemoteSocketClosed);
-                    });
 
-                    int header = await ReadByteAsync(connection.Stream, cts.Token);
+                    int header = await ReadByteAsync(connection.Stream).ConfigureAwait(false);
                     if (header == -1) break;
                     bool fin = (header & 0x80) != 0;
                     int opcode = header & 0x0F;
-                    int lengthByte = await ReadByteAsync(connection.Stream, cts.Token);
+                    int lengthByte = await ReadByteAsync(connection.Stream).ConfigureAwait(false);
                     if (lengthByte == -1) break;
                     bool mask = (lengthByte & 0x80) != 0;
                     int payloadLen = lengthByte & 0x7F;
                     if (payloadLen == 126) {
                         var ext = new byte[2];
-                        await connection.Stream.ReadAsync(ext, 0, 2, cts.Token);
-                        payloadLen = ext[0] << 8 | ext[1];
+                        if (!await ReadExactAsync(connection.Stream, ext, default).ConfigureAwait(false)) break;
+                        payloadLen = (ext[0] << 8) | ext[1];
                     } else if (payloadLen == 127) {
                         var ext = new byte[8];
-                        await connection.Stream.ReadAsync(ext, 0, 8, cts.Token);
+                        if (!await ReadExactAsync(connection.Stream, ext, default).ConfigureAwait(false)) break;
                         payloadLen = (int)BitConverter.ToUInt64(ext, 0);
                     }
-                    byte[] maskingKey = null;
+
+                    var maskKey = new byte[4];
                     if (mask) {
-                        maskingKey = new byte[4];
-                        await connection.Stream.ReadAsync(maskingKey, 0, 4, cts.Token);
+                        if (!await ReadExactAsync(connection.Stream, maskKey, default).ConfigureAwait(false)) break;
                     }
-                    int read = 0;
-                    var payload = new byte[payloadLen];
-                    while (read < payloadLen && !cts.Token.IsCancellationRequested) {
-                        int r = await connection.Stream.ReadAsync(payload, read, payloadLen - read, cts.Token);
-                        if (r <= 0) break;
-                        read += r;
-                    }
-                    if (mask && maskingKey != null) {
-                        for (int i = 0; i < payload.Length; i++)
-                            payload[i] ^= maskingKey[i % 4];
-                    }
+
+                    var payload = ArrayPool<byte>.Shared.Rent(payloadLen);
+                    try {
+                        if (!await ReadExactAsync(connection.Stream, payload.AsMemory(0, payloadLen), default).ConfigureAwait(false))
+                            break;
+
+                        if (mask) {
+                            for (int i = 0; i < payloadLen; i++)
+                                payload[i] ^= maskKey[i % 4];
+                        }
 
                     switch (opcode) {
                         case CloseFrameOpcode: // Close
@@ -207,9 +236,10 @@ namespace SocketJack.Net.WebSockets {
                         case BinaryFrameOpcode:
                             _handshakeCompleted[connection.ID] = true;
 
-                            byte[] data = payload;
+                            var payloadCopy = payload.AsSpan(0, payloadLen).ToArray();
+                            byte[] data = payloadCopy;
                             if (Options.UseCompression && opcode == BinaryFrameOpcode) {
-                                data = Options.CompressionAlgorithm.Decompress(data);
+                                data = Options.CompressionAlgorithm.Decompress(payloadCopy);
                             }
                             var serializer = Options.Serializer;
 
@@ -217,12 +247,10 @@ namespace SocketJack.Net.WebSockets {
                             if (wrapper == null) {
                                 PeerRedirect redirect = serializer.DeserializeRedirect(this, data);
                                 if (redirect != null) {
-                                    Task.Run(() => {
-                                        if (Options.Logging && Options.LogReceiveEvents) {
-                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName), payload.Length.ByteToString() });
-                                        }
-                                        HandleReceive(connection, redirect, redirect.GetType(), payload.Length);
-                                    });
+                                    if (Options.Logging && Options.LogReceiveEvents) {
+                                        LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName), payloadLen.ByteToString() });
+                                    }
+                                    HandleReceive(connection, redirect, redirect.GetType(), payloadLen);
                                 } else {
                                     InvokeOnError(connection, new P2PException("Deserialized object returned null."));
                                 }
@@ -240,12 +268,10 @@ namespace SocketJack.Net.WebSockets {
                                             redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(((JsonElement)val).GetRawText());
                                         }
                                         PeerRedirect redirect = serializer.DeserializeRedirect(this, redirectBytes);
-                                        Task.Run(() => {
-                                            if (Options.Logging && Options.LogReceiveEvents) {
-                                                LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName), payload.Length.ByteToString() });
-                                            }
-                                            HandleReceive(connection, redirect, valueType, payload.Length); 
-                                        });
+                                        if (Options.Logging && Options.LogReceiveEvents) {
+                                            LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, string.Format("PeerRedirect<{0}>", ((PeerRedirect)redirect).CleanTypeName), payloadLen.ByteToString() });
+                                        }
+                                        HandleReceive(connection, redirect, valueType, payloadLen);
                                     } else {
                                         object unwrapped = null;
                                         try {
@@ -254,12 +280,10 @@ namespace SocketJack.Net.WebSockets {
                                             InvokeOnError(connection, ex);
                                         }
                                         if (unwrapped != null)
-                                            Task.Run(() => {
-                                                if (Options.Logging && Options.LogReceiveEvents && !Globals.IgnoreLoggedTypes.Contains(valueType)) {
-                                                     LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, valueType.Name, payload.Length.ByteToString() });
-                                                }
-                                                HandleReceive(connection, unwrapped, valueType, payload.Length);
-                                            });
+                                            if (Options.Logging && Options.LogReceiveEvents && !Globals.IgnoreLoggedTypes.Contains(valueType)) {
+                                                 LogFormatAsync("[{0}] Received {1} - {2}", new[] { Name, valueType.Name, payloadLen.ByteToString() });
+                                            }
+                                            HandleReceive(connection, unwrapped, valueType, payloadLen);
                                     }
                                 }
                             }
@@ -268,8 +292,12 @@ namespace SocketJack.Net.WebSockets {
                             // Unknown or unsupported opcode, ignore
                             break;
                     }
-                    if(exitLoop || cts.IsCancellationRequested) {
+                    if(exitLoop) {
                         break;
+                    }
+                    }
+                    finally {
+                        ArrayPool<byte>.Shared.Return(payload);
                     }
                 }
             } catch (Exception ex) {
@@ -918,24 +946,21 @@ namespace SocketJack.Net.WebSockets {
                     if (useBinaryFrame) {
                         payload = Options.CompressionAlgorithm.Compress(payload);
                     }
-                    List<byte> frame = new List<byte>();
-                    frame.Add(useBinaryFrame ? (byte)0x82 : (byte)0x81); // 0x82 = FIN+binary, 0x81 = FIN+text
-                    if (payload.Length <= 125) {
-                        frame.Add((byte)payload.Length);
-                    } else if (payload.Length <= 8192) {
-                        frame.Add(126);
-                        frame.Add((byte)(payload.Length >> 8 & 0xFF));
-                        frame.Add((byte)(payload.Length & 0xFF));
-                    } else {
-                        frame.Add(127);
-                        ulong len = (ulong)payload.Length;
-                        for (int i = 7; i >= 0; i--)
-                            frame.Add((byte)(len >> 8 * i & 0xFF));
-                    }
-                    frame.AddRange(payload);
-
                     if (Client.Stream == null) return;
-                    await Client.Stream.WriteAsync(frame.ToArray(), 0, frame.Count);
+
+                    var headerLen = GetWebSocketHeaderLength(payload.Length);
+                    var frameLen = headerLen + payload.Length;
+                    var rented = ArrayPool<byte>.Shared.Rent(frameLen);
+                    try {
+                        var span = rented.AsSpan(0, frameLen);
+                        var writtenHeader = WriteWebSocketHeader(span, useBinaryFrame, payload.Length);
+                        payload.CopyTo(span.Slice(writtenHeader));
+
+                        await Client.Stream.WriteAsync(rented, 0, frameLen);
+                    }
+                    finally {
+                        ArrayPool<byte>.Shared.Return(rented);
+                    }
                     await Client.Stream.FlushAsync();
 
                     InvokeInternalSendEvent(Client, objType, Obj, payload.Length);
@@ -1218,7 +1243,7 @@ namespace SocketJack.Net.WebSockets {
                         }
                     }, null);
                 } else {
-                    Thread.Sleep(1);
+                    Thread.Sleep(5);
                 }
             }
         }

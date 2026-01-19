@@ -20,6 +20,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Buffers;
 
 namespace SocketJack.Net.WebSockets {
 
@@ -522,7 +523,7 @@ namespace SocketJack.Net.WebSockets {
         void ISocket.CloseConnection(TcpConnection Connection, DisconnectionReason Reason) {
             try {
                 Connection.Closed = true;
-                if (Connection.Socket != null && Connection.Socket.Connected) {
+                if (Connection.Socket != null && Connection.Socket.Connected && Connection.Socket != null) {
                     // Send close frame
                     byte[] closeFrame = new byte[] { 0x88, 0x00 };
                     Connection.Stream.Write(closeFrame, 0, closeFrame.Length);
@@ -823,8 +824,7 @@ namespace SocketJack.Net.WebSockets {
             if (serializedBytes.Length > 8192) {
                 await SendSegmented(Connection, serializedBytes, obj.GetType(), obj);
             } else {
-                byte[] frame = CreateWebSocketFrame(serializedBytes, Options.UseCompression ? 0x2 : 0x1);
-                await _stream.WriteAsync(frame, 0, frame.Length, cancellationToken);
+                await WriteWebSocketFrameAsync(serializedBytes, Options.UseCompression ? 0x2 : 0x1, cancellationToken);
                 if (Options.Logging && Options.LogSendEvents) {
                     Type objType = obj.GetType();
                     if (Globals.IgnoreLoggedTypes.Contains(objType)) return;
@@ -840,29 +840,65 @@ namespace SocketJack.Net.WebSockets {
             }
         }
 
-        private byte[] CreateWebSocketFrame(byte[] payload, int opcode) {
-            List<byte> frame = new List<byte>();
-            frame.Add((byte)(0x80 | (opcode & 0x0F))); // FIN + opcode
-            if (payload.Length <= 125) {
-                frame.Add((byte)(0x80 | payload.Length)); // Masked + length
-            } else if (payload.Length <= ushort.MaxValue) {
-                frame.Add((byte)(0x80 | 126));
-                frame.Add((byte)((payload.Length >> 8) & 0xFF));
-                frame.Add((byte)(payload.Length & 0xFF));
-            } else {
-                frame.Add((byte)(0x80 | 127));
-                for (int i = 7; i >= 0; i--)
-                    frame.Add((byte)((payload.Length >> (8 * i)) & 0xFF));
+        private static int GetWebSocketHeaderLength(int payloadLength) {
+            if (payloadLength <= 125)
+                return 2;
+            if (payloadLength <= ushort.MaxValue)
+                return 4;
+            return 10;
+        }
+
+        private static int WriteWebSocketHeader(Span<byte> dest, int opcode, int payloadLength) {
+            dest[0] = (byte)(0x80 | (opcode & 0x0F));
+            if (payloadLength <= 125) {
+                dest[1] = (byte)(0x80 | payloadLength);
+                return 2;
             }
-            // Masking key
-            byte[] maskKey = new byte[4];
-            new Random().NextBytes(maskKey);
-            frame.AddRange(maskKey);
-            // Mask payload
-            for (int i = 0; i < payload.Length; i++) {
-                frame.Add((byte)(payload[i] ^ maskKey[i % 4]));
+            if (payloadLength <= ushort.MaxValue) {
+                dest[1] = (byte)(0x80 | 126);
+                dest[2] = (byte)((payloadLength >> 8) & 0xFF);
+                dest[3] = (byte)(payloadLength & 0xFF);
+                return 4;
             }
-            return frame.ToArray();
+            dest[1] = (byte)(0x80 | 127);
+            ulong len = (ulong)payloadLength;
+            dest[2] = (byte)((len >> 56) & 0xFF);
+            dest[3] = (byte)((len >> 48) & 0xFF);
+            dest[4] = (byte)((len >> 40) & 0xFF);
+            dest[5] = (byte)((len >> 32) & 0xFF);
+            dest[6] = (byte)((len >> 24) & 0xFF);
+            dest[7] = (byte)((len >> 16) & 0xFF);
+            dest[8] = (byte)((len >> 8) & 0xFF);
+            dest[9] = (byte)(len & 0xFF);
+            return 10;
+        }
+
+        private async Task WriteWebSocketFrameAsync(byte[] payload, int opcode, CancellationToken cancellationToken) {
+            if (_stream == null)
+                return;
+
+            var headerLen = GetWebSocketHeaderLength(payload.Length);
+            const int maskLen = 4;
+            var frameLen = headerLen + maskLen + payload.Length;
+            var rented = ArrayPool<byte>.Shared.Rent(frameLen);
+
+            try {
+                var span = rented.AsSpan(0, frameLen);
+                var writtenHeader = WriteWebSocketHeader(span, opcode, payload.Length);
+
+                var maskKeySpan = span.Slice(writtenHeader, maskLen);
+                RandomNumberGenerator.Fill(maskKeySpan);
+
+                var maskedPayload = span.Slice(writtenHeader + maskLen, payload.Length);
+                for (int i = 0; i < payload.Length; i++) {
+                    maskedPayload[i] = (byte)(payload[i] ^ maskKeySpan[i % 4]);
+                }
+
+                await _stream.WriteAsync(rented, 0, frameLen, cancellationToken);
+            }
+            finally {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
 
         #endregion

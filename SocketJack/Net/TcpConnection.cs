@@ -537,7 +537,7 @@ namespace SocketJack.Net {
                             _TotalBytesReceived_l = TotalBytesReceived;
                             LastFrame = now;
                             if (timeDiff > TimeSpan.FromSeconds(1)) {
-                                await Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff*10)));
+                                await Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff * 10)));
                             }
                         }
 
@@ -785,7 +785,7 @@ namespace SocketJack.Net {
             Task.Factory.StartNew(async () => {
                 DateTime Time = DateTime.UtcNow;
                 while (!isDisposed && !Closed && Socket.Connected) {
-                    if(Parent.Options.Fps > 0) {
+                    if (Parent.Options.Fps > 0) {
                         var now = DateTime.UtcNow;
                         if (now >= Time.AddMilliseconds(Parent.Options.timeout)) {
                             Time = DateTime.UtcNow;
@@ -816,10 +816,14 @@ namespace SocketJack.Net {
                         });
 #endif
 #if WINDOWS
-                await Application.Current.Dispatcher.InvokeAsync(async () => { bool o = await SendSerializedBytes(chunk); IsSending = false; return o; });
+                try {
+                    SendSerializedBytes(chunk); //await 
+                } finally {
+                    IsSending = false;
+                }
 #endif
 #if NETSTANDARD1_0_OR_GREATER && !UNITY
-                await SendSerializedBytes(chunk);
+                SendSerializedBytes(chunk); //await 
                 IsSending = false;
 #endif
 
@@ -873,79 +877,79 @@ namespace SocketJack.Net {
         //            }
         //        }
 
-        protected internal async Task<bool> SendSerializedBytes(byte[] SerializedBytes) {
-            return await Task.Run(async () => {
-                if (isDisposed || Stream == null || Closed) return false;
-                bool sentSuccessful = false;
-                try {
-                    if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
-                        // Object smaller than MTU.
-                        byte[] ProcessedBytes = SerializedBytes;
-                        int totalBytes = ProcessedBytes.Length;
+        protected internal bool SendSerializedBytes(byte[] SerializedBytes) {
+            //return await Task.Run(async () => {
+            //});
+            if (isDisposed || Stream == null || Closed) return false;
+            bool sentSuccessful = false;
+            try {
+                if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
+                    // Object smaller than MTU.
+                    byte[] ProcessedBytes = SerializedBytes;
+                    int totalBytes = ProcessedBytes.Length;
 
-                        // If upload buffering is disabled or UploadBufferSize is invalid, write whole buffer at once
-                        if (!Parent.Options.isUploadBuffered || Parent.Options.UploadBufferSize <= 0) {
-                            if (SSL) {
-                                SslStream.Write(ProcessedBytes, 0, totalBytes);
-                            } else {
-                                Stream.Write(ProcessedBytes, 0, totalBytes);
-                            }
-                            Parent.InvokeInternalSentByteCounter(this, totalBytes);
+                    // If upload buffering is disabled or UploadBufferSize is invalid, write whole buffer at once
+                    if (!Parent.Options.isUploadBuffered || Parent.Options.UploadBufferSize <= 0) {
+                        if (SSL) {
+                            SslStream.Write(ProcessedBytes, 0, totalBytes);
                         } else {
-                            int chunkUnit = Math.Max(1, Parent.Options.UploadBufferSize);
-
-                            for (int offset = 0; offset < totalBytes; offset += chunkUnit) {
-                                if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
-                                    SerializedBytes = null;
-                                    ProcessedBytes = null;
-                                    if (!Closed) Parent.CloseConnection(this);
-                                    return false;
-                                }
-
-                                long diff = ((TotalBytesSent - _TotalBytesSent_l)) - Parent.Options.MaximumDownloadBytesPerSecond;
-                                if (diff > 0) {
-                                    var now = DateTime.UtcNow;
-                                    var timeDiff = now - LastFrame;
-                                    _ReceivedBytesPerSecond = (int)(TotalBytesSent - _TotalBytesSent_l);
-                                    _TotalBytesSent_l = TotalBytesSent;
-                                    LastFrame = now;
-                                    if (timeDiff > TimeSpan.FromSeconds(1)) {
-                                        await Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff * 10)));
-                                    }
-
-                                }
-
-                                int chunkSize = Math.Min(chunkUnit, totalBytes - offset);
-                                if (SSL) {
-                                    SslStream.Write(ProcessedBytes, offset, chunkSize);
-                                } else {
-                                    Stream.Write(ProcessedBytes, offset, chunkSize);
-                                }
-
-                                Interlocked.Add(ref _TotalBytesSent, chunkSize);
-                                Parent.InvokeInternalSentByteCounter(this, chunkSize);
-                            }
+                            Stream.Write(ProcessedBytes, 0, totalBytes);
                         }
-                        sentSuccessful = true;
-                        //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
-                        Parent.InvokeInternalSendEvent(this, typeof(byte[]), "[CHUNK]", ProcessedBytes.Length);
-                        Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, typeof(byte[]), ProcessedBytes.Length));
-                        //}
+                        Parent.InvokeInternalSentByteCounter(this, totalBytes);
+                    } else {
+                        int chunkUnit = Math.Max(1, Parent.Options.UploadBufferSize);
 
-                    } else if (SerializedBytes.Length > NIC.MTU) {
-                        // Object larger than MTU, we have to Segment the object.
-                        Parent.SendSegmented(this, SerializedBytes);
+                        for (int offset = 0; offset < totalBytes; offset += chunkUnit) {
+                            if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
+                                SerializedBytes = null;
+                                ProcessedBytes = null;
+                                if (!Closed) Parent.CloseConnection(this);
+                                return false;
+                            }
+
+                            long diff = ((TotalBytesSent - _TotalBytesSent_l)) - Parent.Options.MaximumDownloadBytesPerSecond;
+                            if (diff > 0) {
+                                var now = DateTime.UtcNow;
+                                var timeDiff = now - LastFrame;
+                                _ReceivedBytesPerSecond = (int)(TotalBytesSent - _TotalBytesSent_l);
+                                _TotalBytesSent_l = TotalBytesSent;
+                                LastFrame = now;
+                                if (timeDiff > TimeSpan.FromSeconds(1)) {
+                                    Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff * 10))); //await 
+                                }
+
+                            }
+
+                            int chunkSize = Math.Min(chunkUnit, totalBytes - offset);
+                            if (SSL) {
+                                SslStream.Write(ProcessedBytes, offset, chunkSize);
+                            } else {
+                                Stream.Write(ProcessedBytes, offset, chunkSize);
+                            }
+
+                            Interlocked.Add(ref _TotalBytesSent, chunkSize);
+                            Parent.InvokeInternalSentByteCounter(this, chunkSize);
+                        }
                     }
-                } catch (Exception ex) {
-                    if (Closed) return false;
-                    var Reason = ex.Interpret();
-                    if (Reason.ShouldLogReason()) {
-                        Parent.InvokeOnError(this, ex);
-                    }
-                    Parent.CloseConnection(this, Reason);
+                    sentSuccessful = true;
+                    //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
+                    Parent.InvokeInternalSendEvent(this, typeof(byte[]), "[CHUNK]", ProcessedBytes.Length);
+                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, typeof(byte[]), ProcessedBytes.Length));
+                    //}
+
+                } else if (SerializedBytes.Length > NIC.MTU) {
+                    // Object larger than MTU, we have to Segment the object.
+                    Parent.SendSegmented(this, SerializedBytes);
                 }
-                return sentSuccessful;
-            });
+            } catch (Exception ex) {
+                if (Closed) return false;
+                var Reason = ex.Interpret();
+                if (Reason.ShouldLogReason()) {
+                    Parent.InvokeOnError(this, ex);
+                }
+                Parent.CloseConnection(this, Reason);
+            }
+            return sentSuccessful;
         }
         protected internal async Task<bool> TrySendQueueItem(SendQueueItem Item) {
             if (isDisposed || Stream == null || Closed || Item.Complete) return false;
@@ -959,48 +963,48 @@ namespace SocketJack.Net {
                     wrapped = new Wrapper(Item.Object, Parent);
                     SerializedBytes = Parent.Options.Serializer.Serialize(wrapped);
                 }
-               // if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
-                    //    Object smaller than MTU.
-                    byte[] ProcessedBytes = Item.Connection.Compressed ? Parent.Options.CompressionAlgorithm.Compress(SerializedBytes).Terminate() : SerializedBytes.Terminate();
-                    int totalBytes = ProcessedBytes.Length;
-                    TcpConnection Client = Item.Connection;
-                    byte[] SentBytes = new byte[totalBytes];
+                // if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
+                //    Object smaller than MTU.
+                byte[] ProcessedBytes = Item.Connection.Compressed ? Parent.Options.CompressionAlgorithm.Compress(SerializedBytes).Terminate() : SerializedBytes.Terminate();
+                int totalBytes = ProcessedBytes.Length;
+                TcpConnection Client = Item.Connection;
+                byte[] SentBytes = new byte[totalBytes];
 
-                    if (Parent.Options.isUploadBuffered) {
-                        for (int offset = 0, loopTo = ProcessedBytes.Length - 1; Parent.Options.UploadBufferSize >= 0 ? offset <= loopTo : offset >= loopTo; offset += Parent.Options.UploadBufferSize) {
-                            if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
-                                SerializedBytes = null;
-                                ProcessedBytes = null;
-                                wrapped = null;
-                                if (!Closed) Parent.CloseConnection(this);
-                                return false;
-                            }
+                if (Parent.Options.isUploadBuffered) {
+                    for (int offset = 0, loopTo = ProcessedBytes.Length - 1; Parent.Options.UploadBufferSize >= 0 ? offset <= loopTo : offset >= loopTo; offset += Parent.Options.UploadBufferSize) {
+                        if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
+                            SerializedBytes = null;
+                            ProcessedBytes = null;
+                            wrapped = null;
+                            if (!Closed) Parent.CloseConnection(this);
+                            return false;
+                        }
                         int chunkSize = Math.Min(Parent.Options.UploadBufferSize, totalBytes - offset);
-                            if (SSL) {
-                                await SslStream.WriteAsync(ProcessedBytes, offset, chunkSize);
-                            } else {
-                                await Stream.WriteAsync(ProcessedBytes, offset, chunkSize);
-                            }
-                            Parent.InvokeInternalSentByteCounter(Item.Connection, chunkSize);
-                        }
-                    } else {
                         if (SSL) {
-                            await SslStream.WriteAsync(ProcessedBytes, 0, ProcessedBytes.Length);
+                            await SslStream.WriteAsync(ProcessedBytes, offset, chunkSize);
                         } else {
-                            await Stream.WriteAsync(ProcessedBytes, 0, ProcessedBytes.Length);
+                            await Stream.WriteAsync(ProcessedBytes, offset, chunkSize);
                         }
-                        Parent.InvokeInternalSentByteCounter(Item.Connection, ProcessedBytes.Length);
+                        Parent.InvokeInternalSentByteCounter(Item.Connection, chunkSize);
                     }
-                    sentSuccessful = true;
-                    //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
-                    Parent.InvokeInternalSendEvent(Item.Connection, type, Item.Object, ProcessedBytes.Length);
-                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, Item.Connection, type, ProcessedBytes.Length));
-                    //}
+                } else {
+                    if (SSL) {
+                        await SslStream.WriteAsync(ProcessedBytes, 0, ProcessedBytes.Length);
+                    } else {
+                        await Stream.WriteAsync(ProcessedBytes, 0, ProcessedBytes.Length);
+                    }
+                    Parent.InvokeInternalSentByteCounter(Item.Connection, ProcessedBytes.Length);
+                }
+                sentSuccessful = true;
+                //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
+                Parent.InvokeInternalSendEvent(Item.Connection, type, Item.Object, ProcessedBytes.Length);
+                Parent.InvokeOnSent(new SentEventArgs(this.Parent, Item.Connection, type, ProcessedBytes.Length));
+                //}
 
                 //} else if (SerializedBytes.Length > NIC.MTU) {
                 //    // Object larger than MTU, we have to Segment the object.
                 //    Item.Connection.Parent.SendSegmented(Item.Connection, SerializedBytes);
-               // }
+                // }
             } catch (Exception ex) {
                 if (Closed) return false;
                 var Reason = ex.Interpret();
@@ -1039,7 +1043,7 @@ namespace SocketJack.Net {
                 }
             }
         }
-    
+
         #endregion
 
         /// <summary>

@@ -38,7 +38,7 @@ Public Class ChatTest
             .LogReceiveEvents = False
             .LogSendEvents = False
             .LogToConsole = True
-            .UseCompression = True
+            .UseCompression = False
             .UpdateConsoleTitle = True
             .MaximumDownloadMbps = SBW.Value
             .MaximumUploadMbps = SBW.Value
