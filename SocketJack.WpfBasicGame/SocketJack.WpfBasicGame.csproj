@@ -2,16 +2,28 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
+    <ProjectReference Include="..\SocketJack.WPFController\SocketJack.WPFController.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ComputeSharp" Version="3.2.0" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)Generated</CompilerGeneratedFilesOutputPath>
     <AssemblyTitle>Using SocketJack to make a basic game in WPF</AssemblyTitle>
     <Product>Using SocketJack to make a basic game in WPF</Product>
+    <SupportedOSPlatformVersion>10.0.26100.0</SupportedOSPlatformVersion>
+    <StartupObject>SocketJack.WpfBasicGame.App</StartupObject>
   </PropertyGroup>
 
 </Project>

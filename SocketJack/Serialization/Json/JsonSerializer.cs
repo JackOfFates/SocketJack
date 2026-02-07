@@ -12,6 +12,8 @@ using System.Text.Json.Serialization;
 namespace SocketJack.Serialization.Json {
     public class JsonSerializer : ISerializer {
 
+        public event Action<Exception>? DeserializationError;
+
         public JsonSerializer() {
             JsonOptions.Converters.Add(new TypeConverter());
             JsonOptions.Converters.Add(new ByteArrayConverter());
@@ -35,7 +37,12 @@ namespace SocketJack.Serialization.Json {
         }
 
         public byte[] Serialize(object Obj) {
-            string Json = System.Text.Json.JsonSerializer.Serialize(Obj, JsonOptions);
+            // JsonSerializerOptions contains mutable collections (e.g., Converters).
+            // SocketJack can mutate these at runtime (whitelisting/callback registration),
+            // which can race with System.Text.Json enumerating the options and throw
+            // "Collection was modified". Snapshot options for thread-safe serialization.
+            var opts = new JsonSerializerOptions(JsonOptions);
+            string Json = System.Text.Json.JsonSerializer.Serialize(Obj, opts);
             return Encoding.UTF8.GetBytes(Json);
         }
 
@@ -43,7 +50,8 @@ namespace SocketJack.Serialization.Json {
             try {
                 string json = Encoding.UTF8.GetString(bytes);
                 return (Wrapper)System.Text.Json.JsonSerializer.Deserialize(json, typeof(Wrapper), JsonOptions);
-            } catch (Exception) {
+            } catch (Exception ex) {
+                DeserializationError?.Invoke(ex);
                 return null;
             }
         }
@@ -74,7 +82,8 @@ namespace SocketJack.Serialization.Json {
                     redirect.Value = ((Wrapper)System.Text.Json.JsonSerializer.Deserialize(redirect.Value.ToString(), typeof(Wrapper), JsonOptions)).Unwrap(Target);
                 }
                 return redirect;
-            } catch {
+            } catch (Exception ex) {
+                DeserializationError?.Invoke(ex);
                 return null;
             }
         }

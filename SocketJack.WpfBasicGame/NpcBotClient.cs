@@ -1,12 +1,12 @@
+using System.Diagnostics;
 using System.Windows;
-using System.Windows.Threading;
 
 namespace SocketJack.WpfBasicGame;
 
 // Headless AI client used to populate the game with additional players.
 // The bot connects over the same network protocol as a real client, moves a cursor,
 // and sends click events when it reaches the target.
-internal sealed class NpcBotClient : IDisposable {
+internal sealed class NpcBotClient : IDisposable, ITickableBot {
     public sealed class BotTraits {
         // Trait multipliers allow a mix of movement styles and difficulty within the same round.
         public double SpeedMultiplier { get; init; } = 1.0;
@@ -25,10 +25,7 @@ internal sealed class NpcBotClient : IDisposable {
 
     private readonly BotTraits _traits;
 
-    private CancellationTokenSource? _loopCts;
-    private Task? _loopTask;
-
-    private DateTime _nextCursorEventAt = DateTime.MinValue;
+    private long _nextCursorEventAtTs;
     private int _lastSentX;
     private int _lastSentY;
 
@@ -39,8 +36,10 @@ internal sealed class NpcBotClient : IDisposable {
     private BotDifficulty _difficulty;
 
     private bool _hasTarget;
-    private DateTime _nextWanderAt = DateTime.MinValue;
+    private long _nextWanderAtTs;
     private Point _wanderTarget;
+
+    public bool IsActive => _roundActive;
 
     public event Action<Point>? CursorMoved;
     public event Action<string>? Log;
@@ -79,7 +78,6 @@ internal sealed class NpcBotClient : IDisposable {
         if (_cursor == default)
             _cursor = new Point(_rng.Next(40, 250), _rng.Next(40, 250));
         _velocity = new Vector(0, 0);
-        StartLoop();
     }
 
     public void Start() {
@@ -87,28 +85,10 @@ internal sealed class NpcBotClient : IDisposable {
         if (_cursor == default)
             _cursor = new Point(_rng.Next(40, 250), _rng.Next(40, 250));
         _velocity = new Vector(0, 0);
-        StartLoop();
         Log?.Invoke("Bot started");
     }
 
-    private void StartLoop() {
-        if (_loopTask is { IsCompleted: false })
-            return;
-
-        _loopCts?.Cancel();
-        _loopCts?.Dispose();
-        _loopCts = new CancellationTokenSource();
-        var ct = _loopCts.Token;
-
-        // Run a ~60 FPS update loop in the background to simulate movement.
-        _loopTask = Task.Run(async () => {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
-            while (_roundActive && await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
-                Tick();
-        }, ct);
-    }
-
-    private void Tick() {
+    public void Tick(long nowTimestamp) {
         if (!_roundActive)
             return;
 
@@ -121,7 +101,7 @@ internal sealed class NpcBotClient : IDisposable {
         const double targetSize = 70;
         var aim = _hasTarget
             ? new Point(_target.X + targetSize / 2.0, _target.Y + targetSize / 2.0)
-            : GetWanderTarget();
+            : GetWanderTarget(nowTimestamp);
 
         // Steer toward the aim point using a simple velocity model.
         var to = new Vector(aim.X - _cursor.X, aim.Y - _cursor.Y);
@@ -152,9 +132,8 @@ internal sealed class NpcBotClient : IDisposable {
         CursorMoved?.Invoke(_cursor);
 
         // Throttle outbound cursor updates.
-        var now = DateTime.UtcNow;
-        if (now >= _nextCursorEventAt) {
-            _nextCursorEventAt = now.AddMilliseconds(_traits.CursorSendIntervalMs);
+        if (nowTimestamp >= _nextCursorEventAtTs) {
+            _nextCursorEventAtTs = nowTimestamp + MsToTimestampDelta(_traits.CursorSendIntervalMs);
             var x = (int)_cursor.X;
             var y = (int)_cursor.Y;
             if (x != _lastSentX || y != _lastSentY) {
@@ -178,14 +157,72 @@ internal sealed class NpcBotClient : IDisposable {
             _client.SendClick((int)_cursor.X, (int)_cursor.Y);
     }
 
-    private Point GetWanderTarget() {
+    private Point GetWanderTarget(long nowTimestamp) {
         // When the server hasn't sent a target yet, keep the cursor moving so the bot looks alive.
-        var now = DateTime.UtcNow;
-        if (now >= _nextWanderAt) {
-            _nextWanderAt = now.AddMilliseconds(_rng.Next(350, 900));
+        if (nowTimestamp >= _nextWanderAtTs) {
+            _nextWanderAtTs = nowTimestamp + MsToTimestampDelta(_rng.Next(350, 900));
             _wanderTarget = new Point(_rng.Next(30, 520), _rng.Next(30, 330));
         }
         return _wanderTarget;
+    }
+
+    private static long MsToTimestampDelta(int ms) {
+        if (ms <= 0)
+            return 0;
+        return (long)(Stopwatch.Frequency * (ms / 1000.0));
+    }
+
+    public BotSimConfig GetSimConfig(int seed) {
+        var (maxSpeed, _) = GetTuning(_difficulty);
+        maxSpeed *= _traits.SpeedMultiplier;
+
+        const float targetSize = 70f;
+        var aim = _hasTarget
+            ? new Point(_target.X + targetSize / 2.0, _target.Y + targetSize / 2.0)
+            : _wanderTarget;
+
+        var jitter = (float)(0.35 * _traits.JitterMultiplier);
+
+        return new BotSimConfig((float)aim.X, (float)aim.Y, (float)maxSpeed, jitter, seed);
+    }
+
+    public BotSimState ExportSimState() {
+        return new BotSimState {
+            X = (float)_cursor.X,
+            Y = (float)_cursor.Y,
+            Vx = (float)_velocity.X,
+            Vy = (float)_velocity.Y
+        };
+    }
+
+    public void ImportSimState(BotSimState s, long nowTimestamp) {
+        _cursor = new Point(s.X, s.Y);
+        _velocity = new Vector(s.Vx, s.Vy);
+
+        CursorMoved?.Invoke(_cursor);
+
+        if (nowTimestamp >= _nextCursorEventAtTs) {
+            _nextCursorEventAtTs = nowTimestamp + MsToTimestampDelta(_traits.CursorSendIntervalMs);
+
+            var x = (int)_cursor.X;
+            var y = (int)_cursor.Y;
+            if (x != _lastSentX || y != _lastSentY) {
+                _lastSentX = x;
+                _lastSentY = y;
+                _client.SendCursor(x, y);
+            }
+        }
+
+        if (!_hasTarget)
+            return;
+
+        const double targetSize = 70;
+        var margin = _traits.EffectiveClickPaddingPx;
+        var isDeepOverTarget = _cursor.X >= _target.X + margin && _cursor.X <= _target.X + targetSize - margin &&
+                               _cursor.Y >= _target.Y + margin && _cursor.Y <= _target.Y + targetSize - margin;
+
+        if (isDeepOverTarget)
+            _client.SendClick((int)_cursor.X, (int)_cursor.Y);
     }
 
     private static (double speed, double clickProbability) GetTuning(BotDifficulty d) => d switch {
@@ -197,7 +234,6 @@ internal sealed class NpcBotClient : IDisposable {
 
     public void Stop() {
         _roundActive = false;
-        _loopCts?.Cancel();
     }
 
     public void Dispose() {

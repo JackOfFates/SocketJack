@@ -523,14 +523,13 @@ namespace SocketJack.Net.WebSockets {
         void ISocket.CloseConnection(TcpConnection Connection, DisconnectionReason Reason) {
             try {
                 Connection.Closed = true;
-                if (Connection.Socket != null && Connection.Socket.Connected && Connection.Socket != null) {
-                    // Send close frame
-                    byte[] closeFrame = new byte[] { 0x88, 0x00 };
-                    Connection.Stream.Write(closeFrame, 0, closeFrame.Length);
-                    Connection.Socket.Shutdown(SocketShutdown.Both);
-                    Connection.Socket.Close();
-                }
+                // Send close frame
+                byte[] closeFrame = new byte[] { 0x88, 0x00 };
+                Connection.Stream?.Write(closeFrame, 0, closeFrame.Length);
+                Connection.Socket?.Shutdown(SocketShutdown.Both);
+                Connection.Socket?.Close();
                 Connection.Stream?.Dispose();
+
                 InvokeOnDisconnected(new DisconnectedEventArgs(this, Connection, Reason));
             } catch (Exception ex) {
                 InvokeOnError(ex);

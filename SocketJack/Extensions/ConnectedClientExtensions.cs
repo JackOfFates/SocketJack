@@ -14,8 +14,9 @@ namespace SocketJack.Extensions {
         /// <param name="Except">The socket to exclude.</param>
         /// <remarks></remarks>
         public static void SendBroadcast(this ConcurrentDictionary<Guid, TcpConnection> Clients, object Obj, TcpConnection Except) {
-            for (int i = 0; i < Clients.Count; i++) {
-                var client = Clients.ElementAt(i);
+            var clients = Clients.ToArray();
+            for (int i = 0; i < clients.Length; i++) {
+                var client = clients.ElementAt(i);
                 if (!ReferenceEquals(client.Value, Except)) {
                     client.Value?.Send(Obj);
                 }

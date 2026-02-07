@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:SocketJack.WpfBasicGame"
         mc:Ignorable="d"
-        Title="Using SocketJack to make a basic game in WPF" Height="520" Width="820">
+        Title="Using SocketJack to make a basic game in WPF" Height="690" Width="920">
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -28,14 +28,22 @@
                     <TextBlock VerticalAlignment="Center" Text="Host:" Margin="0,0,6,0"/>
                     <TextBox x:Name="ServerHostText" Width="160" Text="127.0.0.1" Margin="0,0,10,0"/>
                     <TextBlock VerticalAlignment="Center" Text="Port:" Margin="0,0,6,0"/>
-                    <TextBox x:Name="ServerPortText" Width="80" Text="8181" Margin="0,0,10,0"/>
+                    <TextBox x:Name="ServerPortText" Width="80" Text="7754" Margin="0,0,10,0"/>
                     <CheckBox x:Name="BotEnabledCheck" VerticalAlignment="Center" Content="Bot" Margin="0,0,10,0" IsChecked="True"/>
+                    <TextBlock VerticalAlignment="Center" Text="Count:" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="BotCountCombo" Width="70" SelectedIndex="1" Margin="0,0,10,0" SelectionChanged="BotCountCombo_SelectionChanged">
+                        <ComboBoxItem Content="0"/>
+                        <ComboBoxItem Content="10"/>
+                        <ComboBoxItem Content="25"/>
+                        <ComboBoxItem Content="50"/>
+                        <ComboBoxItem Content="100"/>
+                    </ComboBox>
                     <ComboBox x:Name="BotDifficultyCombo" Width="110" SelectedIndex="0" Margin="0,0,10,0">
                         <ComboBoxItem Content="Easy"/>
                         <ComboBoxItem Content="Normal"/>
                         <ComboBoxItem Content="Hard"/>
                     </ComboBox>
-                    <Button x:Name="StartButton" Width="140" Content="Start Round" Click="StartButton_Click" />
+                    <Button x:Name="StartButton" Width="133" Content="Start Round" Click="StartButton_Click" />
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -47,7 +55,7 @@
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Padding="10" BorderThickness="1" BorderBrush="#33000000" CornerRadius="6">
-                <Canvas x:Name="GameCanvas" Background="#0C000000" Width="560" Height="360">
+                <Canvas x:Name="GameCanvas" Background="#0C000000" Width="560" Margin="1,0,1,-1">
 					<Ellipse x:Name="BotCursor"
 		                         Width="30" Height="30"
 		                         Fill="Orange"
@@ -64,16 +72,21 @@
                             Foreground="White"
                             BorderBrush="#CC000000"
                             BorderThickness="2"
-                            Click="TargetButton_Click"
+                            PreviewMouseLeftButtonDown="TargetButton_MouseLeftButtonDown"
                             Visibility="Collapsed"
                             Panel.ZIndex="2"/>
                 </Canvas>
             </Border>
 
             <Border Grid.Column="1" Margin="12,0,0,0" Padding="10" BorderThickness="1" BorderBrush="#33000000" CornerRadius="6">
-                <StackPanel>
-                    <TextBlock FontWeight="SemiBold" Text="Round" Margin="0,0,0,6"/>
-                    <TextBlock x:Name="RoundStatusText" Text="Not started"/>
+                <StackPanel CanVerticallyScroll="True">
+                    <TextBlock FontWeight="SemiBold" Text="Round"/>
+                    <TextBlock x:Name="RoundStatusText" Text="Not started" Height="26"/>
+
+                    <TextBlock FontWeight="SemiBold" Text="Log"/>
+                    <TextBox x:Name="LogText" Height="130" IsReadOnly="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                             VerticalContentAlignment="Top" />
 
                     <Separator Margin="0,10,0,10"/>
 
@@ -88,15 +101,16 @@
 
                     <Separator Margin="0,10,0,10"/>
 
-                    <TextBlock FontWeight="SemiBold" Text="Log" Margin="0,0,0,6"/>
-                    <TextBox x:Name="LogText" Height="180" IsReadOnly="True" TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                             VerticalContentAlignment="Top" />
+                    <TextBlock FontWeight="SemiBold" Text="Control Share (Bitmap)" Margin="0,0,0,6"/>
+                    <Button x:Name="ShareToggleButton" Content="Start Sharing" Width="133" Margin="0,0,0,6" Click="ShareToggleButton_Click" />
+                    <Border Height="160" BorderThickness="1" BorderBrush="#33000000" CornerRadius="4" Padding="2">
+                        <Image x:Name="SharedImage" Stretch="Uniform" />
+                    </Border>
                 </StackPanel>
             </Border>
         </Grid>
 
         <TextBlock Grid.Row="3" Margin="0,10,0,0" Foreground="#99000000"
-                   Text="Tip: Start two instances. One Host, one Join. Click the target as fast as you can." />
+                   Text="Tip: Click Start Round. Click the target as fast as you can." />
     </Grid>
 </Window>

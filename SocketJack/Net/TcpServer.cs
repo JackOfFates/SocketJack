@@ -263,6 +263,12 @@ namespace SocketJack.Net {
             if (!RestrictedMetadataKeys.Contains(Args.Object.Key.ToLower())) {
                 Clients[Args.Connection.ID].SetMetaData(Args.Object.Key, Args.Object.Value);
                 Peers[Args.Connection.Identity.ID].SetMetaData(this, Args.Object.Key, Args.Object.Value);
+
+                // Re-sync peer metadata to all clients so UI state (e.g., isnpc) updates promptly.
+                try {
+                    SyncPeer(Args.Connection);
+                } catch {
+                }
             }
         }
         #endregion

@@ -1,6 +1,7 @@
 using SocketJack.Net;
 using SocketJack.Extensions;
 using SocketJack.Net.P2P;
+using SocketJack.WPFController;
 using System.Linq;
 
 namespace SocketJack.WpfBasicGame;
@@ -10,6 +11,8 @@ namespace SocketJack.WpfBasicGame;
 // and centralizes all SocketJack options/whitelisting in one place.
 internal sealed class SocketJackTcpGameClient : IDisposable {
     private readonly TcpClient _client;
+
+    public TcpClient RawClient => _client;
 
     public event Action<StartRoundMessage>? StartRoundReceived;
     public event Action<TargetStateMessage>? TargetStateReceived;
@@ -21,7 +24,7 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
 
     public bool IsConnected => _client.Connected;
 
-    public string? LocalPlayerId => _client.Connection == null ? null : _client.Connection.ID.ToString();
+    public string? LocalPlayerId => _client.Connection == null ? null : _client.Connection.Identity == null ? null : _client.Connection.Identity.ID;
 
     public IReadOnlyCollection<Identifier> Peers {
         get {
@@ -37,7 +40,7 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
         opts.Logging = false;
         opts.LogReceiveEvents = false;
         opts.LogSendEvents = false;
-        opts.UseCompression = true;
+        opts.UseCompression = false;
         opts.UsePeerToPeer = true;
         opts.Fps = 60;
 
@@ -48,6 +51,7 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
         opts.Whitelist.Add(typeof(CursorStateMessage));
 
         _client = new TcpClient(opts, name);
+        _client.EnableRemoteControl();
 
         // Surface connection lifecycle messages to the UI.
         _client.OnConnected += _ => Log?.Invoke("Connected");
@@ -77,6 +81,13 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
             if (e.Object != null)
                 CursorStateReceived?.Invoke(e.Object);
         });
+
+    }
+
+    public void SendToPeer(Identifier peer, object message) {
+        if (!IsConnected)
+            return;
+        _client.Send(peer, message);
     }
 
     public void SendCursor(int x, int y) {

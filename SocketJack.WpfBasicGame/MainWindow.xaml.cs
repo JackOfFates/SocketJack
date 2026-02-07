@@ -4,6 +4,8 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using System.Collections.Generic;
 using System.Linq;
+using SocketJack.Net.P2P;
+using SocketJack.WPFController;
 
 namespace SocketJack.WpfBasicGame;
 
@@ -20,13 +22,29 @@ public partial class MainWindow : Window {
     // Optional AI-controlled clients (created only when hosting and bots are enabled).
     private readonly List<NpcBotClient> _bots = new();
 
-    private string? _selfPlayerId;
+    private static bool PreferGpuBots() {
+        var v = Environment.GetEnvironmentVariable("SOCKETJACK_BOT_GPU");
+        if (string.IsNullOrWhiteSpace(v))
+            return true;
+        return v != "0";
+    }
+    private readonly BotUpdateLoop _botLoop = new(preferGpu: PreferGpuBots());
 
+    private string? _selfPlayerId;
+    private string? _sessionHost;
+    private int _sessionPort;
     private bool _roundRunning;
 
     private readonly Dictionary<string, FrameworkElement> _remoteCursors = new();
     private readonly Dictionary<string, CursorSmoother> _cursorSmoothers = new();
     private readonly DispatcherTimer _cursorRenderTimer;
+
+    private static readonly TimeSpan CursorInterpolationDelay = TimeSpan.FromMilliseconds(50);
+    private const double MaxExtrapolationMs = 60;
+    private const double StaleSnapMs = 350;
+    private const double VelocityEmaAlpha = 0.25;
+    private const double StationaryEpsilonPx = 0.75;
+    private const double MaxSpeedPxPerMs = 2.5;
 
     private readonly object _pendingCursorLock = new();
     private readonly Dictionary<string, Point> _pendingCursorUpdates = new();
@@ -51,6 +69,26 @@ public partial class MainWindow : Window {
 
     private readonly Dictionary<string, bool> _isNpcByPlayerId = new();
 
+    private IDisposable? _shareHandle;
+    private ControlShareViewer? _shareViewer;
+
+    private void UpdateShareButtonUi() {
+        if (ShareToggleButton == null)
+            return;
+        ShareToggleButton.Content = _shareHandle == null ? "Start Sharing" : "Stop Sharing";
+    }
+
+    private int GetDesiredBotCount() {
+        if (BotEnabledCheck.IsChecked != true)
+            return 0;
+
+        var item = BotCountCombo.SelectedItem as ComboBoxItem;
+        var text = item == null ? null : item.Content?.ToString();
+        if (int.TryParse(text, out var n) && n >= 0)
+            return n;
+        return 0;
+    }
+
     private sealed class CursorSmoother {
         public bool HasValue;
         public Point PrevPos;
@@ -58,21 +96,227 @@ public partial class MainWindow : Window {
         public Point NextPos;
         public DateTime NextAt;
         public Point RenderPos;
+
+        public Vector Velocity;
+        public DateTime VelocityAt;
+
+        public DateTime RenderAt;
     }
 
     public MainWindow() {
         InitializeComponent();
+        _roundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _roundTimer.Tick += (_, _) => { /* Timer no longer calls MoveTarget */ };
+        BotEnabledCheck.IsChecked = false;
+        _cursorRenderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _cursorRenderTimer.Tick += (_, _) => RenderCursors();
+        init();
+        PositionSideBySide(isHost: true);
+        StartButton_Click(null, null);
+    }
 
+    public MainWindow(int aaa) {
+        InitializeComponent();
+        BotEnabledCheck.IsChecked = false;
+        JoinRadio.IsChecked = true;
         _roundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _roundTimer.Tick += (_, _) => { /* Timer no longer calls MoveTarget */ };
 
         _cursorRenderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _cursorRenderTimer.Tick += (_, _) => RenderCursors();
+        init();
+        PositionSideBySide(isHost: false);
+        StartButton_Click(null, null);
+    }
 
+    private void PositionSideBySide(bool isHost) {
+        try {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+
+            var leftBound = (int)SystemParameters.VirtualScreenLeft;
+            var topBound = (int)SystemParameters.VirtualScreenTop;
+            var widthBound = (int)SystemParameters.VirtualScreenWidth;
+            var heightBound = (int)SystemParameters.VirtualScreenHeight;
+
+            var w = Width;
+            var h = Height;
+            if (double.IsNaN(w) || w <= 0)
+                w = 900;
+            if (double.IsNaN(h) || h <= 0)
+                h = 520;
+
+            var wInt = (int)Math.Round(w);
+            var hInt = (int)Math.Round(h);
+            var totalW = wInt * 2;
+            var left0 = leftBound + ((widthBound - totalW) / 2);
+            var top0 = topBound + ((heightBound - hInt) / 2);
+
+            Left = isHost ? left0 : left0 + wInt;
+            Top = top0;
+        } catch {
+        }
+    }
+
+    public void init() {
         UpdateScoreboardUi();
         UpdateStartButtonUi();
+        UpdateShareButtonUi();
 
-        GameCanvas.MouseMove += GameCanvas_MouseMove;
+        BotEnabledCheck.Checked += async (_, _) => {
+            try {
+                await EnsureBotsAdjustedAsync().ConfigureAwait(false);
+            } catch {
+            }
+        };
+        BotEnabledCheck.Unchecked += async (_, _) => {
+            try {
+                await EnsureBotsAdjustedAsync().ConfigureAwait(false);
+            } catch {
+            }
+        };
+
+        GameCanvas.PreviewMouseMove += GameCanvas_MouseMove;
+
+    }
+
+    public void ShareToggleButton_Click(object sender, RoutedEventArgs e) {
+        if (_shareHandle != null) {
+            StopShareInternal();
+            UpdateShareButtonUi();
+            return;
+        }
+
+        try {
+            if (_client == null || _client.IsConnected != true) {
+                Log("Connect first.");
+                return;
+            }
+
+            var localId = _client.LocalPlayerId;
+            if (string.IsNullOrWhiteSpace(localId)) {
+                Log("Local identity not ready.");
+                return;
+            }
+
+            // Only allow sharing when there's at least one remote peer.
+            var peers = _client.Peers;
+            var remotePeers = peers.Where(p => !string.IsNullOrWhiteSpace(p.ID) && p.ID != localId).ToList();
+            if (remotePeers.Count < 1) {
+                Log("Need at least 2 clients to share.");
+                return;
+            }
+
+            var peer = remotePeers[0];
+            if (peer == null || string.IsNullOrWhiteSpace(peer.ID)) {
+                Log("No peers available to share with.");
+                return;
+            }
+
+            if (peer.ID == localId) {
+                Log("Refusing to share to self.");
+                return;
+            }
+
+            StopShareInternal();
+            _shareHandle = TargetButton.Share(_client.RawClient, peer, fps: 10);
+            UpdateShareButtonUi();
+        } catch (Exception ex) {
+            Log(ex.Message);
+        }
+    }
+
+    private void StopShareInternal() {
+        if (_shareViewer != null) {
+            try {
+                _shareViewer.Dispose();
+            } catch {
+            }
+            _shareViewer = null;
+        }
+        if (_shareHandle != null) {
+            try {
+                _shareHandle.Dispose();
+            } catch {
+            }
+            _shareHandle = null;
+        }
+
+        UpdateShareButtonUi();
+    }
+
+    private async void BotCountCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+        try {
+            await EnsureBotsAdjustedAsync().ConfigureAwait(false);
+        } catch {
+        }
+    }
+
+    private async Task EnsureBotsAdjustedAsync() {
+        // Only host mode uses bots.
+        if (HostRadio.IsChecked != true)
+            return;
+        if (_client == null || _server == null)
+            return;
+        if (_client.IsConnected != true)
+            return;
+
+        // Bots are local headless clients; only support when hosting locally.
+        if (_sessionHost != "127.0.0.1" && _sessionHost != "localhost")
+            return;
+
+        var desired = GetDesiredBotCount();
+        var current = _bots.Count;
+
+        if (desired == current)
+            return;
+
+        if (desired < current) {
+            for (var i = current - 1; i >= desired; i--) {
+                var b = _bots[i];
+                try {
+                    _botLoop.Remove(b);
+                    b.Stop();
+                    b.Dispose();
+                } catch {
+                }
+                _bots.RemoveAt(i);
+            }
+            return;
+        }
+
+        // Add bots.
+        var host = _sessionHost;
+        var port = _sessionPort;
+        if (string.IsNullOrWhiteSpace(host) || port <= 0)
+            return;
+
+        var rng = new Random();
+        var difficulty = GetSelectedBotDifficulty();
+        for (var i = current + 1; i <= desired; i++) {
+            var traits = new NpcBotClient.BotTraits {
+                SpeedMultiplier = 0.7 + (rng.NextDouble() * 1.6),
+                JitterMultiplier = 0.3 + (rng.NextDouble() * 2.0),
+                Aggression = rng.NextDouble(),
+                CursorSendIntervalMs = 120 + rng.Next(0, 180),
+                EffectiveClickPaddingPx = rng.Next(3, 14)
+            };
+
+            var bot = new NpcBotClient(difficulty, traits, name: $"NpcBot-{i:000}");
+            bot.Log += t => Dispatcher.BeginInvoke(() => Log($"[bot {i:000}] {t}"), DispatcherPriority.Background);
+            _bots.Add(bot);
+            _botLoop.Add(bot);
+
+            var ok = await bot.ConnectAsync(host, port).ConfigureAwait(false);
+            if (ok)
+                bot.MarkAsNpc();
+
+            bot.Start();
+
+            if (i % 10 == 0)
+                await Task.Delay(25).ConfigureAwait(false);
+        }
+
+        _botLoop.Start();
     }
 
     private void GameCanvas_MouseMove(object sender, MouseEventArgs e) {
@@ -86,14 +330,14 @@ public partial class MainWindow : Window {
         if (_localCursor == null) {
             // Create a local visual cursor indicator.
             _localCursor = new System.Windows.Shapes.Ellipse {
-                Width = 18,
-                Height = 18,
+                Width = 8,
+                Height = 8,
                 Fill = System.Windows.Media.Brushes.LimeGreen,
                 Stroke = System.Windows.Media.Brushes.Black,
                 StrokeThickness = 2,
                 IsHitTestVisible = false
             };
-            Canvas.SetZIndex(_localCursor, 1);
+            Canvas.SetZIndex(_localCursor, 10);
             GameCanvas.Children.Add(_localCursor);
         }
 
@@ -104,11 +348,11 @@ public partial class MainWindow : Window {
             return;
 
         // Rate-limit network cursors to reduce bandwidth; remote clients interpolate.
-        var now = DateTime.UtcNow;
+        var now = DateTime.UtcNow - CursorInterpolationDelay;
         if (now < _nextLocalCursorSendAt)
             return;
 
-        _nextLocalCursorSendAt = now.AddMilliseconds(66);
+        _nextLocalCursorSendAt = now.AddMilliseconds(33);
         _client.SendCursor((int)p.X, (int)p.Y);
     }
 
@@ -125,7 +369,9 @@ public partial class MainWindow : Window {
         BotCursor.Visibility = Visibility.Collapsed;
 
         var rng = new Random();
-        const int botCount = 10;
+        var botCount = GetDesiredBotCount();
+        if (botCount <= 0)
+            return;
         var difficulty = GetSelectedBotDifficulty();
 
         for (var i = 1; i <= botCount; i++) {
@@ -141,6 +387,7 @@ public partial class MainWindow : Window {
             var bot = new NpcBotClient(difficulty, traits, name: $"NpcBot-{i:000}");
             bot.Log += t => Dispatcher.BeginInvoke(() => Log($"[bot {i:000}] {t}"), DispatcherPriority.Background);
             _bots.Add(bot);
+            _botLoop.Add(bot);
         }
 
         for (var i = 0; i < _bots.Count; i++) {
@@ -155,17 +402,21 @@ public partial class MainWindow : Window {
 
         foreach (var bot in _bots)
             bot.Start();
+
+        _botLoop.Start();
     }
 
     private void StopAndDisposeBots() {
         foreach (var b in _bots) {
             try {
+                _botLoop.Remove(b);
                 b.Stop();
                 b.Dispose();
             } catch {
             }
         }
         _bots.Clear();
+        _botLoop.Stop();
     }
 
     private async void StartButton_Click(object sender, RoutedEventArgs e) {
@@ -235,6 +486,12 @@ public partial class MainWindow : Window {
 
             Log("Connected.");
 
+            // Viewer: receive frames + forward mouse moves/clicks back to sharer.
+            _shareViewer = new ControlShareViewer(_client.RawClient, SharedImage);
+
+            _sessionHost = host;
+            _sessionPort = port;
+
             _selfPlayerId = _client.LocalPlayerId;
 
             _cursorRenderTimer.Start();
@@ -262,7 +519,7 @@ public partial class MainWindow : Window {
         }
     }
 
-    private void TargetButton_Click(object sender, RoutedEventArgs e) {
+    private void TargetButton_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
         if (_client?.IsConnected != true)
             return;
 
@@ -270,7 +527,7 @@ public partial class MainWindow : Window {
         // This avoids ambiguity when click event is raised from the button element.
         // Send click location in canvas coordinates (relative to the target).
         // This avoids ambiguity when click event is raised from the button element.
-        var pInTarget = Mouse.GetPosition(TargetButton);
+        var pInTarget = e.GetPosition(TargetButton);
         var left = Canvas.GetLeft(TargetButton);
         var top = Canvas.GetTop(TargetButton);
 
@@ -330,6 +587,17 @@ public partial class MainWindow : Window {
         if (string.IsNullOrWhiteSpace(selfId))
             selfId = _client.LocalPlayerId;
 
+        // Refresh NPC flags from latest peer metadata so cursor colors stay correct.
+        try {
+            foreach (var p in _client.Peers) {
+                var isNpc = false;
+                if (p.Metadata != null && p.Metadata.TryGetValue("isnpc", out var isnpcText))
+                    isNpc = isnpcText == "1";
+                _isNpcByPlayerId[p.ID] = isNpc;
+            }
+        } catch {
+        }
+
         if (string.IsNullOrWhiteSpace(selfId))
             return;
 
@@ -385,6 +653,7 @@ public partial class MainWindow : Window {
                 s.NextPos = p;
                 s.NextAt = now;
                 s.RenderPos = p;
+                s.RenderAt = now;
                 continue;
             }
 
@@ -394,12 +663,8 @@ public partial class MainWindow : Window {
             s.NextPos = p;
             s.NextAt = now;
 
-            // If updates are very sparse, snap to avoid long, incorrect glides.
-            if ((s.NextAt - s.PrevAt).TotalMilliseconds > 250) {
-                s.PrevPos = s.NextPos;
-                s.PrevAt = s.NextAt;
-                s.RenderPos = s.NextPos;
-            }
+            // No extrapolation window: we just keep the latest sample as target.
+            // Smoother operates in render loop using additive integration.
         }
 
         var selfId = _selfPlayerId;
@@ -416,21 +681,64 @@ public partial class MainWindow : Window {
             if (!s.HasValue)
                 continue;
 
-            // Time-based interpolation between last two received samples.
-            // This yields smooth cursor motion independent of network send rate.
-            var denomMs = (s.NextAt - s.PrevAt).TotalMilliseconds;
-            if (denomMs <= 0) {
-                s.RenderPos = s.NextPos;
-            } else {
-                var t = (now - s.PrevAt).TotalMilliseconds / denomMs;
-                if (t < 0)
-                    t = 0;
-                if (t > 1)
-                    t = 1;
+            // Additive/subtractive smoothing:
+            // Integrate velocity towards the latest sample, with drag to suppress twitch.
+            var target = s.NextPos;
 
-                var x = s.PrevPos.X + ((s.NextPos.X - s.PrevPos.X) * t);
-                var y = s.PrevPos.Y + ((s.NextPos.Y - s.PrevPos.Y) * t);
-                s.RenderPos = new Point(x, y);
+            // Snap hard if stream is stale.
+            var ageMs = (now - s.NextAt).TotalMilliseconds;
+            if (ageMs > StaleSnapMs) {
+                s.RenderPos = target;
+                s.Velocity = new Vector(0, 0);
+                s.RenderAt = now;
+            } else {
+                var dtMs = (now - s.RenderAt).TotalMilliseconds;
+                if (dtMs < 0)
+                    dtMs = 0;
+                if (dtMs > 50)
+                    dtMs = 50;
+
+                // Position error in px.
+                var err = new Vector(target.X - s.RenderPos.X, target.Y - s.RenderPos.Y);
+                if (Math.Abs(err.X) <= StationaryEpsilonPx && Math.Abs(err.Y) <= StationaryEpsilonPx)
+                    err = new Vector(0, 0);
+
+                // Tune parameters (px/ms^2) and drag per-frame.
+                // Higher accel = snappier; lower drag = smoother.
+                const double accel = 0.014;
+                const double drag = 0.78;
+
+                // v += err * accel
+                s.Velocity += err * accel;
+                // clamp speed
+                var speed = s.Velocity.Length;
+                if (speed > MaxSpeedPxPerMs && speed > 0.0001) {
+                    s.Velocity.Normalize();
+                    s.Velocity *= MaxSpeedPxPerMs;
+                }
+
+                // apply drag
+                s.Velocity *= drag;
+
+                // pos += v * dt
+                var newPos = new Point(
+                    s.RenderPos.X + (s.Velocity.X * dtMs),
+                    s.RenderPos.Y + (s.Velocity.Y * dtMs));
+
+                // Clamp to canvas bounds.
+                var maxX = Math.Max(0.0, GameCanvas.ActualWidth);
+                var maxY = Math.Max(0.0, GameCanvas.ActualHeight);
+                if (newPos.X < 0)
+                    newPos.X = 0;
+                if (newPos.Y < 0)
+                    newPos.Y = 0;
+                if (newPos.X > maxX)
+                    newPos.X = maxX;
+                if (newPos.Y > maxY)
+                    newPos.Y = maxY;
+
+                s.RenderPos = newPos;
+                s.RenderAt = now;
             }
 
             var isNpc = _isNpcByPlayerId.TryGetValue(playerId, out var npcFlag) && npcFlag;
@@ -485,6 +793,7 @@ public partial class MainWindow : Window {
         _roundTimer.Stop();
         _cursorRenderTimer.Stop();
         TargetButton.Visibility = Visibility.Collapsed;
+        StopShareInternal();
         StopAndDisposeBots();
         BotCursor.Visibility = Visibility.Collapsed;
         _selfScore = 0;
@@ -638,13 +947,14 @@ public partial class MainWindow : Window {
     }
 
     private void Log(string text) {
-        //Dispatcher.BeginInvoke(() => LogText.AppendText($"{DateTime.Now:HH:mm:ss} {text}{Environment.NewLine}"));
-        //LogText.CaretIndex = LogText.Text.Length;
-        // Dispatcher.BeginInvoke(() => LogText.ScrollToEnd(), DispatcherPriority.Background);
+        Dispatcher.BeginInvoke(() => LogText.AppendText($"{DateTime.Now:HH:mm:ss} {text}{Environment.NewLine}"));
+        LogText.CaretIndex = LogText.Text.Length;
+        Dispatcher.BeginInvoke(() => LogText.ScrollToEnd(), DispatcherPriority.Background);
     }
 
     protected override void OnClosed(EventArgs e) {
         StopSession(resetUiOnly: false);
+        _botLoop.Dispose();
         base.OnClosed(e);
     }
 }

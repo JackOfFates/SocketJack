@@ -182,7 +182,12 @@
             <para>LocalSocketClosed can be due to connection timeout.</para>
             </summary>
         </member>
-        <member name="M:SocketJack.Net.HttpServer.ParseHttpRequest(System.String)">
+        <member name="T:SocketJack.Net.HttpClient">
+            <summary>
+            Minimal HTTP/HTTPS client supporting headers, content-length, chunked transfer, and redirects.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.ParseHttpRequest(System.Byte[])">
             <summary>
             Parses a raw HTTP request string into an HttpRequest object.
             </summary>
@@ -1169,6 +1174,13 @@
         <member name="P:SocketJack.ThreadManager.Timeout">
             <summary>
             Time in Milliseconds to wait before timing out.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.UseGlobalTickLoop">
+            <summary>
+            When enabled, a single global tick loop will flush send queues for all connections
+            on the same cadence (based on the highest configured FPS across sockets).
+            Disabled by default to preserve legacy per-connection sending behavior.
             </summary>
         </member>
         <member name="M:SocketJack.ThreadManager.Shutdown">

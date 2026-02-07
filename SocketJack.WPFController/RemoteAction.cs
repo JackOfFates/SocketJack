@@ -8,24 +8,26 @@ using Microsoft.VisualBasic.CompilerServices;
 
 namespace SocketJack.WPFController {
 
-    [Serializable]
     public class RemoteAction {
 
         public enum ActionType {
             Click,
             Focus,
-            Keystrokes
+            Keystrokes,
+            MouseMove,
+            MouseEnter,
+            MouseLeave
         }
 
         public ActionType Action { get; set; }
         public string Arguments { get; set; }
 
         /// <summary>
-    /// <para>Time in Milliseconds to perform the action.</para>
-    /// <para>Default is 200.</para>
-    /// </summary>
-    /// <returns></returns>
-        public long Duration { get; set; } = 200L;
+        /// <para>Time in Milliseconds to perform the action.</para>
+        /// <para>Default is 200.</para>
+        /// </summary>
+        /// <returns></returns>
+        public int Duration { get; set; } = 200;
         public ElementRoute Route { get; set; }
 
         public RemoteAction() {
@@ -49,8 +51,8 @@ namespace SocketJack.WPFController {
         private async Task PerformAction(FrameworkElement Element, ActionType Action) {
             switch (Action) {
                 case ActionType.Click: {
-                        var Args = Enum.IsDefined(typeof(MouseButton), Arguments) ? (MouseButton)Conversions.ToInteger(Arguments) : MouseButton.Left;
-                        await SimulateClick(Element, Args);
+                        var (btn, nx, ny, hasPos) = ParseClickArgs(Arguments);
+                        await SimulateClick(Element, btn, nx, ny, hasPos);
                         break;
                     }
                 case ActionType.Focus: {
@@ -61,33 +63,203 @@ namespace SocketJack.WPFController {
                         await SimulateKeystrokes(Element, Arguments);
                         break;
                     }
+                case ActionType.MouseMove: {
+                        var (nx, ny, hasPos) = ParsePosArgs(Arguments);
+                        await SimulateMouseMove(Element, nx, ny, hasPos);
+                        break;
+                    }
+                case ActionType.MouseEnter: {
+                        var (nx, ny, hasPos) = ParsePosArgs(Arguments);
+                        await SimulateMouseEnter(Element, nx, ny, hasPos);
+                        break;
+                    }
+                case ActionType.MouseLeave: {
+                        var (nx, ny, hasPos) = ParsePosArgs(Arguments);
+                        await SimulateMouseLeave(Element, nx, ny, hasPos);
+                        break;
+                    }
             }
         }
 
-        private async Task SimulateClick(FrameworkElement Element, MouseButton MouseButton) {
-            if (Element is Button) {
-                Element.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
-            } else {
-                var mouseDownEvent = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton) { RoutedEvent = UIElement.MouseDownEvent, Source = Element };
-                Element.RaiseEvent(mouseDownEvent);
-                await Task.Delay((int)Duration);
-                var mouseUpEvent = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton) { RoutedEvent = UIElement.MouseUpEvent, Source = Element };
-                Element.RaiseEvent(mouseUpEvent);
+        private static (double nx, double ny, bool hasPos) ParsePosArgs(string args) {
+            // Supported formats:
+            // 1) "" (no position)
+            // 2) "0.5,0.5" (normalized)
+            if (string.IsNullOrWhiteSpace(args))
+                return (0, 0, false);
+
+            var parts = args.Split(',');
+            if (parts.Length >= 2 &&
+                double.TryParse(parts[0].Trim(), out var nx) &&
+                double.TryParse(parts[1].Trim(), out var ny)) {
+                return (nx, ny, true);
             }
+
+            return (0, 0, false);
+        }
+
+        private static (MouseButton button, double nx, double ny, bool hasPos) ParseClickArgs(string args) {
+            // Supported formats:
+            // 1) "Left" / "Right" / numeric enum value
+            // 2) "Left,0.5,0.5" (normalized)
+            if (string.IsNullOrWhiteSpace(args))
+                return (MouseButton.Left, 0, 0, false);
+
+            var parts = args.Split(',');
+            if (parts.Length >= 1) {
+                var btnText = parts[0].Trim();
+                var btn = TryParseMouseButton(btnText, out var b) ? b : MouseButton.Left;
+
+                if (parts.Length >= 3 &&
+                    double.TryParse(parts[1].Trim(), out var nx) &&
+                    double.TryParse(parts[2].Trim(), out var ny)) {
+                    return (btn, nx, ny, true);
+                }
+
+                return (btn, 0, 0, false);
+            }
+
+            return (MouseButton.Left, 0, 0, false);
+        }
+
+        private static bool TryParseMouseButton(string text, out MouseButton button) {
+            button = MouseButton.Left;
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            if (Enum.TryParse(text, ignoreCase: true, out MouseButton parsed)) {
+                button = parsed;
+                return true;
+            }
+
+            if (int.TryParse(text, out var n) && Enum.IsDefined(typeof(MouseButton), n)) {
+                button = (MouseButton)n;
+                return true;
+            }
+
+            return false;
+        }
+
+        private async Task SimulateClick(FrameworkElement Element, MouseButton MouseButton, double nx, double ny, bool hasPos) {
+            await Application.Current.Dispatcher.InvokeAsync(() => Element.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)));
+            await Application.Current.Dispatcher.InvokeAsync(() => {
+                var target = (IInputElement)Element;
+                if (hasPos) {
+                    if (nx < 0)
+                        nx = 0;
+                    if (ny < 0)
+                        ny = 0;
+                    if (nx > 1)
+                        nx = 1;
+                    if (ny > 1)
+                        ny = 1;
+
+                    var pt = new Point(nx * Math.Max(0, Element.ActualWidth), ny * Math.Max(0, Element.ActualHeight));
+                    var hit = Element.InputHitTest(pt);
+                    if (hit != null)
+                        target = hit;
+                }
+
+                var mouseDownEvent = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
+                    RoutedEvent = UIElement.MouseDownEvent,
+                    Source = target
+                };
+                if (target is UIElement uie)
+                    uie.RaiseEvent(mouseDownEvent);
+            });
+            await Task.Delay((int)Duration);
+            await Application.Current.Dispatcher.InvokeAsync(() => {
+                var target = (IInputElement)Element;
+                if (hasPos) {
+                    if (nx < 0)
+                        nx = 0;
+                    if (ny < 0)
+                        ny = 0;
+                    if (nx > 1)
+                        nx = 1;
+                    if (ny > 1)
+                        ny = 1;
+
+                    var pt = new Point(nx * Math.Max(0, Element.ActualWidth), ny * Math.Max(0, Element.ActualHeight));
+                    var hit = Element.InputHitTest(pt);
+                    if (hit != null)
+                        target = hit;
+                }
+
+                var mouseUpEvent = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
+                    RoutedEvent = UIElement.MouseUpEvent,
+                    Source = target
+                };
+
+                if (target is UIElement uie)
+                    uie.RaiseEvent(mouseUpEvent);
+            });
         }
 
         private async Task SimulateKeystrokes(FrameworkElement Element, string text) {
-            int delayPerKey = (int)(Duration / text.Length);
-            foreach (char k in text) {
-                Key key = (Key)KeyInterop.VirtualKeyFromKey((Key)Strings.AscW(k));
+            if (string.IsNullOrEmpty(text))
+                return;
 
-                var keyDownEvent = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(Element), 0, key) { RoutedEvent = Keyboard.KeyDownEvent };
-                Element.RaiseEvent(keyDownEvent);
-                var keyUpEvent = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(Element), 0, key) { RoutedEvent = Keyboard.KeyUpEvent };
-                Element.RaiseEvent(keyUpEvent);
+            int delayPerKey = (int)Math.Max(1, Duration / text.Length);
+            foreach (char k in text) {
+                var vk = (int)k;
+                if (vk < 0)
+                    continue;
+
+                var key = KeyInterop.KeyFromVirtualKey(vk);
+
+                await Application.Current.Dispatcher.InvokeAsync(() => {
+                    var source = PresentationSource.FromVisual(Element);
+                    if (source == null)
+                        return;
+
+                    var keyDownEvent = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key) {
+                        RoutedEvent = Keyboard.KeyDownEvent,
+                        Source = Element
+                    };
+                    Element.RaiseEvent(keyDownEvent);
+
+                    var keyUpEvent = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key) {
+                        RoutedEvent = Keyboard.KeyUpEvent,
+                        Source = Element
+                    };
+                    Element.RaiseEvent(keyUpEvent);
+                });
 
                 await Task.Delay(delayPerKey);
             }
+        }
+
+        private Task SimulateMouseMove(FrameworkElement Element, double nx, double ny, bool hasPos) {
+            return Application.Current.Dispatcher.InvokeAsync(() => {
+                // WPF MouseEventArgs doesn't allow setting a custom cursor position.
+                // Keep normalized coordinates in Arguments for downstream consumers.
+                var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                    RoutedEvent = UIElement.MouseMoveEvent,
+                    Source = Element
+                };
+                Element.RaiseEvent(args);
+            }).Task;
+        }
+
+        private Task SimulateMouseEnter(FrameworkElement Element, double nx, double ny, bool hasPos) {
+            return Application.Current.Dispatcher.InvokeAsync(() => {
+                var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                    RoutedEvent = UIElement.MouseEnterEvent,
+                    Source = Element
+                };
+                Element.RaiseEvent(args);
+            }).Task;
+        }
+
+        private Task SimulateMouseLeave(FrameworkElement Element, double nx, double ny, bool hasPos) {
+            return Application.Current.Dispatcher.InvokeAsync(() => {
+                var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                    RoutedEvent = UIElement.MouseLeaveEvent,
+                    Source = Element
+                };
+                Element.RaiseEvent(args);
+            }).Task;
         }
     }
 }

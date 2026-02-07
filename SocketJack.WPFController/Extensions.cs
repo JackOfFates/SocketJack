@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace SocketJack.WPFController {
 
@@ -35,18 +36,35 @@ namespace SocketJack.WPFController {
 
         public static void EnableRemoteControl(this TcpServer Server) {
             Server.RegisterCallback<RemoteAction>(Server_RemoteAction);
+            Server.Options.Whitelist.Add(typeof(ControlShareFrame));
+            Server.Options.Whitelist.Add(typeof(ControlShareInput));
+            Server.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
         }
 
         public static void EnableRemoteControl(this TcpClient Client) {
             Client.RegisterCallback<RemoteAction>(Client_RemoteAction);
+            Client.Options.Whitelist.Add(typeof(ControlShareFrame));
+            Client.Options.Whitelist.Add(typeof(ControlShareInput));
+            Client.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
         }
 
         private static void Server_RemoteAction(ReceivedEventArgs<RemoteAction> a) {
 
+            // Server-side: perform the action on the server UI (if applicable).
+            // This library is WPF-only; execute on the current Application dispatcher.
+            if (a == null || a.Object == null)
+                return;
+            Dispatcher.CurrentDispatcher.InvokeAsync(async () => { await a.Object.PerformAction(); });
+            
         }
 
         private static void Client_RemoteAction(ReceivedEventArgs<RemoteAction> a) {
 
+            // Client-side: perform the action on the client UI.
+            if (a == null || a.Object == null)
+                return;
+            Dispatcher.CurrentDispatcher.InvokeAsync(async () => { await a.Object.PerformAction(); });
+            
         }
     }
 }

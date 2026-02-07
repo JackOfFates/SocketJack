@@ -491,6 +491,46 @@ namespace SocketJack.Net {
 
         private async Task ReceiveData(bool DataAvailable) {
             if (DataAvailable) {
+                // If terminated streams are disabled treat this as a raw TCP stream (e.g. HTTP)
+                if (!Parent.Options.UseTerminatedStreams) {
+                    try {
+                        var temp = new List<byte>();
+                        var bufSize = Parent.Options.DownloadBufferSize > 0 ? Parent.Options.DownloadBufferSize : 8192;
+                        var buffer = new byte[bufSize];
+                        int bytesRead = 0;
+                        // Read available data into buffer
+                        do {
+                            try {
+                                bytesRead = await Stream.ReadAsync(buffer, 0, buffer.Length);
+                            } catch (Exception ex) {
+                                var Reason = ex.Interpret();
+                                if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
+                                break;
+                            }
+                            if (bytesRead > 0) {
+                                Interlocked.Add(ref _TotalBytesReceived, bytesRead);
+                                Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
+                                if (bytesRead == buffer.Length) temp.AddRange(buffer);
+                                else {
+                                    var slice = new byte[bytesRead];
+                                    Array.Copy(buffer, 0, slice, 0, bytesRead);
+                                    temp.AddRange(slice);
+                                }
+                            }
+                        } while (_Stream.DataAvailable);
+
+                        if (temp.Count > 0) {
+                            await ParseBuffer(temp, this, Parent);
+                        }
+                    } catch (Exception ex) {
+                        var Reason = ex.Interpret();
+                        if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
+                        Parent.CloseConnection(this, Reason);
+                    }
+                    IsReceiving = false;
+                    return;
+                }
+
                 // Read message length header (15 bytes) then read body in buffered chunks
                 byte[] LengthData = new byte[15];
                 int lengthRead = 0;

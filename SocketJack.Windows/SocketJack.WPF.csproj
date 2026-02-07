@@ -290,6 +290,7 @@
     <Compile Include="..\SocketJack\Extensions\ObjectExtensions.cs" Link="Extensions\ObjectExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\StreamExtensions.cs" Link="Extensions\StreamExtensions.cs" />
     <Compile Include="..\SocketJack\Net\EventArguments.cs" Link="Net\EventArguments.cs" />
+    <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
     <Compile Include="..\SocketJack\Net\HttpServer.cs" Link="Net\HttpServer.cs" />
     <Compile Include="..\SocketJack\Net\ISocket.cs" Link="Net\ISocket.cs" />
     <Compile Include="..\SocketJack\Net\NIC.cs" Link="Net\NIC.cs" />
@@ -312,6 +313,7 @@
     <Compile Include="..\SocketJack\Serialization\ISerializer.cs" Link="Serialization\ISerializer.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Converters\BitmapConverter.cs" Link="Serialization\Json\Converters\BitmapConverter.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Converters\ByteArrayConverter.cs" Link="Serialization\Json\Converters\ByteArrayConverter.cs" />
+    <Compile Include="..\SocketJack\Serialization\Json\Converters\ChunkedBinaryPayload.cs" Link="Serialization\Json\Converters\ChunkedBinaryPayload.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Converters\TypeConverter.cs" Link="Serialization\Json\Converters\TypeConverter.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\FileContainer.cs" Link="Serialization\Json\FileContainer.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Int32NotSupportedException.cs" Link="Serialization\Json\Int32NotSupportedException.cs" />

@@ -1,6 +1,8 @@
 using SocketJack.Net;
 using SocketJack.Extensions;
 using System.Collections.Concurrent;
+using Mono.Nat;
+using SocketJack.WPFController;
 
 namespace SocketJack.WpfBasicGame;
 
@@ -33,7 +35,7 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
         opts.Logging = false;
         opts.LogReceiveEvents = false;
         opts.LogSendEvents = false;
-        opts.UseCompression = true;
+        opts.UseCompression = false;
         opts.UsePeerToPeer = true;
 
         opts.Whitelist.Add(typeof(StartRoundMessage));
@@ -41,8 +43,14 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
         opts.Whitelist.Add(typeof(ClickMessage));
         opts.Whitelist.Add(typeof(PointsUpdateMessage));
         opts.Whitelist.Add(typeof(CursorStateMessage));
+        NIC.NatDiscovered += ()=> {
+            var ip = NIC.NAT.GetExternalIP();
+            var portforwarded = NIC.ForwardPort(port);
+            Log?.Invoke($"NAT detected. External IP: {ip}, Port forwarded: {portforwarded}");
+        };
 
         _server = new TcpServer(opts, port, "ClickRaceServer");
+        _server.EnableRemoteControl();
         _server.ClientConnected += e => {
             Log?.Invoke($"Client connected: {e.Connection?.ID}");
 
@@ -63,6 +71,16 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
 
             // Default metadata; bots override this after connecting.
             conn.SetMetaData("isnpc", "0", Restricted: true);
+
+            // If a round is already running, immediately sync the new client with current state.
+            // Safe to send even if a round isn't running (clients ignore until they receive StartRound).
+            try {
+                conn.Send(new TargetStateMessage {
+                    TargetX = _targetX,
+                    TargetY = _targetY
+                });
+            } catch {
+            }
         };
         _server.ClientDisconnected += e => Log?.Invoke($"Client disconnected: {e.Connection?.ID}");
 
@@ -97,7 +115,6 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
 
     private void BroadcastTarget() {
         // Broadcast authoritative target to all clients.
-        Log?.Invoke($"Broadcast TargetState {_targetX:0},{_targetY:0}");
         _server.SendBroadcast(new TargetStateMessage {
             TargetX = _targetX,
             TargetY = _targetY
@@ -105,7 +122,6 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
     }
 
     private void BroadcastPoints(string playerId, int points) {
-        Log?.Invoke($"Broadcast PointsUpdate {playerId}={points}");
         _server.SendBroadcast(new PointsUpdateMessage {
             PlayerId = playerId,
             Points = points
@@ -155,12 +171,10 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
             var dy = clickY - targetCenterY;
             var dist = Math.Sqrt(dx * dx + dy * dy);
             if (dist > HitRadius) {
-                Log?.Invoke($"Click rejected (too far), dist={dist:0.0}");
                 return;
             }
         }
 
-        Log?.Invoke("Click accepted");
 
         // Award point to the sender and broadcast updated score.
         var points = _points.AddOrUpdate(playerId, 1, (_, v) => v + 1);

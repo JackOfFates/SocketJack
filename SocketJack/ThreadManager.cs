@@ -42,6 +42,20 @@ namespace SocketJack {
                 bool Start = !_Alive && value;
                 _Alive = value;
                 StartCounters(Alive);
+                if (!_Alive) {
+                    // Threads will naturally exit their loops; give them a moment.
+                    // Avoid blocking shutdown indefinitely.
+                    try {
+                        if (TickThread != null && TickThread.IsAlive)
+                            TickThread.Join(50);
+                    } catch {
+                    }
+                    try {
+                        if (CounterThread != null && CounterThread.IsAlive)
+                            CounterThread.Join(50);
+                    } catch {
+                    }
+                }
             }
         }
         private static bool _Alive = false;
@@ -50,11 +64,23 @@ namespace SocketJack {
             if (CounterThread == null || CounterThread.ThreadState == System.Threading.ThreadState.Stopped) {
                 CounterThread = new Thread(CounterLoop) { Name = "ByteCounterThread" };
             }
+            if (TickThread == null || TickThread.ThreadState == System.Threading.ThreadState.Stopped) {
+                TickThread = new Thread(TickLoop) { Name = "SocketJackTickThread" };
+            }
             if (Start) {
                 if (!CounterThread.IsAlive)
                     CounterThread.Start();
+                if (UseGlobalTickLoop && !TickThread.IsAlive)
+                    TickThread.Start();
             }
         }
+
+        /// <summary>
+        /// When enabled, a single global tick loop will flush send queues for all connections
+        /// on the same cadence (based on the highest configured FPS across sockets).
+        /// Disabled by default to preserve legacy per-connection sending behavior.
+        /// </summary>
+        public static bool UseGlobalTickLoop { get; set; } = false;
 
         #endregion
 
@@ -216,6 +242,7 @@ namespace SocketJack {
         #endregion
 
         protected internal static Thread CounterThread;
+        protected internal static Thread TickThread;
         private static DateTime LastCount = DateTime.UtcNow;
         // Use a 1 second interval so counters represent bytes-per-second
         private static TimeSpan OneSecond = TimeSpan.FromSeconds(1);
@@ -259,6 +286,132 @@ namespace SocketJack {
                     Thread.Sleep(1);
                 } while(DateTime.UtcNow - LastCount < OneSecond);
                 LastCount = DateTime.UtcNow;
+            }
+        }
+
+        private static void TickLoop() {
+            var sw = Stopwatch.StartNew();
+            double nextTickAtMs = 0;
+
+            while (Alive) {
+                if (!UseGlobalTickLoop) {
+                    Thread.Sleep(10);
+                    continue;
+                }
+
+                var fps = GetTargetFps();
+                if (fps <= 0) {
+                    Thread.Sleep(10);
+                    continue;
+                }
+
+                var tickMs = 1000.0 / fps;
+                if (nextTickAtMs <= 0)
+                    nextTickAtMs = sw.Elapsed.TotalMilliseconds;
+
+                var nowMs = sw.Elapsed.TotalMilliseconds;
+
+                // Catch up if we fell behind real-time.
+                // Bounded to prevent spiraling if the machine can't keep up.
+                var catchUpBudget = 3;
+                while (nowMs >= nextTickAtMs && catchUpBudget > 0) {
+                    FlushAllSendQueues();
+                    nextTickAtMs += tickMs;
+                    catchUpBudget--;
+                    nowMs = sw.Elapsed.TotalMilliseconds;
+                }
+
+                // If still behind, skip forward (quantize the slip) instead of looping hot.
+                if (nowMs >= nextTickAtMs) {
+                    var behindMs = nowMs - nextTickAtMs;
+                    var ticksBehind = (int)(behindMs / tickMs);
+                    if (ticksBehind > 0)
+                        nextTickAtMs += ticksBehind * tickMs;
+                    continue;
+                }
+
+                // Quantize sleep to reduce jitter while staying responsive.
+                var remainingMs = nextTickAtMs - nowMs;
+                var sleepMs = QuantizeSleepMs(remainingMs);
+                if (sleepMs > 0)
+                    Thread.Sleep(sleepMs);
+            }
+        }
+
+        private static int QuantizeSleepMs(double remainingMs) {
+            if (remainingMs <= 0)
+                return 0;
+            if (remainingMs <= 1.0)
+                return 0;
+            if (remainingMs <= 2.5)
+                return 1;
+            if (remainingMs <= 5.5)
+                return 2;
+            if (remainingMs <= 10.5)
+                return 5;
+            return (int)Math.Min(15.0, Math.Floor(remainingMs - 1.0));
+        }
+
+        private static int GetTargetFps() {
+            var max = 0;
+
+            var clients = TcpClients.Values.ToArray();
+            for (int i = 0; i < clients.Length; i++) {
+                var c = clients[i];
+                if (c == null)
+                    continue;
+                var fps = c.Options == null ? 0 : c.Options.Fps;
+                if (fps > max)
+                    max = fps;
+            }
+
+            var servers = TcpServers.Values.ToArray();
+            for (int i = 0; i < servers.Length; i++) {
+                var s = servers[i];
+                if (s == null)
+                    continue;
+                var fps = s.Options == null ? 0 : s.Options.Fps;
+                if (fps > max)
+                    max = fps;
+            }
+
+            return max;
+        }
+
+        private static void FlushAllSendQueues() {
+            try {
+                var clients = TcpClients.Values.ToArray();
+                for (int i = 0; i < clients.Length; i++) {
+                    var c = clients[i];
+                    if (c == null || c.Connection == null)
+                        continue;
+                    if (!c.Connected)
+                        continue;
+
+                    MethodExtensions.TryInvoke(() => {
+                        var _ = c.Connection.ProcessQueue();
+                    });
+                }
+
+                var servers = TcpServers.Values.ToArray();
+                for (int i = 0; i < servers.Length; i++) {
+                    var s = servers[i];
+                    if (s == null)
+                        continue;
+                    if (s.GetType() == typeof(TcpServer)) {
+                        var server = s.AsTcpServer();
+                        var conns = server.Clients.Values.ToArray();
+                        for (int j = 0; j < conns.Length; j++) {
+                            var conn = conns[j];
+                            if (conn == null)
+                                continue;
+                            MethodExtensions.TryInvoke(() => {
+                                var _ = conn.ProcessQueue();
+                            });
+                        }
+                    }
+                }
+            } catch {
             }
         }
     }
