@@ -81,7 +81,7 @@ Public Class WebSocketTest
     Private Sub Server_ReceivedTextObject(e As ReceivedEventArgs(Of WelcomeMessage))
     End Sub
     Private Async Sub Client_ReceivedWelcomeMessage(e As ReceivedEventArgs(Of WelcomeMessage))
-        Log(String.Format("[{0}] '{1}' from {2}", {e.Connection.Parent.Name, e.Object.Text, Await e.From.GetMetaData("Username")}))
+        Log(String.Format("[{0}] '{2}' from {1}", {e.Connection.Parent.Name, e.Object.Text, Await e.From.GetMetaData("Username")}))
     End Sub
 
     Private Sub ITest_StartTest() Implements ITest.StartTest
@@ -159,7 +159,7 @@ Public Class WebSocketTest
 
     Private Async Sub newClient_PeerConnected(sender As ISocket, Peer As Identifier)
         If Peer.Action <> PeerAction.LocalIdentity Then
-            sender.Send(Peer, New WelcomeMessage() With {.Text = "I Am " & Await Peer.GetMetaData("Username")})
+            'sender.Send(Peer, New WelcomeMessage() With {.Text = Await sender.AsWsClient().RemoteIdentity.GetMetaData("Username")})
         End If
     End Sub
 

@@ -34,6 +34,7 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
     private Vector _velocity;
     private bool _roundActive;
     private BotDifficulty _difficulty;
+    private long _lastTickAtTs;
 
     private bool _hasTarget;
     private long _nextWanderAtTs;
@@ -78,6 +79,7 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
         if (_cursor == default)
             _cursor = new Point(_rng.Next(40, 250), _rng.Next(40, 250));
         _velocity = new Vector(0, 0);
+        _lastTickAtTs = 0;
     }
 
     public void Start() {
@@ -85,6 +87,7 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
         if (_cursor == default)
             _cursor = new Point(_rng.Next(40, 250), _rng.Next(40, 250));
         _velocity = new Vector(0, 0);
+        _lastTickAtTs = 0;
         Log?.Invoke("Bot started");
     }
 
@@ -96,6 +99,16 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
         maxSpeed *= _traits.SpeedMultiplier;
         clickProbability = Math.Min(1.0, clickProbability * (0.5 + _traits.Aggression));
 
+        var dtMs = 0.0;
+        if (_lastTickAtTs != 0) {
+            dtMs = (nowTimestamp - _lastTickAtTs) * 1000.0 / Stopwatch.Frequency;
+            if (dtMs < 0)
+                dtMs = 0;
+            if (dtMs > 50)
+                dtMs = 50;
+        }
+        _lastTickAtTs = nowTimestamp;
+
         // If we don't have a target yet, wander so the cursor still moves.
         // When we do have a target, aim for the center of the button.
         const double targetSize = 70;
@@ -103,30 +116,33 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
             ? new Point(_target.X + targetSize / 2.0, _target.Y + targetSize / 2.0)
             : GetWanderTarget(nowTimestamp);
 
-        // Steer toward the aim point using a simple velocity model.
-        var to = new Vector(aim.X - _cursor.X, aim.Y - _cursor.Y);
-        var dist = to.Length;
-        if (dist > 0.01)
-            to.Normalize();
+        // Additive smoothing toward the aim point.
+        var toTarget = new Vector(aim.X - _cursor.X, aim.Y - _cursor.Y);
+        if (Math.Abs(toTarget.X) <= 0.75 && Math.Abs(toTarget.Y) <= 0.75)
+            toTarget = new Vector(0, 0);
 
         // Add jitter so movement isn't perfectly straight.
         var jitter = new Vector((_rng.NextDouble() - 0.5) * 0.35 * _traits.JitterMultiplier,
                                 (_rng.NextDouble() - 0.5) * 0.35 * _traits.JitterMultiplier);
+        toTarget += jitter;
 
-        var desiredVel = (to * maxSpeed) + jitter;
+        const double accelPerMs = 0.02;
+        const double dragPerMs = 0.12;
+        var maxSpeedPerMs = maxSpeed / 16.0;
 
-        // Loop tick is ~16ms; use a stable blend factor.
-        //const double keep = 0.82;
-        //const double take = 0.18;
-        _velocity = desiredVel; //(_velocity * keep) + (desiredVel * take);
+        if (dtMs > 0) {
+            _velocity += toTarget * (accelPerMs * dtMs);
+            var drag = Math.Exp(-dragPerMs * dtMs);
+            _velocity *= drag;
 
-        // Clamp
-        if (_velocity.Length > maxSpeed) {
-            _velocity.Normalize();
-            _velocity *= maxSpeed;
+            var speed = _velocity.Length;
+            if (speed > maxSpeedPerMs && speed > 0.0001) {
+                _velocity.Normalize();
+                _velocity *= maxSpeedPerMs;
+            }
+
+            _cursor = new Point(_cursor.X + (_velocity.X * dtMs), _cursor.Y + (_velocity.Y * dtMs));
         }
-
-        _cursor = new Point(_cursor.X + _velocity.X, _cursor.Y + _velocity.Y);
 
         // UI can optionally visualize the bot locally.
         CursorMoved?.Invoke(_cursor);

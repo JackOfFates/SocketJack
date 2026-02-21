@@ -12,6 +12,7 @@ internal interface ITickableBot {
 internal sealed class BotUpdateLoop : IDisposable {
     private readonly List<NpcBotClient> _bots = new();
     private readonly object _gate = new();
+	private readonly List<NpcBotClient> _snapshot = new();
 
     private readonly IBotComputeEngine _engine;
     private CancellationTokenSource? _cts;
@@ -19,6 +20,7 @@ internal sealed class BotUpdateLoop : IDisposable {
 
     private BotSimState[] _states = Array.Empty<BotSimState>();
     private BotSimConfig[] _configs = Array.Empty<BotSimConfig>();
+	private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(16);
 
     public BotUpdateLoop(bool preferGpu) {
         if (preferGpu) {
@@ -51,7 +53,7 @@ internal sealed class BotUpdateLoop : IDisposable {
         var ct = _cts.Token;
 
         _task = Task.Run(async () => {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
+            using var timer = new PeriodicTimer(TickInterval);
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
                 TickAll();
         }, ct);
@@ -61,8 +63,12 @@ internal sealed class BotUpdateLoop : IDisposable {
         var nowTs = Stopwatch.GetTimestamp();
 
         List<NpcBotClient> snapshot;
-        lock (_gate)
-            snapshot = _bots.Count == 0 ? new List<NpcBotClient>() : new List<NpcBotClient>(_bots);
+        lock (_gate) {
+            _snapshot.Clear();
+            if (_bots.Count > 0)
+                _snapshot.AddRange(_bots);
+            snapshot = _snapshot;
+        }
 
         if (snapshot.Count == 0)
             return;

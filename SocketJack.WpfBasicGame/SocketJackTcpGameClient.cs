@@ -3,6 +3,7 @@ using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using SocketJack.WPFController;
 using System.Linq;
+using System.Threading;
 
 namespace SocketJack.WpfBasicGame;
 
@@ -11,6 +12,7 @@ namespace SocketJack.WpfBasicGame;
 // and centralizes all SocketJack options/whitelisting in one place.
 internal sealed class SocketJackTcpGameClient : IDisposable {
     private readonly TcpClient _client;
+    private readonly object _cursorSendGate = new();
 
     public TcpClient RawClient => _client;
 
@@ -95,10 +97,20 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
             return;
 
         // Client -> server cursor updates; server rebroadcasts to all peers.
-        _client.Send(new CursorStateMessage {
+        var message = new CursorStateMessage {
             X = x,
             Y = y
-        });
+        };
+
+        ThreadPool.QueueUserWorkItem(_ => SendCursorInternal(message));
+    }
+
+    private void SendCursorInternal(CursorStateMessage message) {
+        lock (_cursorSendGate) {
+            if (!IsConnected)
+                return;
+            _client.Send(message);
+        }
     }
 
     public Task<bool> ConnectAsync(string host, int port) => _client.Connect(host, port);

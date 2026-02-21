@@ -39,6 +39,8 @@ public partial class MainWindow : Window {
     private readonly Dictionary<string, CursorSmoother> _cursorSmoothers = new();
     private readonly DispatcherTimer _cursorRenderTimer;
 
+    private const double CursorUpdateHz = 60.0;
+    private static readonly TimeSpan CursorRenderInterval = TimeSpan.FromMilliseconds(1000.0 / CursorUpdateHz);
     private static readonly TimeSpan CursorInterpolationDelay = TimeSpan.FromMilliseconds(50);
     private const double MaxExtrapolationMs = 60;
     private const double StaleSnapMs = 350;
@@ -51,6 +53,8 @@ public partial class MainWindow : Window {
 
     private System.Windows.Shapes.Ellipse? _localCursor;
     private Point _lastLocalCursor;
+    private Point _pendingLocalCursor;
+    private bool _hasPendingLocalCursor;
     private DateTime _nextLocalCursorSendAt = DateTime.MinValue;
 
     private readonly DispatcherTimer _roundTimer;
@@ -108,7 +112,7 @@ public partial class MainWindow : Window {
         _roundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _roundTimer.Tick += (_, _) => { /* Timer no longer calls MoveTarget */ };
         BotEnabledCheck.IsChecked = false;
-        _cursorRenderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _cursorRenderTimer = new DispatcherTimer { Interval = CursorRenderInterval };
         _cursorRenderTimer.Tick += (_, _) => RenderCursors();
         init();
         PositionSideBySide(isHost: true);
@@ -122,7 +126,7 @@ public partial class MainWindow : Window {
         _roundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _roundTimer.Tick += (_, _) => { /* Timer no longer calls MoveTarget */ };
 
-        _cursorRenderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _cursorRenderTimer = new DispatcherTimer { Interval = CursorRenderInterval };
         _cursorRenderTimer.Tick += (_, _) => RenderCursors();
         init();
         PositionSideBySide(isHost: false);
@@ -253,8 +257,11 @@ public partial class MainWindow : Window {
 
     private async Task EnsureBotsAdjustedAsync() {
         // Only host mode uses bots.
-        if (HostRadio.IsChecked != true)
+        if (HostRadio.IsChecked != true) {
+            StopAndDisposeBots();
+            BotCursor.Visibility = Visibility.Collapsed;
             return;
+        }
         if (_client == null || _server == null)
             return;
         if (_client.IsConnected != true)
@@ -326,34 +333,8 @@ public partial class MainWindow : Window {
 
         var p = e.GetPosition(GameCanvas);
         _lastLocalCursor = p;
-
-        if (_localCursor == null) {
-            // Create a local visual cursor indicator.
-            _localCursor = new System.Windows.Shapes.Ellipse {
-                Width = 8,
-                Height = 8,
-                Fill = System.Windows.Media.Brushes.LimeGreen,
-                Stroke = System.Windows.Media.Brushes.Black,
-                StrokeThickness = 2,
-                IsHitTestVisible = false
-            };
-            Canvas.SetZIndex(_localCursor, 10);
-            GameCanvas.Children.Add(_localCursor);
-        }
-
-        Canvas.SetLeft(_localCursor, p.X - _localCursor.Width / 2.0);
-        Canvas.SetTop(_localCursor, p.Y - _localCursor.Height / 2.0);
-
-        if (_client == null || _client.IsConnected != true)
-            return;
-
-        // Rate-limit network cursors to reduce bandwidth; remote clients interpolate.
-        var now = DateTime.UtcNow - CursorInterpolationDelay;
-        if (now < _nextLocalCursorSendAt)
-            return;
-
-        _nextLocalCursorSendAt = now.AddMilliseconds(33);
-        _client.SendCursor((int)p.X, (int)p.Y);
+        _pendingLocalCursor = p;
+        _hasPendingLocalCursor = true;
     }
 
     private async Task EnsureBotsConnectedAsync(string host, int port) {
@@ -654,6 +635,8 @@ public partial class MainWindow : Window {
                 s.NextAt = now;
                 s.RenderPos = p;
                 s.RenderAt = now;
+                s.Velocity = new Vector(0, 0);
+                s.VelocityAt = now;
                 continue;
             }
 
@@ -662,9 +645,6 @@ public partial class MainWindow : Window {
             s.PrevAt = s.NextAt;
             s.NextPos = p;
             s.NextAt = now;
-
-            // No extrapolation window: we just keep the latest sample as target.
-            // Smoother operates in render loop using additive integration.
         }
 
         var selfId = _selfPlayerId;
@@ -681,14 +661,10 @@ public partial class MainWindow : Window {
             if (!s.HasValue)
                 continue;
 
-            // Additive/subtractive smoothing:
-            // Integrate velocity towards the latest sample, with drag to suppress twitch.
-            var target = s.NextPos;
-
-            // Snap hard if stream is stale.
+            // Additive, high-frequency smoothing (no interpolation/extrapolation).
             var ageMs = (now - s.NextAt).TotalMilliseconds;
             if (ageMs > StaleSnapMs) {
-                s.RenderPos = target;
+                s.RenderPos = s.NextPos;
                 s.Velocity = new Vector(0, 0);
                 s.RenderAt = now;
             } else {
@@ -698,29 +674,23 @@ public partial class MainWindow : Window {
                 if (dtMs > 50)
                     dtMs = 50;
 
-                // Position error in px.
-                var err = new Vector(target.X - s.RenderPos.X, target.Y - s.RenderPos.Y);
-                if (Math.Abs(err.X) <= StationaryEpsilonPx && Math.Abs(err.Y) <= StationaryEpsilonPx)
-                    err = new Vector(0, 0);
+                var toTarget = new Vector(s.NextPos.X - s.RenderPos.X, s.NextPos.Y - s.RenderPos.Y);
+                if (Math.Abs(toTarget.X) <= StationaryEpsilonPx && Math.Abs(toTarget.Y) <= StationaryEpsilonPx)
+                    toTarget = new Vector(0, 0);
 
-                // Tune parameters (px/ms^2) and drag per-frame.
-                // Higher accel = snappier; lower drag = smoother.
-                const double accel = 0.014;
-                const double drag = 0.78;
+                const double accelPerMs = 0.02;
+                const double dragPerMs = 0.12;
 
-                // v += err * accel
-                s.Velocity += err * accel;
-                // clamp speed
+                s.Velocity += toTarget * (accelPerMs * dtMs);
+                var drag = Math.Exp(-dragPerMs * dtMs);
+                s.Velocity *= drag;
+
                 var speed = s.Velocity.Length;
                 if (speed > MaxSpeedPxPerMs && speed > 0.0001) {
                     s.Velocity.Normalize();
                     s.Velocity *= MaxSpeedPxPerMs;
                 }
 
-                // apply drag
-                s.Velocity *= drag;
-
-                // pos += v * dt
                 var newPos = new Point(
                     s.RenderPos.X + (s.Velocity.X * dtMs),
                     s.RenderPos.Y + (s.Velocity.Y * dtMs));
@@ -768,6 +738,41 @@ public partial class MainWindow : Window {
             Canvas.SetLeft(el, p.X - el.Width / 2.0);
             Canvas.SetTop(el, p.Y - el.Height / 2.0);
         }
+
+        UpdateLocalCursor(now);
+    }
+
+    private void UpdateLocalCursor(DateTime now) {
+        if (!_hasPendingLocalCursor)
+            return;
+
+        if (_localCursor == null) {
+            _localCursor = new System.Windows.Shapes.Ellipse {
+                Width = 8,
+                Height = 8,
+                Fill = System.Windows.Media.Brushes.LimeGreen,
+                Stroke = System.Windows.Media.Brushes.Black,
+                StrokeThickness = 2,
+                IsHitTestVisible = false
+            };
+            Canvas.SetZIndex(_localCursor, 10);
+            GameCanvas.Children.Add(_localCursor);
+        }
+
+        var pending = _pendingLocalCursor;
+        Canvas.SetLeft(_localCursor, pending.X - _localCursor.Width / 2.0);
+        Canvas.SetTop(_localCursor, pending.Y - _localCursor.Height / 2.0);
+        _hasPendingLocalCursor = false;
+
+        if (_client == null || _client.IsConnected != true)
+            return;
+
+        var sendAt = now - CursorInterpolationDelay;
+        if (sendAt < _nextLocalCursorSendAt)
+            return;
+
+        _nextLocalCursorSendAt = sendAt.AddMilliseconds(33);
+        _client.SendCursor((int)pending.X, (int)pending.Y);
     }
 
     private void EndRound() {

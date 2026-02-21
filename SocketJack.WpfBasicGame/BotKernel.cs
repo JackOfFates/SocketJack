@@ -22,11 +22,6 @@ internal readonly partial struct BotKernel : IComputeShader {
         float dx = cfg.AimX - s.X;
         float dy = cfg.AimY - s.Y;
 
-        float distSq = (dx * dx) + (dy * dy);
-        float invLen = distSq > 1e-6f ? Hlsl.Rsqrt(distSq) : 0f;
-        float nx = dx * invLen;
-        float ny = dy * invLen;
-
         uint h = (uint)(cfg.Seed ^ (i * 1103515245));
         h ^= h << 13;
         h ^= h >> 17;
@@ -38,20 +33,30 @@ internal readonly partial struct BotKernel : IComputeShader {
         float jx = r1 * cfg.Jitter;
         float jy = r2 * cfg.Jitter;
 
-        float vx = (nx * cfg.MaxSpeed) + jx;
-        float vy = (ny * cfg.MaxSpeed) + jy;
+        float tx = dx + jx;
+        float ty = dy + jy;
 
-        float vlenSq = (vx * vx) + (vy * vy);
-        if (vlenSq > (cfg.MaxSpeed * cfg.MaxSpeed)) {
+        const float dtMs = 16f;
+        const float accelPerMs = 0.02f;
+        const float dragPerMs = 0.12f;
+        float accel = accelPerMs * dtMs;
+        float drag = Hlsl.Exp(-dragPerMs * dtMs);
+        float maxSpeedPerMs = cfg.MaxSpeed / dtMs;
+
+        s.Vx += tx * accel;
+        s.Vy += ty * accel;
+        s.Vx *= drag;
+        s.Vy *= drag;
+
+        float vlenSq = (s.Vx * s.Vx) + (s.Vy * s.Vy);
+        if (vlenSq > (maxSpeedPerMs * maxSpeedPerMs)) {
             float invV = Hlsl.Rsqrt(vlenSq);
-            vx *= invV * cfg.MaxSpeed;
-            vy *= invV * cfg.MaxSpeed;
+            s.Vx *= invV * maxSpeedPerMs;
+            s.Vy *= invV * maxSpeedPerMs;
         }
 
-        s.Vx = vx;
-        s.Vy = vy;
-        s.X += vx;
-        s.Y += vy;
+        s.X += s.Vx * dtMs;
+        s.Y += s.Vy * dtMs;
 
         States[i] = s;
     }
