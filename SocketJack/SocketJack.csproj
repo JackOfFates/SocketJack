@@ -347,10 +347,6 @@
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
-    <None Include="Readme_Gen.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
     <None Include="License.txt">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
