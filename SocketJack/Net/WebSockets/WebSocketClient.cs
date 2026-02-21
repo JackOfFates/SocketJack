@@ -51,10 +51,10 @@ namespace SocketJack.Net.WebSockets {
         ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Servers { get => P2P_Servers; set => P2P_Servers = value; }
         ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Clients { get => P2P_Clients; set => P2P_Clients = value; }
 
-        protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new ConcurrentDictionary<string, PeerServer>();
-        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Servers = new ConcurrentDictionary<string, NetworkConnection>();
-        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Clients = new ConcurrentDictionary<string, NetworkConnection>();
-        public NetworkOptions Options { get; set; } = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
+        protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Servers = new();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Clients = new();
+        public NetworkOptions Options { get; set; } = NetworkOptions.NewDefault();
         public NetworkConnection Connection { get; set; }
         public Identifier RemoteIdentity { get; internal set; }
 
@@ -109,7 +109,9 @@ namespace SocketJack.Net.WebSockets {
         public event LogOutputEventHandler LogOutput;
         public delegate void LogOutputEventHandler(string text);
 
+        #pragma warning disable CS0067 // Event is never used
         protected internal event PeerRefusedConnectionEventHandler PeerRefusedConnection;
+#pragma warning restore CS0067
         protected internal delegate void PeerRefusedConnectionEventHandler(ISocket sender, ConnectionRefusedArgs e);
 
         protected internal event PeerUpdateEventHandler PeerUpdate;
@@ -148,10 +150,14 @@ namespace SocketJack.Net.WebSockets {
         public event OnDisconnectedEventHandler OnDisconnected;
         public delegate void OnDisconnectedEventHandler(DisconnectedEventArgs e);
 
+        #pragma warning disable CS0067 // Event is never used
         protected internal event InternalPeerRedirectEventHandler InternalPeerRedirect;
+#pragma warning restore CS0067
         protected internal delegate void InternalPeerRedirectEventHandler(string Recipient, string Sender, object Obj, int BytesReceived);
 
+#pragma warning disable CS0067 // Event is never used
         protected internal event InternalReceiveEventEventHandler InternalReceiveEvent;
+#pragma warning restore CS0067
         protected internal delegate void InternalReceiveEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesReceived);
 
         protected internal event InternalReceivedByteCounterEventHandler InternalReceivedByteCounter;

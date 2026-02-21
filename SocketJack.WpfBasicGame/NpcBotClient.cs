@@ -52,11 +52,11 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
 
     public string? LocalPlayerId => _client.LocalPlayerId;
 
-    public NpcBotClient(BotDifficulty difficulty, BotTraits? traits = null, string name = "NpcBot") {
+    public NpcBotClient(BotDifficulty difficulty, BotTraits? traits = null, string name = "NpcBot", bool useUdp = false) {
         // Each bot is just a normal game client with automated input.
         _difficulty = difficulty;
         _traits = traits ?? new BotTraits();
-        _client = new SocketJackTcpGameClient(name, lightweight: true);
+        _client = new SocketJackTcpGameClient(name, lightweight: true, useUdp: useUdp);
         _client.Log += t => Log?.Invoke(t);
         _client.StartRoundReceived += OnStartRound;
     }

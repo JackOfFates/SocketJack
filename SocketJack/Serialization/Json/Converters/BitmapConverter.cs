@@ -1,4 +1,5 @@
 ﻿#if WINDOWS
+#pragma warning disable CA1416 // Validate platform compatibility - entire file is Windows-only
 using System;
 using System.IO;
 using System.Text.Json;
@@ -132,4 +133,5 @@ namespace SocketJack.Serialization.Json.Converters {
         }
     }
 }
+#pragma warning restore CA1416
 #endif

@@ -624,7 +624,7 @@ Public Class ChatTest
     Private Sub ChatTest_PreviewMouseMove(sender As Object, e As Input.MouseEventArgs) Handles Me.PreviewMouseMove
         If Not sending AndAlso Client1 IsNot Nothing AndAlso Client2 IsNot Nothing AndAlso Client1.Connected AndAlso Client2.Connected AndAlso
             Client1.RemoteIdentity IsNot Nothing AndAlso Client2.RemoteIdentity IsNot Nothing AndAlso
-            DateTime.UtcNow >= lastTimeout.AddMilliseconds(Client1.Options.timeout) Then
+            DateTime.UtcNow >= lastTimeout.AddMilliseconds(Client1.Options.Timeout) Then
             lastTimeout = DateTime.UtcNow
             sending = True
             'Task.Run(Sub()

@@ -162,6 +162,18 @@ namespace SocketJack.Net {
             }
         }
 
+        private void OnPingReceived(ReceivedEventArgs<P2P.Ping> e) {
+            if (e.Object == null || e.Connection == null) return;
+            var pong = new P2P.Pong { TimestampMs = e.Object.TimestampMs };
+            var id = e.Connection.ID;
+            foreach (var kvp in Clients) {
+                if (kvp.Value.ID == id) {
+                    SendTo(kvp.Value, pong);
+                    break;
+                }
+            }
+        }
+
         #endregion
 
         #region Private/Internal
@@ -302,6 +314,7 @@ namespace SocketJack.Net {
             InternalSentByteCounter += UdpServer_InternalSentByteCounter;
             BytesPerSecondUpdate += UdpServer_BytesPerSecondUpdate;
             RegisterCallback(new Action<ReceivedEventArgs<MetadataKeyValue>>(OnReceived_MetadataKeyValue));
+            RegisterCallback<P2P.Ping>(OnPingReceived);
         }
 
         /// <summary>
@@ -320,6 +333,7 @@ namespace SocketJack.Net {
             InternalSentByteCounter += UdpServer_InternalSentByteCounter;
             BytesPerSecondUpdate += UdpServer_BytesPerSecondUpdate;
             RegisterCallback(new Action<ReceivedEventArgs<MetadataKeyValue>>(OnReceived_MetadataKeyValue));
+            RegisterCallback<P2P.Ping>(OnPingReceived);
         }
 
         /// <summary>
@@ -581,15 +595,25 @@ namespace SocketJack.Net {
             Task.Factory.StartNew(async () => {
                 while (!token.IsCancellationRequested && IsListening) {
                     await Task.Delay(1000);
+                    int totalSent = 0;
+                    int totalReceived = 0;
                     foreach (var kvp in Clients.ToArray()) {
                         var udpConn = kvp.Value;
                         udpConn._SentBytesPerSecond = udpConn.SentBytesCounter;
                         udpConn._ReceivedBytesPerSecond = udpConn.ReceivedBytesCounter;
                         Interlocked.Exchange(ref udpConn.SentBytesCounter, 0);
                         Interlocked.Exchange(ref udpConn.ReceivedBytesCounter, 0);
+                        totalSent += udpConn._SentBytesPerSecond;
+                        totalReceived += udpConn._ReceivedBytesPerSecond;
                     }
-                    if (Connection != null)
+
+                    // Mirror aggregated totals onto the NetworkConnection so
+                    // InvokeBytesPerSecondUpdate reads the correct values.
+                    if (Connection != null) {
+                        Connection._SentBytesPerSecond = totalSent;
+                        Connection._ReceivedBytesPerSecond = totalReceived;
                         InvokeBytesPerSecondUpdate(Connection);
+                    }
                 }
             }, TaskCreationOptions.LongRunning);
         }

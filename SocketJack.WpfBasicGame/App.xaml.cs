@@ -8,7 +8,7 @@ namespace SocketJack.WpfBasicGame;
 /// Interaction logic for App.xaml
 /// </summary>
 public partial class App : Application {
-    public void OnStartup(object sender, StartupEventArgs e) {
+    public void OnStartup(object? sender, StartupEventArgs e) {
         ThreadManager.UseGlobalTickLoop = true ;
 
         var mainWindow = new MainWindow();

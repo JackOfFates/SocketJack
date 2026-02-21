@@ -203,7 +203,9 @@ namespace NSpeex
         /// <summary>
         /// How late must a packet be for it not to be considered at all
         /// </summary>
-        int late_cutoff;
+        #pragma warning disable CS0414 // Field is assigned but its value is never used
+                int late_cutoff;
+        #pragma warning restore CS0414
 
         /// <summary>
         /// An interpolation is requested by <see cref="UpdateDelay"/>

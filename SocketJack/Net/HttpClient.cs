@@ -18,8 +18,8 @@ namespace SocketJack.Net {
     public class HttpClient : TcpClient, IDisposable {
 
         // Callback storage (mirrors TcpBase functionality for registering type callbacks)
-        private Dictionary<Type, List<Action<IReceivedEventArgs>>> TypeCallbacks = new Dictionary<Type, List<Action<IReceivedEventArgs>>>();
-        private Dictionary<Delegate, Action<IReceivedEventArgs>> CallbackMap = new Dictionary<Delegate, Action<IReceivedEventArgs>>();
+        private new Dictionary<Type, List<Action<IReceivedEventArgs>>> TypeCallbacks = new();
+        private Dictionary<Delegate, Action<IReceivedEventArgs>> CallbackMap = new();
         private readonly object _callbackLock = new object();
 
         new public void RegisterCallback<T>(Action<ReceivedEventArgs<T>> Action) {
@@ -90,14 +90,14 @@ namespace SocketJack.Net {
         public int MaxRedirects { get; set; } = 5;
         public IDictionary<string,string> DefaultHeaders { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        public HttpClient() : base(NetworkOptions.DefaultOptions.Clone<NetworkOptions>(), "HttpClient") {
+        public HttpClient() : base(NetworkOptions.NewDefault(), "HttpClient") {
             DefaultHeaders["User-Agent"] = "SocketJack-HttpClient/1.0";
             // HTTP is a raw TCP protocol; disable SocketJack framing/terminators.
             Options.UseTerminatedStreams = false;
             Options.UsePeerToPeer = false;
         }
 
-        public void Dispose() { }
+        public new void Dispose() { }
 
         public async Task<Net.HttpResponse> GetAsync(string url, Stream responseStream = null, Action<byte[], int> onChunk = null, CancellationToken cancellationToken = default) {
             return await SendAsync("GET", url, null, null, responseStream, onChunk, cancellationToken);
@@ -467,7 +467,6 @@ namespace SocketJack.Net {
             var ms = new MemoryStream();
             if (initial != null) ms.Write(initial, 0, initial.Length);
             var buf = new byte[8192];
-            int read;
             while (true) {
                 int r;
                 try {
@@ -487,7 +486,6 @@ namespace SocketJack.Net {
                 onChunk?.Invoke(initial, initial.Length);
             }
             var buf = new byte[8192];
-            int read;
             while (true) {
                 int r;
                 try {

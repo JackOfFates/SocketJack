@@ -44,12 +44,9 @@ public static class FrameworkElementShareExtensions {
     private const int DefaultJpegQuality = 77;
 
     public static IDisposable Share(this FrameworkElement element, TcpClient client, Identifier peer, int fps = 10) {
-        if (element == null)
-            throw new ArgumentNullException(nameof(element));
-        if (client == null)
-            throw new ArgumentNullException(nameof(client));
-        if (peer == null)
-            throw new ArgumentNullException(nameof(peer));
+        ArgumentNullException.ThrowIfNull(element);
+        ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(peer);
 
         // Ensure message types are whitelisted.
         client.Options.Whitelist.Add(typeof(ControlShareFrame));
@@ -193,8 +190,8 @@ public static class FrameworkElementShareExtensions {
         client.RemoveCallback<ControlShareInput>(cb);
     }
 
-    private static Task DispatchMouseMoveAsync(ElementRoute route, double nx, double ny) {
-        return Application.Current.Dispatcher.InvokeAsync(async () => {
+    private static async Task DispatchMouseMoveAsync(ElementRoute route, double nx, double ny) {
+        await await Application.Current.Dispatcher.InvokeAsync(async () => {
             try {
                 var element = await route.GetElement().ConfigureAwait(true);
                 if (element == null)
@@ -231,11 +228,11 @@ public static class FrameworkElementShareExtensions {
                     });
             } catch {
             }
-        }).Task;
+        });
     }
 
-    private static Task DispatchMouseClickAsync(ElementRoute route, double nx, double ny, MouseButton button) {
-        return Application.Current.Dispatcher.InvokeAsync(async () => {
+    private static async Task DispatchMouseClickAsync(ElementRoute route, double nx, double ny, MouseButton button) {
+        await await Application.Current.Dispatcher.InvokeAsync(async () => {
             try {
                 var element = await route.GetElement().ConfigureAwait(true);
                 if (element == null)
@@ -297,7 +294,7 @@ public static class FrameworkElementShareExtensions {
                 }
             } catch {
             }
-        }).Task;
+        });
     }
 
     private sealed class StopHandle : IDisposable {

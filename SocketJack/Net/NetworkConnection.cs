@@ -2,6 +2,7 @@
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -46,6 +47,9 @@ namespace SocketJack.Net {
         public SslStream SslStream { get; set; }
 
         public static readonly byte[] Terminator = new[] { (byte)192, (byte)128 };
+        private static readonly TimeSpan OneSecond = TimeSpan.FromSeconds(1);
+        private static readonly Type ByteArrayType = typeof(byte[]);
+        private static readonly char[] LengthTrimChars = { '\0', ' ', '\r', '\n' };
 
         /// <summary>
         /// Whether or not data is compressed.
@@ -87,7 +91,7 @@ namespace SocketJack.Net {
 
         public bool IsWebSocket {
             get {
-                return Parent.GetType().Name == "WebSocketClient" || Parent.GetType().Name == "WebSocketServer";
+                return _isWebSocket;
             }
         }
 
@@ -101,26 +105,55 @@ namespace SocketJack.Net {
         }
 
         /// <summary>
-        /// Bytes per second sent on this connection.
+        /// Bytes per second sent on this connection (rolling average over the last 10 seconds).
         /// </summary>
         public int BytesPerSecondSent {
             get {
-                return _SentBytesPerSecond;
+                return GetRollingBpsAverage(isSent: true);
             }
         }
         protected internal int _SentBytesPerSecond = 0;
         protected internal int SentBytesCounter = 0;
 
         /// <summary>
-        /// Bytes per second received on this connection.
+        /// Bytes per second received on this connection (rolling average over the last 10 seconds).
         /// </summary>
         public int BytesPerSecondReceived {
             get {
-                return _ReceivedBytesPerSecond;
+                return GetRollingBpsAverage(isSent: false);
             }
         }
         protected internal int _ReceivedBytesPerSecond = 0;
         protected internal int ReceivedBytesCounter = 0;
+
+        private const int BpsRollingWindowSeconds = 10;
+        private readonly object _bpsSamplesLock = new object();
+        private readonly Queue<(DateTime time, int sent, int recv)> _bpsSamples = new Queue<(DateTime, int, int)>();
+
+        protected internal void RecordBpsSample() {
+            lock (_bpsSamplesLock) {
+                _bpsSamples.Enqueue((DateTime.UtcNow, _SentBytesPerSecond, _ReceivedBytesPerSecond));
+                PruneBpsSamples();
+            }
+        }
+
+        private void PruneBpsSamples() {
+            var cutoff = DateTime.UtcNow.AddSeconds(-BpsRollingWindowSeconds);
+            while (_bpsSamples.Count > 0 && _bpsSamples.Peek().time < cutoff)
+                _bpsSamples.Dequeue();
+        }
+
+        private int GetRollingBpsAverage(bool isSent) {
+            lock (_bpsSamplesLock) {
+                PruneBpsSamples();
+                if (_bpsSamples.Count == 0)
+                    return 0;
+                long sum = 0;
+                foreach (var s in _bpsSamples)
+                    sum += isSent ? s.sent : s.recv;
+                return (int)(sum / _bpsSamples.Count);
+            }
+        }
 
         public long TotalBytesSent {
             get {
@@ -186,7 +219,7 @@ namespace SocketJack.Net {
                 return _DownloadBuffer;
             }
         }
-        protected internal List<byte> _DownloadBuffer = new List<byte>();
+        protected internal List<byte> _DownloadBuffer = new();
 
         /// <summary>
         /// Buffer used to send data.
@@ -196,7 +229,7 @@ namespace SocketJack.Net {
                 return _UploadBuffer;
             }
         }
-        protected internal List<byte> _UploadBuffer = new List<byte>();
+        protected internal List<byte> _UploadBuffer = new();
 
         /// <summary>
         /// True if the connection is closed.
@@ -227,12 +260,39 @@ namespace SocketJack.Net {
         #region Internal
         private volatile bool _Closed = false;
         public volatile bool _Closing = false;
-        private readonly object _closeLock = new object();
-        protected internal SemaphoreSlim _SendSignal = new SemaphoreSlim(0);
+        private readonly object _closeLock = new();
+        private readonly string _parentTypeName;
+        private readonly bool _isWebSocket;
+        private readonly byte[] _lengthHeaderBuffer = new byte[15];
+        private volatile bool _connectionCounted = false;
+        private static int _activeConnectionCount = 0;
+        protected internal SemaphoreSlim _SendSignal = new(0);
         protected internal long _nextChunkFlushAt = 0;
 
-        protected internal ConcurrentQueue<SendQueueItem> SendQueue = new ConcurrentQueue<SendQueueItem>();
-        protected internal List<byte> SendQueueRaw = new List<byte>();
+        protected internal ConcurrentQueue<SendQueueItem> SendQueue = new();
+        protected internal List<byte> SendQueueRaw = new();
+
+        /// <summary>
+        /// Adjusts <see cref="ThreadPool"/> minimum threads so worker/IO capacity
+        /// scales with the number of active connections.  Without this, the default
+        /// pool ramp-up (~1 thread per 500 ms) causes server-side deserialization
+        /// and callback dispatch to fall behind under heavy bot load.
+        /// </summary>
+        private static void AdjustThreadPool(int connectionDelta) {
+            int connections = Interlocked.Add(ref _activeConnectionCount, connectionDelta);
+            if (connections < 0) {
+                Interlocked.Exchange(ref _activeConnectionCount, 0);
+                connections = 0;
+            }
+            int processorCount = Environment.ProcessorCount;
+            int required = processorCount + (connections * 2);
+            ThreadPool.GetMinThreads(out int currentWorker, out int currentIo);
+            if (currentWorker < required || currentIo < required) {
+                ThreadPool.SetMinThreads(
+                    Math.Max(currentWorker, required),
+                    Math.Max(currentIo, required));
+            }
+        }
 
         /// <summary>
         /// <see langword="True"/> if created by a TcpServer.
@@ -277,6 +337,10 @@ namespace SocketJack.Net {
             lock (_closeLock) {
                 if (!Closed && !Closing) {
                     _Closing = true;
+                    if (_connectionCounted) {
+                        _connectionCounted = false;
+                        AdjustThreadPool(-1);
+                    }
                     var e = new DisconnectedEventArgs(sender, this, Reason);
                     if (Socket != null && Socket.Connected) {
                         MethodExtensions.TryInvoke(() => Socket.Shutdown(SocketShutdown.Both));
@@ -298,7 +362,7 @@ namespace SocketJack.Net {
 
         public void StartConnectionTester() {
             Task.Factory.StartNew(async () => {
-                if (Parent.GetType().Name == "WebSocketClient")
+                if (_parentTypeName == "WebSocketClient")
                     return;
 
                 int failedPollCount = 0;
@@ -373,7 +437,8 @@ namespace SocketJack.Net {
 
         protected internal void InvokeDisconnected(ISocket sender, DisconnectedEventArgs e) {
             if (e.Connection.Closed) return;
-            if (!(sender.GetType().Name == "WebSocketClient") && !(sender.GetType().Name == "WebSocketClient") && !(sender is TcpServer) && !(sender.GetType().Name == "WebSocketServer")) {
+            var senderTypeName = sender.GetType().Name;
+            if (!(senderTypeName == "WebSocketClient") && !(senderTypeName == "WebSocketClient") && !(sender is TcpServer) && !(senderTypeName == "WebSocketServer")) {
                 ((ISocket)sender).InvokeOnDisconnected(sender, e.Connection);
                 e.Connection.Closed = true;
             }
@@ -456,12 +521,17 @@ namespace SocketJack.Net {
         #region Receive
 
         protected internal void StartReceiving() {
+            if (!_connectionCounted) {
+                _connectionCounted = true;
+                AdjustThreadPool(1);
+            }
             Task.Factory.StartNew(async () => {
-                if (Parent.Options.Fps > 0) {
+                var options = Parent.Options;
+                if (options.Fps > 0) {
                     DateTime Time = DateTime.UtcNow;
                     while (!isDisposed && !Closed && Socket.Connected) {
                         var now = DateTime.UtcNow;
-                        var nextFrame = Time.AddMilliseconds(Parent.Options.timeout);
+                        var nextFrame = Time.AddMilliseconds(options.Timeout);
                         if (now >= nextFrame) {
                             Time = now;
                             await Receive();
@@ -490,32 +560,37 @@ namespace SocketJack.Net {
         }
 
         internal async Task Receive() {
-            if (Socket != null && Stream != null && _Stream != null && _Stream.DataAvailable && Interlocked.CompareExchange(ref _IsReceiving, 1, 0) == 0) {
-                try {
-                    await ReceiveData();
-                } catch (Exception ex) {
-                    var Reason = ex.Interpret();
-                    if (Reason.ShouldLogReason())
-                        Parent.InvokeOnError(this, ex);
-                    Parent.CloseConnection(this, Reason);
-                } finally {
-                    IsReceiving = false;
+            while (Socket != null && Stream != null && _Stream != null && !Closed && _Stream.DataAvailable) {
+                if (Interlocked.CompareExchange(ref _IsReceiving, 1, 0) == 0) {
+                    try {
+                        await ReceiveData();
+                    } catch (Exception ex) {
+                        var Reason = ex.Interpret();
+                        if (Reason.ShouldLogReason())
+                            Parent.InvokeOnError(this, ex);
+                        Parent.CloseConnection(this, Reason);
+                        return;
+                    } finally {
+                        IsReceiving = false;
+                    }
                 }
             }
         }
 
         private async Task ReceiveData() {
+                var options = Parent.Options;
+                var stream = Stream;
                 // If terminated streams are disabled treat this as a raw TCP stream (e.g. HTTP)
-                if (!Parent.Options.UseTerminatedStreams) {
+                if (!options.UseTerminatedStreams) {
+                    var bufSize = options.DownloadBufferSize > 0 ? options.DownloadBufferSize : 8192;
+                    var buffer = ArrayPool<byte>.Shared.Rent(bufSize);
                     try {
                         var temp = new List<byte>();
-                        var bufSize = Parent.Options.DownloadBufferSize > 0 ? Parent.Options.DownloadBufferSize : 8192;
-                        var buffer = new byte[bufSize];
                         int bytesRead = 0;
                         // Read available data into buffer
                         do {
                             try {
-                                bytesRead = await Stream.ReadAsync(buffer, 0, buffer.Length);
+                                bytesRead = await stream.ReadAsync(buffer, 0, bufSize);
                             } catch (Exception ex) {
                                 var Reason = ex.Interpret();
                                 if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
@@ -524,8 +599,7 @@ namespace SocketJack.Net {
                             if (bytesRead > 0) {
                                 Interlocked.Add(ref _TotalBytesReceived, bytesRead);
                                 Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
-                                if (bytesRead == buffer.Length) temp.AddRange(buffer);
-                                else temp.AddRange(new ArraySegment<byte>(buffer, 0, bytesRead));
+                                temp.AddRange(new ArraySegment<byte>(buffer, 0, bytesRead));
                             }
                         } while (_Stream.DataAvailable);
 
@@ -536,16 +610,17 @@ namespace SocketJack.Net {
                         var Reason = ex.Interpret();
                         if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
                         Parent.CloseConnection(this, Reason);
+                    } finally {
+                        ArrayPool<byte>.Shared.Return(buffer);
                     }
                     IsReceiving = false;
                     return;
                 }
 
                 // Read message length header (15 bytes) then read body in buffered chunks
-                byte[] LengthData = new byte[15];
-                int lengthRead = 0;
+                int lengthRead;
                 try {
-                    lengthRead = await Stream.ReadAsync(LengthData, 0, 15);
+                    lengthRead = await stream.ReadAsync(_lengthHeaderBuffer, 0, 15);
                     Interlocked.Add(ref _TotalBytesReceived, lengthRead);
                 } catch (Exception ex) {
                     var Reason = ex.Interpret();
@@ -561,7 +636,7 @@ namespace SocketJack.Net {
                     return;
                 }
 
-                string lengthStr = Encoding.UTF8.GetString(LengthData, 0, lengthRead).Trim('\0', ' ', '\r', '\n');
+                string lengthStr = Encoding.UTF8.GetString(_lengthHeaderBuffer, 0, lengthRead).Trim(LengthTrimChars);
                 if (!int.TryParse(lengthStr, out int Length)) {
                     Parent.InvokeOnError(this, new FormatException("Failed to parse message length."));
                     Parent.CloseConnection(this, DisconnectionReason.Unknown);
@@ -573,28 +648,28 @@ namespace SocketJack.Net {
                 int totalRead = 0;
                 try {
                     while (totalRead < Length) {
-                        if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
+                        if (Socket is null || stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
                             if (!Closed) Parent.CloseConnection(this);
                             IsReceiving = false;
                             return;
                         }
 
-                        long diff = ((TotalBytesReceived - _TotalBytesReceived_l)) - Parent.Options.MaximumDownloadBytesPerSecond;
+                        long diff = ((TotalBytesReceived - _TotalBytesReceived_l)) - options.MaximumDownloadBytesPerSecond;
                         if (diff > 0) {
                             var now = DateTime.UtcNow;
                             var timeDiff = now - LastReceiveFrame;
                             _ReceivedBytesPerSecond = (int)(TotalBytesReceived - _TotalBytesReceived_l);
                             _TotalBytesReceived_l = TotalBytesReceived;
                             LastReceiveFrame = now;
-                            if (timeDiff > TimeSpan.FromSeconds(1)) {
-                                await Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff * 10)));
+                            if (timeDiff > OneSecond) {
+                                await Task.Delay((int)(options.MaximumDownloadBytesPerSecond / (diff * 10)));
                             }
                         }
 
-                        int chunkSize = Parent.Options.isDownloadBuffered ? Parent.Options.DownloadBufferSize : (Length - totalRead);
+                        int chunkSize = options.isDownloadBuffered ? options.DownloadBufferSize : (Length - totalRead);
                         chunkSize = Math.Min(chunkSize, Length - totalRead);
 
-                        int bytesRead = await Stream.ReadAsync(Body, totalRead, chunkSize);
+                        int bytesRead = await stream.ReadAsync(Body, totalRead, chunkSize);
                         if (bytesRead <= 0) break;
                         totalRead += bytesRead;
                         Interlocked.Add(ref _TotalBytesReceived, bytesRead);
@@ -775,7 +850,7 @@ namespace SocketJack.Net {
                 var tempBuffer = new List<byte>(Buffer);
                 Buffer.Clear();
                 Task.Run(() => {
-                    Target.HandleReceive(Sender, tempBuffer, typeof(byte[]), tempBuffer.Count);
+                    Target.HandleReceive(Sender, tempBuffer, ByteArrayType, tempBuffer.Count);
                 });
 
                 return Buffer;
@@ -788,16 +863,17 @@ namespace SocketJack.Net {
 
         protected internal void StartSending() {
             Task.Factory.StartNew(async () => {
+                var options = Parent.Options;
                 DateTime Time = DateTime.UtcNow;
                 while (!isDisposed && !Closed && Socket.Connected) {
-                    if (Parent.Options.Chunking) {
-                        var intervalMs = Parent.Options.ChunkingIntervalMs;
+                    if (options.Chunking) {
+                        var intervalMs = options.ChunkingIntervalMs;
                         if (intervalMs < 100) intervalMs = 100;
                         await Task.Delay(intervalMs);
                         await ProcessQueue();
-                    } else if (Parent.Options.Fps > 0) {
+                    } else if (options.Fps > 0) {
                         var now = DateTime.UtcNow;
-                        var nextFrame = Time.AddMilliseconds(Parent.Options.timeout);
+                        var nextFrame = Time.AddMilliseconds(options.Timeout);
                         if (now >= nextFrame) {
                             Time = now;
                             await ProcessQueue();
@@ -831,9 +907,10 @@ namespace SocketJack.Net {
                 }
             }
 
+            var options = Parent.Options;
             if (chunk == null || chunk.Length == 0) {
                 IsSending = false;
-                if (!Parent.Options.Chunking)
+                if (!options.Chunking)
                     await _SendSignal.WaitAsync(100);
                 return;
             }
@@ -902,51 +979,55 @@ namespace SocketJack.Net {
         protected internal bool SendSerializedBytes(byte[] SerializedBytes) {
             //return await Task.Run(async () => {
             //});
-            if (isDisposed || Stream == null || Closed) return false;
+            var stream = Stream;
+            if (isDisposed || stream == null || Closed) return false;
+            var options = Parent.Options;
+            bool useSsl = SSL;
+            int mtu = NIC.MTU;
             bool sentSuccessful = false;
             try {
-                if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
+                if (mtu == -1 || SerializedBytes.Length < mtu && SerializedBytes.Length < 65535) {
                     // Object smaller than MTU.
                     byte[] ProcessedBytes = SerializedBytes;
                     int totalBytes = ProcessedBytes.Length;
 
                     // If upload buffering is disabled or UploadBufferSize is invalid, write whole buffer at once
-                    if (!Parent.Options.isUploadBuffered || Parent.Options.UploadBufferSize <= 0) {
-                        if (SSL) {
+                    if (!options.isUploadBuffered || options.UploadBufferSize <= 0) {
+                        if (useSsl) {
                             SslStream.Write(ProcessedBytes, 0, totalBytes);
                         } else {
-                            Stream.Write(ProcessedBytes, 0, totalBytes);
+                            stream.Write(ProcessedBytes, 0, totalBytes);
                         }
                         Parent.InvokeInternalSentByteCounter(this, totalBytes);
                     } else {
-                        int chunkUnit = Math.Max(1, Parent.Options.UploadBufferSize);
+                        int chunkUnit = Math.Max(1, options.UploadBufferSize);
 
                         for (int offset = 0; offset < totalBytes; offset += chunkUnit) {
-                            if (Socket is null || Stream is null || !Socket.Connected || Closed || (SSL && SslStream is null)) {
+                            if (Socket is null || stream is null || !Socket.Connected || Closed || (useSsl && SslStream is null)) {
                                 SerializedBytes = null;
                                 ProcessedBytes = null;
                                 if (!Closed) Parent.CloseConnection(this);
                                 return false;
                             }
 
-                            long diff = ((TotalBytesSent - _TotalBytesSent_l)) - Parent.Options.MaximumUploadBytesPerSecond;
+                            long diff = ((TotalBytesSent - _TotalBytesSent_l)) - options.MaximumUploadBytesPerSecond;
                             if (diff > 0) {
                                 var now = DateTime.UtcNow;
                                 var timeDiff = now - LastSendFrame;
                                 _SentBytesPerSecond = (int)(TotalBytesSent - _TotalBytesSent_l);
                                 _TotalBytesSent_l = TotalBytesSent;
                                 LastSendFrame = now;
-                                if (timeDiff > TimeSpan.FromSeconds(1)) {
-                                    Thread.Sleep((int)(Parent.Options.MaximumUploadBytesPerSecond / (diff * 10)));
+                                if (timeDiff > OneSecond) {
+                                    Thread.Sleep((int)(options.MaximumUploadBytesPerSecond / (diff * 10)));
                                 }
 
                             }
 
                             int chunkSize = Math.Min(chunkUnit, totalBytes - offset);
-                            if (SSL) {
+                            if (useSsl) {
                                 SslStream.Write(ProcessedBytes, offset, chunkSize);
                             } else {
-                                Stream.Write(ProcessedBytes, offset, chunkSize);
+                                stream.Write(ProcessedBytes, offset, chunkSize);
                             }
 
                             Interlocked.Add(ref _TotalBytesSent, chunkSize);
@@ -955,11 +1036,11 @@ namespace SocketJack.Net {
                     }
                     sentSuccessful = true;
                     //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
-                    Parent.InvokeInternalSendEvent(this, typeof(byte[]), "[CHUNK]", ProcessedBytes.Length);
-                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, typeof(byte[]), ProcessedBytes.Length));
+                    Parent.InvokeInternalSendEvent(this, ByteArrayType, "[CHUNK]", ProcessedBytes.Length);
+                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, ByteArrayType, ProcessedBytes.Length));
                     //}
 
-                } else if (SerializedBytes.Length > NIC.MTU) {
+                } else if (SerializedBytes.Length > mtu) {
                     // Object larger than MTU, we have to Segment the object.
                     Parent.SendSegmented(this, SerializedBytes);
                 }
@@ -1041,8 +1122,17 @@ namespace SocketJack.Net {
             if (Parent is TcpServer Server) {
                 if (Server is null) return;
                 Server.Send(this, Obj);
+            } else if (Parent is UdpServer udpServer) {
+                foreach (var kvp in udpServer.Clients) {
+                    if (kvp.Value.ID == this.ID) {
+                        udpServer.SendTo(kvp.Value, Obj);
+                        break;
+                    }
+                }
             } else if (Parent is TcpClient Client) {
                 Client.Send(Obj);
+            } else if (Parent is UdpClient udpClient) {
+                udpClient.Send(Obj);
             }
         }
 
@@ -1076,6 +1166,7 @@ namespace SocketJack.Net {
         /// <paramref name="value">Metadata Value.</paramref>
         /// <paramref name="Private"><see langword="true"/> to keep the metadata only on server; <see langword="false"/> shares with all peers.</paramref>
         /// <paramref name="Restricted"><see langword="true"/> to restrict the client from updating the metadata value.</paramref>
+        /// </summary>
         public void SetMetaData(string key, string value, bool Private = false, bool Restricted = false) {
             if (Parent == null) return;
             if (string.IsNullOrEmpty(key)) return;
@@ -1087,10 +1178,16 @@ namespace SocketJack.Net {
                 }
                 Parent.Peers[Identity.ID].SetMetaData(server, key.ToLower(), value, Private);
                 //Identity.SetMetaData(server, key.ToLower(), value, Private);
-            } else if (Parent.GetType().Name == "WebSocketServer") {
-                // Use reflection to locate the assembly, type, and members
+            } else if (Parent is UdpServer udpServer) {
+                if (Restricted && !udpServer.RestrictedMetadataKeys.Contains(key.ToLower()))
+                    udpServer.RestrictedMetadataKeys.Add(key.ToLower());
+                if (!Parent.Peers.ContainsKey(Identity.ID)) {
+                    Parent.Peers.AddOrUpdate(Identity.RemoteReady(Parent));
+                }
+                Parent.Peers[Identity.ID].SetMetaData(udpServer, key.ToLower(), value, Private);
+            } else if (_parentTypeName == "WebSocketServer") {
+                // Use reflection to locate the type and members
                 var wsServerType = Parent.GetType();
-                var wsServerAssembly = wsServerType.Assembly;
                 var restrictedKeysProp = wsServerType.GetProperty("RestrictedMetadataKeys");
 
                 if (restrictedKeysProp != null) {
@@ -1112,7 +1209,9 @@ namespace SocketJack.Net {
                 //Identity.SetMetaData(Parent, key.ToLower(), value, Private);
             } else if (Parent is TcpClient client) {
                 client.Send(new MetadataKeyValue() { Key = key.ToLower(), Value = value });
-            } else if (Parent.GetType().Name == "WebSocketClient") {
+            } else if (Parent is UdpClient udpClient) {
+                udpClient.Send(new MetadataKeyValue() { Key = key.ToLower(), Value = value });
+            } else if (_parentTypeName == "WebSocketClient") {
                 // Use reflection to resolve and invoke Send on Parent
                 var sendMethod = Parent.GetType().GetMethod("Send", new[] { typeof(object) });
                 if (sendMethod != null) {
@@ -1142,6 +1241,8 @@ namespace SocketJack.Net {
 
         public NetworkConnection(ISocket Parent, Socket Socket) {
             _Parent = Parent;
+            _parentTypeName = Parent.GetType().Name;
+            _isWebSocket = _parentTypeName == "WebSocketClient" || _parentTypeName == "WebSocketServer";
             if (Parent is TcpClient) {
                 SubscribePeerUpdate();
                 IsServer = false;

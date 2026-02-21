@@ -91,14 +91,14 @@ namespace SocketJack.Net.WebSockets {
         public NetworkConnection Connection { get; private set; }
         public string Name { get; set; } = "WebSocketServer";
         public bool IsListening => _isListening;
-        public ConcurrentDictionary<Guid, NetworkConnection> Clients { get; } = new ConcurrentDictionary<Guid, NetworkConnection>();
+        public ConcurrentDictionary<Guid, NetworkConnection> Clients { get; } = new();
         public NetworkOptions Options { get; set; } = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
         #endregion
 
         #region Internal
         protected internal bool _PeerToPeerInstance = false;
 
-        private ConcurrentDictionary<Guid, bool> _handshakeCompleted = new ConcurrentDictionary<Guid, bool>();
+        private ConcurrentDictionary<Guid, bool> _handshakeCompleted = new();
 
         private async Task HandleRawSocketClient(NetworkConnection connection) {
             if (connection._Stream == null) {
@@ -418,7 +418,9 @@ private NetworkConnection NewConnection(ref Socket handler) {
         public event LogOutputEventHandler LogOutput;
         public delegate void LogOutputEventHandler(string text);
 
+        #pragma warning disable CS0067 // Event is never used
         protected internal event PeerRefusedConnectionEventHandler PeerRefusedConnection;
+#pragma warning restore CS0067
         protected internal delegate void PeerRefusedConnectionEventHandler(ISocket sender, ConnectionRefusedArgs e);
 
         protected internal event PeerUpdateEventHandler PeerUpdate;
@@ -449,10 +451,14 @@ private NetworkConnection NewConnection(ref Socket handler) {
         public event PeerDisconnectedEventHandler PeerDisconnected;
         public delegate void PeerDisconnectedEventHandler(ISocket sender, Identifier Peer);
 
+        #pragma warning disable CS0067 // Event is never used
         protected internal event InternalPeerRedirectEventHandler InternalPeerRedirect;
+#pragma warning restore CS0067
         protected internal delegate void InternalPeerRedirectEventHandler(string Recipient, string Sender, object Obj, int BytesReceived);
 
+#pragma warning disable CS0067 // Event is never used
         protected internal event InternalReceiveEventEventHandler InternalReceiveEvent;
+#pragma warning restore CS0067
         protected internal delegate void InternalReceiveEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesReceived);
 
         protected internal event InternalReceivedByteCounterEventHandler InternalReceivedByteCounter;

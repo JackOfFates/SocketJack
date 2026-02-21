@@ -9,10 +9,11 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices.ComTypes;
+using System.Threading;
 using System.Threading.Tasks;
+#if WINDOWS
 using System.Windows;
-using System.Xml.Linq;
+#endif
 
 namespace SocketJack.Net {
 
@@ -321,22 +322,23 @@ namespace SocketJack.Net {
 #endif
         }
         protected internal void InvokeBytesPerSecondUpdate(NetworkConnection Connection) {
+            Connection.RecordBpsSample();
 #if UNITY
             MainThread.Run(() => {
-                BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondSent, Connection.BytesPerSecondReceived);
+                BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondReceived, Connection.BytesPerSecondSent);
             });
 #endif
 #if WINDOWS
             Application.Current.Dispatcher.Invoke(() => {
-                BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondSent, Connection.BytesPerSecondReceived);
+                BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondReceived, Connection.BytesPerSecondSent);
             });
 #endif
 #if NETSTANDARD1_0_OR_GREATER && !UNITY
-            BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondSent, Connection.BytesPerSecondReceived);
+            BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondReceived, Connection.BytesPerSecondSent);
 #endif
         }
         protected internal void InvokeOnError(NetworkConnection Connection, Exception e) {
-            LogFormat("[{0}] ERROR: {1}", new[] { Name + (Connection != null && Connection.Identity != null ? @"\" + Connection.Identity.ID.ToUpper() : @"\Null"), e.Message });
+            LogFormat("[{0}] ERROR: {1}", [Name + (Connection != null && Connection.Identity != null ? @"\" + Connection.Identity.ID.ToUpper() : @"\Null"), e.Message]);
             if (e.StackTrace != string.Empty) LogAsync(e.StackTrace);
 #if UNITY
             MainThread.Run(() => {
@@ -356,8 +358,7 @@ namespace SocketJack.Net {
 #endif
         }
         protected internal void InvokeAllCallbacks(IReceivedEventArgs e) {
-            if (TypeCallbacks.ContainsKey(e.Type)) {
-                var l = TypeCallbacks[e.Type];
+            if (TypeCallbacks.TryGetValue(e.Type, out var l)) {
                 for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
 #if UNITY
                     int index = i; // Capture the index for the lambda
@@ -377,9 +378,8 @@ namespace SocketJack.Net {
                 }
             }
         }
-        protected internal void InvokeAllCallbacks(Type Type, object obj, IReceivedEventArgs e) {
-            if (TypeCallbacks.ContainsKey(Type)) {
-                var l = TypeCallbacks[Type];
+        protected internal void InvokeAllCallbacks(Type Type, IReceivedEventArgs e) {
+            if (TypeCallbacks.TryGetValue(Type, out var l)) {
                 for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
 #if UNITY
                     int index = i; // Capture the index for the lambda
@@ -410,11 +410,11 @@ namespace SocketJack.Net {
         ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Servers { get => P2P_Servers; set => P2P_Servers = value; }
         ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Clients { get => P2P_Clients; set => P2P_Clients = value; }
 
-        protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new ConcurrentDictionary<string, PeerServer>();
-        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Servers = new ConcurrentDictionary<string, NetworkConnection>();
-        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Clients = new ConcurrentDictionary<string, NetworkConnection>();
-        protected internal ConcurrentDictionary<Guid, byte[]> Buffers = new ConcurrentDictionary<Guid, byte[]>();
-        protected internal Dictionary<Type, List<Action<IReceivedEventArgs>>> TypeCallbacks = new Dictionary<Type, List<Action<IReceivedEventArgs>>>();
+        protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Servers = new();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Clients = new();
+        protected internal ConcurrentDictionary<Guid, byte[]> Buffers = new();
+        protected internal Dictionary<Type, List<Action<IReceivedEventArgs>>> TypeCallbacks = new();
 
         void ISocket.HandleReceive(NetworkConnection connection, object obj, Type objType, int Length) {
             HandleReceive(connection, obj, objType, Length);
@@ -457,15 +457,15 @@ namespace SocketJack.Net {
                     }
                 case var case3 when case3 == typeof(Segment): {
                         Segment s = (Segment)obj;
-                        if (Segment.Cache.ContainsKey(s.SID)) {
-                            Segment.Cache[s.SID].Add(s);
+                        if (Segment.Cache.TryGetValue(s.SID, out var segmentList)) {
+                            segmentList.Add(s);
                             if (Segment.SegmentComplete(s)) {
                                 byte[] RebuiltSegments = Segment.Rebuild(s);
                                 try {
                                     var segObj = ((Wrapper)Options.Serializer.Deserialize(RebuiltSegments)).Unwrap(this);
                                     var segObjType = segObj.GetType();
-                                    var e = new ReceivedEventArgs<Segment>(this, Connection, segObj, RebuiltSegments.Count());
-                                    InternalReceiveEvent?.Invoke(Connection, segObjType, segObj, RebuiltSegments.Count());
+                                    var e = new ReceivedEventArgs<Segment>(this, Connection, segObj, RebuiltSegments.Length);
+                                    InternalReceiveEvent?.Invoke(Connection, segObjType, segObj, RebuiltSegments.Length);
                                     IReceivedEventArgs args = e;
                                     OnReceive?.Invoke(ref args);
                                     InvokeAllCallbacks(e);
@@ -474,7 +474,7 @@ namespace SocketJack.Net {
                                 }
                             }
                         } else {
-                            Segment.Cache.Add(s.SID, new List<Segment>() { s });
+                            Segment.Cache.Add(s.SID, new List<Segment> { s });
                         }
 
                         break;
@@ -490,18 +490,17 @@ namespace SocketJack.Net {
                             Type redirectType = Type.GetType(redirect.Type);
                             var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
                             var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
-                            if (!Peers.ContainsKey(Connection.Identity.ID)) return;
-                            var from = Peers[Connection.Identity.ID];
+                            if (!Peers.TryGetValue(Connection.Identity.ID, out var from)) return;
                             receivedEventArgs.From = from;
                             receivedEventArgs.Initialize(this, Connection, obj, Length);
-                            IReceivedEventArgs NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, obj, Length);
-                            NonGenericEventArgs.From = from;
+                            var NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, obj, Length) {
+                                From = from
+                            };
                             InvokeOnReceive(NonGenericEventArgs);
                             InvokeAllCallbacks(receivedEventArgs);
 
                             if (receivedEventArgs.IsPeerRedirect && !NonGenericEventArgs.CancelPeerRedirect && !receivedEventArgs.CancelPeerRedirect) {
-                                if (Peers.ContainsKey(redirect.Recipient)) {
-                                    Identifier rID = Peers[redirect.Recipient];
+                                if (Peers.TryGetValue(redirect.Recipient, out Identifier rID)) {
                                     Send(rID, redirect);
                                     //SendBroadcast(redirect, Connection);
                                 }
@@ -529,8 +528,9 @@ namespace SocketJack.Net {
 
                         var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
                         receivedEventArgs.Initialize(this, Connection, obj, Length);
-                        IReceivedEventArgs NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, obj, Length);
-                        OnReceive?.Invoke(ref NonGenericEventArgs);
+                        var NonGenericEventArgs = new ReceivedEventArgs<object>(this, Connection, obj, Length);
+                        IReceivedEventArgs nonGenericArgs = NonGenericEventArgs;
+                        OnReceive?.Invoke(ref nonGenericArgs);
                         InvokeAllCallbacks(receivedEventArgs);
                         break;
                     }
@@ -651,7 +651,7 @@ namespace SocketJack.Net {
         public virtual Stream Stream { get; set; }
         public virtual IPEndPoint EndPoint { get; set; }
 
-        public NetworkOptions Options = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
+        public NetworkOptions Options = NetworkOptions.NewDefault();
         NetworkOptions ISocket.Options { get => Options; set => Options = value; }
 
         /// <summary>
@@ -678,7 +678,7 @@ namespace SocketJack.Net {
                 return _InternalID;
             }
         }
-        private Guid _InternalID = Guid.NewGuid();
+        private readonly Guid _InternalID = Guid.NewGuid();
 
         /// <summary>
         /// True if sending or receiving.
@@ -744,12 +744,12 @@ namespace SocketJack.Net {
         /// <returns></returns>
         public bool PeerToPeerInstance { get; internal set; }
 
-        public bool isReceiving {
+        public bool IsReceiving {
             get {
                 return Connection != null && Connection.IsReceiving;
             }
         }
-        public bool isSending {
+        public bool IsSending {
             get {
                 return Connection != null && Connection.IsSending;
             }
@@ -764,6 +764,98 @@ namespace SocketJack.Net {
         bool ISocket.isDisposed { get => isDisposed; set => isDisposed = value; }
         bool ISocket.Connected { get => Connected; }
 
+        /// <summary>
+        /// Measured one-way latency in milliseconds (RTT / 2).
+        /// Updated automatically by the built-in ping loop.
+        /// </summary>
+        public long LatencyMs => Interlocked.Read(ref _LatencyMs);
+        public long _LatencyMs;
+
+        private CancellationTokenSource _pingCts;
+        private const int PingIntervalMs = 10000;
+
+        #endregion
+
+        #region Ping / Pong
+
+        /// <summary>
+        /// Override in subclasses to route the ping datagram through the correct send path.
+        /// Default implementation uses TCP-style <see cref="Send(NetworkConnection, object)"/>.
+        /// </summary>
+        protected virtual void SendPingInternal(object obj) {
+            if (Connection != null && Connected)
+                Send(Connection, obj);
+        }
+
+        /// <summary>
+        /// Starts a background loop that sends a <see cref="P2P.Ping"/> every 10 seconds
+        /// and registers a <see cref="P2P.Pong"/> callback to measure latency.
+        /// Called automatically by client types after a successful connection.
+        /// </summary>
+        protected void StartPingLoop() {
+            StopPingLoop();
+            RegisterPongCallback();
+
+            // Send first ping immediately so UDP servers discover this client
+            // before any broadcasts are sent.
+            if (Connected) {
+                try { SendPingInternal(new P2P.Ping { TimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }); }
+                catch { }
+            }
+
+            _pingCts = new CancellationTokenSource();
+            var token = _pingCts.Token;
+            Task.Run(async () => {
+                while (!token.IsCancellationRequested) {
+                    try {
+                        await Task.Delay(PingIntervalMs, token);
+                    } catch (TaskCanceledException) {
+                        break;
+                    }
+                    if (!Connected) continue;
+                    try {
+                        SendPingInternal(new P2P.Ping { TimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+                    } catch { }
+                }
+            });
+        }
+
+        /// <summary>
+        /// Stops the background ping loop.
+        /// </summary>
+        protected void StopPingLoop() {
+            if (_pingCts != null) {
+                _pingCts.Cancel();
+                _pingCts = null;
+            }
+        }
+
+        private bool _pongCallbackRegistered;
+
+        private void RegisterPongCallback() {
+            if (_pongCallbackRegistered) return;
+            _pongCallbackRegistered = true;
+            RegisterCallback<P2P.Pong>(e => {
+                if (e.Object != null) {
+                    var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    var rtt = now - e.Object.TimestampMs;
+                    if (rtt < 0) rtt = 0;
+                    Interlocked.Exchange(ref _LatencyMs, rtt / 2);
+                    ApplyLatencyScaling();
+                }
+            });
+        }
+
+        private void ApplyLatencyScaling() {
+            if (!Options.Chunking || !Options.ChunkingAutomaticLatencyScaling)
+                return;
+            var latency = LatencyMs;
+            // Minimum is the tick rate (1000/Fps) so flushes never outpace the
+            // send loop. Falls back to 100 ms when Fps is 0 (disabled).
+            var tickRate = Options.Timeout > 0 ? (int)Math.Ceiling(Options.Timeout) : 100;
+            var scaled = (int)Math.Max(tickRate, Math.Min(2000, latency * 2));
+            Options.ChunkingIntervalMs = scaled;
+        }
         #endregion
 
         #region Callbacks
@@ -775,11 +867,10 @@ namespace SocketJack.Net {
         public void RegisterCallback<T>(Action<ReceivedEventArgs<T>> Action) {
             Type Type = typeof(T);
             Options.Whitelist.Add(Type);
-            if (TypeCallbacks.ContainsKey(Type)) {
-                TypeCallbacks[Type].Add(e => Action((ReceivedEventArgs<T>)e));
-
+            if (TypeCallbacks.TryGetValue(Type, out var list)) {
+                list.Add(e => Action((ReceivedEventArgs<T>)e));
             } else {
-                var l = new List<Action<IReceivedEventArgs>>() {
+                var l = new List<Action<IReceivedEventArgs>> {
                     e => Action((ReceivedEventArgs<T>)e)
                 };
                 TypeCallbacks.Add(Type, l);
@@ -791,13 +882,13 @@ namespace SocketJack.Net {
         /// </summary>
         public void RemoveCallback<T>(Action<ReceivedEventArgs<T>> Action) {
             Type Type = typeof(T);
-            if (TypeCallbacks.ContainsKey(Type)) {
+            if (TypeCallbacks.TryGetValue(Type, out var list)) {
                 Action<IReceivedEventArgs> wrappedAction = e => Action((ReceivedEventArgs<T>)e);
-                TypeCallbacks[Type].Remove(wrappedAction);
-            }
-            if (TypeCallbacks[Type].Count == 0) {
-                Options.Whitelist.Remove(Type);
-                TypeCallbacks.Remove(Type);
+                list.Remove(wrappedAction);
+                if (list.Count == 0) {
+                    Options.Whitelist.Remove(Type);
+                    TypeCallbacks.Remove(Type);
+                }
             }
         }
 
@@ -820,6 +911,7 @@ namespace SocketJack.Net {
             if (!disposedValue) {
                 if (disposing) {
                     // TODO: dispose managed state (managed objects)
+                    StopPingLoop();
                     OnDisposing?.Invoke();
                     Buffers.Clear();
                 }

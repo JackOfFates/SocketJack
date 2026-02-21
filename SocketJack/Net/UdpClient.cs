@@ -258,7 +258,7 @@ namespace SocketJack.Net {
             var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(RedirectType);
             var receivedEventArgs = ((IReceivedEventArgs)Activator.CreateInstance(genericType));
             receivedEventArgs.Initialize(this, Connection, Obj, ReceivedBytes, Sender);
-            InvokeAllCallbacks(RedirectType, Obj, receivedEventArgs);
+            InvokeAllCallbacks(RedirectType, receivedEventArgs);
             InvokeOnReceive(new ReceivedEventArgs<object>(this, Connection, Obj, ReceivedBytes, Sender));
         }
 
@@ -432,6 +432,7 @@ namespace SocketJack.Net {
                     Options.AutoReconnect = true;
                 }
 
+                StartPingLoop();
                 OnConnected?.Invoke(new ConnectedEventArgs(this, Connection));
                 _Connecting = false;
                 return true;
@@ -461,6 +462,7 @@ namespace SocketJack.Net {
             if (_Connected) {
                 _CurrentHost = default;
                 _Connected = false;
+                StopPingLoop();
                 _receiveCts?.Cancel();
                 _sendCts?.Cancel();
                 _heartbeatCts?.Cancel();
@@ -494,6 +496,11 @@ namespace SocketJack.Net {
                 UdpConn.SendQueue.Enqueue(new UdpSendItem(processedBytes, _RemoteEndPoint));
                 try { UdpConn._SendSignal.Release(); } catch (ObjectDisposedException) { }
             }
+        }
+
+        /// <inheritdoc />
+        protected override void SendPingInternal(object obj) {
+            Send(obj);
         }
 
         /// <summary>
@@ -610,6 +617,14 @@ namespace SocketJack.Net {
                         UdpConn._ReceivedBytesPerSecond = UdpConn.ReceivedBytesCounter;
                         Interlocked.Exchange(ref UdpConn.SentBytesCounter, 0);
                         Interlocked.Exchange(ref UdpConn.ReceivedBytesCounter, 0);
+
+                        // Mirror onto the NetworkConnection so InvokeBytesPerSecondUpdate
+                        // reads the correct values (it reads from Connection, not UdpConn).
+                        if (Connection != null) {
+                            Connection._SentBytesPerSecond = UdpConn._SentBytesPerSecond;
+                            Connection._ReceivedBytesPerSecond = UdpConn._ReceivedBytesPerSecond;
+                        }
+
                         InvokeBytesPerSecondUpdate(Connection);
                     }
                 }

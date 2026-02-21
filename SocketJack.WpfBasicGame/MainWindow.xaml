@@ -5,9 +5,10 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:SocketJack.WpfBasicGame"
         mc:Ignorable="d"
-        Title="Using SocketJack to make a basic game in WPF" Height="690" Width="920">
+        Title="Using SocketJack to make a basic game in WPF" Height="761" Width="971">
     <Grid Margin="12">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -22,6 +23,7 @@
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
                     <RadioButton x:Name="HostRadio" Content="Host" IsChecked="True" Margin="0,0,10,0"/>
                     <RadioButton x:Name="JoinRadio" Content="Join"/>
+                    <CheckBox x:Name="UdpCheckBox" VerticalAlignment="Center" Content="UDP" IsChecked="True" Margin="10,0,0,0"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
@@ -48,7 +50,21 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="2">
+        <Border Grid.Row="2" Margin="0,0,0,10" Padding="8" BorderThickness="1" BorderBrush="#33000000" CornerRadius="6">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock FontWeight="SemiBold" Text="Metrics" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <TextBlock Text="Upload:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                <TextBlock x:Name="UploadSpeedText" Text="--" VerticalAlignment="Center" Width="90"/>
+                <TextBlock Text="Download:" VerticalAlignment="Center" Margin="10,0,4,0"/>
+                <TextBlock x:Name="DownloadSpeedText" Text="--" VerticalAlignment="Center" Width="90"/>
+                <TextBlock Text="Latency:" VerticalAlignment="Center" Margin="10,0,4,0"/>
+                <TextBlock x:Name="LatencyText" Text="--" VerticalAlignment="Center" Width="60"/>
+                <TextBlock Text="Ping:" VerticalAlignment="Center" Margin="10,0,4,0"/>
+                <TextBlock x:Name="PingText" Text="--" VerticalAlignment="Center" Width="60"/>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition/>
                 <ColumnDefinition Width="Auto" MinWidth="350"/>
@@ -72,7 +88,8 @@
                             Foreground="White"
                             BorderBrush="#CC000000"
                             BorderThickness="2"
-                            Click="TargetButton_Click"
+                            Cursor="Arrow"
+                            PreviewMouseLeftButtonDown="TargetButton_MouseDown"
                             Visibility="Collapsed"
                             Panel.ZIndex="2"/>
                 </Canvas>
@@ -110,7 +127,7 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="3" Margin="0,10,0,0" Foreground="#99000000"
+        <TextBlock Grid.Row="4" Margin="0,10,0,0" Foreground="#99000000"
                    Text="Tip: Click Start Round. Click the target as fast as you can." />
     </Grid>
 </Window>

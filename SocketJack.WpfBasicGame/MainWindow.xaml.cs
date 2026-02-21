@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using System.Collections.Generic;
 using System.Linq;
+using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using SocketJack.WPFController;
 
@@ -58,6 +59,7 @@ public partial class MainWindow : Window {
     private DateTime _nextLocalCursorSendAt = DateTime.MinValue;
 
     private readonly DispatcherTimer _roundTimer;
+    private readonly DispatcherTimer _metricsTimer;
     private readonly Random _rng = new();
 
     private int _selfScore;
@@ -114,10 +116,12 @@ public partial class MainWindow : Window {
         InitializeComponent();
         _roundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _roundTimer.Tick += (_, _) => { /* Timer no longer calls MoveTarget */ };
+        _metricsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _metricsTimer.Tick += (_, _) => UpdateMetricsUi();
         BotEnabledCheck.IsChecked = false;
         _cursorRenderTimer = new DispatcherTimer { Interval = CursorRenderInterval };
         _cursorRenderTimer.Tick += (_, _) => RenderCursors();
-        init();
+        Init();
         PositionSideBySide(isHost: true);
         StartButton_Click(null, null);
     }
@@ -128,10 +132,12 @@ public partial class MainWindow : Window {
         JoinRadio.IsChecked = true;
         _roundTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _roundTimer.Tick += (_, _) => { /* Timer no longer calls MoveTarget */ };
+        _metricsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _metricsTimer.Tick += (_, _) => UpdateMetricsUi();
 
         _cursorRenderTimer = new DispatcherTimer { Interval = CursorRenderInterval };
         _cursorRenderTimer.Tick += (_, _) => RenderCursors();
-        init();
+        Init();
         PositionSideBySide(isHost: false);
         StartButton_Click(null, null);
     }
@@ -164,7 +170,7 @@ public partial class MainWindow : Window {
         }
     }
 
-    public void init() {
+    public void Init() {
         UpdateScoreboardUi();
         UpdateStartButtonUi();
         UpdateShareButtonUi();
@@ -186,7 +192,7 @@ public partial class MainWindow : Window {
 
     }
 
-    public void ShareToggleButton_Click(object sender, RoutedEventArgs e) {
+    public void ShareToggleButton_Click(object? sender, RoutedEventArgs? e) {
         if (_shareHandle != null) {
             StopShareInternal();
             UpdateShareButtonUi();
@@ -196,6 +202,11 @@ public partial class MainWindow : Window {
         try {
             if (_client == null || _client.IsConnected != true) {
                 Log("Connect first.");
+                return;
+            }
+
+            if (_client.IsUdp || _client.RawTcpClient == null) {
+                Log("Control sharing is only available over TCP.");
                 return;
             }
 
@@ -225,7 +236,7 @@ public partial class MainWindow : Window {
             }
 
             StopShareInternal();
-            _shareHandle = this.Share(_client.RawClient, peer, fps: 10);
+            _shareHandle = this.Share(_client.RawTcpClient, peer, fps: 10);
             UpdateShareButtonUi();
         } catch (Exception ex) {
             Log(ex.Message);
@@ -302,6 +313,7 @@ public partial class MainWindow : Window {
 
         var rng = new Random();
         var difficulty = GetSelectedBotDifficulty();
+        var botUseUdp = _client?.IsUdp == true;
         for (var i = current + 1; i <= desired; i++) {
             var traits = new NpcBotClient.BotTraits {
                 SpeedMultiplier = 0.7 + (rng.NextDouble() * 1.6),
@@ -311,7 +323,7 @@ public partial class MainWindow : Window {
                 EffectiveClickPaddingPx = rng.Next(3, 14)
             };
 
-            var bot = new NpcBotClient(difficulty, traits, name: $"NpcBot-{i:000}");
+            var bot = new NpcBotClient(difficulty, traits, name: $"NpcBot-{i:000}", useUdp: botUseUdp);
             bot.Log += t => Dispatcher.BeginInvoke(() => Log($"[bot {i:000}] {t}"), DispatcherPriority.Background);
             _bots.Add(bot);
             _botLoop.Add(bot);
@@ -330,10 +342,6 @@ public partial class MainWindow : Window {
     }
 
     private void GameCanvas_MouseMove(object sender, MouseEventArgs e) {
-        // Always use a visible cursor even when hovering the target button.
-        if (Mouse.OverrideCursor != Cursors.Arrow)
-            Mouse.OverrideCursor = Cursors.Arrow;
-
         var p = e.GetPosition(GameCanvas);
         _lastLocalCursor = p;
         _pendingLocalCursor = p;
@@ -357,6 +365,7 @@ public partial class MainWindow : Window {
         if (botCount <= 0)
             return;
         var difficulty = GetSelectedBotDifficulty();
+        var botUseUdp = _client?.IsUdp == true;
 
         for (var i = 1; i <= botCount; i++) {
             // Randomize traits so bots don't all behave identically.
@@ -368,7 +377,7 @@ public partial class MainWindow : Window {
                 EffectiveClickPaddingPx = rng.Next(3, 14)
             };
 
-            var bot = new NpcBotClient(difficulty, traits, name: $"NpcBot-{i:000}");
+            var bot = new NpcBotClient(difficulty, traits, name: $"NpcBot-{i:000}", useUdp: botUseUdp);
             bot.Log += t => Dispatcher.BeginInvoke(() => Log($"[bot {i:000}] {t}"), DispatcherPriority.Background);
             _bots.Add(bot);
             _botLoop.Add(bot);
@@ -403,12 +412,17 @@ public partial class MainWindow : Window {
         _botLoop.Stop();
     }
 
-    private async void StartButton_Click(object sender, RoutedEventArgs e) {
+    private async void StartButton_Click(object? sender, RoutedEventArgs? e) {
         // The button toggles between starting and stopping a session.
         if (_roundRunning) {
             StopSession(resetUiOnly: false);
             return;
         }
+
+        // Always tear down any leftover resources from a previous session
+        // (e.g. after EndRound which stops the round but keeps the
+        // server/client alive). This releases the port for reuse.
+        StopSession(resetUiOnly: false);
 
         StartButton.IsEnabled = false;
         try {
@@ -422,6 +436,8 @@ public partial class MainWindow : Window {
                 Log("Invalid port.");
                 return;
             }
+
+            var useUdp = UdpCheckBox.IsChecked == true;
 
             // Always reset state (but keep UI visible)
             _roundTimer.Stop();
@@ -440,25 +456,27 @@ public partial class MainWindow : Window {
             if (HostRadio.IsChecked == true) {
                 // Host mode: start a local server and connect to it.
                 // Host always runs a local server and connects locally so a single instance can play.
-                _server = new SocketJackTcpGameServer(port);
+                _server = new SocketJackTcpGameServer(port, useUdp: useUdp);
                 //_server.Log += t => Dispatcher.Invoke(() => Log($"[server] {t}"));
                 if (!_server.Start()) {
                     Log($"Failed to listen on port {port}.");
                     return;
                 }
-                Log($"Hosting on 127.0.0.1:{port}");
+                Log($"Hosting on 127.0.0.1:{port} ({(useUdp ? "UDP" : "TCP")})");
                 host = "127.0.0.1";
             }
 
-            _client = new SocketJackTcpGameClient();
+            _client = new SocketJackTcpGameClient(useUdp: useUdp);
 
             // Wire network events onto the UI thread.
-            _client.Log += t => Dispatcher.Invoke(() => Log($"[client] {t}"));
-            _client.StartRoundReceived += msg => Dispatcher.Invoke(() => HandleStartRound(msg));
-            _client.TargetStateReceived += msg => Dispatcher.Invoke(() => HandleTargetState(msg));
-            _client.PointsUpdateReceived += msg => Dispatcher.Invoke(() => HandlePointsUpdate(msg));
-            _client.CursorStateReceived += msg => Dispatcher.BeginInvoke(() => HandleCursorState(msg), DispatcherPriority.Background);
-            _client.PeersChanged += () => Dispatcher.Invoke(UpdateScoreboardUi);
+            _client.Log += t => Dispatcher.BeginInvoke(() => Log($"[client] {t}"));
+            _client.StartRoundReceived += msg => Dispatcher.BeginInvoke(() => HandleStartRound(msg));
+            _client.TargetStateReceived += msg => Dispatcher.BeginInvoke(() => HandleTargetState(msg));
+            _client.PointsUpdateReceived += msg => Dispatcher.BeginInvoke(() => HandlePointsUpdate(msg));
+            // HandleCursorState is thread-safe (lock-protected dictionary write only) —
+            // run it directly on the network thread to avoid flooding the dispatcher.
+            _client.CursorStateReceived += HandleCursorState;
+            _client.PeersChanged += () => Dispatcher.BeginInvoke(UpdateScoreboardUi);
 
             // Capture remote click coordinates before the library dispatches the
             // Click event. The normalized position is stored so TargetButton_Click
@@ -481,7 +499,9 @@ public partial class MainWindow : Window {
             Log("Connected.");
 
             // Viewer: receive frames + forward mouse moves/clicks back to sharer.
-            _shareViewer = new ControlShareViewer(_client.RawClient, SharedImage);
+            // Control sharing only works over TCP.
+            if (!useUdp && _client.RawTcpClient != null)
+                _shareViewer = new ControlShareViewer(_client.RawTcpClient, SharedImage);
 
             _sessionHost = host;
             _sessionPort = port;
@@ -489,6 +509,7 @@ public partial class MainWindow : Window {
             _selfPlayerId = _client.LocalPlayerId;
 
             _cursorRenderTimer.Start();
+            _metricsTimer.Start();
 
             // In join mode, we just connect and wait for host to start the round.
             if (HostRadio.IsChecked == true) {
@@ -496,8 +517,14 @@ public partial class MainWindow : Window {
                 RoundStatusText.Text = "Starting bot...";
                 await EnsureBotsConnectedAsync(host, port);
 
+                // UDP is connectionless; yield so the server can process the
+                // initial ping datagrams and register all clients before the
+                // round broadcast is sent.
+                if (useUdp)
+                    await Task.Delay(100);
+
                 RoundStatusText.Text = "Starting round...";
-                const int roundLengthMs = 15000;
+                const int roundLengthMs = 150000;
                 _server?.StartRound(roundLengthMs);
             } else {
                 RoundStatusText.Text = "Connected (waiting for host)";
@@ -513,7 +540,7 @@ public partial class MainWindow : Window {
         }
     }
 
-    private void TargetButton_Click(object sender, RoutedEventArgs e) {
+    private void TargetButton_MouseDown(object sender, MouseButtonEventArgs e) {
         if (_client?.IsConnected != true)
             return;
 
@@ -526,7 +553,7 @@ public partial class MainWindow : Window {
         int clickX;
         int clickY;
 
-        var pInTarget = Mouse.GetPosition(TargetButton);
+        var pInTarget = e.GetPosition(TargetButton);
         var isLocal = pInTarget.X >= 0 && pInTarget.X <= TargetButton.ActualWidth &&
                       pInTarget.Y >= 0 && pInTarget.Y <= TargetButton.ActualHeight;
 
@@ -813,9 +840,10 @@ public partial class MainWindow : Window {
     }
 
     private void EndRound() {
-        if (!_roundTimer.IsEnabled)
+        if (!_roundRunning)
             return;
 
+        _roundRunning = false;
         _roundTimer.Stop();
         TargetButton.Visibility = Visibility.Collapsed;
         foreach (var b in _bots)
@@ -828,12 +856,14 @@ public partial class MainWindow : Window {
 
         RoundStatusText.Text = $"Round over: {result}";
         Log($"Round over. You={_selfScore}, Opponent={_otherScore}.");
+        UpdateStartButtonUi();
     }
 
     private void StopSession(bool resetUiOnly = false) {
         // Centralized cleanup for both user-requested stop and error paths.
         _roundTimer.Stop();
         _cursorRenderTimer.Stop();
+        _metricsTimer.Stop();
         TargetButton.Visibility = Visibility.Collapsed;
         StopShareInternal();
         StopAndDisposeBots();
@@ -942,11 +972,11 @@ public partial class MainWindow : Window {
         foreach (var p in peers) {
             var idx = 0;
             if (p.Metadata != null && p.Metadata.TryGetValue("playerindex", out var idxText))
-                int.TryParse(idxText, out idx);
+                _ = int.TryParse(idxText, out idx);
 
             var pts = 0;
             if (p.Metadata != null && p.Metadata.TryGetValue("points", out var ptsText))
-                int.TryParse(ptsText, out pts);
+                _ = int.TryParse(ptsText, out pts);
 
             if (idx <= 0)
                 continue;
@@ -968,14 +998,14 @@ public partial class MainWindow : Window {
                     continue;
 
                 if (p.Metadata != null && p.Metadata.TryGetValue("points", out var ptsText))
-                    int.TryParse(ptsText, out _selfPoints);
+                    _ = int.TryParse(ptsText, out _selfPoints);
 
                 break;
             }
 
             var firstOther = peers.FirstOrDefault(p => p.ID != selfId);
             if (firstOther != null && firstOther.Metadata != null && firstOther.Metadata.TryGetValue("points", out var otherPtsText))
-                int.TryParse(otherPtsText, out _otherPoints);
+                _ = int.TryParse(otherPtsText, out _otherPoints);
         }
     }
 
@@ -986,6 +1016,26 @@ public partial class MainWindow : Window {
 
         _lastTargetTopLeft = new Point(x, y);
         _lastTargetCenter = new Point(x + TargetButton.Width / 2.0, y + TargetButton.Height / 2.0);
+    }
+
+    private void UpdateMetricsUi() {
+        if (_client == null || _client.IsConnected != true) {
+            UploadSpeedText.Text = "--";
+            DownloadSpeedText.Text = "--";
+            LatencyText.Text = "--";
+            PingText.Text = "--";
+            return;
+        }
+
+        var up = _client.UploadBytesPerSecond;
+        var down = _client.DownloadBytesPerSecond;
+        var latency = _client.LatencyMs;
+        var ping = latency * 2;
+
+        UploadSpeedText.Text = ((long)up).ByteToString(1) + "/s";
+        DownloadSpeedText.Text = ((long)down).ByteToString(1) + "/s";
+        LatencyText.Text = latency > 0 ? $"{latency} ms" : "--";
+        PingText.Text = ping > 0 ? $"{ping} ms" : "--";
     }
 
     private void Log(string text) {

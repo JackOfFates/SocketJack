@@ -41,10 +41,10 @@ namespace NSpeex
 	/// </summary>
     internal class Ltp3Tap : Ltp
 	{
-		private float[] gain;
-		private int[] gain_cdbk;
-		private int gain_bits;
-		private int pitch_bits;
+		private readonly float[] gain;
+		private readonly int[] gain_cdbk;
+		private readonly int gain_bits;
+		private readonly int pitch_bits;
 		private float[][] e;
 
 		public Ltp3Tap(int[] gain_cdbk_0, int gain_bits_1, int pitch_bits_2)
@@ -316,6 +316,7 @@ namespace NSpeex
 					 * If true, force "safe" pitch values to handle packet loss
 					 * better
 					 */
+#pragma warning disable CS0162 // Unreachable code detected
 					if (false)
 					{
 						float tot = Math.Abs(gain_cdbk[ptr + 1]);
@@ -326,6 +327,7 @@ namespace NSpeex
 						if (tot > 1)
 							continue;
 					}
+#pragma warning restore CS0162
 
 					if (sum > best_sum || i == 0)
 					{

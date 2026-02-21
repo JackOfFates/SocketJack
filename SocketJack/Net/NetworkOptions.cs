@@ -1,4 +1,5 @@
 ﻿using SocketJack.Compression;
+using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using SocketJack.Serialization.Json;
@@ -19,6 +20,10 @@ namespace SocketJack.Net {
     public class NetworkOptions {
 
         public static NetworkOptions DefaultOptions = new NetworkOptions();
+
+        public static NetworkOptions NewDefault() {
+            return DefaultOptions.Clone<NetworkOptions>();
+        }
 
         /// <summary>
         /// Serializer for both <see langword="TcpClient"/> and <see langword="TcpServer"/>.
@@ -207,6 +212,14 @@ namespace SocketJack.Net {
         public int ChunkingIntervalMs { get; set; } = 1000;
 
         /// <summary>
+        /// When <see langword="true"/>, the library automatically adjusts <see cref="ChunkingIntervalMs"/>
+        /// based on measured round-trip latency so chunk flushes stay proportional to network delay.
+        /// <para>Requires the built-in ping loop to be active (client-side only).</para>
+        /// <para>Default is <see langword="false"/>.</para>
+        /// </summary>
+        public bool ChunkingAutomaticLatencyScaling { get; set; } = false;
+
+        /// <summary>
         /// Gets or sets the frame rate, in frames per second, for processing operations.
         /// </summary>
         /// <remarks>Setting this property adjusts the timing interval used for frame updates. The value
@@ -225,7 +238,7 @@ namespace SocketJack.Net {
             }
         }
         private int _Fps = 0;
-        public double timeout {
+        public double Timeout {
             get { return _timeout; }
         }
         private double _timeout = 0;
@@ -238,6 +251,8 @@ namespace SocketJack.Net {
             typeof(MetadataKeyValue),
             typeof(PeerAction),
             //typeof(PingObject), Deprecated
+            typeof(Ping),
+            typeof(Pong),
             typeof(Identifier),
             typeof(Identifier[]),
             typeof(PeerRedirect),

@@ -274,11 +274,16 @@ namespace SocketJack.Net {
                 }
             }
         }
+
+        private void OnPingReceived(ReceivedEventArgs<P2P.Ping> e) {
+            if (e.Object == null || e.Connection == null) return;
+            Send(e.Connection, new P2P.Pong { TimestampMs = e.Object.TimestampMs });
+        }
         #endregion
 
         #region Private/Internal
 
-        private Dictionary<string, List<PeerServer>> PeerServers = new Dictionary<string, List<PeerServer>>();
+        private Dictionary<string, List<PeerServer>> PeerServers = new();
         private bool DelayListen = false;
         protected internal int ActiveClients = 0;
         protected internal int PendingConnections = 0;
@@ -407,6 +412,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
             BytesPerSecondUpdate += TcpServer_BytesPerSecondUpdate;
             ClientDisconnected += TcpServer_OnClientDisconnected;
             RegisterCallback(new Action<ReceivedEventArgs<MetadataKeyValue>>(OnReceived_MetadataKeyValue));
+            RegisterCallback<P2P.Ping>(OnPingReceived);
         }
 
         /// <summary>
@@ -430,6 +436,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
             BytesPerSecondUpdate += TcpServer_BytesPerSecondUpdate;
             ClientDisconnected += TcpServer_OnClientDisconnected;
             RegisterCallback(new Action<ReceivedEventArgs<MetadataKeyValue>>(OnReceived_MetadataKeyValue));
+            RegisterCallback<P2P.Ping>(OnPingReceived);
         }
 
         /// <summary>

@@ -9,7 +9,9 @@ namespace NSpeex
         public int FrameSize { get; private set; }
 
 
-        private byte[] bytes;
+        #pragma warning disable CS0169 // Field is never used
+                private byte[] bytes;
+        #pragma warning restore CS0169
 
         public SpeexPacket(int framePerPacket)
         {

@@ -248,10 +248,12 @@ namespace SocketJack.Net {
         private string LastHost;
         private int LastPort;
         private bool DelayConnect;
+#pragma warning disable CS0649 // Field is never assigned to
         private string DelayHost;
         private int DelayPort;
+#pragma warning restore CS0649
         private void DelayDelegate(int MTU, IPAddress LocalIP) => ConnectDelayed(DelayHost, DelayPort);
-        protected internal static ConcurrentDictionary<string, IPEndPoint> CachedHosts = new ConcurrentDictionary<string, IPEndPoint>();
+        protected internal static ConcurrentDictionary<string, IPEndPoint> CachedHosts = new();
 
         private async void ConnectDelayed(string Host, int Port) {
             if (DelayConnect) {
@@ -295,6 +297,7 @@ namespace SocketJack.Net {
                         Options.AutoReconnect = true;
                     }
                     Connection.EndPoint = (IPEndPoint)Socket.RemoteEndPoint;
+                    StartPingLoop();
                     OnConnected?.Invoke(new ConnectedEventArgs(this, Connection));
                     return true;
                 }
@@ -439,7 +442,7 @@ namespace SocketJack.Net {
             //InvokeOnReceive(receivedEventArgs);
 
 
-            InvokeAllCallbacks(RedirectType, Obj, receivedEventArgs);
+            InvokeAllCallbacks(RedirectType, receivedEventArgs);
             InvokeOnReceive(new ReceivedEventArgs<object>(this, Connection, Obj, ReceivedBytes, Sender));
         }
         private async void TcpClient_OnDisconnected(DisconnectedEventArgs args) {
@@ -495,7 +498,7 @@ namespace SocketJack.Net {
         /// <param name="Timeout">Timeout in milliseconds.</param>
         /// <returns>True if Port is Open, False if Closed.</returns>
         public static async Task<bool> CheckPort(string Host, int Port, int Timeout = 500) {
-            NetworkOptions opts = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
+            NetworkOptions opts = NetworkOptions.NewDefault();
             opts.ConnectionTimeout = TimeSpan.FromMilliseconds(Timeout);
             var PortChecker = new TcpClient(opts, "PortChecker");
             var success = await PortChecker.Connect(Host, Port);
@@ -637,6 +640,7 @@ namespace SocketJack.Net {
             if (Connected) {
                 _CurrentHost = default;
                 _Connected = false;
+                StopPingLoop();
                 CloseConnection(Connection, DisconnectionReason.LocalSocketClosed);
                 GC.Collect();
                 GC.WaitForPendingFinalizers();

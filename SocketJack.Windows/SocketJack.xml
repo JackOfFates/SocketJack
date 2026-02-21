@@ -315,6 +315,30 @@
             <para>Required.</para>
             </summary>
         </member>
+        <member name="P:SocketJack.Net.NetworkBase.LatencyMs">
+            <summary>
+            Measured one-way latency in milliseconds (RTT / 2).
+            Updated automatically by the built-in ping loop.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.SendPingInternal(System.Object)">
+            <summary>
+            Override in subclasses to route the ping datagram through the correct send path.
+            Default implementation uses TCP-style <see cref="M:SocketJack.Net.NetworkBase.Send(SocketJack.Net.NetworkConnection,System.Object)"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.StartPingLoop">
+            <summary>
+            Starts a background loop that sends a <see cref="T:SocketJack.Net.P2P.Ping"/> every 10 seconds
+            and registers a <see cref="T:SocketJack.Net.P2P.Pong"/> callback to measure latency.
+            Called automatically by client types after a successful connection.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.StopPingLoop">
+            <summary>
+            Stops the background ping loop.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.NetworkBase.RegisterCallback``1(System.Action{SocketJack.Net.ReceivedEventArgs{``0}})">
             <summary>
             <para>Registers a type callback using generic types.</para>
@@ -373,12 +397,12 @@
         </member>
         <member name="P:SocketJack.Net.NetworkConnection.BytesPerSecondSent">
             <summary>
-            Bytes per second sent on this connection.
+            Bytes per second sent on this connection (rolling average over the last 10 seconds).
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkConnection.BytesPerSecondReceived">
             <summary>
-            Bytes per second received on this connection.
+            Bytes per second received on this connection (rolling average over the last 10 seconds).
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkConnection.Identity">
@@ -416,6 +440,14 @@
         <member name="P:SocketJack.Net.NetworkConnection.Closing">
             <summary>
             True if the connection is closing.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.AdjustThreadPool(System.Int32)">
+            <summary>
+            Adjusts <see cref="T:System.Threading.ThreadPool"/> minimum threads so worker/IO capacity
+            scales with the number of active connections.  Without this, the default
+            pool ramp-up (~1 thread per 500 ms) causes server-side deserialization
+            and callback dispatch to fall behind under heavy bot load.
             </summary>
         </member>
         <member name="F:SocketJack.Net.NetworkConnection.IsServer">
@@ -456,7 +488,17 @@
             <param name="Recipient"></param>
             <param name="Obj"></param>
         </member>
-        <!-- Badly formed XML comment ignored for member "M:SocketJack.Net.NetworkConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)" -->
+        <member name="M:SocketJack.Net.NetworkConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)">
+            <summary>
+            Set metadata for the connection serialized with Json.
+            <para>WARNING: This information will be sent to all connected clients.</para>
+            <para>Set the `Private` <see langword="bool"/> parameter to <see langword="true"/> to retain private metadata only on server.</para>
+            <paramref name="key">Metadata Key.</paramref>
+            <paramref name="value">Metadata Value.</paramref>
+            <paramref name="Private"><see langword="true"/> to keep the metadata only on server; <see langword="false"/> shares with all peers.</paramref>
+            <paramref name="Restricted"><see langword="true"/> to restrict the client from updating the metadata value.</paramref>
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.NetworkConnection.GetMetaData(System.String,System.Boolean,System.Boolean)">
             <summary>
             Get metadata value by key for the connection.
@@ -620,6 +662,14 @@
             <summary>
             The interval in milliseconds between chunked flushes when <see cref="P:SocketJack.Net.NetworkOptions.Chunking"/> is enabled.
             <para>Default is 1000 ms (1 second).</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.ChunkingAutomaticLatencyScaling">
+            <summary>
+            When <see langword="true"/>, the library automatically adjusts <see cref="P:SocketJack.Net.NetworkOptions.ChunkingIntervalMs"/>
+            based on measured round-trip latency so chunk flushes stay proportional to network delay.
+            <para>Requires the built-in ping loop to be active (client-side only).</para>
+            <para>Default is <see langword="false"/>.</para>
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.Fps">
@@ -891,6 +941,26 @@
             </summary>
             <returns>new TcpClient</returns>
         </member>
+        <member name="T:SocketJack.Net.P2P.Ping">
+            <summary>
+            Latency probe sent by clients. The server echoes it back as a <see cref="T:SocketJack.Net.P2P.Pong"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.P2P.Ping.TimestampMs">
+            <summary>
+            Unix-epoch timestamp in milliseconds set by the sender.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.P2P.Pong">
+            <summary>
+            Latency probe response sent by the server in reply to a <see cref="T:SocketJack.Net.P2P.Ping"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.P2P.Pong.TimestampMs">
+            <summary>
+            The original timestamp from the <see cref="T:SocketJack.Net.P2P.Ping"/> that triggered this response.
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.TcpClient">
             <summary>
             Multithreaded TCP Client.
@@ -1149,6 +1219,295 @@
             <param name="Obj">Serializable Object to send to the client.</param>
             <param name="Except">The socket to exclude.</param>
             <remarks></remarks>
+        </member>
+        <member name="T:SocketJack.Net.UdpClient">
+            <summary>
+            Multithreaded UDP Client.
+            Modeled after TcpClient but uses connectionless UDP datagrams.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpClient.Name">
+            <summary>
+            (Optional) Name used for logging purposes.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpClient.Peers">
+            <summary>
+            Connected clients on the Server. (Includes your connection)
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.UdpClient.OnConnected">
+            <summary>
+            Fired when connected (bound and remote endpoint set) to the remote server.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.UdpClient.OnDisconnected">
+            <summary>
+            Fired when disconnected from the remote server.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.UdpClient.ConnectionFailed">
+            <summary>
+            Fired when connecting takes longer than ConnectionTimeout timespan.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.UdpClient.PeerMetaDataChanged">
+            <summary>
+            Fired when a user's metadata changes.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.UdpClient.OnIdentified">
+            <summary>
+            Fired when the local client is identified.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of UdpClient.
+            <para>Uses System.Text.Json as the default serializer.</para>
+            </summary>
+            <param name="Name">Name used for logging.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.#ctor(SocketJack.Net.NetworkOptions,System.String)">
+            <summary>
+            Initializes a new instance of UdpClient.
+            </summary>
+            <param name="Options">NetworkOptions for configuration.</param>
+            <param name="Name">Name used for logging.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.Connect(System.String,System.Int32)">
+            <summary>
+            Connect to a remote UDP server.
+            <para>Since UDP is connectionless, this binds the local socket and sets the remote endpoint.</para>
+            </summary>
+            <param name="Host">The host to send datagrams to.</param>
+            <param name="Port">The port the host uses.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.Reconnect">
+            <summary>
+            Attempt to connect to the last host and port.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.Disconnect">
+            <summary>
+            Disconnect from the server.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.Send(System.Object)">
+            <summary>
+            Send an object to the server as a UDP datagram.
+            </summary>
+            <param name="Obj">An object.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.SendPingInternal(System.Object)">
+            <inheritdoc />
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.Send(SocketJack.Net.P2P.Identifier,System.Object)">
+            <summary>
+            Send an object to a Remote Client on the server via peer redirect.
+            <para>This will <see langword="NOT"/> expose your remote IP.</para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.SendPeerBroadcast(System.Object)">
+            <summary>
+            Send an object to all Remote Clients on the server via peer broadcast.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.UdpConnection">
+            <summary>
+            Represents a UDP connection endpoint with send/receive capabilities.
+            Modeled after TcpConnection but adapted for connectionless UDP datagrams.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Socket">
+            <summary>
+            The socket associated to the connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Stream">
+            <summary>
+            UDP is connectionless, so Stream is not used. Always returns null.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Compressed">
+            <summary>
+            Whether or not data is compressed.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.EndPoint">
+            <summary>
+            The remote endpoint of the connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.ID">
+            <summary>
+            Unique identifier for this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Parent">
+            <summary>
+            Parent of this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Active">
+            <summary>
+            True if connection sending or receiving.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.BytesPerSecondSent">
+            <summary>
+            Bytes per second sent on this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.BytesPerSecondReceived">
+            <summary>
+            Bytes per second received on this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Identity">
+            <summary>
+            Remote Peer identifier for peer to peer interactions.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.IsReceiving">
+            <summary>
+            True if the connection is receiving data.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.IsSending">
+            <summary>
+            True if the connection is sending data.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Closed">
+            <summary>
+            True if the connection is closed.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpConnection.Closing">
+            <summary>
+            True if the connection is closing.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.UdpConnection.MaxDatagramSize">
+            <summary>
+            Maximum safe UDP payload size to avoid IP fragmentation.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.UdpConnection.IsServer">
+            <summary>
+            <see langword="True"/> if created by a UdpServer.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpConnection.SendLocalIdentity">
+            <summary>
+            Sends the remote client their remote Identity.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpConnection.Send(System.Object)">
+            <summary>
+            Queue a datagram for sending to this connection's endpoint.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)">
+            <summary>
+            Set metadata for the connection.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.UdpSendItem">
+            <summary>
+            Represents a queued UDP send operation.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.UdpServer">
+            <summary>
+            Multithreaded UDP Server.
+            Modeled after TcpServer but uses connectionless UDP datagrams.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpServer.Name">
+            <summary>
+            (Optional) Name used for logging purposes.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UdpServer.Clients">
+            <summary>
+            Connected clients tracked by their endpoint.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.UdpServer.RestrictedMetadataKeys">
+            <summary>
+            Stop the client from updating metadata keys that are restricted, such as `Username`.
+            <para>Not case sensitive.</para>
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.UdpServer._clientLastActivity">
+            <summary>
+            Track last activity time per client endpoint.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.UdpServer._clientTcpConnections">
+            <summary>
+            Map from client endpoint key to their TcpConnection (for HandleReceive compatibility).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.#ctor(System.Int32,System.String)">
+            <summary>
+            Initializes a new instance of UdpServer.
+            <para>Uses System.Text.Json as the default serializer.</para>
+            </summary>
+            <param name="Port">Socket Listen Port.</param>
+            <param name="Name">Name used for Logging.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.#ctor(SocketJack.Net.NetworkOptions,System.Int32,System.String)">
+            <summary>
+            Initializes a new instance of UdpServer.
+            </summary>
+            <param name="Options">NetworkOptions for configuration.</param>
+            <param name="Port">Socket Listen Port.</param>
+            <param name="Name">Name used for Logging.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.Listen">
+            <summary>
+            Starts listening on the specified Port for UDP datagrams.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.StopListening">
+            <summary>
+            Stops listening.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.SendTo(SocketJack.Net.UdpConnection,System.Object)">
+            <summary>
+            Sends an object to a specific UDP client.
+            </summary>
+            <param name="Client">The UdpConnection representing the client.</param>
+            <param name="Obj">Object to send.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.Send(SocketJack.Net.P2P.Identifier,System.Object)">
+            <summary>
+            Sends an object to a peer by Identifier.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.Send(System.String,System.Object)">
+            <summary>
+            Sends an object to a client by string ID.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.SendBroadcast(System.Object)">
+            <summary>
+            Send a serializable object to all connected UDP clients.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.SendBroadcast(System.Object,SocketJack.Net.NetworkConnection)">
+            <summary>
+            Send a serializable object to all connected UDP clients except one.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UdpServer.SendBroadcastUdp(System.Object,SocketJack.Net.UdpConnection)">
+            <summary>
+            Send a serializable object to all connected UDP clients.
+            </summary>
         </member>
         <member name="E:SocketJack.Net.WebSockets.WebSocketClient.PeerMetaDataChanged">
             <summary>

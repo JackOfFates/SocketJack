@@ -12,7 +12,9 @@ using System.Text.Json.Serialization;
 namespace SocketJack.Serialization.Json {
     public class JsonSerializer : ISerializer {
 
+#pragma warning disable CS8632 // Nullable annotation in non-nullable context
         public event Action<Exception>? DeserializationError;
+#pragma warning restore CS8632
 
         public JsonSerializer() {
             JsonOptions.Converters.Add(new TypeConverter());

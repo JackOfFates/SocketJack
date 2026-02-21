@@ -13,6 +13,7 @@ using System.Collections.Concurrent;
 
 namespace SocketJack.Serialization {
 
+#nullable enable
     public class Wrapper {
         private static readonly ConcurrentDictionary<string, Type?> ResolvedTypeCache = new(StringComparer.Ordinal);
 
@@ -25,12 +26,13 @@ namespace SocketJack.Serialization {
             ResolvedTypeCache[typeName] = t;
             return t;
         }
+#nullable restore
 
         public string Type { get; set; }
         public object value { get; set; }
         protected static bool hasRecieved = false;
 
-        private ConcurrentDictionary<string, Type> TypeCache = new ConcurrentDictionary<string, Type>();
+        private readonly ConcurrentDictionary<string, Type> TypeCache = new();
 
         private static string RemoveNamespace(string fullTypeName) {
             if (string.IsNullOrEmpty(fullTypeName))
@@ -104,7 +106,7 @@ namespace SocketJack.Serialization {
                         if (assembly.IsDynamic) continue;
                         try {
                             foundType = assembly.GetType(typeName);
-                        } catch (ReflectionTypeLoadException ex) {
+                        } catch (ReflectionTypeLoadException) {
                             continue;
                         }
                         if (foundType != null)

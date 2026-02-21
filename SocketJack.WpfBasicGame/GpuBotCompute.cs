@@ -86,9 +86,9 @@ internal sealed class GpuBotComputeEngine : IBotComputeEngine {
             _stateBuffer!.CopyFrom(states);
             _cfgBuffer!.CopyFrom(configs);
 
-            _device.For(count, new BotKernel(_stateBuffer, _cfgBuffer));
+            _device.For(count, new BotKernel(_stateBuffer!, _cfgBuffer!));
 
-            _stateBuffer.CopyTo(states);
+            _stateBuffer!.CopyTo(states);
         } catch {
             _disabled = true;
         }

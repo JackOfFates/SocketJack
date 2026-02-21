@@ -10,11 +10,15 @@ namespace SocketJack.WpfBasicGame;
 // Clients send input events (cursor + click) and the server rebroadcasts state
 // (target position + points + cursors) so every client sees a consistent game.
 internal sealed class SocketJackTcpGameServer : IDisposable {
-    private readonly TcpServer _server;
+    private readonly TcpServer? _tcpServer;
+    private readonly UdpServer? _udpServer;
+    private readonly NetworkBase _base;
+    private readonly bool _useUdp;
     private readonly ConcurrentDictionary<string, int> _points = new();
     private readonly ConcurrentDictionary<string, int> _playerIndex = new();
     private int _nextPlayerIndex;
 
+    private readonly object _clickLock = new();
     private readonly Random _rng = new();
     private int _targetX;
     private int _targetY;
@@ -27,11 +31,13 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
 
     public event Action<string>? Log;
 
-    public SocketJackTcpGameServer(int port) {
+    public SocketJackTcpGameServer(int port, bool useUdp = false) {
+        _useUdp = useUdp;
+
         // SocketJack runtime options.
         // Use compression and whitelist message types to keep network traffic tight and safe.
-        var opts = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
-        opts.Fps = 60;
+        var opts = NetworkOptions.NewDefault();
+        opts.Fps = 0;
         opts.Chunking = false;
         opts.Logging = false;
         opts.LogReceiveEvents = false;
@@ -44,61 +50,79 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
         opts.Whitelist.Add(typeof(ClickMessage));
         opts.Whitelist.Add(typeof(PointsUpdateMessage));
         opts.Whitelist.Add(typeof(CursorStateMessage));
+
         NIC.NatDiscovered += ()=> {
             var ip = NIC.NAT.GetExternalIP();
             var portforwarded = NIC.ForwardPort(port);
             Log?.Invoke($"NAT detected. External IP: {ip}, Port forwarded: {portforwarded}");
         };
 
-        _server = new TcpServer(opts, port, "ClickRaceServer");
-        _server.EnableRemoteControl();
-        _server.ClientConnected += e => {
-            Log?.Invoke($"Client connected: {e.Connection?.ID}");
+        if (useUdp) {
+            _udpServer = new UdpServer(opts, port, "ClickRaceServer");
+            _base = _udpServer;
+            _udpServer.EnableRemoteControl();
+            _udpServer.ClientConnected += OnClientConnected;
+            _udpServer.ClientDisconnected += e => Log?.Invoke($"Client disconnected: {e.Connection?.ID}");
 
-            var conn = e.Connection;
-            if (conn == null)
-                return;
+            _udpServer.RegisterCallback<ClickMessage>(OnClick);
+            _udpServer.RegisterCallback<CursorStateMessage>(OnCursorState);
+        } else {
+            _tcpServer = new TcpServer(opts, port, "ClickRaceServer");
+            _base = _tcpServer;
+            _tcpServer.EnableRemoteControl();
+            _tcpServer.ClientConnected += OnClientConnected;
+            _tcpServer.ClientDisconnected += e => Log?.Invoke($"Client disconnected: {e.Connection?.ID}");
 
-            var id = conn.ID;
-            if (id == Guid.Empty)
-                return;
-
-            var playerId = id.ToString();
-
-            // Stable player index (used by UI sorting/labels).
-            var idx = _playerIndex.GetOrAdd(playerId, _ => Interlocked.Increment(ref _nextPlayerIndex));
-            conn.SetMetaData("playerindex", idx.ToString(), Restricted: true);
-            conn.SetMetaData("points", "0", Restricted: true);
-
-            // Default metadata; bots override this after connecting.
-            conn.SetMetaData("isnpc", "0", Restricted: true);
-
-            // If a round is already running, immediately sync the new client with current state.
-            // Safe to send even if a round isn't running (clients ignore until they receive StartRound).
-            try {
-                conn.Send(new TargetStateMessage {
-                    TargetX = _targetX,
-                    TargetY = _targetY
-                });
-            } catch {
-            }
-        };
-        _server.ClientDisconnected += e => Log?.Invoke($"Client disconnected: {e.Connection?.ID}");
-
-        // Register inbound message handlers.
-        _server.RegisterCallback<ClickMessage>(OnClick);
-        _server.RegisterCallback<CursorStateMessage>(OnCursorState);
+            _tcpServer.RegisterCallback<ClickMessage>(OnClick);
+            _tcpServer.RegisterCallback<CursorStateMessage>(OnCursorState);
+        }
     }
 
-    public bool Start() => _server.Listen();
+    private void OnClientConnected(ConnectedEventArgs e) {
+        Log?.Invoke($"Client connected: {e.Connection?.ID}");
 
-    public void StartRound(int roundLengthMs) {
-        // Reset per-round scoreboard. Player identity stays stable across rounds.
-        _points.Clear();
+        var conn = e.Connection;
+        if (conn == null)
+            return;
+
+        var id = conn.ID;
+        if (id == Guid.Empty)
+            return;
+
+        var playerId = id.ToString();
+
+        var idx = _playerIndex.GetOrAdd(playerId, _ => Interlocked.Increment(ref _nextPlayerIndex));
+        conn.SetMetaData("playerindex", idx.ToString(), Restricted: true);
+        conn.SetMetaData("points", "0", Restricted: true);
+        conn.SetMetaData("isnpc", "0", Restricted: true);
+
+        try {
+            conn.Send(new TargetStateMessage {
+                TargetX = _targetX,
+                TargetY = _targetY
+            });
+        } catch {
+        }
+    }
+
+    public bool Start() {
+        // Set an initial target position so clients connecting before
+        // StartRound receive a valid TargetState instead of (0,0).
         MoveTarget();
 
-        // Notify clients that the round is starting.
-        _server.SendBroadcast(new StartRoundMessage {
+        if (_useUdp)
+            return _udpServer!.Listen();
+        return _tcpServer!.Listen();
+    }
+
+    public void StartRound(int roundLengthMs) {
+        _points.Clear();
+
+        lock (_clickLock) {
+            MoveTarget();
+        }
+
+        _base.SendBroadcast(new StartRoundMessage {
             RoundLengthMs = roundLengthMs,
             ServerUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         });
@@ -107,7 +131,6 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
     }
 
     private void MoveTarget() {
-        // Server chooses the target position so clients cannot cheat by moving it locally.
         var w = Math.Max(0, PlayfieldWidth - TargetSize);
         var h = Math.Max(0, PlayfieldHeight - TargetSize);
         _targetX = (int)(_rng.NextDouble() * w);
@@ -115,15 +138,14 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
     }
 
     private void BroadcastTarget() {
-        // Broadcast authoritative target to all clients.
-        _server.SendBroadcast(new TargetStateMessage {
+        _base.SendBroadcast(new TargetStateMessage {
             TargetX = _targetX,
             TargetY = _targetY
         });
     }
 
     private void BroadcastPoints(string playerId, int points) {
-        _server.SendBroadcast(new PointsUpdateMessage {
+        _base.SendBroadcast(new PointsUpdateMessage {
             PlayerId = playerId,
             Points = points
         });
@@ -139,8 +161,7 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
 
         e.Object.PlayerId = id.ToString();
 
-        // Server rebroadcasts raw cursor positions; clients handle interpolation/rendering.
-        _server.SendBroadcast(e.Object);
+        _base.SendBroadcast(e.Object);
     }
 
     private void OnClick(ReceivedEventArgs<ClickMessage> e) {
@@ -155,43 +176,42 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
 
         Log?.Invoke($"Click from {playerId} at {e.Object.ClickX:0},{e.Object.ClickY:0}");
 
-        // Validate click against the current target location.
-        // This keeps the server authoritative and mitigates spoofed clicks.
         var clickX = e.Object.ClickX;
         var clickY = e.Object.ClickY;
 
-        // Prefer bounds check (matches WPF button hit area)
-        var inBounds = clickX >= _targetX && clickX <= _targetX + TargetSize &&
-                       clickY >= _targetY && clickY <= _targetY + TargetSize;
+        // Lock the hit-test + target-move sequence so concurrent bot clicks
+        // cannot corrupt Random or double-score on the same target position.
+        lock (_clickLock) {
+            var inBounds = clickX >= _targetX && clickX <= _targetX + TargetSize &&
+                           clickY >= _targetY && clickY <= _targetY + TargetSize;
 
-        if (!inBounds) {
-            // fallback: allow a generous radius around center
-            var targetCenterX = _targetX + TargetSize / 2.0;
-            var targetCenterY = _targetY + TargetSize / 2.0;
-            var dx = clickX - targetCenterX;
-            var dy = clickY - targetCenterY;
-            var dist = Math.Sqrt(dx * dx + dy * dy);
-            if (dist > HitRadius) {
-                return;
+            if (!inBounds) {
+                var targetCenterX = _targetX + TargetSize / 2.0;
+                var targetCenterY = _targetY + TargetSize / 2.0;
+                var dx = clickX - targetCenterX;
+                var dy = clickY - targetCenterY;
+                var dist = Math.Sqrt(dx * dx + dy * dy);
+                if (dist > HitRadius) {
+                    return;
+                }
             }
+
+            var points = _points.AddOrUpdate(playerId, 1, (_, v) => v + 1);
+
+            if (e.Connection != null)
+                e.Connection.SetMetaData("points", points.ToString(), Restricted: true);
+
+            BroadcastPoints(playerId, points);
+
+            MoveTarget();
+            BroadcastTarget();
         }
-
-
-        // Award point to the sender and broadcast updated score.
-        var points = _points.AddOrUpdate(playerId, 1, (_, v) => v + 1);
-
-        if (e.Connection != null)
-            e.Connection.SetMetaData("points", points.ToString(), Restricted: true);
-
-        BroadcastPoints(playerId, points);
-
-        // Move target after a valid click (server authority).
-        // Clients never move the target directly.
-        MoveTarget();
-        BroadcastTarget();
     }
 
     public void Dispose() {
-        _server.Dispose();
+        if (_useUdp)
+            _udpServer!.Dispose();
+        else
+            _tcpServer!.Dispose();
     }
 }

@@ -2,7 +2,6 @@
 Imports System.Threading
 Imports System.Windows.Threading
 Imports SocketJack.Net
-Imports SocketJack.Net.[Shared]
 Imports SocketJack.Serialization
 Imports SocketJack.Extensions
 

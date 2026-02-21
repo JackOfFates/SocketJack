@@ -304,10 +304,14 @@
     <Compile Include="..\SocketJack\Net\P2P\PeerList.cs" Link="Net\P2P\PeerList.cs" />
     <Compile Include="..\SocketJack\Net\P2P\PeerRedirect.cs" Link="Net\P2P\PeerRedirect.cs" />
     <Compile Include="..\SocketJack\Net\P2P\PeerServer.cs" Link="Net\P2P\PeerServer.cs" />
+    <Compile Include="..\SocketJack\Net\P2P\Ping.cs" Link="Net\P2P\Ping.cs" />
     <Compile Include="..\SocketJack\Net\Segment.cs" Link="Net\Segment.cs" />
     <Compile Include="..\SocketJack\Net\SendQueueItem.cs" Link="Net\SendQueueItem.cs" />
     <Compile Include="..\SocketJack\Net\TcpClient.cs" Link="Net\TcpClient.cs" />
     <Compile Include="..\SocketJack\Net\TcpServer.cs" Link="Net\TcpServer.cs" />
+    <Compile Include="..\SocketJack\Net\UdpClient.cs" Link="Net\UdpClient.cs" />
+    <Compile Include="..\SocketJack\Net\UdpConnection.cs" Link="Net\UdpConnection.cs" />
+    <Compile Include="..\SocketJack\Net\UdpServer.cs" Link="Net\UdpServer.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketClient.cs" Link="Net\WebSockets\WebSocketClient.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketServer.cs" Link="Net\WebSockets\WebSocketServer.cs" />
     <Compile Include="..\SocketJack\Serialization\ISerializer.cs" Link="Serialization\ISerializer.cs" />

@@ -190,6 +190,247 @@ var client = new UdpClient(options);
 
 ---
 
+## HTTP Server & Client
+
+SocketJack provides `HttpServer` and `HttpClient` classes that layer a familiar HTTP API on top of the existing TCP transport. Both classes inherit from the TCP base, so all `NetworkOptions`, serialization, compression, and callback features carry over automatically.
+
+### Create an HTTP Server
+
+`HttpServer` extends `TcpServer`. Pass a port (and optional name) to the constructor, then call `StartListening()`.
+
+```cs
+var server = new HttpServer(port: 8080);
+server.StartListening();
+```
+
+By default a GET to `/` returns a built-in HTML page. You can replace it:
+
+```cs
+server.IndexPageHtml = "<html><body><h1>Welcome!</h1></body></html>";
+```
+
+### Route Mapping
+
+Register handlers for specific HTTP methods and paths with `Map`. The handler receives the `NetworkConnection`, the parsed `HttpRequest`, and a `CancellationToken`, and returns a response body object.
+
+```cs
+// Return a plain string
+server.Map("GET", "/hello", (connection, request, ct) =>
+{
+    return "Hello, World!";
+});
+
+// Return a serialized object (sent as application/json)
+server.Map("POST", "/echo", (connection, request, ct) =>
+{
+    return new EchoResponse(request.Body);
+});
+
+// Remove a route
+server.RemoveRoute("GET", "/hello");
+```
+
+For requests that don't match any route, subscribe to the `OnHttpRequest` event and set the response on the `HttpContext` directly:
+
+```cs
+server.OnHttpRequest += (connection, ref context, ct) =>
+{
+    context.Response.Body = "Custom response";
+    context.Response.ContentType = "text/plain";
+    context.StatusCode = "200 OK";
+};
+```
+
+### Typed Callbacks on the Server
+
+If the request body contains a SocketJack-serialized object, you can register strongly-typed callbacks just like with `TcpServer`:
+
+```cs
+server.RegisterCallback<MyPayload>((args) =>
+{
+    Console.WriteLine($"Received payload: {args.Object}");
+});
+```
+
+### HTTP Client
+
+`HttpClient` extends `TcpClient` and provides standard `GetAsync`, `PostAsync`, and `SendAsync` methods. It handles Content-Length, chunked transfer-encoding, HTTPS/TLS, and automatic redirects.
+
+```cs
+using var client = new HttpClient();
+
+// Simple GET
+HttpResponse response = await client.GetAsync("http://localhost:8080/hello");
+Console.WriteLine(response.Body);
+
+// POST with a body
+byte[] body = Encoding.UTF8.GetBytes("{\"message\":\"hi\"}");
+HttpResponse postResp = await client.PostAsync(
+    "http://localhost:8080/echo",
+    "application/json",
+    body);
+
+// Full control: method, headers, body, streaming
+HttpResponse resp = await client.SendAsync(
+    "PUT",
+    "https://example.com/api/resource",
+    new Dictionary<string, string> { ["Authorization"] = "Bearer token" },
+    body);
+```
+
+### Client Options
+
+```cs
+var client = new HttpClient();
+
+// Request timeout (default 30 seconds)
+client.Timeout = TimeSpan.FromSeconds(60);
+
+// Maximum redirect hops (default 5)
+client.MaxRedirects = 10;
+
+// Default headers sent with every request
+client.DefaultHeaders["Accept"] = "application/json";
+```
+
+### Streaming Responses
+
+Pass a `Stream` or an `onChunk` callback to stream large responses without buffering the entire body in memory:
+
+```cs
+using var fileStream = File.Create("download.bin");
+await client.GetAsync("http://example.com/largefile", responseStream: fileStream);
+```
+
+### Typed Callbacks on the Client
+
+When the server returns a SocketJack-serialized object, the client can dispatch it to typed callbacks automatically:
+
+```cs
+client.RegisterCallback<EchoResponse>((args) =>
+{
+    Console.WriteLine($"Server echoed: {args.Object}");
+});
+```
+
+### Key HTTP Classes
+
+| Class | Description |
+|---|---|
+| `HttpServer` | Extends `TcpServer`. Parses incoming HTTP requests, resolves routes, and writes HTTP responses. |
+| `HttpClient` | Extends `TcpClient`. Sends HTTP/HTTPS requests with redirect and chunked-transfer support. |
+| `HttpContext` | Carries the `HttpRequest`, `HttpResponse`, status code, and content type for a single request cycle. |
+| `HttpRequest` | Parsed request with `Method`, `Path`, `Headers`, `Body`, and `BodyBytes`. |
+| `HttpResponse` | Response with `StatusCodeNumber`, `Headers`, `Body`/`BodyBytes`, and `ContentType`. Serializes to wire-ready bytes. |
+
+---
+
+## WebSocket Transport
+
+SocketJack includes `WebSocketClient` and `WebSocketServer` classes that implement the WebSocket protocol (RFC 6455) while sharing the same serialization, compression, peer-to-peer, and callback systems as the TCP and UDP transports.
+
+### Create a WebSocket Server
+
+```cs
+var server = new WebSocketServer(port: 9000);
+server.Listen();
+```
+
+The server performs the HTTP upgrade handshake automatically. Optionally enable TLS by setting an `X509Certificate`:
+
+```cs
+server.SslCertificate = new X509Certificate2("cert.pfx", "password");
+server.Options.UseSsl = true;
+server.Listen();
+```
+
+### Connect a WebSocket Client
+
+```cs
+var client = new WebSocketClient();
+await client.Connect("127.0.0.1", 9000);
+```
+
+Or connect with a full URI:
+
+```cs
+await client.ConnectAsync(new Uri("ws://127.0.0.1:9000/path"));
+```
+
+### Sending and Receiving
+
+The same `Send`, `RegisterCallback`, and event patterns work identically to TCP:
+
+```cs
+// Client sends an object
+client.Send(new CustomMessage("Hello via WebSocket!"));
+
+// Server registers a typed callback
+server.RegisterCallback<CustomMessage>((args) =>
+{
+    Console.WriteLine($"Received: {args.Object.Message}");
+});
+
+// Server sends to a specific client
+server.Send(clientConnection, new CustomMessage("Reply"));
+
+// Server broadcasts to all clients
+server.SendBroadcast(new CustomMessage("Announcement"));
+```
+
+### Peer-to-Peer over WebSocket
+
+Enable P2P and use the same peer API as TCP/UDP:
+
+```cs
+var options = new NetworkOptions();
+options.UsePeerToPeer = true;
+
+var client = new WebSocketClient(options);
+await client.Connect("127.0.0.1", 9000);
+
+// Send to a specific peer (relayed through the server)
+client.Send(remotePeer, new CustomMessage("P2P over WebSocket"));
+
+// Broadcast to all peers
+client.SendBroadcast(new CustomMessage("Hello everyone!"));
+```
+
+### Events
+
+`WebSocketServer` and `WebSocketClient` expose the same event system as the TCP classes:
+
+```cs
+// Server events
+server.ClientConnected += (e) => Console.WriteLine($"Client connected: {e.Connection.Identity.ID}");
+server.ClientDisconnected += (e) => Console.WriteLine($"Client disconnected: {e.Connection.Identity.ID}");
+server.OnReceive += (ref e) => Console.WriteLine($"Received: {e.Obj}");
+
+// Client events
+client.OnConnected += (e) => Console.WriteLine("Connected!");
+client.OnDisconnected += (e) => Console.WriteLine("Disconnected.");
+client.PeerConnected += (sender, peer) => Console.WriteLine($"Peer joined: {peer.ID}");
+client.PeerDisconnected += (sender, peer) => Console.WriteLine($"Peer left: {peer.ID}");
+```
+
+### Browser Client Support
+
+`WebSocketServer` can automatically generate JavaScript class constructors for all whitelisted types and send them to browser-based WebSocket clients. This allows browser clients to construct and send SocketJack-compatible objects without manual schema definition.
+
+### Key Differences from TcpClient
+
+| | TCP | WebSocket |
+|---|---|---|
+| **Protocol** | Raw TCP stream | WebSocket frames (RFC 6455) |
+| **Handshake** | TCP three-way handshake | HTTP Upgrade + WebSocket handshake |
+| **Browser support** | Not natively supported | Full browser `WebSocket` API compatibility |
+| **Server method** | `StartListening()` | `Listen()` |
+| **Client method** | `Connect(host, port)` | `Connect(host, port)` or `ConnectAsync(uri)` |
+| **TLS** | `SslStream` with `X509Certificate` | `SslStream` with `X509Certificate` |
+| **Segmentation** | Automatic for large payloads | Automatic for payloads > 8 KB |
+
+---
+
 ## WPFController — Live Control Sharing
 
 The `SocketJack.WPFController` library lets you share any WPF `FrameworkElement` over a `TcpClient` connection. The sharer captures JPEG frames of the element at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in a WPF `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.

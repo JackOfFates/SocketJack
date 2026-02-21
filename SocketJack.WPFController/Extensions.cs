@@ -48,6 +48,20 @@ namespace SocketJack.WPFController {
             Client.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
         }
 
+        public static void EnableRemoteControl(this UdpServer Server) {
+            Server.RegisterCallback<RemoteAction>(Server_RemoteAction);
+            Server.Options.Whitelist.Add(typeof(ControlShareFrame));
+            Server.Options.Whitelist.Add(typeof(ControlShareInput));
+            Server.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+        }
+
+        public static void EnableRemoteControl(this UdpClient Client) {
+            Client.RegisterCallback<RemoteAction>(Client_RemoteAction);
+            Client.Options.Whitelist.Add(typeof(ControlShareFrame));
+            Client.Options.Whitelist.Add(typeof(ControlShareInput));
+            Client.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+        }
+
         private static void Server_RemoteAction(ReceivedEventArgs<RemoteAction> a) {
 
             // Server-side: perform the action on the server UI (if applicable).

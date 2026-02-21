@@ -283,6 +283,30 @@
             <para>Required.</para>
             </summary>
         </member>
+        <member name="P:SocketJack.Net.NetworkBase.LatencyMs">
+            <summary>
+            Measured one-way latency in milliseconds (RTT / 2).
+            Updated automatically by the built-in ping loop.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.SendPingInternal(System.Object)">
+            <summary>
+            Override in subclasses to route the ping datagram through the correct send path.
+            Default implementation uses TCP-style <see cref="M:SocketJack.Net.NetworkBase.Send(SocketJack.Net.NetworkConnection,System.Object)"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.StartPingLoop">
+            <summary>
+            Starts a background loop that sends a <see cref="T:SocketJack.Net.P2P.Ping"/> every 10 seconds
+            and registers a <see cref="T:SocketJack.Net.P2P.Pong"/> callback to measure latency.
+            Called automatically by client types after a successful connection.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.StopPingLoop">
+            <summary>
+            Stops the background ping loop.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.NetworkBase.RegisterCallback``1(System.Action{SocketJack.Net.ReceivedEventArgs{``0}})">
             <summary>
             <para>Registers a type callback using generic types.</para>
@@ -341,12 +365,12 @@
         </member>
         <member name="P:SocketJack.Net.NetworkConnection.BytesPerSecondSent">
             <summary>
-            Bytes per second sent on this connection.
+            Bytes per second sent on this connection (rolling average over the last 10 seconds).
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkConnection.BytesPerSecondReceived">
             <summary>
-            Bytes per second received on this connection.
+            Bytes per second received on this connection (rolling average over the last 10 seconds).
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkConnection.Identity">
@@ -384,6 +408,14 @@
         <member name="P:SocketJack.Net.NetworkConnection.Closing">
             <summary>
             True if the connection is closing.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.AdjustThreadPool(System.Int32)">
+            <summary>
+            Adjusts <see cref="T:System.Threading.ThreadPool"/> minimum threads so worker/IO capacity
+            scales with the number of active connections.  Without this, the default
+            pool ramp-up (~1 thread per 500 ms) causes server-side deserialization
+            and callback dispatch to fall behind under heavy bot load.
             </summary>
         </member>
         <member name="F:SocketJack.Net.NetworkConnection.IsServer">
@@ -424,7 +456,17 @@
             <param name="Recipient"></param>
             <param name="Obj"></param>
         </member>
-        <!-- Badly formed XML comment ignored for member "M:SocketJack.Net.NetworkConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)" -->
+        <member name="M:SocketJack.Net.NetworkConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)">
+            <summary>
+            Set metadata for the connection serialized with Json.
+            <para>WARNING: This information will be sent to all connected clients.</para>
+            <para>Set the `Private` <see langword="bool"/> parameter to <see langword="true"/> to retain private metadata only on server.</para>
+            <paramref name="key">Metadata Key.</paramref>
+            <paramref name="value">Metadata Value.</paramref>
+            <paramref name="Private"><see langword="true"/> to keep the metadata only on server; <see langword="false"/> shares with all peers.</paramref>
+            <paramref name="Restricted"><see langword="true"/> to restrict the client from updating the metadata value.</paramref>
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.NetworkConnection.GetMetaData(System.String,System.Boolean,System.Boolean)">
             <summary>
             Get metadata value by key for the connection.
@@ -588,6 +630,14 @@
             <summary>
             The interval in milliseconds between chunked flushes when <see cref="P:SocketJack.Net.NetworkOptions.Chunking"/> is enabled.
             <para>Default is 1000 ms (1 second).</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.ChunkingAutomaticLatencyScaling">
+            <summary>
+            When <see langword="true"/>, the library automatically adjusts <see cref="P:SocketJack.Net.NetworkOptions.ChunkingIntervalMs"/>
+            based on measured round-trip latency so chunk flushes stay proportional to network delay.
+            <para>Requires the built-in ping loop to be active (client-side only).</para>
+            <para>Default is <see langword="false"/>.</para>
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.Fps">
@@ -858,6 +908,26 @@
             Accept the requested Peer to Peer connection.
             </summary>
             <returns>new TcpClient</returns>
+        </member>
+        <member name="T:SocketJack.Net.P2P.Ping">
+            <summary>
+            Latency probe sent by clients. The server echoes it back as a <see cref="T:SocketJack.Net.P2P.Pong"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.P2P.Ping.TimestampMs">
+            <summary>
+            Unix-epoch timestamp in milliseconds set by the sender.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.P2P.Pong">
+            <summary>
+            Latency probe response sent by the server in reply to a <see cref="T:SocketJack.Net.P2P.Ping"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.P2P.Pong.TimestampMs">
+            <summary>
+            The original timestamp from the <see cref="T:SocketJack.Net.P2P.Ping"/> that triggered this response.
+            </summary>
         </member>
         <member name="T:SocketJack.Net.TcpClient">
             <summary>
@@ -1196,6 +1266,9 @@
             Send an object to the server as a UDP datagram.
             </summary>
             <param name="Obj">An object.</param>
+        </member>
+        <member name="M:SocketJack.Net.UdpClient.SendPingInternal(System.Object)">
+            <inheritdoc />
         </member>
         <member name="M:SocketJack.Net.UdpClient.Send(SocketJack.Net.P2P.Identifier,System.Object)">
             <summary>

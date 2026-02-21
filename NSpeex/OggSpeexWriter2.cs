@@ -23,7 +23,9 @@ namespace NSpeex
 
         private int bitRate;
 
-        private int size;
+        #pragma warning disable CS0414 // Field is assigned but its value is never used
+                private int size;
+        #pragma warning restore CS0414
         /** Ogg Stream Serial Number */
         private int streamSerialNumber;
         /** Data buffer */
