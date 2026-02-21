@@ -629,7 +629,7 @@
         <member name="P:SocketJack.Net.NetworkOptions.ChunkingIntervalMs">
             <summary>
             The interval in milliseconds between chunked flushes when <see cref="P:SocketJack.Net.NetworkOptions.Chunking"/> is enabled.
-            <para>Default is 1000 ms (1 second).</para>
+            <para>Default is 100 ms.</para>
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.ChunkingAutomaticLatencyScaling">

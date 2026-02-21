@@ -60,9 +60,7 @@ namespace SocketJack.Serialization.Json {
                 if (Target.Options.Serializer.GetType() == typeof(JsonSerializer)) {
                     JsonSerializer serializer = (JsonSerializer)Target.Options.Serializer;
                     if (serializer.HasConverter(T)) {
-                        object obj = serializer.GetValue(redirect.Value, T, true);
-                        if (obj.GetType() == typeof(string))
-                            redirect.Value = System.Text.Json.JsonSerializer.Deserialize((JsonElement)redirect.Value, T, JsonOptions);
+                        redirect.Value = System.Text.Json.JsonSerializer.Deserialize((JsonElement)redirect.Value, T, JsonOptions);
                         return redirect;
                     } else {
                         //var txt = ((JsonElement)redirect.value).GetRawText();

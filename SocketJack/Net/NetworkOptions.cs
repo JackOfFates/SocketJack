@@ -132,9 +132,9 @@ namespace SocketJack.Net {
             }
         }
         internal bool isDownloadBuffered = true;
-        // Default to 1 Mbps. 1 Mbps = 1 * 1024 * 1024 bits/s -> /8 = 131072 bytes/s
-        protected internal double _MaximumDownloadMbps = 1.0; // 1 Mbps
-        protected internal int MaximumDownloadBytesPerSecond = 131072;
+        // Default to 100 Mbps. 100 Mbps = 100 * 1024 * 1024 bits/s -> /8 = 13107200 bytes/s
+        protected internal double _MaximumDownloadMbps = 100.0; // 100 Mbps
+        protected internal int MaximumDownloadBytesPerSecond = 13107200;
 
         /// <summary>
         /// Download buffer size.
@@ -142,7 +142,7 @@ namespace SocketJack.Net {
         /// <value>Integer</value>
         /// <remarks></remarks>
         /// </summary>
-        public int DownloadBufferSize { get; set; } = 13107;
+        public int DownloadBufferSize { get; set; } = 65536;
 
         /// <summary>
         /// Maximum Upload bandwidth.
@@ -166,9 +166,9 @@ namespace SocketJack.Net {
             }
         }
         internal bool isUploadBuffered = true;
-        // Default to 1 Mbps.
-        protected internal double _MaximumUploadMbps = 1.0; // 1 Mbps
-        protected internal int MaximumUploadBytesPerSecond = 131072;
+        // Default to 100 Mbps.
+        protected internal double _MaximumUploadMbps = 100.0; // 100 Mbps
+        protected internal int MaximumUploadBytesPerSecond = 13107200;
 
         /// <summary>
         /// Upload buffer size.
@@ -176,7 +176,7 @@ namespace SocketJack.Net {
         /// <value>Integer</value>
         /// <remarks></remarks>
         /// </summary>
-        public int UploadBufferSize { get; set; } = 13107;
+        public int UploadBufferSize { get; set; } = 65536;
 
         /// <summary>
         /// <para>Use compression for network transfer.</para>
@@ -207,9 +207,9 @@ namespace SocketJack.Net {
 
         /// <summary>
         /// The interval in milliseconds between chunked flushes when <see cref="Chunking"/> is enabled.
-        /// <para>Default is 1000 ms (1 second).</para>
+        /// <para>Default is 100 ms.</para>
         /// </summary>
-        public int ChunkingIntervalMs { get; set; } = 1000;
+        public int ChunkingIntervalMs { get; set; } = 100;
 
         /// <summary>
         /// When <see langword="true"/>, the library automatically adjusts <see cref="ChunkingIntervalMs"/>

@@ -662,7 +662,7 @@ namespace SocketJack.Net {
                             _TotalBytesReceived_l = TotalBytesReceived;
                             LastReceiveFrame = now;
                             if (timeDiff > OneSecond) {
-                                await Task.Delay((int)(options.MaximumDownloadBytesPerSecond / (diff * 10)));
+                                await Task.Delay((int)Math.Min(1000, diff * 1000L / Math.Max(1, options.MaximumDownloadBytesPerSecond)));
                             }
                         }
 
@@ -1038,13 +1038,13 @@ namespace SocketJack.Net {
                     //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
                     Parent.InvokeInternalSendEvent(this, ByteArrayType, "[CHUNK]", ProcessedBytes.Length);
                     Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, ByteArrayType, ProcessedBytes.Length));
-                    //}
+                //}
 
-                } else if (SerializedBytes.Length > mtu) {
-                    // Object larger than MTU, we have to Segment the object.
-                    Parent.SendSegmented(this, SerializedBytes);
-                }
-            } catch (Exception ex) {
+            } else if (SerializedBytes.Length > mtu) {
+               // Object larger than MTU, we have to Segment the object.
+               Parent.SendSegmented(this, SerializedBytes);
+            }
+        } catch (Exception ex) {
                 if (Closed) return false;
                 var Reason = ex.Interpret();
                 if (Reason.ShouldLogReason()) {
