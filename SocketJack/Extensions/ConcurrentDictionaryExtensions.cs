@@ -29,7 +29,7 @@ namespace SocketJack.Extensions {
             return Tasks;
         }
 
-        public static Identifier[] ToArrayWithLocal<T, T2>(this ConcurrentDictionary<T, T2> Dict, TcpConnection LocalClient) where T2 : Identifier {
+        public static Identifier[] ToArrayWithLocal<T, T2>(this ConcurrentDictionary<T, T2> Dict, NetworkConnection LocalClient) where T2 : Identifier {
             var peers = Array.Empty<Identifier>();
             foreach (var keyValuePair in Dict) {
                 if (keyValuePair.Value is Identifier peer) {

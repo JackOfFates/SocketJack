@@ -1,10 +1,8 @@
 ﻿using SocketJack.Net;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace SocketJack.Extensions {
     public static class ByteExtensions {
@@ -225,34 +223,21 @@ namespace SocketJack.Extensions {
                 return new List<int>();
 
             int range = sourceArray.Count - searchArray.Length + 1;
-            int processorCount = Environment.ProcessorCount;
-            int chunkSize = Math.Max(range / processorCount, 1);
+            var results = new List<int>();
 
-            var results = new ConcurrentBag<int>();
-            var tasks = new List<Task>();
-
-            for (int t = 0; t < processorCount; t++) {
-                int chunkStart = StartIndex + t * chunkSize;
-                int chunkEnd = (t == processorCount - 1) ? range : chunkStart + chunkSize;
-                if (chunkStart >= range) break;
-
-                tasks.Add(Task.Run(() => {
-                    for (int i = chunkStart; i < chunkEnd && i < range; i++) {
-                        bool match = true;
-                        for (int j = 0; j < searchArray.Length; j++) {
-                            if (sourceArray[i + j] != searchArray[j]) {
-                                match = false;
-                                break;
-                            }
-                        }
-                        if (match)
-                            results.Add(i);
+            for (int i = StartIndex; i < range; i++) {
+                bool match = true;
+                for (int j = 0; j < searchArray.Length; j++) {
+                    if (sourceArray[i + j] != searchArray[j]) {
+                        match = false;
+                        break;
                     }
-                }));
+                }
+                if (match)
+                    results.Add(i);
             }
 
-            Task.WaitAll(tasks.ToArray());
-            return results.OrderBy(index => index).ToList();
+            return results;
         }
 
         public static List<int> IndexOfAll(this byte[] sourceArray, byte[] searchArray) {
@@ -265,11 +250,12 @@ namespace SocketJack.Extensions {
             if (searchArray.Length == 0 || searchArray.Length > sourceArray.Length)
                 return new List<int>();
 
-            var results = new ConcurrentBag<int>();
+            int range = sourceArray.Length - searchArray.Length + 1;
+            var results = new List<int>();
 
-            Parallel.For(StartIndex, sourceArray.Length - searchArray.Length + 1, i => {
+            for (int i = StartIndex; i < range; i++) {
                 bool match = true;
-                for (int j = 0, loopTo = searchArray.Length - 1; j <= loopTo; j++) {
+                for (int j = 0; j < searchArray.Length; j++) {
                     if (sourceArray[i + j] != searchArray[j]) {
                         match = false;
                         break;
@@ -277,9 +263,9 @@ namespace SocketJack.Extensions {
                 }
                 if (match)
                     results.Add(i);
-            });
+            }
 
-            return results.OrderBy(index => index).ToList();
+            return results;
         }
 
         public static byte[] Concat(this byte[] A, byte[] B) {

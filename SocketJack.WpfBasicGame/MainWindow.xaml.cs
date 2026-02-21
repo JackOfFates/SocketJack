@@ -76,6 +76,9 @@ public partial class MainWindow : Window {
     private IDisposable? _shareHandle;
     private ControlShareViewer? _shareViewer;
 
+    private readonly object _remoteClickLock = new();
+    private Point? _remoteClickNorm;
+
     private void UpdateShareButtonUi() {
         if (ShareToggleButton == null)
             return;
@@ -222,7 +225,7 @@ public partial class MainWindow : Window {
             }
 
             StopShareInternal();
-            _shareHandle = TargetButton.Share(_client.RawClient, peer, fps: 10);
+            _shareHandle = this.Share(_client.RawClient, peer, fps: 10);
             UpdateShareButtonUi();
         } catch (Exception ex) {
             Log(ex.Message);
@@ -457,6 +460,16 @@ public partial class MainWindow : Window {
             _client.CursorStateReceived += msg => Dispatcher.BeginInvoke(() => HandleCursorState(msg), DispatcherPriority.Background);
             _client.PeersChanged += () => Dispatcher.Invoke(UpdateScoreboardUi);
 
+            // Capture remote click coordinates before the library dispatches the
+            // Click event. The normalized position is stored so TargetButton_Click
+            // can translate it to canvas coordinates instead of using Mouse.GetPosition.
+            _client.RawClient.RegisterCallback<ControlShareInput>(e => {
+                if (e?.Object == null || !e.Object.IsClick)
+                    return;
+                lock (_remoteClickLock)
+                    _remoteClickNorm = new Point(e.Object.X, e.Object.Y);
+            });
+
             RoundStatusText.Text = "Connecting...";
             var ok = await _client.ConnectAsync(host, port);
             if (!ok) {
@@ -500,23 +513,47 @@ public partial class MainWindow : Window {
         }
     }
 
-    private void TargetButton_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
+    private void TargetButton_Click(object sender, RoutedEventArgs e) {
         if (_client?.IsConnected != true)
             return;
 
-        // Send click location in canvas coordinates (relative to the target).
-        // This avoids ambiguity when click event is raised from the button element.
-        // Send click location in canvas coordinates (relative to the target).
-        // This avoids ambiguity when click event is raised from the button element.
-        var pInTarget = e.GetPosition(TargetButton);
         var left = Canvas.GetLeft(TargetButton);
         var top = Canvas.GetTop(TargetButton);
 
         if (double.IsNaN(left) || double.IsNaN(top))
             return;
 
-        int clickX = (int)(left + pInTarget.X);
-        int clickY = (int)(top + pInTarget.Y);
+        int clickX;
+        int clickY;
+
+        var pInTarget = Mouse.GetPosition(TargetButton);
+        var isLocal = pInTarget.X >= 0 && pInTarget.X <= TargetButton.ActualWidth &&
+                      pInTarget.Y >= 0 && pInTarget.Y <= TargetButton.ActualHeight;
+
+        if (isLocal) {
+            // Local click: mouse is physically over the button.
+            clickX = (int)(left + pInTarget.X);
+            clickY = (int)(top + pInTarget.Y);
+        } else {
+            // Remote click via control sharing. Translate the stored normalized
+            // coordinates (percentage of the shared element) to canvas space.
+            Point? norm;
+            lock (_remoteClickLock) {
+                norm = _remoteClickNorm;
+                _remoteClickNorm = null;
+            }
+
+            if (norm.HasValue) {
+                var windowPoint = new Point(norm.Value.X * ActualWidth, norm.Value.Y * ActualHeight);
+                var canvasPoint = TranslatePoint(windowPoint, GameCanvas);
+                clickX = (int)canvasPoint.X;
+                clickY = (int)canvasPoint.Y;
+            } else {
+                // No stored remote position; fall back to button center.
+                clickX = (int)(left + TargetButton.ActualWidth / 2.0);
+                clickY = (int)(top + TargetButton.ActualHeight / 2.0);
+            }
+        }
 
         Log($"Click at {clickX:0},{clickY:0}");
         _client.SendClick(clickX, clickY);

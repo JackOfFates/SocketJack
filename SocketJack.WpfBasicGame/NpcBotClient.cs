@@ -37,8 +37,13 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
     private long _lastTickAtTs;
 
     private bool _hasTarget;
+    private bool _hasClicked;
     private long _nextWanderAtTs;
     private Point _wanderTarget;
+
+    private float _gpuWanderX;
+    private float _gpuWanderY;
+    private float _gpuWanderTimer;
 
     public bool IsActive => _roundActive;
 
@@ -51,7 +56,7 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
         // Each bot is just a normal game client with automated input.
         _difficulty = difficulty;
         _traits = traits ?? new BotTraits();
-        _client = new SocketJackTcpGameClient(name);
+        _client = new SocketJackTcpGameClient(name, lightweight: true);
         _client.Log += t => Log?.Invoke(t);
         _client.StartRoundReceived += OnStartRound;
     }
@@ -66,28 +71,38 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
 
     public void SetDifficulty(BotDifficulty difficulty) => _difficulty = difficulty;
 
-    public void SetTarget(Point target) => _target = target;
+    public void SetTarget(Point target) {
+        _target = target;
+        _hasClicked = false;
+    }
 
     public void SetTarget(Point target, bool hasTarget) {
         _target = target;
         _hasTarget = hasTarget;
+        _hasClicked = false;
     }
 
     private void OnStartRound(StartRoundMessage msg) {
         // Bots begin their simulation loop when a round starts.
         _roundActive = true;
+        _hasClicked = false;
         if (_cursor == default)
             _cursor = new Point(_rng.Next(40, 250), _rng.Next(40, 250));
         _velocity = new Vector(0, 0);
         _lastTickAtTs = 0;
+        _gpuWanderTimer = 0f;
     }
 
     public void Start() {
         _roundActive = true;
+        _hasClicked = false;
         if (_cursor == default)
             _cursor = new Point(_rng.Next(40, 250), _rng.Next(40, 250));
         _velocity = new Vector(0, 0);
         _lastTickAtTs = 0;
+        _gpuWanderX = (float)_rng.Next(30, 520);
+        _gpuWanderY = (float)_rng.Next(30, 330);
+        _gpuWanderTimer = 0f;
         Log?.Invoke("Bot started");
     }
 
@@ -169,8 +184,10 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
                                _cursor.Y >= _target.Y + margin && _cursor.Y <= _target.Y + targetSize - margin;
 
         // Fire click as soon as the bot is clearly over the target.
-        if (isDeepOverTarget)
+        if (isDeepOverTarget && !_hasClicked) {
+            _hasClicked = true;
             _client.SendClick((int)_cursor.X, (int)_cursor.Y);
+        }
     }
 
     private Point GetWanderTarget(long nowTimestamp) {
@@ -193,13 +210,19 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
         maxSpeed *= _traits.SpeedMultiplier;
 
         const float targetSize = 70f;
-        var aim = _hasTarget
-            ? new Point(_target.X + targetSize / 2.0, _target.Y + targetSize / 2.0)
-            : _wanderTarget;
-
         var jitter = (float)(0.35 * _traits.JitterMultiplier);
 
-        return new BotSimConfig((float)aim.X, (float)aim.Y, (float)maxSpeed, jitter, seed);
+        return new BotSimConfig(
+            maxSpeed: (float)maxSpeed,
+            jitter: jitter,
+            seed: seed,
+            targetCenterX: (float)(_target.X + targetSize / 2.0),
+            targetCenterY: (float)(_target.Y + targetSize / 2.0),
+            targetLeft: (float)_target.X,
+            targetTop: (float)_target.Y,
+            targetSize: targetSize,
+            clickMargin: (float)_traits.EffectiveClickPaddingPx,
+            hasTarget: _hasTarget ? 1 : 0);
     }
 
     public BotSimState ExportSimState() {
@@ -207,13 +230,21 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
             X = (float)_cursor.X,
             Y = (float)_cursor.Y,
             Vx = (float)_velocity.X,
-            Vy = (float)_velocity.Y
+            Vy = (float)_velocity.Y,
+            WanderX = _gpuWanderX,
+            WanderY = _gpuWanderY,
+            WanderTimer = _gpuWanderTimer,
+            HitTarget = 0
         };
     }
 
     public void ImportSimState(BotSimState s, long nowTimestamp) {
         _cursor = new Point(s.X, s.Y);
         _velocity = new Vector(s.Vx, s.Vy);
+        _gpuWanderX = s.WanderX;
+        _gpuWanderY = s.WanderY;
+        _gpuWanderTimer = s.WanderTimer;
+        _lastTickAtTs = nowTimestamp;
 
         CursorMoved?.Invoke(_cursor);
 
@@ -229,16 +260,10 @@ internal sealed class NpcBotClient : IDisposable, ITickableBot {
             }
         }
 
-        if (!_hasTarget)
-            return;
-
-        const double targetSize = 70;
-        var margin = _traits.EffectiveClickPaddingPx;
-        var isDeepOverTarget = _cursor.X >= _target.X + margin && _cursor.X <= _target.X + targetSize - margin &&
-                               _cursor.Y >= _target.Y + margin && _cursor.Y <= _target.Y + targetSize - margin;
-
-        if (isDeepOverTarget)
+        if (s.HitTarget == 1 && !_hasClicked) {
+            _hasClicked = true;
             _client.SendClick((int)_cursor.X, (int)_cursor.Y);
+        }
     }
 
     private static (double speed, double clickProbability) GetTuning(BotDifficulty d) => d switch {

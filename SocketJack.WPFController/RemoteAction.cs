@@ -141,7 +141,6 @@ namespace SocketJack.WPFController {
         }
 
         private async Task SimulateClick(FrameworkElement Element, MouseButton MouseButton, double nx, double ny, bool hasPos) {
-            await Application.Current.Dispatcher.InvokeAsync(() => Element.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)));
             await Application.Current.Dispatcher.InvokeAsync(() => {
                 var target = (IInputElement)Element;
                 if (hasPos) {
@@ -160,12 +159,16 @@ namespace SocketJack.WPFController {
                         target = hit;
                 }
 
-                var mouseDownEvent = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
-                    RoutedEvent = UIElement.MouseDownEvent,
-                    Source = target
-                };
-                if (target is UIElement uie)
-                    uie.RaiseEvent(mouseDownEvent);
+                Element.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
+                    RoutedEvent = UIElement.PreviewMouseDownEvent,
+                    Source = Element
+                });
+
+                if (target is UIElement uieDown)
+                    uieDown.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
+                        RoutedEvent = UIElement.MouseDownEvent,
+                        Source = target
+                    });
             });
             await Task.Delay((int)Duration);
             await Application.Current.Dispatcher.InvokeAsync(() => {
@@ -186,13 +189,30 @@ namespace SocketJack.WPFController {
                         target = hit;
                 }
 
-                var mouseUpEvent = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
-                    RoutedEvent = UIElement.MouseUpEvent,
-                    Source = target
-                };
+                Element.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
+                    RoutedEvent = UIElement.PreviewMouseUpEvent,
+                    Source = Element
+                });
 
-                if (target is UIElement uie)
-                    uie.RaiseEvent(mouseUpEvent);
+                if (target is UIElement uieUp)
+                    uieUp.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
+                        RoutedEvent = UIElement.MouseUpEvent,
+                        Source = target
+                    });
+
+                // Walk up from the hit-test target to find the nearest ButtonBase
+                // and raise Click on it. InputHitTest returns the deepest element
+                // (e.g. a TextBlock), not the Button itself.
+                if (MouseButton == System.Windows.Input.MouseButton.Left) {
+                    var ancestor = target as DependencyObject;
+                    while (ancestor != null) {
+                        if (ancestor is System.Windows.Controls.Primitives.ButtonBase bb) {
+                            bb.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                            break;
+                        }
+                        ancestor = System.Windows.Media.VisualTreeHelper.GetParent(ancestor);
+                    }
+                }
             });
         }
 
@@ -232,33 +252,75 @@ namespace SocketJack.WPFController {
 
         private Task SimulateMouseMove(FrameworkElement Element, double nx, double ny, bool hasPos) {
             return Application.Current.Dispatcher.InvokeAsync(() => {
-                // WPF MouseEventArgs doesn't allow setting a custom cursor position.
-                // Keep normalized coordinates in Arguments for downstream consumers.
-                var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
-                    RoutedEvent = UIElement.MouseMoveEvent,
+                var target = (IInputElement)Element;
+                if (hasPos) {
+                    if (nx < 0) nx = 0;
+                    if (ny < 0) ny = 0;
+                    if (nx > 1) nx = 1;
+                    if (ny > 1) ny = 1;
+
+                    var pt = new Point(nx * Math.Max(0, Element.ActualWidth), ny * Math.Max(0, Element.ActualHeight));
+                    var hit = Element.InputHitTest(pt);
+                    if (hit != null)
+                        target = hit;
+                }
+
+                Element.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                    RoutedEvent = UIElement.PreviewMouseMoveEvent,
                     Source = Element
-                };
-                Element.RaiseEvent(args);
+                });
+
+                if (target is UIElement uie)
+                    uie.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                        RoutedEvent = UIElement.MouseMoveEvent,
+                        Source = target
+                    });
             }).Task;
         }
 
         private Task SimulateMouseEnter(FrameworkElement Element, double nx, double ny, bool hasPos) {
             return Application.Current.Dispatcher.InvokeAsync(() => {
-                var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
-                    RoutedEvent = UIElement.MouseEnterEvent,
-                    Source = Element
-                };
-                Element.RaiseEvent(args);
+                var target = (IInputElement)Element;
+                if (hasPos) {
+                    if (nx < 0) nx = 0;
+                    if (ny < 0) ny = 0;
+                    if (nx > 1) nx = 1;
+                    if (ny > 1) ny = 1;
+
+                    var pt = new Point(nx * Math.Max(0, Element.ActualWidth), ny * Math.Max(0, Element.ActualHeight));
+                    var hit = Element.InputHitTest(pt);
+                    if (hit != null)
+                        target = hit;
+                }
+
+                if (target is UIElement uie)
+                    uie.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                        RoutedEvent = UIElement.MouseEnterEvent,
+                        Source = target
+                    });
             }).Task;
         }
 
         private Task SimulateMouseLeave(FrameworkElement Element, double nx, double ny, bool hasPos) {
             return Application.Current.Dispatcher.InvokeAsync(() => {
-                var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
-                    RoutedEvent = UIElement.MouseLeaveEvent,
-                    Source = Element
-                };
-                Element.RaiseEvent(args);
+                var target = (IInputElement)Element;
+                if (hasPos) {
+                    if (nx < 0) nx = 0;
+                    if (ny < 0) ny = 0;
+                    if (nx > 1) nx = 1;
+                    if (ny > 1) ny = 1;
+
+                    var pt = new Point(nx * Math.Max(0, Element.ActualWidth), ny * Math.Max(0, Element.ActualHeight));
+                    var hit = Element.InputHitTest(pt);
+                    if (hit != null)
+                        target = hit;
+                }
+
+                if (target is UIElement uie)
+                    uie.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                        RoutedEvent = UIElement.MouseLeaveEvent,
+                        Source = target
+                    });
             }).Task;
         }
     }

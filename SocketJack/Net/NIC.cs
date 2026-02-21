@@ -147,7 +147,7 @@ namespace SocketJack.Net {
         /// </summary>
         /// <returns></returns>
         public static IPAddress LocalIP() {
-            var u = new UdpClient("209.159.154.138", 1);
+            var u = new System.Net.Sockets.UdpClient("209.159.154.138", 1);
             var localAddr = ((IPEndPoint)u.Client.LocalEndPoint).Address;
             return localAddr;
         }

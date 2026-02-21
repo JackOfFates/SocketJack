@@ -73,15 +73,6 @@ internal sealed class BotUpdateLoop : IDisposable {
         if (snapshot.Count == 0)
             return;
 
-        var activeCount = 0;
-        for (var i = 0; i < snapshot.Count; i++) {
-            if (snapshot[i].IsActive)
-                activeCount++;
-        }
-
-        if (activeCount == 0)
-            return;
-
         if (_states.Length < snapshot.Count)
             _states = new BotSimState[snapshot.Count];
 
@@ -100,16 +91,21 @@ internal sealed class BotUpdateLoop : IDisposable {
             return;
         }
 
+        var anyActive = false;
         for (var i = 0; i < snapshot.Count; i++) {
             var b = snapshot[i];
             if (!b.IsActive)
                 continue;
 
+            anyActive = true;
             _states[i] = b.ExportSimState();
             _configs[i] = b.GetSimConfig(seed + i);
         }
 
-        _engine.UpdateBots(_states, _configs);
+        if (!anyActive)
+            return;
+
+        _engine.UpdateBots(_states, _configs, snapshot.Count);
 
         for (var i = 0; i < snapshot.Count; i++) {
             var b = snapshot[i];

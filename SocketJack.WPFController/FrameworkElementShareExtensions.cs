@@ -81,7 +81,7 @@ public static class FrameworkElementShareExtensions {
                             UnixMs = unchecked((int)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
                         });
 
-                        ShareDiagLog($"send frame to={peer.ID} size={width}x{height}");
+                        //ShareDiagLog($"send frame to={peer.ID} size={width}x{height}");
                     }
                 } catch {
                     // best-effort streaming
@@ -219,13 +219,16 @@ public static class FrameworkElementShareExtensions {
 
                 ShareDiagLog($"hit move x={x:0.#} y={y:0.#} target={target.GetType().Name}");
 
-                var args = new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
-                    RoutedEvent = UIElement.MouseMoveEvent,
-                    Source = target
-                };
+                element.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                    RoutedEvent = UIElement.PreviewMouseMoveEvent,
+                    Source = element
+                });
 
                 if (target is UIElement uie)
-                    uie.RaiseEvent(args);
+                    uie.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) {
+                        RoutedEvent = UIElement.MouseMoveEvent,
+                        Source = target
+                    });
             } catch {
             }
         }).Task;
@@ -257,23 +260,40 @@ public static class FrameworkElementShareExtensions {
 
                 ShareDiagLog($"hit click x={x:0.#} y={y:0.#} btn={button} target={target.GetType().Name}");
 
-                var down = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button) {
-                    RoutedEvent = UIElement.MouseDownEvent,
-                    Source = target
-                };
-                if (target is UIElement uieDown)
-                    uieDown.RaiseEvent(down);
+                element.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button) {
+                    RoutedEvent = UIElement.PreviewMouseDownEvent,
+                    Source = element
+                });
 
-                var up = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button) {
-                    RoutedEvent = UIElement.MouseUpEvent,
-                    Source = target
-                };
+                if (target is UIElement uieDown)
+                    uieDown.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button) {
+                        RoutedEvent = UIElement.MouseDownEvent,
+                        Source = target
+                    });
+
+                element.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button) {
+                    RoutedEvent = UIElement.PreviewMouseUpEvent,
+                    Source = element
+                });
+
                 if (target is UIElement uieUp)
-                    uieUp.RaiseEvent(up);
+                    uieUp.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button) {
+                        RoutedEvent = UIElement.MouseUpEvent,
+                        Source = target
+                    });
 
                 // For common controls, also trigger click semantic.
-                if (target is System.Windows.Controls.Primitives.ButtonBase bb && button == MouseButton.Left) {
-                    bb.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                // InputHitTest returns the deepest element (e.g. a TextBlock inside a
+                // Button), so walk up the visual tree to find the nearest ButtonBase.
+                if (button == MouseButton.Left) {
+                    var ancestor = target as DependencyObject;
+                    while (ancestor != null) {
+                        if (ancestor is System.Windows.Controls.Primitives.ButtonBase bb) {
+                            bb.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                            break;
+                        }
+                        ancestor = System.Windows.Media.VisualTreeHelper.GetParent(ancestor);
+                    }
                 }
             } catch {
             }

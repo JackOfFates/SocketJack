@@ -293,6 +293,9 @@
     <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
     <Compile Include="..\SocketJack\Net\HttpServer.cs" Link="Net\HttpServer.cs" />
     <Compile Include="..\SocketJack\Net\ISocket.cs" Link="Net\ISocket.cs" />
+    <Compile Include="..\SocketJack\Net\NetworkBase.cs" Link="Net\NetworkBase.cs" />
+    <Compile Include="..\SocketJack\Net\NetworkConnection.cs" Link="Net\NetworkConnection.cs" />
+    <Compile Include="..\SocketJack\Net\NetworkOptions.cs" Link="Net\NetworkOptions.cs" />
     <Compile Include="..\SocketJack\Net\NIC.cs" Link="Net\NIC.cs" />
     <Compile Include="..\SocketJack\Net\P2P\ConnectionRefusedArgs.cs" Link="Net\P2P\ConnectionRefusedArgs.cs" />
     <Compile Include="..\SocketJack\Net\P2P\Identifier.cs" Link="Net\P2P\Identifier.cs" />
@@ -303,10 +306,7 @@
     <Compile Include="..\SocketJack\Net\P2P\PeerServer.cs" Link="Net\P2P\PeerServer.cs" />
     <Compile Include="..\SocketJack\Net\Segment.cs" Link="Net\Segment.cs" />
     <Compile Include="..\SocketJack\Net\SendQueueItem.cs" Link="Net\SendQueueItem.cs" />
-    <Compile Include="..\SocketJack\Net\TcpBase.cs" Link="Net\TcpBase.cs" />
     <Compile Include="..\SocketJack\Net\TcpClient.cs" Link="Net\TcpClient.cs" />
-    <Compile Include="..\SocketJack\Net\TcpConnection.cs" Link="Net\TcpConnection.cs" />
-    <Compile Include="..\SocketJack\Net\TcpOptions.cs" Link="Net\TcpOptions.cs" />
     <Compile Include="..\SocketJack\Net\TcpServer.cs" Link="Net\TcpServer.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketClient.cs" Link="Net\WebSockets\WebSocketClient.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketServer.cs" Link="Net\WebSockets\WebSocketServer.cs" />

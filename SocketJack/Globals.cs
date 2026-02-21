@@ -21,7 +21,7 @@ namespace SocketJack {
         public static ThreadManager threadManager { get; } = new ThreadManager();
 
         public static List<Type> IgnoreLoggedTypes { get; } = new List<Type>(new[]{ typeof(Segment) });
-        public static List<Type> BlacklistedRedirects = new List<Type>() { typeof(Identifier), typeof(PeerServer), typeof(PeerRedirect), typeof(Socket), typeof(TcpConnection) };
+        public static List<Type> BlacklistedRedirects = new List<Type>() { typeof(Identifier), typeof(PeerServer), typeof(PeerRedirect), typeof(Socket), typeof(NetworkConnection) };
 
         static string HashAssembly(Assembly a) {
             var path = string.IsNullOrEmpty(a.Location) ? "<no file on disk>" : a.Location;

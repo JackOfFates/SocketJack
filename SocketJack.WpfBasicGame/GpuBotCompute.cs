@@ -5,22 +5,35 @@ namespace SocketJack.WpfBasicGame;
 
 internal interface IBotComputeEngine : IDisposable {
     bool IsAvailable { get; }
-    void UpdateBots(BotSimState[] states, BotSimConfig[] configs);
+    void UpdateBots(BotSimState[] states, BotSimConfig[] configs, int count);
 }
 
 internal readonly struct BotSimConfig {
-    public readonly float AimX;
-    public readonly float AimY;
-    public readonly float MaxSpeed;
+    public readonly float MaxSpeedPerMs;
     public readonly float Jitter;
     public readonly int Seed;
+    public readonly float TargetCenterX;
+    public readonly float TargetCenterY;
+    public readonly float TargetLeft;
+    public readonly float TargetTop;
+    public readonly float TargetSize;
+    public readonly float ClickMargin;
+    public readonly int HasTarget;
 
-    public BotSimConfig(float aimX, float aimY, float maxSpeed, float jitter, int seed) {
-        AimX = aimX;
-        AimY = aimY;
-        MaxSpeed = maxSpeed;
+    public BotSimConfig(float maxSpeed, float jitter, int seed,
+                        float targetCenterX, float targetCenterY,
+                        float targetLeft, float targetTop,
+                        float targetSize, float clickMargin, int hasTarget) {
+        MaxSpeedPerMs = maxSpeed / 16f;
         Jitter = jitter;
         Seed = seed;
+        TargetCenterX = targetCenterX;
+        TargetCenterY = targetCenterY;
+        TargetLeft = targetLeft;
+        TargetTop = targetTop;
+        TargetSize = targetSize;
+        ClickMargin = clickMargin;
+        HasTarget = hasTarget;
     }
 }
 
@@ -29,14 +42,16 @@ internal struct BotSimState {
     public float Y;
     public float Vx;
     public float Vy;
+    public float WanderX;
+    public float WanderY;
+    public float WanderTimer;
+    public int HitTarget;
 }
 
 internal sealed class CpuBotComputeEngine : IBotComputeEngine {
     public bool IsAvailable => false;
 
-    public void UpdateBots(BotSimState[] states, BotSimConfig[] configs) {
-        // Placeholder: CPU path should remain in NpcBotClient for now.
-        // This engine exists to keep call sites simple when GPU isn't available.
+    public void UpdateBots(BotSimState[] states, BotSimConfig[] configs, int count) {
     }
 
     public void Dispose() {
@@ -46,6 +61,10 @@ internal sealed class CpuBotComputeEngine : IBotComputeEngine {
 internal sealed class GpuBotComputeEngine : IBotComputeEngine {
     private readonly GraphicsDevice? _device;
     private bool _disabled;
+
+    private ReadWriteBuffer<BotSimState>? _stateBuffer;
+    private ReadWriteBuffer<BotSimConfig>? _cfgBuffer;
+    private int _bufferCapacity;
 
     public bool IsAvailable => _device != null && !_disabled;
 
@@ -57,27 +76,38 @@ internal sealed class GpuBotComputeEngine : IBotComputeEngine {
         }
     }
 
-    public void UpdateBots(BotSimState[] states, BotSimConfig[] configs) {
-        if (_device == null || _disabled)
-            return;
-
-        if (states.Length == 0)
-            return;
-
-        if (configs.Length < states.Length)
+    public void UpdateBots(BotSimState[] states, BotSimConfig[] configs, int count) {
+        if (_device == null || _disabled || count <= 0)
             return;
 
         try {
-            using var stateBuffer = _device.AllocateReadWriteBuffer(states);
-            using var cfgBuffer = _device.AllocateReadOnlyBuffer(configs);
-            _device.For(states.Length, new BotKernel(stateBuffer, cfgBuffer));
-            stateBuffer.CopyTo(states);
+            EnsureBufferCapacity(states.Length);
+
+            _stateBuffer!.CopyFrom(states);
+            _cfgBuffer!.CopyFrom(configs);
+
+            _device.For(count, new BotKernel(_stateBuffer, _cfgBuffer));
+
+            _stateBuffer.CopyTo(states);
         } catch {
-            // If the GPU path faults (driver/device/shader issues), disable it for the process.
             _disabled = true;
         }
     }
 
+    private void EnsureBufferCapacity(int length) {
+        if (length == _bufferCapacity && _stateBuffer != null && _cfgBuffer != null)
+            return;
+
+        _stateBuffer?.Dispose();
+        _cfgBuffer?.Dispose();
+
+        _bufferCapacity = length;
+        _stateBuffer = _device!.AllocateReadWriteBuffer<BotSimState>(length);
+        _cfgBuffer = _device!.AllocateReadWriteBuffer<BotSimConfig>(length);
+    }
+
     public void Dispose() {
+        _stateBuffer?.Dispose();
+        _cfgBuffer?.Dispose();
     }
 }

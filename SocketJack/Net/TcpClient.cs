@@ -18,7 +18,7 @@ namespace SocketJack.Net {
     /// Multithreaded TCP Client.
     /// </summary>
     /// <remarks></remarks>
-    public class TcpClient : TcpBase {
+    public class TcpClient : NetworkBase {
 
         #region Peer To Peer
 
@@ -39,7 +39,7 @@ namespace SocketJack.Net {
         /// <param name="Serializer">Serializer used for this connection.</param>
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer; <see langword="null"/> if error occured.</returns>
-        public override async Task<ISocket> StartServer(Identifier RemotePeer, TcpOptions Options, string Name = "TcpServer") {
+        public override async Task<ISocket> StartServer(Identifier RemotePeer, NetworkOptions Options, string Name = "TcpServer") {
             return await StartServer(RemotePeer.ID, Options, Name);
         }
 
@@ -51,7 +51,7 @@ namespace SocketJack.Net {
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <param name="Port">Port to listen on. If 0, a random port will be chosen.</param>
         /// <returns>new TcpServer; <see langword="null"/> if error occured.</returns>
-        private async Task<TcpServer> StartServer(string ID, TcpOptions Options, string Name = "TcpServer", int Port = 0) {
+        private async Task<TcpServer> StartServer(string ID, NetworkOptions Options, string Name = "TcpServer", int Port = 0) {
             if (!Options.UsePeerToPeer) {
                 InvokeOnError(Connection, new Exception("P2P is not enabled."));
                 return null;
@@ -274,7 +274,7 @@ namespace SocketJack.Net {
             _Socket.ReceiveTimeout = -1;
             _Socket.SendTimeout = -1;
 
-            Connection = new TcpConnection(this, Socket);
+            Connection = new NetworkConnection(this, Socket);
             
             try {
                 Bind(_Port);
@@ -369,7 +369,7 @@ namespace SocketJack.Net {
         public event OnIdentifiedEventHandler OnIdentified;
         public delegate void OnIdentifiedEventHandler(ISocket sender, Identifier LocalIdentity);
 
-        public override void InvokeOnDisconnected(ISocket sender, TcpConnection Connection) {
+        public override void InvokeOnDisconnected(ISocket sender, NetworkConnection Connection) {
 #if UNITY
             MainThread.Run(() => {
 		        OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
@@ -385,7 +385,7 @@ namespace SocketJack.Net {
 #endif
         }
 
-        public override void InvokeOnConnected(ISocket sender, TcpConnection Connection) {
+        public override void InvokeOnConnected(ISocket sender, NetworkConnection Connection) {
 #if UNITY
             MainThread.Run(() => {
                 OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
@@ -449,7 +449,7 @@ namespace SocketJack.Net {
             if (Options.AutoReconnect && !isDisposed)
                 await Reconnect();
         }
-        private void TcpClient_InternalReceiveEvent(TcpConnection Connection, Type objType, object obj, int BytesReceived) {
+        private void TcpClient_InternalReceiveEvent(NetworkConnection Connection, Type objType, object obj, int BytesReceived) {
             if (Options.LogReceiveEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
@@ -459,10 +459,10 @@ namespace SocketJack.Net {
                 }
             }
         }
-        private void TcpClient_InternalReceivedByteCounter(TcpConnection Connection, int BytesReceived) {
+        private void TcpClient_InternalReceivedByteCounter(NetworkConnection Connection, int BytesReceived) {
             Interlocked.Add(ref base.Connection.ReceivedBytesCounter, BytesReceived);
         }
-        private void TcpClient_InternalSendEvent(TcpConnection Connection, Type objType, object obj, int BytesSent) {
+        private void TcpClient_InternalSendEvent(NetworkConnection Connection, Type objType, object obj, int BytesSent) {
             if (Options.LogSendEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
@@ -472,7 +472,7 @@ namespace SocketJack.Net {
                 }
             }
         }
-        private void TcpClient_InternalSentByteCounter(TcpConnection Connection, int BytesSent) {
+        private void TcpClient_InternalSentByteCounter(NetworkConnection Connection, int BytesSent) {
             Interlocked.Add(ref Connection.SentBytesCounter, BytesSent);
         }
         private void TcpClient_BytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
@@ -495,7 +495,7 @@ namespace SocketJack.Net {
         /// <param name="Timeout">Timeout in milliseconds.</param>
         /// <returns>True if Port is Open, False if Closed.</returns>
         public static async Task<bool> CheckPort(string Host, int Port, int Timeout = 500) {
-            TcpOptions opts = TcpOptions.DefaultOptions.Clone<TcpOptions>();
+            NetworkOptions opts = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
             opts.ConnectionTimeout = TimeSpan.FromMilliseconds(Timeout);
             var PortChecker = new TcpClient(opts, "PortChecker");
             var success = await PortChecker.Connect(Host, Port);
@@ -544,7 +544,7 @@ namespace SocketJack.Net {
         /// <param name="Serializer">Serializer for serialization and deserialization.</param>
         /// <param name="AutoReconnect">Auto Reconnect on Disconnect/Failed Connection to last Host / Port.</param>
         /// <param name="Name">Name used for logging. </param>
-        public TcpClient(TcpOptions Options, string Name = "TcpClient") : base() {
+        public TcpClient(NetworkOptions Options, string Name = "TcpClient") : base() {
             this.Options = Options;
             this.Name = Name;
             var argClient = (ISocket)this;

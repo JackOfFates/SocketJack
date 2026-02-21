@@ -22,14 +22,14 @@ Public Class BandwidthTest
     Public Property ServerPort As Integer = NIC.FindOpenPort(7500, 8000).Result
     Public Property Compressor As New GZip2Compression(IO.Compression.CompressionLevel.SmallestSize)
     Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options =
-        New TcpOptions With {.Logging = True,
+        New NetworkOptions With {.Logging = True,
                              .UseCompression = False,
                              .MaximumDownloadMbps = 0.2,
                              .MaximumUploadMbps = 0.2,
                              .CompressionAlgorithm = Compressor}}
 
     Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options =
-        New TcpOptions With {.Logging = True,
+        New NetworkOptions With {.Logging = True,
                              .UpdateConsoleTitle = True,
                              .UseCompression = Server.Options.UseCompression,
                              .MaximumDownloadMbps = 0.2,

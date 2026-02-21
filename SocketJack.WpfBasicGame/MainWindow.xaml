@@ -50,13 +50,13 @@
 
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition/>
+                <ColumnDefinition Width="Auto" MinWidth="350"/>
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Padding="10" BorderThickness="1" BorderBrush="#33000000" CornerRadius="6">
                 <Canvas x:Name="GameCanvas" Background="#0C000000" Width="560" Margin="1,0,1,-1">
-					<Ellipse x:Name="BotCursor"
+                    <Ellipse x:Name="BotCursor"
 		                         Width="30" Height="30"
 		                         Fill="Orange"
 		                         Stroke="Black"
@@ -64,7 +64,7 @@
 		                         Visibility="Collapsed"
 		                         IsHitTestVisible="False"
 		                         Panel.ZIndex="1"/>
-					<Button x:Name="TargetButton"
+                    <Button x:Name="TargetButton"
                             Width="70" Height="70"
                             Content="CLICK"
                             FontWeight="Bold"
@@ -72,7 +72,7 @@
                             Foreground="White"
                             BorderBrush="#CC000000"
                             BorderThickness="2"
-                            PreviewMouseLeftButtonDown="TargetButton_MouseLeftButtonDown"
+                            Click="TargetButton_Click"
                             Visibility="Collapsed"
                             Panel.ZIndex="2"/>
                 </Canvas>
@@ -103,8 +103,8 @@
 
                     <TextBlock FontWeight="SemiBold" Text="Control Share (Bitmap)" Margin="0,0,0,6"/>
                     <Button x:Name="ShareToggleButton" Content="Start Sharing" Width="133" Margin="0,0,0,6" Click="ShareToggleButton_Click" />
-                    <Border Height="160" BorderThickness="1" BorderBrush="#33000000" CornerRadius="4" Padding="2">
-                        <Image x:Name="SharedImage" Stretch="Uniform" />
+                    <Border Height="240">
+                        <Image x:Name="SharedImage" Stretch="UniformToFill" StretchDirection="DownOnly" />
                     </Border>
                 </StackPanel>
             </Border>

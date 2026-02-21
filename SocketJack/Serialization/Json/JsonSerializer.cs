@@ -37,13 +37,7 @@ namespace SocketJack.Serialization.Json {
         }
 
         public byte[] Serialize(object Obj) {
-            // JsonSerializerOptions contains mutable collections (e.g., Converters).
-            // SocketJack can mutate these at runtime (whitelisting/callback registration),
-            // which can race with System.Text.Json enumerating the options and throw
-            // "Collection was modified". Snapshot options for thread-safe serialization.
-            var opts = new JsonSerializerOptions(JsonOptions);
-            string Json = System.Text.Json.JsonSerializer.Serialize(Obj, opts);
-            return Encoding.UTF8.GetBytes(Json);
+            return System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(Obj, JsonOptions);
         }
 
         public Wrapper Deserialize(byte[] bytes) {

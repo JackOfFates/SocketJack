@@ -18,20 +18,47 @@ internal static class ControlBitmapCapture {
             // Ensure layout is up to date
             element.UpdateLayout();
 
-            var width = (int)Math.Ceiling(element.ActualWidth);
-            var height = (int)Math.Ceiling(element.ActualHeight);
+            var dipWidth = element.ActualWidth;
+            var dipHeight = element.ActualHeight;
 
-            if (width <= 0 || height <= 0)
+            if (dipWidth <= 0 || dipHeight <= 0)
+                return (byte[]?)null;
+
+            // Detect the actual DPI so the captured bitmap has pixel dimensions
+            // consistent with its DPI metadata.  When the viewer decodes the JPEG,
+            // WPF may fall back to the system DPI; using the true DPI here keeps
+            // the natural size correct regardless of the fallback path.
+            double renderDpiX = dpi;
+            double renderDpiY = dpi;
+            var ps = PresentationSource.FromVisual(element);
+            if (ps != null && ps.CompositionTarget != null) {
+                var m = ps.CompositionTarget.TransformToDevice;
+                renderDpiX = 96.0 * m.M11;
+                renderDpiY = 96.0 * m.M22;
+            }
+
+            int pixelWidth = (int)Math.Ceiling(dipWidth * renderDpiX / 96.0);
+            int pixelHeight = (int)Math.Ceiling(dipHeight * renderDpiY / 96.0);
+
+            if (pixelWidth <= 0 || pixelHeight <= 0)
                 return (byte[]?)null;
 
             // Render via a VisualBrush so we capture exactly the element bounds.
+            // Explicitly set Viewbox in absolute DIP coordinates so the brush
+            // always maps the element's layout region 1-to-1 to the destination
+            // rectangle.  Without this, WPF's automatic bounding-box computation
+            // can return device-scaled bounds after visual-tree invalidations on
+            // high-DPI displays, causing the content to fill only half the bitmap.
             var dv = new DrawingVisual();
             using (var dc = dv.RenderOpen()) {
-                var vb = new VisualBrush(element);
-                dc.DrawRectangle(vb, null, new Rect(0, 0, width, height));
+                var vb = new VisualBrush(element) {
+                    Viewbox = new Rect(0, 0, dipWidth, dipHeight),
+                    ViewboxUnits = BrushMappingMode.Absolute
+                };
+                dc.DrawRectangle(vb, null, new Rect(0, 0, dipWidth, dipHeight));
             }
 
-            var rtb = new RenderTargetBitmap(width, height, dpi, dpi, PixelFormats.Pbgra32);
+            var rtb = new RenderTargetBitmap(pixelWidth, pixelHeight, renderDpiX, renderDpiY, PixelFormats.Pbgra32);
             rtb.Render(dv);
 
             if (quality < 1)

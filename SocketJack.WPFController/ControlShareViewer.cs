@@ -23,8 +23,17 @@ public sealed class ControlShareViewer : IDisposable {
     private int _bitmapPixelHeight;
 
     private DateTime _nextMoveSendAt = DateTime.MinValue;
+    private DateTime _lastFrameReceivedUtc = DateTime.MinValue;
     private bool _mouseInside;
     private bool _canSendP2p;
+
+    private const double FrameTimeoutSeconds = 3.0;
+
+    private bool IsReceivingFrames {
+        get {
+            return (DateTime.UtcNow - _lastFrameReceivedUtc).TotalSeconds < FrameTimeoutSeconds;
+        }
+    }
 
     public ControlShareViewer(TcpClient client, Image image) {
         _client = client ?? throw new ArgumentNullException(nameof(client));
@@ -92,12 +101,7 @@ public sealed class ControlShareViewer : IDisposable {
         var offsetX = (iw - drawW) / 2.0;
         var offsetY = (ih - drawH) / 2.0;
 
-        // Convert to root-window coordinates then subtract Image's top-left to ensure
-        // we are always working in Image-local space (prevents window-relative drift).
-        var root = Application.Current?.MainWindow as IInputElement;
-        var pRoot = root == null ? e.GetPosition(_image) : e.GetPosition(root);
-        var imageOrigin = _image.TranslatePoint(new Point(0, 0), root == null ? _image : (UIElement)root);
-        var p = new Point(pRoot.X - imageOrigin.X, pRoot.Y - imageOrigin.Y);
+        var p = e.GetPosition(_image);
         var x = (p.X - offsetX) / drawW;
         var y = (p.Y - offsetY) / drawH;
         if (x < 0)
@@ -133,10 +137,7 @@ public sealed class ControlShareViewer : IDisposable {
         var offsetX = (iw - drawW) / 2.0;
         var offsetY = (ih - drawH) / 2.0;
 
-        var root = Application.Current?.MainWindow as IInputElement;
-        var pRoot = root == null ? e.GetPosition(_image) : e.GetPosition(root);
-        var imageOrigin = _image.TranslatePoint(new Point(0, 0), root == null ? _image : (UIElement)root);
-        var p = new Point(pRoot.X - imageOrigin.X, pRoot.Y - imageOrigin.Y);
+        var p = e.GetPosition(_image);
         var x = (p.X - offsetX) / drawW;
         var y = (p.Y - offsetY) / drawH;
         if (x < 0)
@@ -159,6 +160,8 @@ public sealed class ControlShareViewer : IDisposable {
             return;
         if (string.IsNullOrWhiteSpace(_controlId))
             return;
+        if (!IsReceivingFrames)
+            return;
 
         try {
             _client.Send(_sharePeer, new ControlShareRemoteAction {
@@ -177,6 +180,8 @@ public sealed class ControlShareViewer : IDisposable {
         if (e.Connection == null || e.Connection.Identity == null)
             return;
 
+        _lastFrameReceivedUtc = DateTime.UtcNow;
+
         var msg = e.Object;
         if (msg.JpegBytes == null || msg.JpegBytes.Length == 0)
             return;
@@ -192,20 +197,27 @@ public sealed class ControlShareViewer : IDisposable {
         if (msg.Height > 0)
             _frameHeight = msg.Height;
 
-        try {
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.StreamSource = new MemoryStream(msg.JpegBytes);
-            bmp.EndInit();
-            bmp.Freeze();
+        // Decode the JPEG on the UI thread so the BitmapImage is created in the
+        // correct DPI-awareness context.  Background-thread decoding can cause
+        // WPF to fall back to the system DPI, which halves the image's natural
+        // size on high-DPI displays.
+        var jpegBytes = msg.JpegBytes;
+        _image.Dispatcher.BeginInvoke(() => {
+            try {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.StreamSource = new MemoryStream(jpegBytes);
+                bmp.EndInit();
+                bmp.Freeze();
 
-            _bitmapPixelWidth = bmp.PixelWidth;
-            _bitmapPixelHeight = bmp.PixelHeight;
+                _bitmapPixelWidth = bmp.PixelWidth;
+                _bitmapPixelHeight = bmp.PixelHeight;
 
-            _image.Dispatcher.BeginInvoke(() => _image.Source = bmp);
-        } catch {
-        }
+                _image.Source = bmp;
+            } catch {
+            }
+        });
     }
 
     private bool TryGetRenderedBitmapMetrics(out double drawW, out double drawH, out double offsetX, out double offsetY) {
@@ -259,6 +271,8 @@ public sealed class ControlShareViewer : IDisposable {
             return;
         if (string.IsNullOrWhiteSpace(_controlId))
             return;
+        if (!IsReceivingFrames)
+            return;
 
         var now = DateTime.UtcNow;
         if (now < _nextMoveSendAt)
@@ -268,10 +282,7 @@ public sealed class ControlShareViewer : IDisposable {
         if (!TryGetRenderedBitmapMetrics(out var drawW, out var drawH, out var offsetX, out var offsetY))
             return;
 
-        var root = Application.Current?.MainWindow as IInputElement;
-        var pRoot = root == null ? e.GetPosition(_image) : e.GetPosition(root);
-        var imageOrigin = _image.TranslatePoint(new Point(0, 0), root == null ? _image : (UIElement)root);
-        var p = new Point(pRoot.X - imageOrigin.X, pRoot.Y - imageOrigin.Y);
+        var p = e.GetPosition(_image);
         var x = (p.X - offsetX) / drawW;
         var y = (p.Y - offsetY) / drawH;
 
@@ -310,6 +321,8 @@ public sealed class ControlShareViewer : IDisposable {
             return;
         if (string.IsNullOrWhiteSpace(_controlId))
             return;
+        if (!IsReceivingFrames)
+            return;
 
         if (!TryGetRenderedBitmapMetrics(out var drawW, out var drawH, out var offsetX, out var offsetY))
             return;
@@ -317,6 +330,15 @@ public sealed class ControlShareViewer : IDisposable {
         var p = e.GetPosition(_image);
         var x = (p.X - offsetX) / drawW;
         var y = (p.Y - offsetY) / drawH;
+
+        if (x < 0)
+            x = 0;
+        if (y < 0)
+            y = 0;
+        if (x > 1)
+            x = 1;
+        if (y > 1)
+            y = 1;
 
         _client.Send(_sharePeer, new ControlShareInput {
             ControlId = _controlId,
@@ -352,6 +374,8 @@ public sealed class ControlShareViewer : IDisposable {
             return;
         if (string.IsNullOrWhiteSpace(_controlId))
             return;
+        if (!IsReceivingFrames)
+            return;
 
         if (!TryGetRenderedBitmapMetrics(out var drawW, out var drawH, out var offsetX, out var offsetY))
             return;
@@ -359,6 +383,15 @@ public sealed class ControlShareViewer : IDisposable {
         var p = e.GetPosition(_image);
         var x = (p.X - offsetX) / drawW;
         var y = (p.Y - offsetY) / drawH;
+
+        if (x < 0)
+            x = 0;
+        if (y < 0)
+            y = 0;
+        if (x > 1)
+            x = 1;
+        if (y > 1)
+            y = 1;
 
         _client.Send(_sharePeer, new ControlShareInput {
             ControlId = _controlId,

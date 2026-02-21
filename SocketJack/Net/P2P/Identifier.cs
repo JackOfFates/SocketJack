@@ -30,8 +30,8 @@ namespace SocketJack.Net.P2P {
         /// <remarks>Only changable from server.</remarks>
         /// </summary>
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public Dictionary<string, string> Metadata { get; set; } = new Dictionary<string, string>();
-        private Dictionary<string, string> PrivateMetadata { get; set; } = new Dictionary<string, string>();
+        public ConcurrentDictionary<string, string> Metadata { get; set; } = new ConcurrentDictionary<string, string>();
+        private ConcurrentDictionary<string, string> PrivateMetadata { get; set; } = new ConcurrentDictionary<string, string>();
 
         /// <summary>
         /// Set metadata key/value for this Peer.
@@ -41,7 +41,7 @@ namespace SocketJack.Net.P2P {
         /// <param name="server"></param>
         /// <param name="key"></param>
         /// <param name="value">Value of key;Removes value if equal to null or String.Empty</param>
-        public void SetMetaData(TcpServer server, string key, string value, bool Private = false) {
+        public void SetMetaData(TcpServer server, string key, string value, bool Private = false, bool broadcastUpdate = true) {
             if (server != null) {
                 var metadata = Private ? PrivateMetadata : Metadata;
                 if (string.IsNullOrEmpty(value)) {
@@ -55,11 +55,13 @@ namespace SocketJack.Net.P2P {
                     }
                 }
 
-                var update = server.Peers[ID].Clone<Identifier>();
-                update.Action = PeerAction.MetadataUpdate;
-                update.Metadata = metadata;
-                update.IP = string.Empty;
-                server.SendBroadcast(update);
+                if (broadcastUpdate) {
+                    var update = server.Peers[ID].Clone<Identifier>();
+                    update.Action = PeerAction.MetadataUpdate;
+                    update.Metadata = metadata;
+                    update.IP = string.Empty;
+                    server.SendBroadcast(update);
+                }
             }
         }
 
@@ -71,7 +73,7 @@ namespace SocketJack.Net.P2P {
         /// <param name="server"></param>
         /// <param name="key"></param>
         /// <param name="value">Value of key;Removes value if equal to null or String.Empty</param>
-        public void SetMetaData(ISocket server, string key, string value, bool Private = false) {
+        public void SetMetaData(ISocket server, string key, string value, bool Private = false, bool broadcastUpdate = true) {
             if (server != null) {
                 var metadata = Private ? PrivateMetadata : Metadata;
                 if (string.IsNullOrEmpty(value)) {
@@ -85,11 +87,13 @@ namespace SocketJack.Net.P2P {
                     }
                 }
 
-                var update = server.Peers[ID].Clone<Identifier>();
-                update.Action = PeerAction.MetadataUpdate;
-                update.Metadata = metadata;
-                update.IP = string.Empty;
-                server.SendBroadcast(update);
+                if (broadcastUpdate) {
+                    var update = server.Peers[ID].Clone<Identifier>();
+                    update.Action = PeerAction.MetadataUpdate;
+                    update.Metadata = metadata;
+                    update.IP = string.Empty;
+                    server.SendBroadcast(update);
+                }
             }
         }
 
@@ -279,7 +283,7 @@ namespace SocketJack.Net.P2P {
         /// <param name="Client">TcpClient associated with the RemotePeer.</param>
         /// <param name="Serializer">Serializer used for this connection.</param>
         /// <returns></returns>
-        protected internal async static Task<ISocket> StartServer(Identifier RemotePeer, TcpClient Client, TcpOptions Options, string Name = "TcpServer") {
+        protected internal async static Task<ISocket> StartServer(Identifier RemotePeer, TcpClient Client, NetworkOptions Options, string Name = "TcpServer") {
             return await Client.StartServer(RemotePeer, Options, Name);
         }
 
@@ -298,7 +302,7 @@ namespace SocketJack.Net.P2P {
         /// <param name="Serializer">Serializer used for this connection.</param>
         /// <param name="Name">Name of the TcpServer (Used for logging)</param>
         /// <returns>new TcpServer</returns>
-        public async Task<ISocket> StartServer(TcpOptions Options, string Name = "TcpServer") {
+        public async Task<ISocket> StartServer(NetworkOptions Options, string Name = "TcpServer") {
             return await Parent.StartServer(this, Options, Name);
         }
 
@@ -330,11 +334,11 @@ namespace SocketJack.Net.P2P {
             return Create(ID.ToString(), IsLocalIdentity, IsLocalIdentity ? IP : string.Empty);
         }
 
-        public static Identifier Create(TcpConnection Client) {
+        public static Identifier Create(NetworkConnection Client) {
             return Create(Client.ID);
         }
 
-        public static Identifier Create(TcpConnection Client, bool IsLocalIdentity, string IP = "") {
+        public static Identifier Create(NetworkConnection Client, bool IsLocalIdentity, string IP = "") {
             return Create(Client.ID, IsLocalIdentity, IsLocalIdentity ? IP : string.Empty);
         }
 

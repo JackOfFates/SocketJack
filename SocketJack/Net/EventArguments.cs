@@ -19,12 +19,12 @@ namespace SocketJack.Net {
         public bool CancelPeerRedirect { get; set; }
         public bool IsPeerRedirect { get; set; }
         public ISocket sender { get; set; }
-        public TcpConnection Connection { get; set; }
+        public NetworkConnection Connection { get; set; }
         public Type Type { get; set; }
         public int BytesReceived { get; set; }
         public object Obj { get; set; }
 
-        public void Initialize(ISocket sender, TcpConnection Client, object obj, int BytesReceived, string From = null) {
+        public void Initialize(ISocket sender, NetworkConnection Client, object obj, int BytesReceived, string From = null) {
             this.sender = sender;
             this.Connection = Client;
             this.Type = obj.GetType();
@@ -66,7 +66,7 @@ namespace SocketJack.Net {
         public bool IsPeerRedirect { get; set; }
 
         public ISocket sender { get; set; }
-        public TcpConnection Connection { get; set; }
+        public NetworkConnection Connection { get; set; }
         public Type Type { get; set; }
         public int BytesReceived { get; set; }
 
@@ -77,7 +77,7 @@ namespace SocketJack.Net {
 
         public ReceivedEventArgs() { }
 
-        public ReceivedEventArgs(ISocket sender, TcpConnection Connection, object obj, int BytesReceived, string From = null) {
+        public ReceivedEventArgs(ISocket sender, NetworkConnection Connection, object obj, int BytesReceived, string From = null) {
             this.sender = sender;
             this.Connection = Connection;
             this.Object = (T)obj;
@@ -105,27 +105,27 @@ namespace SocketJack.Net {
     }
 
     public class SentEventArgs {
-        public SentEventArgs(ISocket sender, TcpConnection Connection, Type Type, int BytesSent) {
+        public SentEventArgs(ISocket sender, NetworkConnection Connection, Type Type, int BytesSent) {
             this.sender = sender;
             this.Connection = Connection;
             this.BytesSent = BytesSent;
             this.Type = Type;
         }
         public ISocket sender { get; private set; }
-        public TcpConnection Connection { get; private set; }
+        public NetworkConnection Connection { get; private set; }
         public int BytesSent { get; private set; }
         public Type Type { get; private set; }
     }
 
     public class DisconnectedEventArgs {
-        public DisconnectedEventArgs(ISocket sender, TcpConnection Connection, DisconnectionReason Reason = DisconnectionReason.Unknown) {
+        public DisconnectedEventArgs(ISocket sender, NetworkConnection Connection, DisconnectionReason Reason = DisconnectionReason.Unknown) {
             this.sender = sender;
             this.Connection = Connection;
             this.Reason = Reason;
         }
 
         public ISocket sender { get; private set; }
-        public TcpConnection Connection { get; private set; }
+        public NetworkConnection Connection { get; private set; }
         public DisconnectionReason Reason { get; private set; }
     }
 
@@ -144,24 +144,24 @@ namespace SocketJack.Net {
     }
 
     public class ConnectedEventArgs {
-        public ConnectedEventArgs(ISocket sender, TcpConnection Connection) {
+        public ConnectedEventArgs(ISocket sender, NetworkConnection Connection) {
             this.sender = sender;
             this.Connection = Connection;
         }
 
         public ISocket sender { get; private set; }
-        public TcpConnection Connection { get; private set; }
+        public NetworkConnection Connection { get; private set; }
     }
 
     public class ErrorEventArgs {
-        public ErrorEventArgs(ISocket sender, TcpConnection Connection, Exception e) {
+        public ErrorEventArgs(ISocket sender, NetworkConnection Connection, Exception e) {
             this.sender = sender;
             this.Connection = Connection;
             Exception = e;
         }
 
         public ISocket sender { get; private set; }
-        public TcpConnection Connection { get; private set; }
+        public NetworkConnection Connection { get; private set; }
         public Exception Exception { get; private set; }
     }
 }

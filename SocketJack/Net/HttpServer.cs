@@ -16,9 +16,9 @@ namespace SocketJack.Net {
         //new private event PeerConnectionRequestEventHandler PeerConnectionRequest;
 
         public event RequestHandler OnHttpRequest;
-        public delegate void RequestHandler(TcpConnection Connection, ref HttpContext context, CancellationToken cancellationToken);
+        public delegate void RequestHandler(NetworkConnection Connection, ref HttpContext context, CancellationToken cancellationToken);
 
-        public delegate object RouteHandler(TcpConnection connection, HttpRequest request, CancellationToken cancellationToken);
+        public delegate object RouteHandler(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken);
 
         private readonly Dictionary<string, Dictionary<string, RouteHandler>> _routes = new Dictionary<string, Dictionary<string, RouteHandler>>(StringComparer.OrdinalIgnoreCase);
 
@@ -45,7 +45,7 @@ namespace SocketJack.Net {
             return byPath.Remove(path);
         }
 
-        private object ResolveRouteObject(TcpConnection connection, HttpRequest request, CancellationToken cancellationToken) {
+        private object ResolveRouteObject(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
             if (request == null)
                 return null;
 
@@ -148,7 +148,7 @@ namespace SocketJack.Net {
             }
         }
 
-        public HttpServer(TcpOptions Options, int Port, string Name = "HttpServer") : base(Options, Port, Name) {
+        public HttpServer(NetworkOptions Options, int Port, string Name = "HttpServer") : base(Options, Port, Name) {
             Options.UseTerminatedStreams = false;
             Options.UsePeerToPeer = false;
             OnDisposing += Disposing;
@@ -449,7 +449,7 @@ namespace SocketJack.Net {
             } 
         }
         private HttpResponse _Response;
-        public TcpConnection Connection { get; set; }
+        public NetworkConnection Connection { get; set; }
         public CancellationToken cancellationToken { get; set; }
 
         public HttpResponse CreateResponse() {

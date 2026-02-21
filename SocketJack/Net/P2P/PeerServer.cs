@@ -48,7 +48,7 @@ namespace SocketJack.Net.P2P {
         /// </summary>
         /// <param name="AutoReconnect">Reconnect automatically.</param>
         /// <returns>New TcpClient or WebSocketClient if successful; <see langword="Nothing"/> if connection failed.</returns>
-        public async Task<ISocket> Accept(TcpOptions Options, string Name = "TcpClient", bool AutoReconnect = false) {
+        public async Task<ISocket> Accept(NetworkOptions Options, string Name = "TcpClient", bool AutoReconnect = false) {
 #if !UNITY_WEBGL
                         return await Task.Run<ISocket>(async () => {
                             if (LocalClient.Parent == null) return null;

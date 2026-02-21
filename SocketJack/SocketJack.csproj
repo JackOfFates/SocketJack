@@ -25,27 +25,33 @@
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
     <Copyright>Copyright © JackOfFates 2025</Copyright>
-    <AssemblyVersion>1.3.0</AssemblyVersion>
-    <FileVersion>1.3.0</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
-    <Description>Fast, Efficient, 100% Managed, Peer to Peer, Non Generic, Extensible TCP Client &amp; Server with built in Serialization that can be used to transmit any object.</Description>
+    <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 6, .NET 8, .NET 9, and .NET 10.</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes>WebSocket deserialization fix
-Peer to peer</PackageReleaseNotes>
+    <PackageReleaseNotes>SocketJack v1.4 – Release Notes
+🚀 New Features
+• UDP Transport — New UdpClient and UdpServer classes that mirror the TCP API using connectionless datagrams. Full support for serialization, compression, peer-to-peer relay, callbacks, and broadcasting over UDP. Configurable options for max datagram size, client timeout, receive buffer size, and broadcast mode.
+• HTTP Server — New HttpServer class (built on TcpServer) with route mapping (Map(method, path, handler)), HttpContext/HttpRequest support, request handling events, and a default index page.
+• WPFController – Live Control Sharing — New ControlShareViewer.cs library enabling real-time sharing of any WPF FrameworkElement over P2P. The sharer captures JPEG frames at a configurable FPS via element.Share(client, peer, fps), and the viewer displays them with ControlShareViewer while forwarding mouse input (moves, clicks, enter/leave) back to the sharer for replay on the original element.
+🎯 Target Framework Updates
+• Added .NET 9 and .NET 10 to supported targets (alongside .NET Standard 2.1, .NET 6, .NET 8).
+📝 Other
+• Updated NuGet package description, tags, and readme.
+• Unified transport-agnostic API across TCP, UDP, and WebSocket.</PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
     <PackageIcon>SocketJackIcon.png</PackageIcon>
     <PackageReadmeFile>Readme_Gen.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/JackOfFates/SocketJack</RepositoryUrl>
-    <PackageTags>Socket; Sockets; Jack; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; Generic; Compressed; Multi Threaded; Concurrent; Multi Platform; WebSocket; WebSockets; </PackageTags>
+    <PackageTags>TCP; UDP; WebSocket; Socket; Sockets; Networking; Client; Server; TcpClient; TcpServer; UdpClient; UdpServer; Peer-to-Peer; P2P; NAT-Traversal; Serialization; JSON; System.Text.Json; GZip; Compression; SSL; TLS; Encryption; Async; Real-Time; Multiplayer; Game-Networking; Remote-Control; IoT; HTTP; Managed; Cross-Platform; High-Performance; Bandwidth-Throttling; WPF</PackageTags>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|netstandard2.1|AnyCPU'">
     <WarningLevel>0</WarningLevel>

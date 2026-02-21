@@ -168,7 +168,7 @@
             <param name="Key"></param>
             <param name="Value"></param>
         </member>
-        <member name="M:SocketJack.Extensions.ConnectedClientExtensions.SendBroadcast(System.Collections.Concurrent.ConcurrentDictionary{System.Guid,SocketJack.Net.TcpConnection},System.Object,SocketJack.Net.TcpConnection)">
+        <member name="M:SocketJack.Extensions.ConnectedClientExtensions.SendBroadcast(System.Collections.Concurrent.ConcurrentDictionary{System.Guid,SocketJack.Net.NetworkConnection},System.Object,SocketJack.Net.NetworkConnection)">
             <summary>
             Send a serializable object to all ConnectedSocket Except
             </summary>
@@ -176,7 +176,7 @@
             <param name="Except">The socket to exclude.</param>
             <remarks></remarks>
         </member>
-        <member name="M:SocketJack.Extensions.ConnectedClientExtensions.SendBroadcast(System.Collections.Concurrent.ConcurrentDictionary{System.Guid,SocketJack.Net.TcpConnection},System.Object)">
+        <member name="M:SocketJack.Extensions.ConnectedClientExtensions.SendBroadcast(System.Collections.Concurrent.ConcurrentDictionary{System.Guid,SocketJack.Net.NetworkConnection},System.Object)">
             <summary>
             Send a serializable object to all ConnectedSocket.
             </summary>
@@ -225,6 +225,451 @@
             </summary>
             <param name="rawRequest">The raw HTTP request string.</param>
             <returns>HttpRequest object with parsed data.</returns>
+        </member>
+        <member name="T:SocketJack.Net.NetworkBase">
+            <summary>
+            Base class for the Tcp Client and Server.
+            </summary>
+            <remarks></remarks>
+        </member>
+        <member name="E:SocketJack.Net.NetworkBase.PeerConnected">
+            <summary>
+            Fired when a user connects to the server.
+            </summary>
+            <param name="sender"></param>
+            <param name="Peer"></param>
+        </member>
+        <member name="E:SocketJack.Net.NetworkBase.PeerDisconnected">
+            <summary>
+            Fired when a user disconnects from the server.
+            </summary>
+            <param name="sender"></param>
+            <param name="Peer"></param>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.Name">
+            <summary>
+            (Optional) Name used for logging purposes.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.RemoteIdentity">
+            <summary>
+            Remote identifier used for peer-to-peer interactions used to determine the server-side client ID.
+            </summary>
+            <returns><see langword="null"/> if accessed before the server identifies the client.
+            <para>To avoid problems please do not acccess this via OnConnected Event.</para></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.InternalID">
+            <summary>
+            Not to be confused with RemoteIdentity, InternalID is used for internally identifying the client.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.Active">
+            <summary>
+            True if sending or receiving.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.Connection">
+            <summary>
+            The base connection for identification.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.Socket">
+            <summary>
+            The main socket that listens to all requests. Using the TCP protocol.
+            </summary>
+            <remarks>Uses AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp</remarks>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.Port">
+            <summary>
+            The bound port.
+            </summary>
+            <value>Integer</value>
+            <returns></returns>
+            <remarks></remarks>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.LocalIPEndPoint">
+            <summary>
+            Returns the bound IPEndPoint.
+            </summary>
+            <value>IPEndPoint</value>
+            <returns></returns>
+            <remarks></remarks>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.Connected">
+            <summary>
+            Current connection State.
+            </summary>
+            <returns><see langword="true"/> if Socket.Connected or Socket.Listening; otherwise <see langword="false"/></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.PeerToPeerInstance">
+            <summary>
+            True if is Peer to Peer Client or Server instance.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkBase.SslTargetHost">
+            <summary>
+            Host name for SSL connections.
+            <para>Required.</para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.RegisterCallback``1(System.Action{SocketJack.Net.ReceivedEventArgs{``0}})">
+            <summary>
+            <para>Registers a type callback using generic types.</para>
+            <para>Action of type invoked when type is received.</para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.RemoveCallback``1(System.Action{SocketJack.Net.ReceivedEventArgs{``0}})">
+            <summary>
+            Removes a type callback.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.RemoveCallback``1">
+            <summary>
+            Removes all type callbacks of T and it's respective white-list entry.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Socket">
+            <summary>
+            The socket associated to the connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Stream">
+            <summary>
+            The stream associated to the connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Compressed">
+            <summary>
+            Whether or not data is compressed.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.SSL">
+            <summary>
+            Whether or not data is encrypted.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.EndPoint">
+            <summary>
+            The remote endpoint of the connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.ID">
+            <summary>
+            Unique identifier for this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Parent">
+            <summary>
+            Parent of this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Active">
+            <summary>
+            True if connection sending or receiving.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.BytesPerSecondSent">
+            <summary>
+            Bytes per second sent on this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.BytesPerSecondReceived">
+            <summary>
+            Bytes per second received on this connection.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Identity">
+            <summary>
+            Remote Peer identifier for peer to peer interactions used to determine the Server's Client GUID.
+            </summary>
+            <returns>NULL if accessed before the Server identifies the Client.
+            To avoid problems please do not acccess this via OnConnected Event.</returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.IsReceiving">
+            <summary>
+            True if the connection is receiving data.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.IsSending">
+            <summary>
+            True if the connection is sending data.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.DownloadBuffer">
+            <summary>
+            Buffer used to receive data.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.UploadBuffer">
+            <summary>
+            Buffer used to send data.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Closed">
+            <summary>
+            True if the connection is closed.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Closing">
+            <summary>
+            True if the connection is closing.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.NetworkConnection.IsServer">
+            <summary>
+            <see langword="True"/> if created by a TcpServer.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.SendLocalIdentity">
+            <summary>
+            Sends the remote client their remote Identity and IP.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.Poll">
+            <summary>
+            Polls a socket to see if it is connected.
+            </summary>
+            <param name="socket"></param>
+            <returns><see langword="True"/> if poll successful.</returns>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.InitializeSslStream(System.Security.Cryptography.X509Certificates.X509Certificate,System.String)">
+            <summary>
+            Initializes the SSL stream for this connection.
+            </summary>
+            <param name="serverCertificate">The server certificate (required for server-side).</param>
+            <param name="targetHost">Target host name (required for client-side).</param>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.InitializeSslStream(System.String)">
+            <summary>
+            Initializes the SSL stream for this connection.
+            </summary>
+            <param name="targetHost">Target host name (required for client-side).</param>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.Send(SocketJack.Net.P2P.Identifier,System.Object)">
+            <summary>
+            Send an object to a Remote Client on the server.
+            <para>This will <see langword="NOT"/> expose your remote IP.</para>
+            </summary>
+            <param name="Recipient"></param>
+            <param name="Obj"></param>
+        </member>
+        <!-- Badly formed XML comment ignored for member "M:SocketJack.Net.NetworkConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)" -->
+        <member name="M:SocketJack.Net.NetworkConnection.GetMetaData(System.String,System.Boolean,System.Boolean)">
+            <summary>
+            Get metadata value by key for the connection.
+            <para>Can only be called from server.</para>
+            <paramref name="key">Metadata Key.</paramref>
+            <returns>Value as string.</returns>
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.NetworkOptions">
+            <summary>
+            Default options for <see langword="TcpClient"/>, <see langword="TcpServer"/>, <see langword="UdpClient"/>, and <see langword="UdpServer"/>.
+            <para>These options are used by default unless overridden here.</para>
+            <para>Set before creating any instances of TcpClient, TcpServer, UdpClient, or UdpServer.</para>
+            <para>Example:</para>
+            <code>
+            DefaultOptions.Logging = <see langword="True"/>
+            </code>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.Serializer">
+            <summary>
+            Serializer for both <see langword="TcpClient"/> and <see langword="TcpServer"/>.
+            <para>Default is System.Text.Json.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.CompressionAlgorithm">
+            <summary>
+            Compression algorithm for both <see langword="TcpClient"/> and <see langword="TcpServer"/>.
+            <para>Default is GZip2.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.Logging">
+            <summary>
+            Output OnConnected, OnDisconnected, and OnConnectionFailed events to Console.
+            Send and Receive events only logged when LogSendEvents or LogReceiveEvents are set to True.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.LogSendEvents">
+            <summary>
+            Log sent events to console.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.LogReceiveEvents">
+            <summary>
+            <para>Log received events to console.</para>
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.LogToConsole">
+            <summary>
+            Log to Debug Output Window.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UsePeerToPeer">
+            <summary>
+            <para>Turns on or off Peer to Peer functionality.</para>
+            <para>Required to be set before TcpClient.Connect or TcpServer.StartListening.</para>
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UpdateConsoleTitle">
+            <summary>
+            Update the title of the console window with traffic statistics.
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.ConnectionTimeout">
+            <summary>
+            Timespan to attempt to connect to a server.
+            <para>Default is 3 seconds.</para>
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.AutoReconnect">
+            <summary>
+            When True the client will automatically retry connection to the last used Host / Port.
+            </summary>
+            <returns>False by default.</returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.Backlog">
+            <summary>
+            Maximum concurrent pending connections.
+            </summary>
+            <returns>100 is default. Lower to reduce processing time.</returns>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.MaximumBufferSize">
+            <summary>
+            Maximum buffer size per connection.
+            </summary>
+            <remarks>Default is 100MB.</remarks>
+            <value>Long</value>
+            <remarks></remarks>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.MaximumDownloadMbps">
+            <summary>
+            Maximum receiving bandwidth.
+            </summary>
+            <remarks>
+            <para>Default is 100Mbps. Set to 0 to disable buffering.</para>
+            <para>Disabling buffer will not work with SSL.</para>
+            </remarks>
+            <value>Integer</value>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.DownloadBufferSize">
+            <summary>
+            Download buffer size.
+            <remarks>Default is 65536 bytes.</remarks>
+            <value>Integer</value>
+            <remarks></remarks>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.MaximumUploadMbps">
+            <summary>
+            Maximum Upload bandwidth.
+            <remarks>
+            <para>Default is 100Mbps. Set to 0 for unlimited.</para>
+            </remarks>
+            <value>Integer</value>
+            <remarks></remarks>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UploadBufferSize">
+            <summary>
+            Upload buffer size.
+            <remarks>Default is 65536 bytes.</remarks>
+            <value>Integer</value>
+            <remarks></remarks>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UseCompression">
+            <summary>
+            <para>Use compression for network transfer.</para>
+            <para>Must be set before connection started.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UseTerminatedStreams">
+            <summary>
+            Send and receive objects with terminator (default is <see langword="true"/>).
+            <para><see langword="Required"/> to parse objects.
+            An exception would be used in the case of HttpServer where the terminator is not used.
+            HttpServer simply reads to the end of the stream.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UseSsl">
+            <summary>
+            Use SSL for network transfer.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.Chunking">
+            <summary>
+            When enabled, outbound messages are buffered and flushed in large chunks
+            at the interval specified by <see cref="P:SocketJack.Net.NetworkOptions.ChunkingIntervalMs"/>.
+            <para>This reduces the number of small writes and syscalls at the cost of added latency.</para>
+            <para>Default is <see langword="true"/>.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.ChunkingIntervalMs">
+            <summary>
+            The interval in milliseconds between chunked flushes when <see cref="P:SocketJack.Net.NetworkOptions.Chunking"/> is enabled.
+            <para>Default is 1000 ms (1 second).</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.Fps">
+            <summary>
+            Gets or sets the frame rate, in frames per second, for processing operations.
+            </summary>
+            <remarks>Setting this property adjusts the timing interval used for frame updates. The value
+            should be a positive integer to ensure correct timing behavior.
+            0 or less = disabled.</remarks>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.Whitelist">
+            <summary>
+            Types that are allowed to be deserialized.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.Blacklist">
+            <summary>
+            Types that are not allowed to be deserialized.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.MaxDatagramSize">
+            <summary>
+            Maximum datagram payload size in bytes for UDP.
+            <para>Datagrams exceeding this size will be rejected with an error.</para>
+            <para>Default is 65,507 bytes (maximum safe UDP payload). Lower to ~1,400 for safe MTU.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.ClientTimeoutSeconds">
+            <summary>
+            Timeout in seconds before a UDP server considers a client disconnected due to inactivity.
+            <para>Default is 30 seconds.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UdpReceiveBufferSize">
+            <summary>
+            Size of the receive buffer used by the UDP socket in bytes.
+            <para>Default is 65,535 bytes (maximum single UDP datagram size including headers).</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.EnableBroadcast">
+            <summary>
+            When enabled, the UDP socket is configured to allow sending broadcast datagrams.
+            <para>Default is <see langword="false"/>.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.ClientTimeoutCheckIntervalMs">
+            <summary>
+            Interval in milliseconds between client timeout checks on the UDP server.
+            <para>Default is 5000 ms (5 seconds).</para>
+            </summary>
         </member>
         <member name="T:SocketJack.Net.NIC">
             <summary>
@@ -340,7 +785,7 @@
             <remarks>Only changable from server.</remarks>
             </summary>
         </member>
-        <member name="M:SocketJack.Net.P2P.Identifier.SetMetaData(SocketJack.Net.TcpServer,System.String,System.String,System.Boolean)">
+        <member name="M:SocketJack.Net.P2P.Identifier.SetMetaData(SocketJack.Net.TcpServer,System.String,System.String,System.Boolean,System.Boolean)">
             <summary>
             Set metadata key/value for this Peer.
             <para>WARNING: This information will be sent to all connected clients.</para>
@@ -350,7 +795,7 @@
             <param name="key"></param>
             <param name="value">Value of key;Removes value if equal to null or String.Empty</param>
         </member>
-        <member name="M:SocketJack.Net.P2P.Identifier.SetMetaData(SocketJack.Net.ISocket,System.String,System.String,System.Boolean)">
+        <member name="M:SocketJack.Net.P2P.Identifier.SetMetaData(SocketJack.Net.ISocket,System.String,System.String,System.Boolean,System.Boolean)">
             <summary>
             Set metadata key/value for this Peer.
             <para>WARNING: This information will be sent to all connected clients.</para>
@@ -384,7 +829,7 @@
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns></returns>
         </member>
-        <member name="M:SocketJack.Net.P2P.Identifier.StartServer(SocketJack.Net.P2P.Identifier,SocketJack.Net.TcpClient,SocketJack.Net.TcpOptions,System.String)">
+        <member name="M:SocketJack.Net.P2P.Identifier.StartServer(SocketJack.Net.P2P.Identifier,SocketJack.Net.TcpClient,SocketJack.Net.NetworkOptions,System.String)">
             <summary>
             Start a connection with a Remote Client.
             </summary>
@@ -401,7 +846,7 @@
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns></returns>
         </member>
-        <member name="M:SocketJack.Net.P2P.Identifier.StartServer(SocketJack.Net.TcpOptions,System.String)">
+        <member name="M:SocketJack.Net.P2P.Identifier.StartServer(SocketJack.Net.NetworkOptions,System.String)">
             <summary>
             Start a connection with this Remote Client.
             </summary>
@@ -426,7 +871,7 @@
             <param name="AutoReconnect">Reconnect automatically.</param>
             <returns>New TcpClient if successful; <see langword="null"/> if connection failed.</returns>
         </member>
-        <member name="M:SocketJack.Net.P2P.PeerServer.Accept(SocketJack.Net.TcpOptions,System.String,System.Boolean)">
+        <member name="M:SocketJack.Net.P2P.PeerServer.Accept(SocketJack.Net.NetworkOptions,System.String,System.Boolean)">
             <summary>
             Accept the requested Peer to Peer connection.
             </summary>
@@ -446,111 +891,6 @@
             </summary>
             <returns>new TcpClient</returns>
         </member>
-        <member name="T:SocketJack.Net.TcpBase">
-            <summary>
-            Base class for the Tcp Client and Server.
-            </summary>
-            <remarks></remarks>
-        </member>
-        <member name="E:SocketJack.Net.TcpBase.PeerConnected">
-            <summary>
-            Fired when a user connects to the server.
-            </summary>
-            <param name="sender"></param>
-            <param name="Peer"></param>
-        </member>
-        <member name="E:SocketJack.Net.TcpBase.PeerDisconnected">
-            <summary>
-            Fired when a user disconnects from the server.
-            </summary>
-            <param name="sender"></param>
-            <param name="Peer"></param>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.Name">
-            <summary>
-            (Optional) Name used for logging purposes.
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.RemoteIdentity">
-            <summary>
-            Remote identifier used for peer-to-peer interactions used to determine the server-side client ID.
-            </summary>
-            <returns><see langword="null"/> if accessed before the server identifies the client.
-            <para>To avoid problems please do not acccess this via OnConnected Event.</para></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.InternalID">
-            <summary>
-            Not to be confused with RemoteIdentity, InternalID is used for internally identifying the client.
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.Active">
-            <summary>
-            True if sending or receiving.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.Connection">
-            <summary>
-            The base connection for identification.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.Socket">
-            <summary>
-            The main socket that listens to all requests. Using the TCP protocol.
-            </summary>
-            <remarks>Uses AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp</remarks>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.Port">
-            <summary>
-            The bound port.
-            </summary>
-            <value>Integer</value>
-            <returns></returns>
-            <remarks></remarks>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.LocalIPEndPoint">
-            <summary>
-            Returns the bound IPEndPoint.
-            </summary>
-            <value>IPEndPoint</value>
-            <returns></returns>
-            <remarks></remarks>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.Connected">
-            <summary>
-            Current connection State.
-            </summary>
-            <returns><see langword="true"/> if Socket.Connected or Socket.Listening; otherwise <see langword="false"/></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.PeerToPeerInstance">
-            <summary>
-            True if is Peer to Peer Client or Server instance.
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpBase.SslTargetHost">
-            <summary>
-            Host name for SSL connections.
-            <para>Required.</para>
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.TcpBase.RegisterCallback``1(System.Action{SocketJack.Net.ReceivedEventArgs{``0}})">
-            <summary>
-            <para>Registers a type callback using generic types.</para>
-            <para>Action of type invoked when type is received.</para>
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.TcpBase.RemoveCallback``1(System.Action{SocketJack.Net.ReceivedEventArgs{``0}})">
-            <summary>
-            Removes a type callback.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.TcpBase.RemoveCallback``1">
-            <summary>
-            Removes all type callbacks of T and it's respective white-list entry.
-            </summary>
-        </member>
         <member name="T:SocketJack.Net.TcpClient">
             <summary>
             Multithreaded TCP Client.
@@ -565,7 +905,7 @@
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns>new TcpServer; <see langword="null"/> if error occured.</returns>
         </member>
-        <member name="M:SocketJack.Net.TcpClient.StartServer(SocketJack.Net.P2P.Identifier,SocketJack.Net.TcpOptions,System.String)">
+        <member name="M:SocketJack.Net.TcpClient.StartServer(SocketJack.Net.P2P.Identifier,SocketJack.Net.NetworkOptions,System.String)">
             <summary>
             Start a connection with the specified Remote Client.
             </summary>
@@ -574,7 +914,7 @@
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns>new TcpServer; <see langword="null"/> if error occured.</returns>
         </member>
-        <member name="M:SocketJack.Net.TcpClient.StartServer(System.String,SocketJack.Net.TcpOptions,System.String,System.Int32)">
+        <member name="M:SocketJack.Net.TcpClient.StartServer(System.String,SocketJack.Net.NetworkOptions,System.String,System.Int32)">
             <summary>
             Start a connection with the specified Remote Client.
             </summary>
@@ -644,7 +984,7 @@
             <param name="AutoReconnect">Auto Reconnect on Disconnect/Failed Connection to last Host / Port.</param>
             <param name="Name">Name used for logging. </param>
         </member>
-        <member name="M:SocketJack.Net.TcpClient.#ctor(SocketJack.Net.TcpOptions,System.String)">
+        <member name="M:SocketJack.Net.TcpClient.#ctor(SocketJack.Net.NetworkOptions,System.String)">
             <summary>
             Initializes a new instance of TcpClient.
             </summary>
@@ -700,301 +1040,6 @@
             </summary>
             <param name="Obj"></param>
         </member>
-        <member name="P:SocketJack.Net.TcpConnection.Socket">
-            <summary>
-            The socket associated to the connection.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.Stream">
-            <summary>
-            The stream associated to the connection.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.Compressed">
-            <summary>
-            Whether or not data is compressed.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.SSL">
-            <summary>
-            Whether or not data is encrypted.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.EndPoint">
-            <summary>
-            The remote endpoint of the connection.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.ID">
-            <summary>
-            Unique identifier for this connection.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.Parent">
-            <summary>
-            Parent of this connection.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.Active">
-            <summary>
-            True if connection sending or receiving.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.BytesPerSecondSent">
-            <summary>
-            Bytes per second sent on this connection.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.BytesPerSecondReceived">
-            <summary>
-            Bytes per second received on this connection.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.Identity">
-            <summary>
-            Remote Peer identifier for peer to peer interactions used to determine the Server's Client GUID.
-            </summary>
-            <returns>NULL if accessed before the Server identifies the Client.
-            To avoid problems please do not acccess this via OnConnected Event.</returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.IsReceiving">
-            <summary>
-            True if the connection is receiving data.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.IsSending">
-            <summary>
-            True if the connection is sending data.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.DownloadBuffer">
-            <summary>
-            Buffer used to receive data.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.UploadBuffer">
-            <summary>
-            Buffer used to send data.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.Closed">
-            <summary>
-            True if the connection is closed.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpConnection.Closing">
-            <summary>
-            True if the connection is closing.
-            </summary>
-        </member>
-        <member name="F:SocketJack.Net.TcpConnection.IsServer">
-            <summary>
-            <see langword="True"/> if created by a TcpServer.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.TcpConnection.SendLocalIdentity">
-            <summary>
-            Sends the remote client their remote Identity and IP.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.TcpConnection.Poll">
-            <summary>
-            Polls a socket to see if it is connected.
-            </summary>
-            <param name="socket"></param>
-            <returns><see langword="True"/> if poll successful.</returns>
-        </member>
-        <member name="M:SocketJack.Net.TcpConnection.InitializeSslStream(System.Security.Cryptography.X509Certificates.X509Certificate,System.String)">
-            <summary>
-            Initializes the SSL stream for this connection.
-            </summary>
-            <param name="serverCertificate">The server certificate (required for server-side).</param>
-            <param name="targetHost">Target host name (required for client-side).</param>
-        </member>
-        <member name="M:SocketJack.Net.TcpConnection.InitializeSslStream(System.String)">
-            <summary>
-            Initializes the SSL stream for this connection.
-            </summary>
-            <param name="targetHost">Target host name (required for client-side).</param>
-        </member>
-        <member name="M:SocketJack.Net.TcpConnection.Send(SocketJack.Net.P2P.Identifier,System.Object)">
-            <summary>
-            Send an object to a Remote Client on the server.
-            <para>This will <see langword="NOT"/> expose your remote IP.</para>
-            </summary>
-            <param name="Recipient"></param>
-            <param name="Obj"></param>
-        </member>
-        <!-- Badly formed XML comment ignored for member "M:SocketJack.Net.TcpConnection.SetMetaData(System.String,System.String,System.Boolean,System.Boolean)" -->
-        <member name="M:SocketJack.Net.TcpConnection.GetMetaData(System.String,System.Boolean,System.Boolean)">
-            <summary>
-            Get metadata value by key for the connection.
-            <para>Can only be called from server.</para>
-            <paramref name="key">Metadata Key.</paramref>
-            <returns>Value as string.</returns>
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.TcpOptions">
-            <summary>
-            Default options for <see langword="TcpClient"/> and <see langword="TcpServer"/>.
-            <para>These options are used by default unless overridden here.</para>
-            <para>Set before creating any instances of TcpClient or TcpServer.</para>
-            <para>Example:</para>
-            <code>
-            DefaultOptions.Logging = <see langword="True"/>
-            </code>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.Serializer">
-            <summary>
-            Serializer for both <see langword="TcpClient"/> and <see langword="TcpServer"/>.
-            <para>Default is System.Text.Json.</para>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.CompressionAlgorithm">
-            <summary>
-            Compression algorithm for both <see langword="TcpClient"/> and <see langword="TcpServer"/>.
-            <para>Default is GZip2.</para>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.Logging">
-            <summary>
-            Output OnConnected, OnDisconnected, and OnConnectionFailed events to Console.
-            Send and Receive events only logged when LogSendEvents or LogReceiveEvents are set to True.
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.LogSendEvents">
-            <summary>
-            Log sent events to console.
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.LogReceiveEvents">
-            <summary>
-            <para>Log received events to console.</para>
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.LogToConsole">
-            <summary>
-            Log to Debug Output Window.
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.UsePeerToPeer">
-            <summary>
-            <para>Turns on or off Peer to Peer functionality.</para>
-            <para>Required to be set before TcpClient.Connect or TcpServer.StartListening.</para>
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.UpdateConsoleTitle">
-            <summary>
-            Update the title of the console window with traffic statistics.
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.ConnectionTimeout">
-            <summary>
-            Timespan to attempt to connect to a server.
-            <para>Default is 3 seconds.</para>
-            </summary>
-            <returns></returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.AutoReconnect">
-            <summary>
-            When True the client will automatically retry connection to the last used Host / Port.
-            </summary>
-            <returns>False by default.</returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.Backlog">
-            <summary>
-            Maximum concurrent pending connections.
-            </summary>
-            <returns>100 is default. Lower to reduce processing time.</returns>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.MaximumBufferSize">
-            <summary>
-            Maximum buffer size per connection.
-            </summary>
-            <remarks>Default is 100MB.</remarks>
-            <value>Long</value>
-            <remarks></remarks>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.MaximumDownloadMbps">
-            <summary>
-            Maximum receiving bandwidth.
-            </summary>
-            <remarks>
-            <para>Default is 100Mbps. Set to 0 to disable buffering.</para>
-            <para>Disabling buffer will not work with SSL.</para>
-            </remarks>
-            <value>Integer</value>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.DownloadBufferSize">
-            <summary>
-            Download buffer size.
-            <remarks>Default is 65536 bytes.</remarks>
-            <value>Integer</value>
-            <remarks></remarks>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.MaximumUploadMbps">
-            <summary>
-            Maximum Upload bandwidth.
-            <remarks>
-            <para>Default is 100Mbps. Set to 0 for unlimited.</para>
-            </remarks>
-            <value>Integer</value>
-            <remarks></remarks>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.UploadBufferSize">
-            <summary>
-            Upload buffer size.
-            <remarks>Default is 65536 bytes.</remarks>
-            <value>Integer</value>
-            <remarks></remarks>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.UseCompression">
-            <summary>
-            <para>Use compression for network transfer.</para>
-            <para>Must be set before connection started.</para>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.UseTerminatedStreams">
-            <summary>
-            Send and receive objects with terminator (default is <see langword="true"/>).
-            <para><see langword="Required"/> to parse objects.
-            An exception would be used in the case of HttpServer where the terminator is not used.
-            HttpServer simply reads to the end of the stream.</para>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.UseSsl">
-            <summary>
-            Use SSL for network transfer.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.Fps">
-            <summary>
-            Gets or sets the frame rate, in frames per second, for processing operations.
-            </summary>
-            <remarks>Setting this property adjusts the timing interval used for frame updates. The value
-            should be a positive integer to ensure correct timing behavior.
-            0 or less = disabled.</remarks>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.Whitelist">
-            <summary>
-            Types that are allowed to be deserialized.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.TcpOptions.Blacklist">
-            <summary>
-            Types that are not allowed to be deserialized.
-            </summary>
-        </member>
         <member name="T:SocketJack.Net.TcpServer">
             <summary>
             Multithreaded TCP Server.
@@ -1032,7 +1077,7 @@
             <param name="Port">Socket Listen Port.</param>
             <param name="Name">Name used for Logging.</param>
         </member>
-        <member name="M:SocketJack.Net.TcpServer.#ctor(SocketJack.Net.TcpOptions,System.Int32,System.String)">
+        <member name="M:SocketJack.Net.TcpServer.#ctor(SocketJack.Net.NetworkOptions,System.Int32,System.String)">
             <summary>
             Initializes a new instance of TcpServer.
             </summary>
@@ -1049,7 +1094,7 @@
             Stops listening.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.TcpServer.Send(SocketJack.Net.TcpConnection,System.Object)">
+        <member name="M:SocketJack.Net.TcpServer.Send(SocketJack.Net.NetworkConnection,System.Object)">
             <summary>
             Sends an object to a client.
             </summary>
@@ -1081,7 +1126,7 @@
             <param name="Obj">An Object.</param>
             <remarks>Can also be accessed directly from TcpConnection.Send()</remarks>
         </member>
-        <member name="M:SocketJack.Net.TcpServer.SendBroadcast(SocketJack.Net.TcpConnection[],System.Object,SocketJack.Net.TcpConnection)">
+        <member name="M:SocketJack.Net.TcpServer.SendBroadcast(SocketJack.Net.NetworkConnection[],System.Object,SocketJack.Net.NetworkConnection)">
             <summary>
             Send an object to an array of TcpConnection.
             </summary>
@@ -1097,7 +1142,7 @@
             <param name="Obj">Serializable Object to send to the client.</param>
             <remarks>Can be accessed directly from TcpServer.Clients.SendBroadcast()</remarks>
         </member>
-        <member name="M:SocketJack.Net.TcpServer.SendBroadcast(System.Object,SocketJack.Net.TcpConnection)">
+        <member name="M:SocketJack.Net.TcpServer.SendBroadcast(System.Object,SocketJack.Net.NetworkConnection)">
             <summary>
             Send a serializable object to all ConnectedSockets (Except)
             </summary>
@@ -1130,7 +1175,7 @@
             Fired when disconnected from the remote server.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.WebSockets.WebSocketClient.StartServer(SocketJack.Net.P2P.Identifier,SocketJack.Net.TcpOptions,System.String)">
+        <member name="M:SocketJack.Net.WebSockets.WebSocketClient.StartServer(SocketJack.Net.P2P.Identifier,SocketJack.Net.NetworkOptions,System.String)">
             <summary>
             Start a connection with the specified Remote Client.
             </summary>

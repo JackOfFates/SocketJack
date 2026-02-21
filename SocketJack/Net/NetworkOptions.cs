@@ -8,17 +8,17 @@ using System.Net.Sockets;
 namespace SocketJack.Net {
 
     /// <summary>
-    /// Default options for <see langword="TcpClient"/> and <see langword="TcpServer"/>.
+    /// Default options for <see langword="TcpClient"/>, <see langword="TcpServer"/>, <see langword="UdpClient"/>, and <see langword="UdpServer"/>.
     /// <para>These options are used by default unless overridden here.</para>
-    /// <para>Set before creating any instances of TcpClient or TcpServer.</para>
+    /// <para>Set before creating any instances of TcpClient, TcpServer, UdpClient, or UdpServer.</para>
     /// <para>Example:</para>
     /// <code>
     /// DefaultOptions.Logging = <see langword="True"/>
     /// </code>
     /// </summary>
-    public class TcpOptions {
+    public class NetworkOptions {
 
-        public static TcpOptions DefaultOptions = new TcpOptions();
+        public static NetworkOptions DefaultOptions = new NetworkOptions();
 
         /// <summary>
         /// Serializer for both <see langword="TcpClient"/> and <see langword="TcpServer"/>.
@@ -193,6 +193,20 @@ namespace SocketJack.Net {
         public bool UseSsl { get; set; } = false;
 
         /// <summary>
+        /// When enabled, outbound messages are buffered and flushed in large chunks
+        /// at the interval specified by <see cref="ChunkingIntervalMs"/>.
+        /// <para>This reduces the number of small writes and syscalls at the cost of added latency.</para>
+        /// <para>Default is <see langword="true"/>.</para>
+        /// </summary>
+        public bool Chunking { get; set; } = true;
+
+        /// <summary>
+        /// The interval in milliseconds between chunked flushes when <see cref="Chunking"/> is enabled.
+        /// <para>Default is 1000 ms (1 second).</para>
+        /// </summary>
+        public int ChunkingIntervalMs { get; set; } = 1000;
+
+        /// <summary>
         /// Gets or sets the frame rate, in frames per second, for processing operations.
         /// </summary>
         /// <remarks>Setting this property adjusts the timing interval used for frame updates. The value
@@ -255,6 +269,41 @@ namespace SocketJack.Net {
         /// <summary>
         /// Types that are not allowed to be deserialized.
         /// </summary>
-        public TypeList Blacklist { get; internal set; } = new TypeList(new[] { typeof(object), typeof(Socket), typeof(TcpConnection) } );
+        public TypeList Blacklist { get; internal set; } = new TypeList(new[] { typeof(object), typeof(Socket), typeof(NetworkConnection) } );
+
+        #region UDP Options
+
+        /// <summary>
+        /// Maximum datagram payload size in bytes for UDP.
+        /// <para>Datagrams exceeding this size will be rejected with an error.</para>
+        /// <para>Default is 65,507 bytes (maximum safe UDP payload). Lower to ~1,400 for safe MTU.</para>
+        /// </summary>
+        public int MaxDatagramSize { get; set; } = 65507;
+
+        /// <summary>
+        /// Timeout in seconds before a UDP server considers a client disconnected due to inactivity.
+        /// <para>Default is 30 seconds.</para>
+        /// </summary>
+        public int ClientTimeoutSeconds { get; set; } = 30;
+
+        /// <summary>
+        /// Size of the receive buffer used by the UDP socket in bytes.
+        /// <para>Default is 65,535 bytes (maximum single UDP datagram size including headers).</para>
+        /// </summary>
+        public int UdpReceiveBufferSize { get; set; } = 65535;
+
+        /// <summary>
+        /// When enabled, the UDP socket is configured to allow sending broadcast datagrams.
+        /// <para>Default is <see langword="false"/>.</para>
+        /// </summary>
+        public bool EnableBroadcast { get; set; } = false;
+
+        /// <summary>
+        /// Interval in milliseconds between client timeout checks on the UDP server.
+        /// <para>Default is 5000 ms (5 seconds).</para>
+        /// </summary>
+        public int ClientTimeoutCheckIntervalMs { get; set; } = 5000;
+
+        #endregion
     }
 }

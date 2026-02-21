@@ -30,8 +30,9 @@ internal sealed class SocketJackTcpGameServer : IDisposable {
     public SocketJackTcpGameServer(int port) {
         // SocketJack runtime options.
         // Use compression and whitelist message types to keep network traffic tight and safe.
-        var opts = TcpOptions.DefaultOptions.Clone<TcpOptions>();
+        var opts = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
         opts.Fps = 60;
+        opts.Chunking = false;
         opts.Logging = false;
         opts.LogReceiveEvents = false;
         opts.LogSendEvents = false;

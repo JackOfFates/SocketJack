@@ -13,6 +13,7 @@ namespace SocketJack.WpfBasicGame;
 internal sealed class SocketJackTcpGameClient : IDisposable {
     private readonly TcpClient _client;
     private readonly object _cursorSendGate = new();
+    private readonly bool _lightweight;
 
     public TcpClient RawClient => _client;
 
@@ -35,16 +36,30 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
         }
     }
 
-    public SocketJackTcpGameClient(string name = "ClickRaceClient") {
+    public SocketJackTcpGameClient(string name = "ClickRaceClient", bool lightweight = false) {
+        _lightweight = lightweight;
+
         // SocketJack runtime options.
         // Whitelisting is required so only expected message types are serialized.
-        var opts = TcpOptions.DefaultOptions.Clone<TcpOptions>();
+        var opts = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
         opts.Logging = false;
         opts.LogReceiveEvents = false;
         opts.LogSendEvents = false;
         opts.UseCompression = false;
         opts.UsePeerToPeer = true;
-        opts.Fps = 60;
+
+        if (lightweight) {
+            // Bot connections: low-frequency receive polling, batched sends.
+            // Fps=0 causes a tight spin-loop in TcpConnection.StartReceiving;
+            // a low positive value keeps the Task.Delay throttle while reducing
+            // per-bot polling from 60fps down to 10fps (~100ms between reads).
+            opts.Fps = 10;
+            opts.Chunking = true;
+            opts.ChunkingIntervalMs = 200;
+        } else {
+            opts.Fps = 60;
+            opts.Chunking = false;
+        }
 
         opts.Whitelist.Add(typeof(StartRoundMessage));
         opts.Whitelist.Add(typeof(TargetStateMessage));
@@ -53,15 +68,20 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
         opts.Whitelist.Add(typeof(CursorStateMessage));
 
         _client = new TcpClient(opts, name);
-        _client.EnableRemoteControl();
+
+        // Bots don't need WPF remote-control support.
+        if (!lightweight)
+            _client.EnableRemoteControl();
 
         // Surface connection lifecycle messages to the UI.
         _client.OnConnected += _ => Log?.Invoke("Connected");
         _client.OnDisconnected += _ => Log?.Invoke("Disconnected");
 
-        // Peer list changes drive the scoreboard/roster UI.
-        _client.PeerConnected += (_, _) => PeersChanged?.Invoke();
-        _client.PeerDisconnected += (_, _) => PeersChanged?.Invoke();
+        // Bots only need the start-round event; skip peer/UI callbacks.
+        if (!lightweight) {
+            _client.PeerConnected += (_, _) => PeersChanged?.Invoke();
+            _client.PeerDisconnected += (_, _) => PeersChanged?.Invoke();
+        }
 
         // Map raw network messages into simple UI-friendly events.
         _client.RegisterCallback<StartRoundMessage>(e => {
@@ -69,21 +89,24 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
                 StartRoundReceived?.Invoke(e.Object);
         });
 
-        _client.RegisterCallback<TargetStateMessage>(e => {
-            if (e.Object != null)
-                TargetStateReceived?.Invoke(e.Object);
-        });
+        // Bots receive target/points/cursor from the host directly;
+        // they don't need to process these network callbacks.
+        if (!lightweight) {
+            _client.RegisterCallback<TargetStateMessage>(e => {
+                if (e.Object != null)
+                    TargetStateReceived?.Invoke(e.Object);
+            });
 
-        _client.RegisterCallback<PointsUpdateMessage>(e => {
-            if (e.Object != null)
-                PointsUpdateReceived?.Invoke(e.Object);
-        });
+            _client.RegisterCallback<PointsUpdateMessage>(e => {
+                if (e.Object != null)
+                    PointsUpdateReceived?.Invoke(e.Object);
+            });
 
-        _client.RegisterCallback<CursorStateMessage>(e => {
-            if (e.Object != null)
-                CursorStateReceived?.Invoke(e.Object);
-        });
-
+            _client.RegisterCallback<CursorStateMessage>(e => {
+                if (e.Object != null)
+                    CursorStateReceived?.Invoke(e.Object);
+            });
+        }
     }
 
     public void SendToPeer(Identifier peer, object message) {
@@ -102,7 +125,12 @@ internal sealed class SocketJackTcpGameClient : IDisposable {
             Y = y
         };
 
-        ThreadPool.QueueUserWorkItem(_ => SendCursorInternal(message));
+        if (_lightweight) {
+            // Bot callers are already on a background thread; send directly.
+            _client.Send(message);
+        } else {
+            ThreadPool.QueueUserWorkItem(_ => SendCursorInternal(message));
+        }
     }
 
     private void SendCursorInternal(CursorStateMessage message) {

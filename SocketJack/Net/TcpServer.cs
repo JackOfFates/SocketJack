@@ -18,7 +18,7 @@ namespace SocketJack.Net {
     /// Multithreaded TCP Server.
     /// </summary>
     /// <remarks></remarks>
-    public class TcpServer : TcpBase {
+    public class TcpServer : NetworkBase {
 
         #region Properties
 
@@ -47,12 +47,12 @@ namespace SocketJack.Net {
         /// Connected Clients.
         /// </summary>
         /// <returns></returns>
-        public ConcurrentDictionary<Guid, TcpConnection> Clients {
+        public ConcurrentDictionary<Guid, NetworkConnection> Clients {
             get {
                 return _Clients;
             }
         }
-        protected internal ConcurrentDictionary<Guid, TcpConnection> _Clients = new ConcurrentDictionary<Guid, TcpConnection>();
+        protected internal ConcurrentDictionary<Guid, NetworkConnection> _Clients = new ConcurrentDictionary<Guid, NetworkConnection>();
 
         public override int Port {
             get {
@@ -97,7 +97,7 @@ namespace SocketJack.Net {
             }
         }
 
-        private void TcpServer_InternalReceiveEvent(TcpConnection Connection, Type objType, object obj, int BytesReceived) {
+        private void TcpServer_InternalReceiveEvent(NetworkConnection Connection, Type objType, object obj, int BytesReceived) {
             if (Options.LogReceiveEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
@@ -107,10 +107,10 @@ namespace SocketJack.Net {
                 }
             }
         }
-        private void TcpServer_InternalReceiveByteCounter(TcpConnection Connection, int BytesReceived) {
+        private void TcpServer_InternalReceiveByteCounter(NetworkConnection Connection, int BytesReceived) {
             Interlocked.Add(ref Connection.ReceivedBytesCounter, BytesReceived);
         }
-        private void TcpServer_InternalSendEvent(TcpConnection Connection, Type objType, object obj, int BytesSent) {
+        private void TcpServer_InternalSendEvent(NetworkConnection Connection, Type objType, object obj, int BytesSent) {
             if (Options.LogSendEvents) {
                 if (ReferenceEquals(objType, typeof(PeerRedirect))) {
                     PeerRedirect Redirect = (PeerRedirect)obj;
@@ -120,7 +120,7 @@ namespace SocketJack.Net {
                 }
             }
         }
-        private void TcpServer_InternalSentByteCounter(TcpConnection Connection, int BytesSent) {
+        private void TcpServer_InternalSentByteCounter(NetworkConnection Connection, int BytesSent) {
             Interlocked.Add(ref Connection.SentBytesCounter, BytesSent);
         }
         private void TcpServer_BytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
@@ -246,13 +246,13 @@ namespace SocketJack.Net {
                 }
             }
         }
-        private void SyncPeer(TcpConnection Client) {
+        private void SyncPeer(NetworkConnection Client) {
             Task.Run(() => {
                 Client.Send(Peers.ToArrayWithLocal(Client));
                 Clients.SendBroadcast(Client.Identity, Client);
             });
         }
-        private void InitializePeer(TcpConnection Client) {
+        private void InitializePeer(NetworkConnection Client) {
             Task.Run(() => {
                 Peers.AddOrUpdate(Client.Identity);
                 SyncPeer(Client);
@@ -261,12 +261,15 @@ namespace SocketJack.Net {
         private void OnReceived_MetadataKeyValue(ReceivedEventArgs<MetadataKeyValue> Args) {
             if (string.IsNullOrEmpty(Args.Object.Key)) return;
             if (!RestrictedMetadataKeys.Contains(Args.Object.Key.ToLower())) {
-                Clients[Args.Connection.ID].SetMetaData(Args.Object.Key, Args.Object.Value);
-                Peers[Args.Connection.Identity.ID].SetMetaData(this, Args.Object.Key, Args.Object.Value);
+                // Update metadata locally without triggering an immediate broadcast per change.
+                Peers[Args.Connection.Identity.ID].SetMetaData(this, Args.Object.Key, Args.Object.Value, broadcastUpdate: false);
 
-                // Re-sync peer metadata to all clients so UI state (e.g., isnpc) updates promptly.
+                // Single broadcast of the updated metadata to all clients.
                 try {
-                    SyncPeer(Args.Connection);
+                    var update = Peers[Args.Connection.Identity.ID].Clone<Identifier>();
+                    update.Action = PeerAction.MetadataUpdate;
+                    update.IP = string.Empty;
+                    SendBroadcast(update);
                 } catch {
                 }
             }
@@ -311,7 +314,7 @@ namespace SocketJack.Net {
                     await Task.Delay(1);
                 }
                 LogFormat("[{0}] Shutdown Started *:{1}", new[] { Name, Port.ToString() });
-                Clients.ToList().ForEach((KeyValuePair<Guid, TcpConnection> kvp) => {
+                Clients.ToList().ForEach((KeyValuePair<Guid, NetworkConnection> kvp) => {
                     if (kvp.Value != null && !kvp.Value.Closed) {
                         ClientDisconnected?.Invoke(new DisconnectedEventArgs(this, kvp.Value, DisconnectionReason.LocalSocketClosed));
                         CloseConnection(kvp.Value);
@@ -337,9 +340,10 @@ namespace SocketJack.Net {
                 }
             }
         }
-        private TcpConnection NewConnection(ref Socket handler) {
-            var newConnection = new TcpConnection(this, handler);
-            newConnection._Stream = new NetworkStream(newConnection.Socket);
+
+private NetworkConnection NewConnection(ref Socket handler) {
+    var newConnection = new NetworkConnection(this, handler);
+    newConnection._Stream = new NetworkStream(newConnection.Socket);
             try {
                 if (Options.UseSsl)
                     newConnection.InitializeSslStream(SslCertificate, SslTargetHost);
@@ -410,7 +414,7 @@ namespace SocketJack.Net {
         /// </summary>
         /// <param name="Port">Socket Listen Port.</param>
         /// <param name="Name">Name used for Logging.</param>
-        public TcpServer(TcpOptions Options, int Port, string Name = "TcpServer") : base() {
+        public TcpServer(NetworkOptions Options, int Port, string Name = "TcpServer") : base() {
             this.Options = Options;
             Init(Port, Name);
             var argServer = (ISocket)this;
@@ -443,7 +447,7 @@ namespace SocketJack.Net {
                     withBlock.ReceiveTimeout = -1;
                     withBlock.SendTimeout = -1;
                 }
-                Connection = new TcpConnection(this, Socket);
+                Connection = new NetworkConnection(this, Socket);
                 try {
                     Bind(Port);
                     //if (!NIC.InterfaceDiscovered) {
@@ -507,7 +511,7 @@ namespace SocketJack.Net {
         /// <param name="Client">The Client's TcpConnection.</param>
         /// <param name="Obj">Object to send to the client.</param>
         /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
-        public new void Send(TcpConnection Client, object Obj) {
+        public new void Send(NetworkConnection Client, object Obj) {
             if (Client != null && !Client.Closed && Client.Socket.Connected) {
                 base.Send(Client, Obj);
             }
@@ -559,7 +563,7 @@ namespace SocketJack.Net {
         /// <param name="Obj">Object to send to the client.</param>
         /// <param name="Except">The client to exclude.</param>
         /// <remarks>Can be accessed directly from TcpServer.Clients.SendBroadcast()</remarks>
-        public override void SendBroadcast(TcpConnection[] Clients, object Obj, TcpConnection Except = null) {
+        public override void SendBroadcast(NetworkConnection[] Clients, object Obj, NetworkConnection Except = null) {
             this.Clients.SendBroadcast(Obj, Except);
         }
 
@@ -578,7 +582,7 @@ namespace SocketJack.Net {
         /// <param name="Obj">Serializable Object to send to the client.</param>
         /// <param name="Except">The socket to exclude.</param>
         /// <remarks></remarks>
-        public override void SendBroadcast(object Obj, TcpConnection Except) {
+        public override void SendBroadcast(object Obj, NetworkConnection Except) {
             Clients.SendBroadcast(Obj, Except);
         }
     }

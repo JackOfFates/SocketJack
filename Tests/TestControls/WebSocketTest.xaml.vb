@@ -136,7 +136,7 @@ Public Class WebSocketTest
     Private Sub ButtonAddClient_Click(sender As Object, e As RoutedEventArgs) Handles ButtonAddClient.Click
         RunTask(
             Async Sub()
-                Dim newClient As New WebSocketClient(TcpOptions.DefaultOptions, "Client" & clientCount)
+                Dim newClient As New WebSocketClient(NetworkOptions.DefaultOptions, "Client" & clientCount)
                 With newClient
                     .Options.Logging = Server.Options.Logging
                     .Options.LogReceiveEvents = Server.Options.LogReceiveEvents
@@ -169,7 +169,7 @@ Public Class WebSocketTest
 
     Private Sub ButtonDcLast_Click(sender As Object, e As RoutedEventArgs) Handles ButtonDcLast.Click
         If Server.Clients.Count > 0 Then
-            Dim lastClient As TcpConnection = Server.Clients.Last().Value
+            Dim lastClient As NetworkConnection = Server.Clients.Last().Value
             lastClient.CloseConnection()
         End If
         If Server.Clients.Count = 0 Then
@@ -180,7 +180,7 @@ Public Class WebSocketTest
 
     Private Sub ButtonDcAll_Click(sender As Object, e As RoutedEventArgs) Handles ButtonDcAll.Click
         If Server.Clients.Count > 0 Then
-            Dim clientArray As TcpConnection() = Server.Clients.Values.ToArray()
+            Dim clientArray As NetworkConnection() = Server.Clients.Values.ToArray()
             For Each client In clientArray
                 client.CloseConnection()
             Next

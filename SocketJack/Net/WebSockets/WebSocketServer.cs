@@ -88,11 +88,11 @@ namespace SocketJack.Net.WebSockets {
         /// Server certificate for SSL connections.
         /// </summary>
         public X509Certificate SslCertificate { get; set; }
-        public TcpConnection Connection { get; private set; }
+        public NetworkConnection Connection { get; private set; }
         public string Name { get; set; } = "WebSocketServer";
         public bool IsListening => _isListening;
-        public ConcurrentDictionary<Guid, TcpConnection> Clients { get; } = new ConcurrentDictionary<Guid, TcpConnection>();
-        public TcpOptions Options { get; set; } = TcpOptions.DefaultOptions.Clone<TcpOptions>();
+        public ConcurrentDictionary<Guid, NetworkConnection> Clients { get; } = new ConcurrentDictionary<Guid, NetworkConnection>();
+        public NetworkOptions Options { get; set; } = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
         #endregion
 
         #region Internal
@@ -100,7 +100,7 @@ namespace SocketJack.Net.WebSockets {
 
         private ConcurrentDictionary<Guid, bool> _handshakeCompleted = new ConcurrentDictionary<Guid, bool>();
 
-        private async Task HandleRawSocketClient(TcpConnection connection) {
+        private async Task HandleRawSocketClient(NetworkConnection connection) {
             if (connection._Stream == null) {
                 connection._Stream = new NetworkStream(connection.Socket, ownsSocket: false);
                 _Stream = connection._Stream;
@@ -187,7 +187,7 @@ namespace SocketJack.Net.WebSockets {
         private const int CloseFrameOpcode = 0x8;
         private const int BrowserClientOpcode = 0xB; // 0xB is unused in RFC6455
 
-        private async Task HandleWebSocketFrames(TcpConnection connection) {
+        private async Task HandleWebSocketFrames(NetworkConnection connection) {
             try {
                 bool exitLoop = false;
                 while (connection.Socket.Connected && (!connection.Closed || connection.Closing)) {
@@ -308,8 +308,9 @@ namespace SocketJack.Net.WebSockets {
             }
         }
 
-        private TcpConnection NewConnection(ref Socket handler) {
-            var newConnection = new TcpConnection(this, handler);
+
+private NetworkConnection NewConnection(ref Socket handler) {
+    var newConnection = new NetworkConnection(this, handler);
             newConnection.StartConnectionTester();
             newConnection.ID = Guid.NewGuid();
             _handshakeCompleted[newConnection.ID] = false;
@@ -318,7 +319,7 @@ namespace SocketJack.Net.WebSockets {
             return newConnection;
         }
 
-        private void SendConstructors(ref TcpConnection connection) {
+        private void SendConstructors(ref NetworkConnection connection) {
             var javascript = new StringBuilder();
             // For each whitelisted type, generate a JS constructor
             foreach (var t in Options.Whitelist) {
@@ -452,18 +453,18 @@ namespace SocketJack.Net.WebSockets {
         protected internal delegate void InternalPeerRedirectEventHandler(string Recipient, string Sender, object Obj, int BytesReceived);
 
         protected internal event InternalReceiveEventEventHandler InternalReceiveEvent;
-        protected internal delegate void InternalReceiveEventEventHandler(TcpConnection Connection, Type objType, object obj, int BytesReceived);
+        protected internal delegate void InternalReceiveEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesReceived);
 
         protected internal event InternalReceivedByteCounterEventHandler InternalReceivedByteCounter;
-        protected internal delegate void InternalReceivedByteCounterEventHandler(TcpConnection Connection, int BytesReceived);
+        protected internal delegate void InternalReceivedByteCounterEventHandler(NetworkConnection Connection, int BytesReceived);
 
         protected internal event InternalSentByteCounterEventHandler InternalSentByteCounter;
-        protected internal delegate void InternalSentByteCounterEventHandler(TcpConnection Connection, int BytesSent);
+        protected internal delegate void InternalSentByteCounterEventHandler(NetworkConnection Connection, int BytesSent);
 
         protected internal event InternalSendEventEventHandler InternalSendEvent;
-        protected internal delegate void InternalSendEventEventHandler(TcpConnection Connection, Type objType, object obj, int BytesSent);
+        protected internal delegate void InternalSendEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesSent);
 
-        void ISocket.InvokeBytesPerSecondUpdate(TcpConnection connection) {
+        void ISocket.InvokeBytesPerSecondUpdate(NetworkConnection connection) {
 #if UNITY
             MainThread.Run(() => {
                 InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
@@ -570,7 +571,7 @@ namespace SocketJack.Net.WebSockets {
             PeerDisconnected?.Invoke(sender, Peer);
 #endif
         }
-        public void InvokeInternalReceivedByteCounter(TcpConnection Connection, int BytesReceived) {
+        public void InvokeInternalReceivedByteCounter(NetworkConnection Connection, int BytesReceived) {
 #if UNITY
             MainThread.Run(() => {
                 InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
@@ -585,7 +586,7 @@ namespace SocketJack.Net.WebSockets {
             InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
 #endif
         }
-        public void InvokeInternalSentByteCounter(TcpConnection connection, int chunkSize) {
+        public void InvokeInternalSentByteCounter(NetworkConnection connection, int chunkSize) {
 #if UNITY
             MainThread.Run(() => {
                 InternalSentByteCounter?.Invoke(connection, chunkSize);
@@ -600,7 +601,7 @@ namespace SocketJack.Net.WebSockets {
             InternalSentByteCounter?.Invoke(connection, chunkSize);
 #endif
         }
-        public void InvokeInternalSendEvent(TcpConnection connection, Type type, object @object, int length) {
+        public void InvokeInternalSendEvent(NetworkConnection connection, Type type, object @object, int length) {
 #if UNITY
             MainThread.Run(() => {
                 InternalSendEvent?.Invoke(connection, type, @object, length);
@@ -662,7 +663,7 @@ namespace SocketJack.Net.WebSockets {
             LogOutput?.Invoke(text);
 #endif
         }
-        public void InvokeOnError(TcpConnection Connection, Exception e) {
+        public void InvokeOnError(NetworkConnection Connection, Exception e) {
 #if UNITY
             MainThread.Run(() => {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
@@ -723,7 +724,7 @@ namespace SocketJack.Net.WebSockets {
 #endif
             }
         }
-        public void CloseConnection(TcpConnection Connection, DisconnectionReason Reason) {
+        public void CloseConnection(NetworkConnection Connection, DisconnectionReason Reason) {
             try {
                 if (Connection.Socket != null && Connection.Socket.Connected) {
                     Connection._Closing = true;
@@ -756,11 +757,11 @@ namespace SocketJack.Net.WebSockets {
 #endif
         }
 
-        public virtual void InvokeOnDisconnected(ISocket sender, TcpConnection Connection) {
+        public virtual void InvokeOnDisconnected(ISocket sender, NetworkConnection Connection) {
             throw new NotImplementedException();
         }
 
-        public virtual void InvokeOnConnected(ISocket sender, TcpConnection Connection) {
+        public virtual void InvokeOnConnected(ISocket sender, NetworkConnection Connection) {
             throw new NotImplementedException();
         }
 
@@ -771,15 +772,15 @@ namespace SocketJack.Net.WebSockets {
         public PeerList Peers { get; internal set; }
         PeerList ISocket.Peers { get => Peers; set => Peers = value; }
         ConcurrentDictionary<string, PeerServer> ISocket.P2P_ServerInformation { get => P2P_ServerInformation; set => P2P_ServerInformation = value; }
-        ConcurrentDictionary<string, TcpConnection> ISocket.P2P_Servers { get => P2P_Servers; set => P2P_Servers = value; }
-        ConcurrentDictionary<string, TcpConnection> ISocket.P2P_Clients { get => P2P_Clients; set => P2P_Clients = value; }
+        ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Servers { get => P2P_Servers; set => P2P_Servers = value; }
+        ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Clients { get => P2P_Clients; set => P2P_Clients = value; }
         Identifier ISocket.RemoteIdentity { get => null; set => throw new NotImplementedException(); }
 
         protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new ConcurrentDictionary<string, PeerServer>();
-        protected internal ConcurrentDictionary<string, TcpConnection> P2P_Servers = new ConcurrentDictionary<string, TcpConnection>();
-        protected internal ConcurrentDictionary<string, TcpConnection> P2P_Clients = new ConcurrentDictionary<string, TcpConnection>();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Servers = new ConcurrentDictionary<string, NetworkConnection>();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Clients = new ConcurrentDictionary<string, NetworkConnection>();
 
-        private void InitializePeer(TcpConnection newConnection) {
+        private void InitializePeer(NetworkConnection newConnection) {
             if (Options.UsePeerToPeer) {
                 var peer = newConnection._Identity;
                 if (!Peers.ContainsKey(newConnection.Identity.ID)) {
@@ -796,7 +797,7 @@ namespace SocketJack.Net.WebSockets {
             }
         }
 
-        Task<ISocket> ISocket.StartServer(Identifier identifier, TcpOptions options, string name) {
+        Task<ISocket> ISocket.StartServer(Identifier identifier, NetworkOptions options, string name) {
             throw new NotImplementedException();
         }
 
@@ -905,11 +906,11 @@ namespace SocketJack.Net.WebSockets {
 
         #region Sending
 
-        public void Send(TcpConnection Client, object Obj) {
+        public void Send(NetworkConnection Client, object Obj) {
             SendAsync(Client, Obj);
         }
 
-        public async Task SendAsync(TcpConnection Client, object Object) {
+        public async Task SendAsync(NetworkConnection Client, object Object) {
             if (Client == null || Client.Closed || Client.Socket == null || !Client.Socket.Connected) return;
             var Obj = Object;
 #if UNITY
@@ -996,11 +997,11 @@ namespace SocketJack.Net.WebSockets {
             await SendAsync(client, redirect);
         }
 
-        public void SendSegmented(TcpConnection Client, object Obj) {
+        public void SendSegmented(NetworkConnection Client, object Obj) {
             SendSegmentedAsync(Client, Obj);
         }
 
-        public async Task SendSegmentedAsync(TcpConnection Client, object Obj) {
+        public async Task SendSegmentedAsync(NetworkConnection Client, object Obj) {
             byte[] SerializedBytes = Options.Serializer.Serialize(new Wrapper(Obj, this));
             Segment[] SegmentedObject = SerializedBytes.GetSegments();
             var sendTasks = new List<Task>();
@@ -1010,11 +1011,11 @@ namespace SocketJack.Net.WebSockets {
             await Task.WhenAll(sendTasks);
         }
 
-        public void SendSegmented(TcpConnection Client, byte[] SerializedBytes, Type objType, object obj) {
+        public void SendSegmented(NetworkConnection Client, byte[] SerializedBytes, Type objType, object obj) {
             SendSegmentedAsync(Client, SerializedBytes, objType, obj);
         }
 
-        public async Task SendSegmentedAsync(TcpConnection Client, byte[] SerializedBytes, Type objType, object obj) {
+        public async Task SendSegmentedAsync(NetworkConnection Client, byte[] SerializedBytes, Type objType, object obj) {
             Segment[] SegmentedObject = SerializedBytes.GetSegments();
             var sendTasks = new List<Task>();
             foreach (var s in SegmentedObject) {
@@ -1032,7 +1033,7 @@ namespace SocketJack.Net.WebSockets {
         }
 
         public void SendBroadcast(object Obj) {
-            TcpConnection[] clients = null;
+            NetworkConnection[] clients = null;
             lock (Clients.Values) { clients = Clients.Values.ToArray(); }
 
             foreach (var client in clients) {
@@ -1049,7 +1050,7 @@ namespace SocketJack.Net.WebSockets {
 
         }
 
-        public void SendBroadcast(TcpConnection[] Clients, object Obj, TcpConnection Except) {
+        public void SendBroadcast(NetworkConnection[] Clients, object Obj, NetworkConnection Except) {
             Parallel.ForEach(Clients, (client) => {
                 if (client != null && client.Socket != null && client.Socket.Connected && client != Except) {
                     Send(client, Obj);
@@ -1058,7 +1059,7 @@ namespace SocketJack.Net.WebSockets {
 
         }
 
-        public void SendBroadcast(object Obj, TcpConnection Except) {
+        public void SendBroadcast(object Obj, NetworkConnection Except) {
             lock (Clients.Values) {
                 Parallel.ForEach(Clients.Values, (client) => {
                     if (client != null && client.Socket != null && client.Socket.Connected && client != Except) {
@@ -1070,7 +1071,7 @@ namespace SocketJack.Net.WebSockets {
         #endregion
 
         #region Receiving
-        public void HandleReceive(TcpConnection connection, object obj, Type objType, int Length) {
+        public void HandleReceive(NetworkConnection connection, object obj, Type objType, int Length) {
             if (objType == typeof(PeerServer)) {
                 var pServer = (PeerServer)obj;
                 if (Options.UsePeerToPeer) {
@@ -1216,7 +1217,7 @@ namespace SocketJack.Net.WebSockets {
             _ct = new CancellationToken(IsListening);
             _listenerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             _Socket = _listenerSocket;
-            var connection = new TcpConnection(this, _listenerSocket);
+            var connection = new NetworkConnection(this, _listenerSocket);
             Connection = connection;
             _listenerSocket.Bind(new IPEndPoint(IPAddress.Any, _port));
             _listenerSocket.Listen(Options.Backlog > 0 ? Options.Backlog : 100);

@@ -29,8 +29,8 @@ Public Class ChatTest
     Public WithEvents Server As ISocket
     Public WithEvents Client1 As ISocket
     Public WithEvents Client2 As ISocket
-    Public ServerOptions As New TcpOptions()
-    Public ClientOptions As New TcpOptions()
+    Public ServerOptions As New NetworkOptions()
+    Public ClientOptions As New NetworkOptions()
 
     Private Sub Setup()
         With ServerOptions

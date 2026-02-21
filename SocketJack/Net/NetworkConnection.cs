@@ -20,7 +20,7 @@ using System.Windows;
 using System.Xml.Linq;
 
 namespace SocketJack.Net {
-    public class TcpConnection : IDisposable {
+    public class NetworkConnection : IDisposable {
 
         #region Properties
 
@@ -137,7 +137,8 @@ namespace SocketJack.Net {
         }
         protected internal long _TotalBytesReceived = 0;
         protected internal long _TotalBytesReceived_l = 0;
-        DateTime LastFrame = DateTime.UtcNow;
+        DateTime LastSendFrame = DateTime.UtcNow;
+        DateTime LastReceiveFrame = DateTime.UtcNow;
 
         /// <summary>
         /// Remote Peer identifier for peer to peer interactions used to determine the Server's Client GUID.
@@ -207,8 +208,8 @@ namespace SocketJack.Net {
             set {
                 _Closed = value;
                 if (Closed) {
-                    _TotalBytesReceived = 0;
-                    _TotalBytesSent = 0;
+                    Interlocked.Exchange(ref _TotalBytesReceived, 0);
+                    Interlocked.Exchange(ref _TotalBytesSent, 0);
                 }
             }
         }
@@ -224,8 +225,11 @@ namespace SocketJack.Net {
         #endregion
 
         #region Internal
-        private bool _Closed = false;
-        public bool _Closing = false;
+        private volatile bool _Closed = false;
+        public volatile bool _Closing = false;
+        private readonly object _closeLock = new object();
+        protected internal SemaphoreSlim _SendSignal = new SemaphoreSlim(0);
+        protected internal long _nextChunkFlushAt = 0;
 
         protected internal ConcurrentQueue<SendQueueItem> SendQueue = new ConcurrentQueue<SendQueueItem>();
         protected internal List<byte> SendQueueRaw = new List<byte>();
@@ -270,7 +274,7 @@ namespace SocketJack.Net {
         }
 
         public void Close(ISocket sender, DisconnectionReason Reason = DisconnectionReason.LocalSocketClosed) {
-            lock (this) {
+            lock (_closeLock) {
                 if (!Closed && !Closing) {
                     _Closing = true;
                     var e = new DisconnectedEventArgs(sender, this, Reason);
@@ -280,11 +284,14 @@ namespace SocketJack.Net {
                     }
                     InvokeDisconnected(sender, e);
                     SendQueue.Clear();
-                    SendQueueRaw.Clear();
+                    lock (SendQueueRaw) {
+                        SendQueueRaw.Clear();
+                    }
                     _UploadBuffer.Clear();
                     _DownloadBuffer.Clear();
                     sender.EndPoint = null;
                     UnsubscribePeerUpdate();
+                    try { _SendSignal.Release(); } catch (ObjectDisposedException) { }
                 }
             }
         }
@@ -297,12 +304,11 @@ namespace SocketJack.Net {
                 int failedPollCount = 0;
                 const int maxFailedPolls = 3;
 
-                while (!isDisposed && (!Closed || Closing) && Socket.Connected) {
+                while (!isDisposed && !Closed && !Closing && Socket.Connected) {
                     if (!Poll()) {
                         failedPollCount++;
                         if (failedPollCount >= maxFailedPolls) {
-                            if (Closing || !Closed) {
-                                _Closing = true;
+                            if (!Closed) {
                                 Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
                             }
                             break;
@@ -312,8 +318,7 @@ namespace SocketJack.Net {
                     }
                     await Task.Delay(1000);
                 }
-                if (Closing || !Closed) {
-                    _Closing = true;
+                if (!Closed && !Closing) {
                     Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
                 }
             }, TaskCreationOptions.LongRunning);
@@ -364,7 +369,7 @@ namespace SocketJack.Net {
         #region Events
 
         public event ClientDisconnectedEventHandler OnDisconnected;
-        public delegate void ClientDisconnectedEventHandler(TcpConnection sender, DisconnectedEventArgs e);
+        public delegate void ClientDisconnectedEventHandler(NetworkConnection sender, DisconnectedEventArgs e);
 
         protected internal void InvokeDisconnected(ISocket sender, DisconnectedEventArgs e) {
             if (e.Connection.Closed) return;
@@ -397,6 +402,7 @@ namespace SocketJack.Net {
                 isDisposed = true;
                 UnsubscribePeerUpdate();
                 Close(Parent);
+                _SendSignal.Dispose();
                 GC.SuppressFinalize(this);
             } else {
                 throw new ObjectDisposedException(ID.ToString().ToUpper());
@@ -451,46 +457,54 @@ namespace SocketJack.Net {
 
         protected internal void StartReceiving() {
             Task.Factory.StartNew(async () => {
-                //while (!isDisposed && !Closed && Socket.Connected) {
-                //    await Receive();
-                //}
-
-                DateTime Time = DateTime.UtcNow;
-                while (!isDisposed && !Closed && Socket.Connected) {
-                    if (Parent.Options.Fps > 0) {
+                if (Parent.Options.Fps > 0) {
+                    DateTime Time = DateTime.UtcNow;
+                    while (!isDisposed && !Closed && Socket.Connected) {
                         var now = DateTime.UtcNow;
-                        if (now >= Time.AddMilliseconds(Parent.Options.timeout)) {
-                            Time = DateTime.UtcNow;
+                        var nextFrame = Time.AddMilliseconds(Parent.Options.timeout);
+                        if (now >= nextFrame) {
+                            Time = now;
                             await Receive();
                         } else {
-                            await Task.Delay(1);
+                            int waitMs = (int)(nextFrame - now).TotalMilliseconds;
+                            if (waitMs > 0) await Task.Delay(waitMs);
                         }
-                    } else {
-                        await Receive();
+                    }
+                } else {
+                    while (!isDisposed && !Closed && Socket.Connected) {
+                        if (Interlocked.CompareExchange(ref _IsReceiving, 1, 0) == 0) {
+                            try {
+                                await ReceiveData();
+                            } catch (Exception ex) {
+                                var Reason = ex.Interpret();
+                                if (Reason.ShouldLogReason())
+                                    Parent.InvokeOnError(this, ex);
+                                Parent.CloseConnection(this, Reason);
+                            } finally {
+                                IsReceiving = false;
+                            }
+                        }
                     }
                 }
-
             }, TaskCreationOptions.LongRunning);
         }
 
         internal async Task Receive() {
-            if (Socket != null && Stream != null && !IsReceiving && _Stream.DataAvailable) {
-                IsReceiving = true;
+            if (Socket != null && Stream != null && _Stream != null && _Stream.DataAvailable && Interlocked.CompareExchange(ref _IsReceiving, 1, 0) == 0) {
                 try {
-                    await ReceiveData(_Stream.DataAvailable);
+                    await ReceiveData();
                 } catch (Exception ex) {
                     var Reason = ex.Interpret();
                     if (Reason.ShouldLogReason())
                         Parent.InvokeOnError(this, ex);
                     Parent.CloseConnection(this, Reason);
+                } finally {
+                    IsReceiving = false;
                 }
-            } else {
-                await Task.Delay(1);
             }
         }
 
-        private async Task ReceiveData(bool DataAvailable) {
-            if (DataAvailable) {
+        private async Task ReceiveData() {
                 // If terminated streams are disabled treat this as a raw TCP stream (e.g. HTTP)
                 if (!Parent.Options.UseTerminatedStreams) {
                     try {
@@ -511,11 +525,7 @@ namespace SocketJack.Net {
                                 Interlocked.Add(ref _TotalBytesReceived, bytesRead);
                                 Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
                                 if (bytesRead == buffer.Length) temp.AddRange(buffer);
-                                else {
-                                    var slice = new byte[bytesRead];
-                                    Array.Copy(buffer, 0, slice, 0, bytesRead);
-                                    temp.AddRange(slice);
-                                }
+                                else temp.AddRange(new ArraySegment<byte>(buffer, 0, bytesRead));
                             }
                         } while (_Stream.DataAvailable);
 
@@ -572,10 +582,10 @@ namespace SocketJack.Net {
                         long diff = ((TotalBytesReceived - _TotalBytesReceived_l)) - Parent.Options.MaximumDownloadBytesPerSecond;
                         if (diff > 0) {
                             var now = DateTime.UtcNow;
-                            var timeDiff = now - LastFrame;
+                            var timeDiff = now - LastReceiveFrame;
                             _ReceivedBytesPerSecond = (int)(TotalBytesReceived - _TotalBytesReceived_l);
                             _TotalBytesReceived_l = TotalBytesReceived;
-                            LastFrame = now;
+                            LastReceiveFrame = now;
                             if (timeDiff > TimeSpan.FromSeconds(1)) {
                                 await Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff * 10)));
                             }
@@ -607,7 +617,6 @@ namespace SocketJack.Net {
                 }
 
                 IsReceiving = false;
-            }
         }
 
         private async Task ReceiveData_old(bool DataAvailable) {
@@ -681,7 +690,7 @@ namespace SocketJack.Net {
             IsReceiving = false;
         }
 
-        private static void ParseBuffer(byte[] Bytes, TcpConnection Sender, ISocket Target) {
+        private static void DeserializeAndDispatch(byte[] Bytes, int ByteLength, NetworkConnection Sender, ISocket Target) {
             if (Target.Options.UseCompression) {
                 var decompressionResult = MethodExtensions.TryInvoke(Target.Options.CompressionAlgorithm.Decompress, ref Bytes);
                 if (decompressionResult.Success) {
@@ -695,126 +704,82 @@ namespace SocketJack.Net {
             Wrapper wrapper = Target.Options.Serializer.Deserialize(Bytes);
             if (wrapper == null) {
                 Target.InvokeOnError(Sender, new P2PException("Deserialized object returned null."));
-            } else {
-                var valueType = wrapper.GetValueType();
-                if (wrapper.value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
-                    if (valueType == typeof(PeerRedirect)) {
-                        Byte[] redirectBytes = null;
-                        object val = wrapper.value;
-                        Type type = wrapper.value.GetType();
-                        if (type == typeof(string)) {
-                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
-                        } else if (type == typeof(JsonElement)) {
-                            string json = ((JsonElement)val).GetRawText();
-                            redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(json);
-                        }
-                        PeerRedirect redirect = Target.Options.Serializer.DeserializeRedirect(Target, redirectBytes);
-                        Task.Run(() => { Target.HandleReceive(Sender, redirect, valueType, Bytes.Length); });
-                    } else {
-                        object unwrapped = null;
-                        try {
-                            unwrapped = wrapper.Unwrap(Target);
-                        } catch (Exception ex) {
-                            Target.InvokeOnError(Sender, ex);
-                        }
-                        if (unwrapped != null)
-                            Task.Run(() => { Target.HandleReceive(Sender, unwrapped, valueType, Bytes.Length); });
+                return;
+            }
+            var valueType = wrapper.GetValueType();
+            if (wrapper.value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
+                if (valueType == typeof(PeerRedirect)) {
+                    Byte[] redirectBytes = null;
+                    object val = wrapper.value;
+                    Type type = wrapper.value.GetType();
+                    if (type == typeof(string)) {
+                        redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
+                    } else if (type == typeof(JsonElement)) {
+                        string json = ((JsonElement)val).GetRawText();
+                        redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(json);
                     }
+                    PeerRedirect redirect = Target.Options.Serializer.DeserializeRedirect(Target, redirectBytes);
+                    Target.HandleReceive(Sender, redirect, valueType, ByteLength);
+                } else {
+                    object unwrapped = null;
+                    try {
+                        unwrapped = wrapper.Unwrap(Target);
+                    } catch (Exception ex) {
+                        Target.InvokeOnError(Sender, ex);
+                    }
+                    if (unwrapped != null)
+                        Target.HandleReceive(Sender, unwrapped, valueType, ByteLength);
                 }
             }
         }
 
-        private static async Task<List<byte>> ParseBuffer(List<byte> Buffer, TcpConnection Sender, ISocket Target) {
-            int LastIndexOf = 0;
-            if (Buffer != null && Buffer.Count > 0) {
-                if (Target.Options.UseTerminatedStreams) {
-                    var TerminatorIndices = Buffer.IndexOfAll(Terminator);
+        private static void ParseBuffer(byte[] Bytes, NetworkConnection Sender, ISocket Target) {
+            Task.Run(() => DeserializeAndDispatch(Bytes, Bytes.Length, Sender, Target));
+        }
 
-                    if (TerminatorIndices.Count > 0) {
+        private static async Task<List<byte>> ParseBuffer(List<byte> Buffer, NetworkConnection Sender, ISocket Target) {
+            if (Buffer == null || Buffer.Count == 0) return Buffer;
 
+            if (Target.Options.UseTerminatedStreams) {
+                var TerminatorIndices = Buffer.IndexOfAll(Terminator);
 
-                        List<Task> tasks = new List<Task>();
-                        for (int i = 0, loopTo = TerminatorIndices.Count - 1; i <= loopTo; i++) {
-                            int lastIndex = i > 0 ? TerminatorIndices[i - 1] : 0;
-                            int Index = TerminatorIndices[i];
-                            if (i == TerminatorIndices.Count - 1)
-                                LastIndexOf = Index;
+                if (TerminatorIndices.Count > 0) {
+                    int lastTerminatorIndex = TerminatorIndices[TerminatorIndices.Count - 1];
 
-                            tasks.Add(Task.Run(() => {
-                                if (Buffer is null || Buffer.Count < Index || Buffer.Count < lastIndex)
-                                    return;
-                                int MinusTerminator = lastIndex + Terminator.Length;
-                                byte[] Bytes = Buffer.Part(lastIndex == 0 ? lastIndex : MinusTerminator, Index);
-                                int Length = Bytes.Length;
-                                if (Target.Options.UseCompression) {
-                                    var decompressionResult = MethodExtensions.TryInvoke(Target.Options.CompressionAlgorithm.Decompress, ref Bytes);
-                                    if (decompressionResult.Success) {
-                                        Bytes = decompressionResult.Result;
-                                    } else {
-                                        Target.CloseConnection(Sender, DisconnectionReason.CompressionError);
-                                        Target.InvokeOnError(Sender, decompressionResult.Exception);
-                                        return;
-                                    }
-                                }
-                                Wrapper wrapper = Target.Options.Serializer.Deserialize(Bytes);
-                                if (wrapper == null) {
-                                    Target.InvokeOnError(Sender, new P2PException("Deserialized object returned null."));
-                                } else {
-                                    var valueType = wrapper.GetValueType();
-                                    if (wrapper.value != null || wrapper.Type != "") { //wrapper.Type != typeof(PingObject).AssemblyQualifiedName
-                                        if (valueType == typeof(PeerRedirect)) {
-                                            Byte[] redirectBytes = null;
-                                            object val = wrapper.value;
-                                            Type type = wrapper.value.GetType();
-                                            if (type == typeof(string)) {
-                                                redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes((string)val);
-                                            } else if (type == typeof(JsonElement)) {
-                                                string json = ((JsonElement)val).GetRawText();
-                                                redirectBytes = System.Text.UTF8Encoding.UTF8.GetBytes(json);
-                                            }
-                                            PeerRedirect redirect = Target.Options.Serializer.DeserializeRedirect(Target, redirectBytes);
-                                            Task.Run(() => { Target.HandleReceive(Sender, redirect, valueType, Length); });
-                                        } else {
-                                            object unwrapped = null;
-                                            try {
-                                                unwrapped = wrapper.Unwrap(Target);
-                                            } catch (Exception ex) {
-                                                Target.InvokeOnError(Sender, ex);
-                                            }
-                                            if (unwrapped != null)
-                                                Task.Run(() => { Target.HandleReceive(Sender, unwrapped, valueType, Length); });
-                                        }
-                                    }
-                                }
-                            }));
-                        }
-
-                        await Task.WhenAll(tasks);
-                        if (LastIndexOf > 0) {
-                            if (Buffer != null && (LastIndexOf + Terminator.Length) - Buffer.Count == 0) {
-                                Buffer.Clear();
-                                return Buffer;
-                            } else {
-                                int removeAt = LastIndexOf + Terminator.Length;
-                                if (Buffer.Count > removeAt) {
-                                    Buffer.RemoveRange(0, LastIndexOf + Terminator.Length);
-                                } else if (Buffer.Count == removeAt) {
-                                    Buffer.Clear();
-                                }
-                            }
-                        }
+                    // Pre-extract all message segments as independent byte arrays
+                    // so parallel tasks operate on isolated data instead of the shared List<byte>
+                    var segments = new byte[TerminatorIndices.Count][];
+                    for (int i = 0; i < TerminatorIndices.Count; i++) {
+                        int prevEnd = i > 0 ? TerminatorIndices[i - 1] + Terminator.Length : 0;
+                        segments[i] = Buffer.Part(prevEnd, TerminatorIndices[i]);
                     }
-                    return Buffer;
-                } else {
-                    var tempBuffer = new List<byte>(Buffer);
-                    Buffer.Clear();
-                    Task.Run(() => {
-                        Target.HandleReceive(Sender, tempBuffer, typeof(byte[]), tempBuffer.Count);
-                    });
 
-                    return Buffer;
+                    // Process all segments in parallel
+                    var tasks = new Task[segments.Length];
+                    for (int i = 0; i < segments.Length; i++) {
+                        var segment = segments[i];
+                        tasks[i] = Task.Run(() => DeserializeAndDispatch(segment, segment.Length, Sender, Target));
+                    }
+                    await Task.WhenAll(tasks);
+
+                    // Clean up consumed bytes from buffer
+                    int consumedEnd = lastTerminatorIndex + Terminator.Length;
+                    if (consumedEnd >= Buffer.Count) {
+                        Buffer.Clear();
+                    } else {
+                        Buffer.RemoveRange(0, consumedEnd);
+                    }
                 }
-            } else { return Buffer; }
+                return Buffer;
+            } else {
+                var tempBuffer = new List<byte>(Buffer);
+                Buffer.Clear();
+                Task.Run(() => {
+                    Target.HandleReceive(Sender, tempBuffer, typeof(byte[]), tempBuffer.Count);
+                });
+
+                return Buffer;
+            }
         }
 
         #endregion
@@ -825,13 +790,20 @@ namespace SocketJack.Net {
             Task.Factory.StartNew(async () => {
                 DateTime Time = DateTime.UtcNow;
                 while (!isDisposed && !Closed && Socket.Connected) {
-                    if (Parent.Options.Fps > 0) {
+                    if (Parent.Options.Chunking) {
+                        var intervalMs = Parent.Options.ChunkingIntervalMs;
+                        if (intervalMs < 100) intervalMs = 100;
+                        await Task.Delay(intervalMs);
+                        await ProcessQueue();
+                    } else if (Parent.Options.Fps > 0) {
                         var now = DateTime.UtcNow;
-                        if (now >= Time.AddMilliseconds(Parent.Options.timeout)) {
-                            Time = DateTime.UtcNow;
+                        var nextFrame = Time.AddMilliseconds(Parent.Options.timeout);
+                        if (now >= nextFrame) {
+                            Time = now;
                             await ProcessQueue();
                         } else {
-                            await Task.Delay(1);
+                            int waitMs = (int)(nextFrame - now).TotalMilliseconds;
+                            if (waitMs > 0) await Task.Delay(waitMs);
                         }
                     } else {
                         await ProcessQueue();
@@ -841,13 +813,30 @@ namespace SocketJack.Net {
         }
 
         protected async internal Task ProcessQueue() {
-            if (Socket != null && Stream != null && (Socket.Connected) && !Closed && !IsSending && SendQueueRaw.Count > 0) {
-                IsSending = true;
-                byte[] chunk = default;
-                lock (SendQueueRaw) {
+            if (Socket == null || Stream == null || !Socket.Connected || Closed) {
+                await Task.Delay(50);
+                return;
+            }
+
+            if (Interlocked.CompareExchange(ref _IsSending, 1, 0) != 0) {
+                await Task.Delay(1);
+                return;
+            }
+
+            byte[] chunk = null;
+            lock (SendQueueRaw) {
+                if (SendQueueRaw.Count > 0) {
                     chunk = SendQueueRaw.ToArray();
                     SendQueueRaw.Clear();
                 }
+            }
+
+            if (chunk == null || chunk.Length == 0) {
+                IsSending = false;
+                if (!Parent.Options.Chunking)
+                    await _SendSignal.WaitAsync(100);
+                return;
+            }
 
 #if UNITY
                         MainThread.Run(() => {
@@ -856,23 +845,16 @@ namespace SocketJack.Net {
                         });
 #endif
 #if WINDOWS
-                try {
-                    SendSerializedBytes(chunk); //await 
-                } finally {
-                    IsSending = false;
-                }
+            try {
+                SendSerializedBytes(chunk);
+            } finally {
+                IsSending = false;
+            }
 #endif
 #if NETSTANDARD1_0_OR_GREATER && !UNITY
-                SendSerializedBytes(chunk); //await 
-                IsSending = false;
+            SendSerializedBytes(chunk);
+            IsSending = false;
 #endif
-
-
-
-
-            } else {
-                await Task.Delay(1);
-            }
         }
 
         //        protected async internal Task ProcessQueue() {
@@ -947,15 +929,15 @@ namespace SocketJack.Net {
                                 return false;
                             }
 
-                            long diff = ((TotalBytesSent - _TotalBytesSent_l)) - Parent.Options.MaximumDownloadBytesPerSecond;
+                            long diff = ((TotalBytesSent - _TotalBytesSent_l)) - Parent.Options.MaximumUploadBytesPerSecond;
                             if (diff > 0) {
                                 var now = DateTime.UtcNow;
-                                var timeDiff = now - LastFrame;
-                                _ReceivedBytesPerSecond = (int)(TotalBytesSent - _TotalBytesSent_l);
+                                var timeDiff = now - LastSendFrame;
+                                _SentBytesPerSecond = (int)(TotalBytesSent - _TotalBytesSent_l);
                                 _TotalBytesSent_l = TotalBytesSent;
-                                LastFrame = now;
+                                LastSendFrame = now;
                                 if (timeDiff > TimeSpan.FromSeconds(1)) {
-                                    Task.Delay((int)(Parent.Options.MaximumDownloadBytesPerSecond / (diff * 10))); //await 
+                                    Thread.Sleep((int)(Parent.Options.MaximumUploadBytesPerSecond / (diff * 10)));
                                 }
 
                             }
@@ -1007,7 +989,7 @@ namespace SocketJack.Net {
                 //    Object smaller than MTU.
                 byte[] ProcessedBytes = Item.Connection.Compressed ? Parent.Options.CompressionAlgorithm.Compress(SerializedBytes).Terminate() : SerializedBytes.Terminate();
                 int totalBytes = ProcessedBytes.Length;
-                TcpConnection Client = Item.Connection;
+                NetworkConnection Client = Item.Connection;
                 byte[] SentBytes = new byte[totalBytes];
 
                 if (Parent.Options.isUploadBuffered) {
@@ -1158,7 +1140,7 @@ namespace SocketJack.Net {
             return await Identity.GetMetaData(key, Private, WaitForValueIfNull);
         }
 
-        public TcpConnection(ISocket Parent, Socket Socket) {
+        public NetworkConnection(ISocket Parent, Socket Socket) {
             _Parent = Parent;
             if (Parent is TcpClient) {
                 SubscribePeerUpdate();

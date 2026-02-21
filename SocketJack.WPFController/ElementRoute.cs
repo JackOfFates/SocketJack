@@ -37,6 +37,10 @@ namespace SocketJack.WPFController {
                 } else {
                     foreach (Window w in Application.Current.Windows) {
                         if ((w.Name ?? "") == (WindowName ?? "")) {
+                            if (Conversions.ToBoolean(Operators.ConditionalCompareObjectEqual(w.Tag, ID, false))) {
+                                ControlCache.Add(ID, w);
+                                return w;
+                            }
                             var Controls = w.GetAllControls();
                             foreach (var c in Controls) {
                                 if (Conversions.ToBoolean(Operators.ConditionalCompareObjectEqual(c.Tag, ID, false))) {

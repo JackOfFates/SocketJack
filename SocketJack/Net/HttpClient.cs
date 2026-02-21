@@ -90,7 +90,7 @@ namespace SocketJack.Net {
         public int MaxRedirects { get; set; } = 5;
         public IDictionary<string,string> DefaultHeaders { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        public HttpClient() : base(TcpOptions.DefaultOptions.Clone<TcpOptions>(), "HttpClient") {
+        public HttpClient() : base(NetworkOptions.DefaultOptions.Clone<NetworkOptions>(), "HttpClient") {
             DefaultHeaders["User-Agent"] = "SocketJack-HttpClient/1.0";
             // HTTP is a raw TCP protocol; disable SocketJack framing/terminators.
             Options.UseTerminatedStreams = false;

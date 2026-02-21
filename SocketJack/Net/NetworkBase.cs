@@ -20,7 +20,7 @@ namespace SocketJack.Net {
     /// Base class for the Tcp Client and Server.
     /// </summary>
     /// <remarks></remarks>
-    public abstract class TcpBase : IDisposable, ISocket {
+    public abstract class NetworkBase : IDisposable, ISocket {
 
         #region Events
 
@@ -77,16 +77,16 @@ namespace SocketJack.Net {
         protected internal delegate void InternalPeerRedirectEventHandler(string Recipient, string Sender, object Obj, int BytesReceived);
 
         protected internal event InternalReceiveEventEventHandler InternalReceiveEvent;
-        protected internal delegate void InternalReceiveEventEventHandler(TcpConnection Connection, Type objType, object obj, int BytesReceived);
+        protected internal delegate void InternalReceiveEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesReceived);
 
         protected internal event InternalReceivedByteCounterEventHandler InternalReceivedByteCounter;
-        protected internal delegate void InternalReceivedByteCounterEventHandler(TcpConnection Connection, int BytesReceived);
+        protected internal delegate void InternalReceivedByteCounterEventHandler(NetworkConnection Connection, int BytesReceived);
 
         protected internal event InternalSentByteCounterEventHandler InternalSentByteCounter;
-        protected internal delegate void InternalSentByteCounterEventHandler(TcpConnection Connection, int BytesSent);
+        protected internal delegate void InternalSentByteCounterEventHandler(NetworkConnection Connection, int BytesSent);
 
         protected internal event InternalSendEventEventHandler InternalSendEvent;
-        protected internal delegate void InternalSendEventEventHandler(TcpConnection Connection, Type objType, object obj, int BytesSent);
+        protected internal delegate void InternalSendEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesSent);
 
         void ISocket.InvokePeerConnectionRequest(ISocket sender, ref PeerServer Server) {
 #if UNITY
@@ -180,7 +180,7 @@ namespace SocketJack.Net {
             PeerDisconnected?.Invoke(sender, Peer);
 #endif
         }
-        void ISocket.InvokeInternalReceivedByteCounter(TcpConnection Connection, int BytesReceived) {
+        void ISocket.InvokeInternalReceivedByteCounter(NetworkConnection Connection, int BytesReceived) {
 #if UNITY
             MainThread.Run(() => {
                 InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
@@ -195,7 +195,7 @@ namespace SocketJack.Net {
             InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
 #endif
         }
-        void ISocket.InvokeInternalSentByteCounter(TcpConnection connection, int chunkSize) {
+        void ISocket.InvokeInternalSentByteCounter(NetworkConnection connection, int chunkSize) {
 #if UNITY
             MainThread.Run(() => {
                 InternalSentByteCounter?.Invoke(connection, chunkSize);
@@ -210,7 +210,7 @@ namespace SocketJack.Net {
             InternalSentByteCounter?.Invoke(connection, chunkSize);
 #endif
         }
-        void ISocket.InvokeInternalSendEvent(TcpConnection connection, Type type, object @object, int length) {
+        void ISocket.InvokeInternalSendEvent(NetworkConnection connection, Type type, object @object, int length) {
 #if UNITY
             MainThread.Run(() => {
                 InternalSendEvent?.Invoke(connection, type, @object, length);
@@ -272,7 +272,7 @@ namespace SocketJack.Net {
             LogOutput?.Invoke(text);
 #endif
         }
-        void ISocket.InvokeOnError(TcpConnection Connection, Exception e) {
+        void ISocket.InvokeOnError(NetworkConnection Connection, Exception e) {
 #if UNITY
             MainThread.Run(() => {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
@@ -287,7 +287,7 @@ namespace SocketJack.Net {
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
 #endif
         }
-        void ISocket.CloseConnection(TcpConnection Connection, DisconnectionReason Reason) {
+        void ISocket.CloseConnection(NetworkConnection Connection, DisconnectionReason Reason) {
             Connection.Close(this, Reason);
         }
         void ISocket.InvokeOnDisposing() {
@@ -320,7 +320,7 @@ namespace SocketJack.Net {
             OnReceive?.Invoke(ref e);
 #endif
         }
-        protected internal void InvokeBytesPerSecondUpdate(TcpConnection Connection) {
+        protected internal void InvokeBytesPerSecondUpdate(NetworkConnection Connection) {
 #if UNITY
             MainThread.Run(() => {
                 BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondSent, Connection.BytesPerSecondReceived);
@@ -335,7 +335,7 @@ namespace SocketJack.Net {
             BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondSent, Connection.BytesPerSecondReceived);
 #endif
         }
-        protected internal void InvokeOnError(TcpConnection Connection, Exception e) {
+        protected internal void InvokeOnError(NetworkConnection Connection, Exception e) {
             LogFormat("[{0}] ERROR: {1}", new[] { Name + (Connection != null && Connection.Identity != null ? @"\" + Connection.Identity.ID.ToUpper() : @"\Null"), e.Message });
             if (e.StackTrace != string.Empty) LogAsync(e.StackTrace);
 #if UNITY
@@ -405,21 +405,21 @@ namespace SocketJack.Net {
         #region Internal
         public PeerList Peers { get; internal set; }
         PeerList ISocket.Peers { get => Peers; set => Peers = value; }
-        TcpConnection ISocket.Connection { get => Connection; }
+        NetworkConnection ISocket.Connection { get => Connection; }
         ConcurrentDictionary<string, PeerServer> ISocket.P2P_ServerInformation { get => P2P_ServerInformation; set => P2P_ServerInformation = value; }
-        ConcurrentDictionary<string, TcpConnection> ISocket.P2P_Servers { get => P2P_Servers; set => P2P_Servers = value; }
-        ConcurrentDictionary<string, TcpConnection> ISocket.P2P_Clients { get => P2P_Clients; set => P2P_Clients = value; }
+        ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Servers { get => P2P_Servers; set => P2P_Servers = value; }
+        ConcurrentDictionary<string, NetworkConnection> ISocket.P2P_Clients { get => P2P_Clients; set => P2P_Clients = value; }
 
         protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation = new ConcurrentDictionary<string, PeerServer>();
-        protected internal ConcurrentDictionary<string, TcpConnection> P2P_Servers = new ConcurrentDictionary<string, TcpConnection>();
-        protected internal ConcurrentDictionary<string, TcpConnection> P2P_Clients = new ConcurrentDictionary<string, TcpConnection>();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Servers = new ConcurrentDictionary<string, NetworkConnection>();
+        protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Clients = new ConcurrentDictionary<string, NetworkConnection>();
         protected internal ConcurrentDictionary<Guid, byte[]> Buffers = new ConcurrentDictionary<Guid, byte[]>();
         protected internal Dictionary<Type, List<Action<IReceivedEventArgs>>> TypeCallbacks = new Dictionary<Type, List<Action<IReceivedEventArgs>>>();
 
-        void ISocket.HandleReceive(TcpConnection connection, object obj, Type objType, int Length) {
+        void ISocket.HandleReceive(NetworkConnection connection, object obj, Type objType, int Length) {
             HandleReceive(connection, obj, objType, Length);
         }
-        public void HandleReceive(TcpConnection Connection, object obj, Type objType, int Length) {
+        public void HandleReceive(NetworkConnection Connection, object obj, Type objType, int Length) {
             switch (objType) {
                 case var @case when @case == typeof(Identifier): {
                         if (Options.UsePeerToPeer)
@@ -536,7 +536,7 @@ namespace SocketJack.Net {
                     }
             }
         }
-        public void CloseConnection(TcpConnection Connection, DisconnectionReason Reason = DisconnectionReason.Unknown) {
+        public void CloseConnection(NetworkConnection Connection, DisconnectionReason Reason = DisconnectionReason.Unknown) {
             if (!Connection.Closed) {
                 Connection.Closed = true;
                 if (Connection.Stream != null) {
@@ -590,7 +590,7 @@ namespace SocketJack.Net {
         public void LogFormatAsync(string[] lines, string[] args) {
             LogAsync(new[] { string.Format(string.Join(Environment.NewLine, lines), args) });
         }
-        protected internal void Send(TcpConnection Connection, object Obj) {
+        protected internal void Send(NetworkConnection Connection, object Obj) {
             if (Connection.Socket == null)
                 return;
             if (Connection.Socket.Connected) {
@@ -601,11 +601,12 @@ namespace SocketJack.Net {
                 lock (Connection.SendQueueRaw) {
                     Connection.SendQueueRaw.AddRange(SerializedBytes);
                 }
+                try { Connection._SendSignal.Release(); } catch (ObjectDisposedException) { }
             }
             //Connection.SendQueue.Enqueue(new SendQueueItem(Obj, Connection));
         }
 
-        void ISocket.Send(TcpConnection connection, object Obj) {
+        void ISocket.Send(NetworkConnection connection, object Obj) {
             if (!Connected) return;
             Send(Connection, Obj);
         }
@@ -615,7 +616,7 @@ namespace SocketJack.Net {
             Send(Connection, new PeerRedirect(Recipient.ID, Obj));
         }
 
-        public void Send(TcpConnection connection, Identifier Recipient, object Obj) {
+        public void Send(NetworkConnection connection, Identifier Recipient, object Obj) {
             if (Recipient == null || !Connected) return;
             if (RemoteIdentity is null) {
                 InvokeOnError(Connection, new P2PException("P2P Client not yet initialized." + Environment.NewLine +
@@ -650,8 +651,8 @@ namespace SocketJack.Net {
         public virtual Stream Stream { get; set; }
         public virtual IPEndPoint EndPoint { get; set; }
 
-        public TcpOptions Options = TcpOptions.DefaultOptions.Clone<TcpOptions>();
-        TcpOptions ISocket.Options { get => Options; set => Options = value; }
+        public NetworkOptions Options = NetworkOptions.DefaultOptions.Clone<NetworkOptions>();
+        NetworkOptions ISocket.Options { get => Options; set => Options = value; }
 
         /// <summary>
         /// Remote identifier used for peer-to-peer interactions used to determine the server-side client ID.
@@ -691,7 +692,7 @@ namespace SocketJack.Net {
         /// <summary>
         /// The base connection for identification.
         /// </summary>
-        public TcpConnection Connection { get; set; }
+        public NetworkConnection Connection { get; set; }
 
         /// <summary>
         /// The main socket that listens to all requests. Using the TCP protocol.
@@ -838,11 +839,11 @@ namespace SocketJack.Net {
         #endregion
 
         #region ISocket
-        void ISocket.SendSegmented(TcpConnection Client, object Obj) {
+        void ISocket.SendSegmented(NetworkConnection Client, object Obj) {
             SendSegmented(Client, Obj);
         }
 
-        protected internal void SendSegmented(TcpConnection Client, object Obj) {
+        protected internal void SendSegmented(NetworkConnection Client, object Obj) {
             Task.Run(() => {
                 byte[] SerializedBytes = Options.Serializer.Serialize(new Wrapper(Obj, this));
                 Segment[] SegmentedObject = SerializedBytes.GetSegments();
@@ -852,6 +853,7 @@ namespace SocketJack.Net {
                     lock (Client.SendQueueRaw) {
                         Client.SendQueueRaw.AddRange(Options.Serializer.Serialize(s));
                     }
+                    try { Client._SendSignal.Release(); } catch (ObjectDisposedException) { }
                 });
             });
         }
@@ -860,19 +862,19 @@ namespace SocketJack.Net {
             throw new NotImplementedException();
         }
 
-        public virtual void SendBroadcast(object Obj, TcpConnection Except) {
+        public virtual void SendBroadcast(object Obj, NetworkConnection Except) {
             throw new NotImplementedException();
         }
 
-        public virtual void SendBroadcast(TcpConnection[] Clients, object Obj, TcpConnection Except = null) {
+        public virtual void SendBroadcast(NetworkConnection[] Clients, object Obj, NetworkConnection Except = null) {
             throw new NotImplementedException();
         }
 
-        public virtual Task<ISocket> StartServer(Identifier identifier, TcpOptions options, string name) {
+        public virtual Task<ISocket> StartServer(Identifier identifier, NetworkOptions options, string name) {
             throw new NotImplementedException();
         }
 
-        public virtual Task<ISocket> StartServer(Identifier identifier, TcpOptions options) {
+        public virtual Task<ISocket> StartServer(Identifier identifier, NetworkOptions options) {
             throw new NotImplementedException();
         }
 
@@ -880,25 +882,25 @@ namespace SocketJack.Net {
             throw new NotImplementedException();
         }
 
-        void ISocket.InvokeBytesPerSecondUpdate(TcpConnection connection) {
+        void ISocket.InvokeBytesPerSecondUpdate(NetworkConnection connection) {
             InvokeBytesPerSecondUpdate(connection);
         }
 
-        public virtual void InvokeOnDisconnected(ISocket sender, TcpConnection Connection) {
+        public virtual void InvokeOnDisconnected(ISocket sender, NetworkConnection Connection) {
             throw new NotImplementedException();
         }
 
-        public virtual void InvokeOnConnected(ISocket sender, TcpConnection Connection) {
+        public virtual void InvokeOnConnected(ISocket sender, NetworkConnection Connection) {
             throw new NotImplementedException();
         }
 
         #endregion
 
-        public TcpBase() {
+        public NetworkBase() {
             Peers = new PeerList(this);
             NIC.Initialize();
         }
-        public TcpBase(ISerializer Serializer) {
+        public NetworkBase(ISerializer Serializer) {
             Peers = new PeerList(this);
             Options.Serializer = Serializer;
             NIC.Initialize();

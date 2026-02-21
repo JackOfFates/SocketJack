@@ -73,13 +73,13 @@ namespace SocketJack.Net.P2P {
             lock (Parent.Peers)
                 return Parent.Peers.ContainsKey(ID) && Parent.P2P_Clients.ContainsKey(ID);
         }
-        public TcpConnection GetPeerClient(Identifier Peer) {
+        public NetworkConnection GetPeerClient(Identifier Peer) {
             return GetPeerClient(Peer.ID);
         }
-        public TcpConnection GetPeerClient(string ID) {
+        public NetworkConnection GetPeerClient(string ID) {
             if (PeerClientExists(ID)) {
-                TcpConnection peerClient = (TcpConnection)Parent.P2P_Clients[ID];
-                return peerClient == null || peerClient.Closed ? null : (TcpConnection)Parent.P2P_Clients[ID];
+                NetworkConnection peerClient = (NetworkConnection)Parent.P2P_Clients[ID];
+                return peerClient == null || peerClient.Closed ? null : (NetworkConnection)Parent.P2P_Clients[ID];
             } else {
                 return null;
             }
