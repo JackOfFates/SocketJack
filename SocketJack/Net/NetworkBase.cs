@@ -1,4 +1,4 @@
-﻿using SocketJack.Extensions;
+using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using System;
@@ -86,333 +86,158 @@ namespace SocketJack.Net {
         protected internal event InternalSentByteCounterEventHandler InternalSentByteCounter;
         protected internal delegate void InternalSentByteCounterEventHandler(NetworkConnection Connection, int BytesSent);
 
-        protected internal event InternalSendEventEventHandler InternalSendEvent;
-        protected internal delegate void InternalSendEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesSent);
+		protected internal event InternalSendEventEventHandler InternalSendEvent;
+		protected internal delegate void InternalSendEventEventHandler(NetworkConnection Connection, Type objType, object obj, int BytesSent);
 
-        void ISocket.InvokePeerConnectionRequest(ISocket sender, ref PeerServer Server) {
+		/// <summary>
+		/// Dispatches <paramref name="action"/> on the UI / main thread.
+		/// On WPF, verifies <see cref="Application.Current"/> is still alive;
+		/// if the application has already shut down, calls <see cref="ThreadManager.Shutdown"/> instead.
+		/// </summary>
+		protected internal static void Invoke(Action action) {
 #if UNITY
-            var s = Server;
-            MainThread.Run(() => {
-		        Internal_PeerConnectionRequest?.Invoke(sender, ref s);
-            });
+			MainThread.Run(action);
 #endif
 #if WINDOWS
-            var s = Server;
-            Application.Current.Dispatcher.Invoke(() => {
-                Internal_PeerConnectionRequest?.Invoke(sender, ref s);
-            });
+			if (Application.Current != null) {
+				Application.Current.Dispatcher.Invoke(action);
+			} else {
+				ThreadManager.Shutdown();
+			}
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            Internal_PeerConnectionRequest?.Invoke(sender, ref Server);
+#if !UNITY && !WINDOWS
+			action();
 #endif
-        }
-        void ISocket.InvokeBytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
-#if UNITY
-            MainThread.Run(() => {
-                BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
-#endif
-        }
-        void ISocket.InvokePeerServerShutdown(ISocket sender, PeerServer Server) {
-#if UNITY
-            MainThread.Run(() => {
-                PeerServerShutdown?.Invoke(sender, Server);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                PeerServerShutdown?.Invoke(sender, Server);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            PeerServerShutdown?.Invoke(sender, Server);
-#endif
-        }
-        void ISocket.InvokePeerUpdate(ISocket sender, Identifier Peer) {
-#if UNITY
-            MainThread.Run(() => {
-                PeerUpdate?.Invoke(sender, Peer);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                PeerUpdate?.Invoke(sender, Peer);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            PeerUpdate?.Invoke(sender, Peer);
-#endif
-        }
-        void ISocket.InvokePeerConnected(ISocket sender, Identifier Peer) {
-            // If this is a client that hasn't been identified yet, defer the
-            // event until RemoteIdentity is available so that subscribers can
-            // safely use Peers.FirstNotMe(), Send(peer, …), etc.
-            if (Connection != null && !Connection.IsServer && RemoteIdentity == null) {
-                Task.Run(async () => {
-                    while (RemoteIdentity == null && Connected && !isDisposed) {
-                        await Task.Delay(10);
-                    }
-                    if (RemoteIdentity != null && Connected && !isDisposed) {
-                        ((ISocket)this).InvokePeerConnected(sender, Peer);
-                    }
-                });
-                return;
-            }
-#if UNITY
-            MainThread.Run(() => {
-                PeerConnected?.Invoke(sender, Peer);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                PeerConnected?.Invoke(sender, Peer);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            PeerConnected?.Invoke(sender, Peer);
-#endif
-        }
-        void ISocket.InvokePeerDisconnected(ISocket sender, Identifier Peer) {
-#if UNITY
-            MainThread.Run(() => {
-                PeerDisconnected?.Invoke(sender, Peer);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                PeerDisconnected?.Invoke(sender, Peer);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            PeerDisconnected?.Invoke(sender, Peer);
-#endif
-        }
-        void ISocket.InvokeInternalReceivedByteCounter(NetworkConnection Connection, int BytesReceived) {
-#if UNITY
-            MainThread.Run(() => {
-                InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
-#endif
-        }
-        void ISocket.InvokeInternalSentByteCounter(NetworkConnection connection, int chunkSize) {
-#if UNITY
-            MainThread.Run(() => {
-                InternalSentByteCounter?.Invoke(connection, chunkSize);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                InternalSentByteCounter?.Invoke(connection, chunkSize);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            InternalSentByteCounter?.Invoke(connection, chunkSize);
-#endif
-        }
-        void ISocket.InvokeInternalSendEvent(NetworkConnection connection, Type type, object @object, int length) {
-#if UNITY
-            MainThread.Run(() => {
-                InternalSendEvent?.Invoke(connection, type, @object, length);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                InternalSendEvent?.Invoke(connection, type, @object, length);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            InternalSendEvent?.Invoke(connection, type, @object, length);
-#endif
-        }
-        void ISocket.InvokeOnReceive(ref IReceivedEventArgs e) {
-#if UNITY
-            var args = e;
-            MainThread.Run(() => {
-                OnReceive?.Invoke(ref args);
-            });
-#endif
-#if WINDOWS
-            var args = e;
-            Application.Current.Dispatcher.Invoke(() => {
-                 OnReceive?.Invoke(ref args);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            OnReceive?.Invoke(ref e);
-#endif
-        }
-        void ISocket.InvokeOnSent(SentEventArgs sentEventArgs) {
-#if UNITY
-            MainThread.Run(() => {
-                OnSent?.Invoke(sentEventArgs);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                OnSent?.Invoke(sentEventArgs);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            OnSent?.Invoke(sentEventArgs);
-#endif
-        }
-        void ISocket.InvokeLogOutput(string text) {
-#if UNITY
-            MainThread.Run(() => {
-                LogOutput?.Invoke(text);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                LogOutput?.Invoke(text);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            LogOutput?.Invoke(text);
-#endif
-        }
-        void ISocket.InvokeOnError(NetworkConnection Connection, Exception e) {
-#if UNITY
-            MainThread.Run(() => {
-                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
-#endif
-        }
-        void ISocket.CloseConnection(NetworkConnection Connection, DisconnectionReason Reason) {
-            Connection.Close(this, Reason);
-        }
-        void ISocket.InvokeOnDisposing() {
-#if UNITY
-            MainThread.Run(() => {
-                OnDisposing?.Invoke();
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                OnDisposing?.Invoke();
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            OnDisposing?.Invoke();
-#endif
-        }
-        protected internal void InvokeOnReceive(IReceivedEventArgs e) {
-#if UNITY
-            MainThread.Run(() => {
-                OnReceive?.Invoke(ref e);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                OnReceive?.Invoke(ref e);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            OnReceive?.Invoke(ref e);
-#endif
-        }
-        protected internal void InvokeBytesPerSecondUpdate(NetworkConnection Connection) {
-            Connection.RecordBpsSample();
-#if UNITY
-            MainThread.Run(() => {
-                BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondReceived, Connection.BytesPerSecondSent);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondReceived, Connection.BytesPerSecondSent);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondReceived, Connection.BytesPerSecondSent);
-#endif
-        }
-        protected internal void InvokeOnError(NetworkConnection Connection, Exception e) {
-            LogFormat("[{0}] ERROR: {1}", [Name + (Connection != null && Connection.Identity != null ? @"\" + Connection.Identity.ID.ToUpper() : @"\Null"), e.Message]);
-            if (e.StackTrace != string.Empty) LogAsync(e.StackTrace);
-#if UNITY
-            MainThread.Run(() => {
-                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
-                if (e.InnerException != null) InvokeOnError(Connection, e.InnerException);
-            });
-#endif
-#if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
-                if (e.InnerException != null) InvokeOnError(Connection, e.InnerException);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-            OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
-            if (e.InnerException != null) InvokeOnError(Connection, e.InnerException);
-#endif
-        }
-        protected internal void InvokeAllCallbacks(IReceivedEventArgs e) {
-            if (TypeCallbacks.TryGetValue(e.Type, out var l)) {
-                for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
-#if UNITY
-                    int index = i; // Capture the index for the lambda
-                    MainThread.Run(() => {
-                        l.ElementAt(index).Invoke(e);
-                    });
-#endif
-#if WINDOWS
-            int index = i; // Capture the index for the lambda
-            Application.Current.Dispatcher.Invoke(() => {
-                l.ElementAt(index).Invoke(e);
-            });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-                    l.ElementAt(i).Invoke(e);
-#endif
-                }
-            }
-        }
-        protected internal void InvokeAllCallbacks(Type Type, IReceivedEventArgs e) {
-            if (TypeCallbacks.TryGetValue(Type, out var l)) {
-                for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
-#if UNITY
-                    int index = i; // Capture the index for the lambda
-                    MainThread.Run(() => {
-                        l.ElementAt(index).Invoke(e);
-                    });
-#endif
-#if WINDOWS
-                    int index = i; // Capture the index for the lambda
-                    Application.Current.Dispatcher.Invoke(() => {
-                        l.ElementAt(index).Invoke(e);
-                    });
-#endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
-                    l.ElementAt(i).Invoke(e);
-#endif
-                }
-            }
-        }
+		}
+
+		void ISocket.InvokePeerConnectionRequest(ISocket sender, ref PeerServer Server) {
+			var s = Server;
+			Invoke(() => {
+				Internal_PeerConnectionRequest?.Invoke(sender, ref s);
+			});
+		}
+		void ISocket.InvokeBytesPerSecondUpdate(int ReceivedPerSecond, int SentPerSecond) {
+			Invoke(() => {
+				BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
+			});
+		}
+		void ISocket.InvokePeerServerShutdown(ISocket sender, PeerServer Server) {
+			Invoke(() => {
+				PeerServerShutdown?.Invoke(sender, Server);
+			});
+		}
+		void ISocket.InvokePeerUpdate(ISocket sender, Identifier Peer) {
+			Invoke(() => {
+				PeerUpdate?.Invoke(sender, Peer);
+			});
+		}
+		void ISocket.InvokePeerConnected(ISocket sender, Identifier Peer) {
+			// If this is a client that hasn't been identified yet, defer the
+			// event until RemoteIdentity is available so that subscribers can
+			// safely use Peers.FirstNotMe(), Send(peer, �), etc.
+			if (Connection != null && !Connection.IsServer && RemoteIdentity == null) {
+				Task.Run(async () => {
+					while (RemoteIdentity == null && Connected && !isDisposed) {
+						await Task.Delay(10);
+					}
+					if (RemoteIdentity != null && Connected && !isDisposed) {
+						((ISocket)this).InvokePeerConnected(sender, Peer);
+					}
+				});
+				return;
+			}
+			Invoke(() => {
+				PeerConnected?.Invoke(sender, Peer);
+			});
+		}
+		void ISocket.InvokePeerDisconnected(ISocket sender, Identifier Peer) {
+			Invoke(() => {
+				PeerDisconnected?.Invoke(sender, Peer);
+			});
+		}
+		void ISocket.InvokeInternalReceivedByteCounter(NetworkConnection Connection, int BytesReceived) {
+			Invoke(() => {
+				InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
+			});
+		}
+		void ISocket.InvokeInternalSentByteCounter(NetworkConnection connection, int chunkSize) {
+			Invoke(() => {
+				InternalSentByteCounter?.Invoke(connection, chunkSize);
+			});
+		}
+		void ISocket.InvokeInternalSendEvent(NetworkConnection connection, Type type, object @object, int length) {
+			Invoke(() => {
+				InternalSendEvent?.Invoke(connection, type, @object, length);
+			});
+		}
+		void ISocket.InvokeOnReceive(ref IReceivedEventArgs e) {
+			var args = e;
+			Invoke(() => {
+				OnReceive?.Invoke(ref args);
+			});
+		}
+		void ISocket.InvokeOnSent(SentEventArgs sentEventArgs) {
+			Invoke(() => {
+				OnSent?.Invoke(sentEventArgs);
+			});
+		}
+		void ISocket.InvokeLogOutput(string text) {
+			Invoke(() => {
+				LogOutput?.Invoke(text);
+			});
+		}
+		void ISocket.InvokeOnError(NetworkConnection Connection, Exception e) {
+			Invoke(() => {
+				OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+			});
+		}
+		void ISocket.CloseConnection(NetworkConnection Connection, DisconnectionReason Reason) {
+			Connection.Close(this, Reason);
+		}
+		void ISocket.InvokeOnDisposing() {
+			Invoke(() => {
+				OnDisposing?.Invoke();
+			});
+		}
+		protected internal void InvokeOnReceive(IReceivedEventArgs e) {
+			Invoke(() => {
+				OnReceive?.Invoke(ref e);
+			});
+		}
+		protected internal void InvokeBytesPerSecondUpdate(NetworkConnection Connection) {
+			Connection.RecordBpsSample();
+			Invoke(() => {
+				BytesPerSecondUpdate?.Invoke(Connection.BytesPerSecondReceived, Connection.BytesPerSecondSent);
+			});
+		}
+		protected internal void InvokeOnError(NetworkConnection Connection, Exception e) {
+			LogFormat("[{0}] ERROR: {1}", [Name + (Connection != null && Connection.Identity != null ? @"\" + Connection.Identity.ID.ToUpper() : @"\Null"), e.Message]);
+			if (e.StackTrace != string.Empty) LogAsync(e.StackTrace);
+			Invoke(() => {
+				OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
+				if (e.InnerException != null) InvokeOnError(Connection, e.InnerException);
+			});
+		}
+		protected internal void InvokeAllCallbacks(IReceivedEventArgs e) {
+			if (TypeCallbacks.TryGetValue(e.Type, out var l)) {
+				for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
+					int index = i;
+					Invoke(() => {
+						l.ElementAt(index).Invoke(e);
+					});
+				}
+			}
+		}
+		protected internal void InvokeAllCallbacks(Type Type, IReceivedEventArgs e) {
+			if (TypeCallbacks.TryGetValue(Type, out var l)) {
+				for (int i = 0, loopTo = l.Count - 1; i <= loopTo; i++) {
+					int index = i;
+					Invoke(() => {
+						l.ElementAt(index).Invoke(e);
+					});
+				}
+			}
+		}
 
         #endregion
 
@@ -532,9 +357,12 @@ namespace SocketJack.Net {
                                     }
                                 }
 #endif
-                                if (allowRedirect && Peers.TryGetValue(redirect.Recipient, out Identifier rID)) {
-                                    Send(rID, redirect);
-                                    //SendBroadcast(redirect, Connection);
+                                if (allowRedirect) {
+                                    if (redirect.Recipient == "#ALL#") {
+                                        SendBroadcast(redirect, Connection);
+                                    } else if (Peers.TryGetValue(redirect.Recipient, out Identifier rID)) {
+                                        Send(rID, redirect);
+                                    }
                                 }
                             }
 

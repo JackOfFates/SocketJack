@@ -439,6 +439,8 @@ The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `T
 
 ### Sharing an Element
 
+# NOTE [![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack.WPF)
+You MUST install the `SocketJack.WPF` instead of `SocketJack` NuGet package to use the features described in this section.
 Call the `Share` extension method on any `FrameworkElement`. It returns an `IDisposable` handle you can dispose to stop sharing.
 
 ```cs

@@ -1,4 +1,4 @@
-﻿using Mono.Nat;
+using Mono.Nat;
 using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using System;
@@ -383,7 +383,7 @@ namespace SocketJack.Net {
                 OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
 #endif
         }
@@ -399,7 +399,7 @@ namespace SocketJack.Net {
                 OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
 #endif
         }
@@ -414,7 +414,7 @@ namespace SocketJack.Net {
                 OnIdentified?.Invoke(sender, Identity);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnIdentified?.Invoke(sender, Identity);
 #endif
         }
@@ -429,7 +429,7 @@ namespace SocketJack.Net {
                 OnDisconnected?.Invoke(e);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(e);
 #endif
         }

@@ -249,7 +249,7 @@ namespace SocketJack.Net {
                 OnDisconnected?.Invoke(this, e);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(this, e);
 #endif
         }

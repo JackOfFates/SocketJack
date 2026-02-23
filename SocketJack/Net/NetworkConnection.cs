@@ -1,4 +1,4 @@
-﻿using SocketJack.Extensions;
+using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using System;
@@ -452,7 +452,7 @@ namespace SocketJack.Net {
                 OnDisconnected?.Invoke(this, e);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(this, e);
 #endif
         }
@@ -596,11 +596,20 @@ namespace SocketJack.Net {
                                 if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
                                 break;
                             }
-                            if (bytesRead > 0) {
-                                Interlocked.Add(ref _TotalBytesReceived, bytesRead);
-                                Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
-                                temp.AddRange(new ArraySegment<byte>(buffer, 0, bytesRead));
+                            if (bytesRead <= 0) {
+                                // Stream ended — remote side closed the connection.
+                                // Close locally to prevent the outer loop from spinning.
+                                if (temp.Count > 0) {
+                                    await ParseBuffer(temp, this, Parent);
+                                }
+                                ArrayPool<byte>.Shared.Return(buffer);
+                                IsReceiving = false;
+                                Parent.CloseConnection(this, DisconnectionReason.RemoteSocketClosed);
+                                return;
                             }
+                            Interlocked.Add(ref _TotalBytesReceived, bytesRead);
+                            Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
+                            temp.AddRange(new ArraySegment<byte>(buffer, 0, bytesRead));
                         } while (_Stream.DataAvailable);
 
                         if (temp.Count > 0) {
@@ -632,6 +641,8 @@ namespace SocketJack.Net {
                 }
 
                 if (lengthRead <= 0) {
+                    // Stream ended — remote side closed the connection.
+                    Parent.CloseConnection(this, DisconnectionReason.RemoteSocketClosed);
                     IsReceiving = false;
                     return;
                 }
@@ -928,7 +939,7 @@ namespace SocketJack.Net {
                 IsSending = false;
             }
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             SendSerializedBytes(chunk);
             IsSending = false;
 #endif
@@ -962,7 +973,7 @@ namespace SocketJack.Net {
         //#if WINDOWS
         //                       okay = await Application.Current.Dispatcher.InvokeAsync(async () => { return await TrySendQueueItem(item); }).Result;
         //#endif
-        //#if NETSTANDARD1_0_OR_GREATER && !UNITY
+        //#if !UNITY && !WINDOWS
         //            okay = await TrySendQueueItem(item);
         //#endif
         //                        if (okay) {
@@ -1245,6 +1256,9 @@ namespace SocketJack.Net {
             _isWebSocket = _parentTypeName == "WebSocketClient" || _parentTypeName == "WebSocketServer";
             if (Parent is TcpClient) {
                 SubscribePeerUpdate();
+                IsServer = false;
+            } else if (Parent is UdpClient) {
+                // UdpClient manages its own PeerUpdate subscriptions.
                 IsServer = false;
             } else {
                 IsServer = true;

@@ -21,20 +21,69 @@ Public Class BandwidthTest
     End Property ' buffer size equal to object size for high bandwidth
     Public Property ServerPort As Integer = NIC.FindOpenPort(7500, 8000).Result
     Public Property Compressor As New GZip2Compression(IO.Compression.CompressionLevel.SmallestSize)
-    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options =
-        New NetworkOptions With {.Logging = True,
+    Private ServerOptions As New NetworkOptions With {.Logging = True,
                              .UseCompression = False,
                              .MaximumDownloadMbps = 0.2,
                              .MaximumUploadMbps = 0.2,
-                             .CompressionAlgorithm = Compressor}}
-
-    Public WithEvents Client As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options =
-        New NetworkOptions With {.Logging = True,
+                             .CompressionAlgorithm = Compressor}
+    Private ClientOptions As New NetworkOptions With {.Logging = True,
                              .UpdateConsoleTitle = True,
-                             .UseCompression = Server.Options.UseCompression,
+                             .UseCompression = False,
                              .MaximumDownloadMbps = 0.2,
                              .MaximumUploadMbps = 0.2,
-                             .CompressionAlgorithm = Compressor}}
+                             .CompressionAlgorithm = Compressor}
+    Public Server As ISocket
+    Public Client As ISocket
+    Private _UseUdp As Boolean
+
+    Private Sub Cleanup()
+        If Client IsNot Nothing Then
+            Client.Dispose()
+            Client = Nothing
+        End If
+        If Server IsNot Nothing Then
+            Server.Dispose()
+            Server = Nothing
+        End If
+    End Sub
+
+    Private Sub Setup()
+        Cleanup()
+        _UseUdp = UDP_Enabled.IsChecked
+        If _UseUdp Then
+            Dim s As New UdpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = ServerOptions}
+            Dim c As New UdpClient(String.Format("{0}Client", {TestName})) With {.Options = ClientOptions}
+            Server = s
+            Client = c
+            AddHandler s.ClientConnected, AddressOf Server_ClientConnected
+            AddHandler s.ClientDisconnected, AddressOf Server_ClientDisconnected
+            AddHandler s.OnError, AddressOf Server_OnError
+            AddHandler s.LogOutput, AddressOf Server_LogOutput
+            AddHandler s.OnSent, AddressOf Tcp_OnSent
+            AddHandler s.OnReceive, AddressOf ClientServer_OnReceive
+            AddHandler c.OnConnected, AddressOf Client_OnConnected
+            AddHandler c.LogOutput, AddressOf Client_LogOutput
+            AddHandler c.OnSent, AddressOf Tcp_OnSent
+            AddHandler c.OnReceive, AddressOf ClientServer_OnReceive
+        Else
+            Dim s As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = ServerOptions}
+            Dim c As New TcpClient(String.Format("{0}Client", {TestName})) With {.Options = ClientOptions}
+            Server = s
+            Client = c
+            AddHandler s.ClientConnected, AddressOf Server_ClientConnected
+            AddHandler s.ClientDisconnected, AddressOf Server_ClientDisconnected
+            AddHandler s.OnError, AddressOf Server_OnError
+            AddHandler s.LogOutput, AddressOf Server_LogOutput
+            AddHandler s.OnSent, AddressOf Tcp_OnSent
+            AddHandler s.OnReceive, AddressOf ClientServer_OnReceive
+            AddHandler c.OnConnected, AddressOf Client_OnConnected
+            AddHandler c.LogOutput, AddressOf Client_LogOutput
+            AddHandler c.OnSent, AddressOf Tcp_OnSent
+            AddHandler c.OnReceive, AddressOf ClientServer_OnReceive
+        End If
+        Server.RegisterCallback(Of BandwidthObject)(AddressOf Received_BandwidthObject)
+        Client.RegisterCallback(Of BandwidthObject)(AddressOf Received_BandwidthObject)
+    End Sub
 
 #Region "Properties"
     Public ReadOnly Property TestName As String = "Bandwidth Test" Implements ITest.TestName
@@ -98,13 +147,15 @@ Public Class BandwidthTest
 
     Public Property Running As Boolean Implements ITest.Running
         Get
-            Return Server.isListening
+            If Server Is Nothing Then Return False
+            Return CType(Server, Object).IsListening
         End Get
         Set(value As Boolean)
             If Server Is Nothing Then Return
-            If value AndAlso Not Server.isListening Then
+            Dim isListening As Boolean = CType(Server, Object).IsListening
+            If value AndAlso Not isListening Then
                 ITest_StartTest()
-            ElseIf Not value AndAlso Server.isListening Then
+            ElseIf Not value AndAlso isListening Then
                 ITest_StopTest()
             End If
         End Set
@@ -134,12 +185,19 @@ Public Class BandwidthTest
 
     Private Async Sub ITest_StartTest() Implements ITest.StartTest
         If Not Running Then
+            Dispatcher.Invoke(AddressOf Setup)
             ButtonStartStop.IsEnabled = False
+            UDP_Enabled.IsEnabled = False
             Log("Test Starting...")
             ButtonStartStop.Content = "Starting.."
             ResetValues()
-            If Server.Listen() Then
-                Dim connected As Boolean = Await Client.Connect("127.0.0.1", ServerPort)
+            Dim listened As Boolean = CType(Server, Object).Listen()
+            If listened Then
+                If _UseUdp Then
+                    Dim connected As Boolean = Await Client.AsUdpClient.Connect("127.0.0.1", ServerPort)
+                Else
+                    Dim connected As Boolean = Await Client.AsTcpClient.Connect("127.0.0.1", ServerPort)
+                End If
                 ButtonStartStop.IsEnabled = True
                 Log("Test Started.")
                 ButtonStartStop.Content = "Stop Test"
@@ -155,15 +213,17 @@ Public Class BandwidthTest
         If Running Then
             ButtonStartStop.IsEnabled = False
             ButtonStartStop.Content = "Stopping.."
-            Server.StopListening()
+            CType(Server, Object).StopListening()
+            Cleanup()
             ButtonStartStop.Content = "Start Test"
             ButtonStartStop.IsEnabled = True
+            UDP_Enabled.IsEnabled = True
             Log("Test Stopped.")
         End If
     End Sub
 
     Private Sub SliderBwSize_ValueChanged(sender As Object, e As RoutedPropertyChangedEventArgs(Of Double)) Handles SliderBwSize.ValueChanged
-        If Running Then
+        If Running AndAlso Server IsNot Nothing AndAlso Client IsNot Nothing Then
             Server.Options.MaximumUploadMbps = SliderBwSize.Value / 100
             Server.Options.MaximumDownloadMbps = SliderBwSize.Value / 100
             Client.Options.MaximumUploadMbps = SliderBwSize.Value / 100
@@ -175,7 +235,7 @@ Public Class BandwidthTest
         BandwidthObject.UnitSize = CInt(SliderUnitSize.Value)
     End Sub
 
-    Private Sub Client_LogOutput(text As String) Handles Client.LogOutput
+    Private Sub Client_LogOutput(text As String)
         Dim isAtEnd As Boolean = TextboxLog.VerticalOffset >= (TextboxLog.ExtentHeight - TextboxLog.ViewportHeight) * 0.9
         Dispatcher.InvokeAsync(Sub()
                                    TextboxLog.AppendText(text)
@@ -203,21 +263,21 @@ Public Class BandwidthTest
     End Sub
 #End Region
 
-    Private Sub Server_ClientConnected(e As ConnectedEventArgs) Handles Server.ClientConnected
+    Private Sub Server_ClientConnected(e As ConnectedEventArgs)
         Interlocked.Increment(Connects)
         Interlocked.Increment(TotalClients)
     End Sub
 
-    Private Sub Server_ClientDisconnected(e As DisconnectedEventArgs) Handles Server.ClientDisconnected
+    Private Sub Server_ClientDisconnected(e As DisconnectedEventArgs)
         Interlocked.Increment(Disconnects)
         Interlocked.Decrement(TotalClients)
     End Sub
 
-    Private Sub Server_OnError(e As ErrorEventArgs) Handles Server.OnError
+    Private Sub Server_OnError(e As ErrorEventArgs)
         Log(e.Exception.Message & e.Exception.StackTrace)
     End Sub
 
-    Private Sub Server_LogOutput(text As String) Handles Server.LogOutput
+    Private Sub Server_LogOutput(text As String)
         Dim isAtEnd As Boolean = TextboxLog.VerticalOffset >= (TextboxLog.ExtentHeight - TextboxLog.ViewportHeight) * 0.9
         Dispatcher.InvokeAsync(Sub()
                                    TextboxLog.AppendText(text)
@@ -225,11 +285,15 @@ Public Class BandwidthTest
                                End Sub)
     End Sub
 
-    Dim sw As New SpinWait, WorkerCount As Integer = 16
+    Dim sw As New SpinWait, WorkerCount As Integer = 8, w As TimeSpan = TimeSpan.FromMilliseconds(0.5)
     Private Sub WorkerThread(obj As Object)
         Do While Running
             If Client.Connected Then
-                Client.Send(BandwidthObject.Cached)
+                If _UseUdp Then
+                    Client.AsUdpClient.Send(BandwidthObject.Cached)
+                Else
+                    Client.AsTcpClient.Send(BandwidthObject.Cached)
+                End If
             End If
             'If Server.isListening Then
             '    Server.SendBroadcast(BandwidthObject.Create())
@@ -238,18 +302,18 @@ Public Class BandwidthTest
         Loop
     End Sub
 
-    Private Sub Client_OnConnected(sender As Object) Handles Client.OnConnected
+    Private Sub Client_OnConnected(sender As Object)
         For i As Integer = 0 To WorkerCount - 1
             Dim Worker = New Thread(AddressOf WorkerThread)
             Worker.Start()
         Next
     End Sub
 
-    Private Sub Tcp_OnSent(e As SentEventArgs) Handles Client.OnSent, Server.OnSent
+    Private Sub Tcp_OnSent(e As SentEventArgs)
         AddSentBytes(e.BytesSent)
     End Sub
 
-    Private Sub ClientServer_OnReceive(ByRef e As ReceivedEventArgs(Of Object)) Handles Client.OnReceive, Server.OnReceive
+    Private Sub ClientServer_OnReceive(ByRef e As ReceivedEventArgs(Of Object))
         AddReceivedBytes(e.BytesReceived)
     End Sub
 
@@ -312,14 +376,12 @@ Public Class BandwidthTest
 
         ' Alternative way to white-list types
         ' Server.Whitelist.AddType(GetType(BandwidthObject))
-        With Server.Options
+        With ServerOptions
             .LogReceiveEvents = False
             '.UseCompression = True
             '.MaximumDownloadMbps = 0
         End With
-        Client.Options = Server.Options
-        Server.RegisterCallback(Of BandwidthObject)(AddressOf Received_BandwidthObject)
-        Client.RegisterCallback(Of BandwidthObject)(AddressOf Received_BandwidthObject)
+        ClientOptions = ServerOptions
     End Sub
 
 End Class

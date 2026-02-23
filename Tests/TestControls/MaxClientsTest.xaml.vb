@@ -8,12 +8,44 @@ Public Class MaxClientsTest
     Implements ITest
 
     Public MaxClients As Integer = 10000
-    Public Clients As New ConcurrentDictionary(Of Guid, TcpClient)
+    Public Clients As New ConcurrentDictionary(Of Guid, ISocket)
     Public ServerPort As Integer = NIC.FindOpenPort(7500, 8000).Result
 
     Public ServerOptions As New NetworkOptions With {.Logging = False, .UsePeerToPeer = False, .UpdateConsoleTitle = True}
     Public ClientOptions As New NetworkOptions With {.Logging = False, .UsePeerToPeer = False, .UpdateConsoleTitle = False}
-    Public WithEvents Server As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = ServerOptions}
+    Public Server As ISocket
+    Private _UseUdp As Boolean
+
+    Private Sub Cleanup()
+        For Each kvp In Clients
+            kvp.Value.Dispose()
+        Next
+        Clients.Clear()
+        If Server IsNot Nothing Then
+            Server.Dispose()
+            Server = Nothing
+        End If
+    End Sub
+
+    Private Sub Setup()
+        Cleanup()
+        _UseUdp = UDP_Enabled.IsChecked
+        If _UseUdp Then
+            Dim s As New UdpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = ServerOptions}
+            Server = s
+            AddHandler s.ClientConnected, AddressOf Server_ClientConnected
+            AddHandler s.ClientDisconnected, AddressOf Server_ClientDisconnected
+            AddHandler s.OnError, AddressOf Server_OnError
+            AddHandler s.LogOutput, AddressOf Server_LogOutput
+        Else
+            Dim s As New TcpServer(ServerPort, String.Format("{0}Server", {TestName})) With {.Options = ServerOptions}
+            Server = s
+            AddHandler s.ClientConnected, AddressOf Server_ClientConnected
+            AddHandler s.ClientDisconnected, AddressOf Server_ClientDisconnected
+            AddHandler s.OnError, AddressOf Server_OnError
+            AddHandler s.LogOutput, AddressOf Server_LogOutput
+        End If
+    End Sub
 
 #Region "Properties"
     Public Property TestName As String = "MaxConnections" Implements ITest.TestName
@@ -73,7 +105,8 @@ Public Class MaxClientsTest
 
     Public Property Running As Boolean Implements ITest.Running
         Get
-            Return Server.isListening
+            If Server Is Nothing Then Return False
+            Return CType(Server, Object).IsListening
         End Get
         Set(value As Boolean)
             If value Then
@@ -115,11 +148,11 @@ Public Class MaxClientsTest
 
 #Region "Events"
 
-    Private Sub Server_OnError(e As ErrorEventArgs) Handles Server.OnError
+    Private Sub Server_OnError(e As ErrorEventArgs)
         LogAsync(e.Exception.Message & vbCrLf & e.Exception.StackTrace)
     End Sub
 
-    Private Sub Server_LogOutput(text As String) Handles Server.LogOutput
+    Private Sub Server_LogOutput(text As String)
         Dim isAtEnd As Boolean = TextboxLog.VerticalOffset >= (TextboxLog.ExtentHeight - TextboxLog.ViewportHeight) * 0.9
         Dispatcher.Invoke(Sub()
                               TextboxLog.AppendText(text)
@@ -127,12 +160,12 @@ Public Class MaxClientsTest
                           End Sub)
     End Sub
 
-    Private Sub Server_ClientConnected(e As ConnectedEventArgs) Handles Server.ClientConnected
+    Private Sub Server_ClientConnected(e As ConnectedEventArgs)
         Interlocked.Increment(Connects)
         Interlocked.Increment(TotalClients)
     End Sub
 
-    Private Sub Server_ClientDisconnected(e As DisconnectedEventArgs) Handles Server.ClientDisconnected
+    Private Sub Server_ClientDisconnected(e As DisconnectedEventArgs)
         Interlocked.Increment(Disconnects)
         Interlocked.Decrement(TotalClients)
     End Sub
@@ -142,20 +175,23 @@ Public Class MaxClientsTest
     Private cancelTest As Boolean = False
     Private Sub ITest_StartTest() Implements ITest.StartTest
         If Not Running Then
-            If Server.Listen() Then
+            Dispatcher.Invoke(AddressOf Setup)
+            UDP_Enabled.IsEnabled = False
+            Dim listened As Boolean = CType(Server, Object).Listen()
+            If listened Then
                 cancelTest = False
                 Clients.Clear()
                 Log("Starting test.", True)
                 ButtonStartStop.Content = "Stop Test"
-                Parallel.For(1, MaxClients, Sub(index)
-                                                If cancelTest Then Return
-                                                CreateClientAndConnect(index).ConfigureAwait(False)
-                                            End Sub)
-                'Parallel.For(1, MaxClients, Async Sub(index)
-                '                                Await CreateClientAndConnect(index)
-                '                            End Sub)
+                Task.Run(Sub()
+                             Parallel.For(1, MaxClients, Sub(index)
+                                                             If cancelTest Then Return
+                                                             CreateClientAndConnect(index).ConfigureAwait(False)
+                                                         End Sub)
+                         End Sub)
             Else
-                Log(String.Format("Server failed to listen on port {0}.", {Server.Port}))
+                Log(String.Format("Server failed to listen on port {0}.", {CType(Server, Object).Port}))
+                UDP_Enabled.IsEnabled = True
             End If
         End If
     End Sub
@@ -164,15 +200,23 @@ Public Class MaxClientsTest
         If Running Then
             cancelTest = True
             ButtonStartStop.Content = "Start Test"
-            Server.StopListening()
+            CType(Server, Object).StopListening()
+            Cleanup()
+            UDP_Enabled.IsEnabled = True
             Log("Stopping test.", True)
         End If
     End Sub
 
     Private Async Function CreateClientAndConnect(index As Integer) As Task(Of Boolean)
-        Dim Client As New TcpClient(ClientOptions, String.Format("{0}Client[{1}]", {TestName, index}))
-        Clients.Add(Client.InternalID, Client)
-        Return Await Client.Connect("127.0.0.1", ServerPort)
+        If _UseUdp Then
+            Dim Client As New UdpClient(ClientOptions, String.Format("{0}Client[{1}]", {TestName, index}))
+            Clients.TryAdd(Client.InternalID, Client)
+            Return Await Client.Connect("127.0.0.1", ServerPort)
+        Else
+            Dim Client As New TcpClient(ClientOptions, String.Format("{0}Client[{1}]", {TestName, index}))
+            Clients.TryAdd(Client.InternalID, Client)
+            Return Await Client.Connect("127.0.0.1", ServerPort)
+        End If
     End Function
 
 

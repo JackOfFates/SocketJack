@@ -32,7 +32,23 @@ Public Class ChatTest
     Public ServerOptions As New NetworkOptions()
     Public ClientOptions As New NetworkOptions()
 
+    Private Sub Cleanup()
+        If Client1 IsNot Nothing Then
+            Client1.Dispose()
+            Client1 = Nothing
+        End If
+        If Client2 IsNot Nothing Then
+            Client2.Dispose()
+            Client2 = Nothing
+        End If
+        If Server IsNot Nothing Then
+            Server.Dispose()
+            Server = Nothing
+        End If
+    End Sub
+
     Private Sub Setup()
+        Cleanup()
         With ServerOptions
             .Logging = True
             .LogReceiveEvents = False
@@ -70,6 +86,39 @@ Public Class ChatTest
             Server = s
             Client1 = c1
             Client2 = c2
+
+            ' Logging
+            AddHandler s.LogOutput, AddressOf Log
+            AddHandler c1.LogOutput, AddressOf Log
+            AddHandler c2.LogOutput, AddressOf Log
+
+            AddHandler c1.OnDisconnected, AddressOf Client1_OnDisconnected
+            AddHandler c2.OnDisconnected, AddressOf Client2_OnDisconnected
+            AddHandler c1.OnConnected, AddressOf Client1_OnConnected
+            AddHandler c2.OnConnected, AddressOf Client2_OnConnected
+
+            ' Setup remote identity
+            AddHandler c1.OnIdentified, AddressOf Client1_OnIdentified
+            AddHandler c2.OnIdentified, AddressOf Client2_OnIdentified
+
+            ' Peer list updates
+            AddHandler c1.OnConnected, AddressOf RefreshUserList
+            AddHandler c2.OnConnected, AddressOf RefreshUserList
+            AddHandler c1.OnDisconnected, AddressOf RefreshUserList
+            AddHandler c2.OnDisconnected, AddressOf RefreshUserList
+            AddHandler c1.PeerConnected, AddressOf RefreshUserList
+            AddHandler c1.PeerDisconnected, AddressOf RefreshUserList
+            AddHandler c2.PeerConnected, AddressOf RefreshUserList
+            AddHandler c2.PeerDisconnected, AddressOf RefreshUserList
+        ElseIf UDP_Enabled.IsChecked Then
+            Dim s As New UdpServer(ServerPort, "ChatServer") With {.Options = ServerOptions}
+            Dim c1 As New UdpClient(ClientOptions, "ChatClient1")
+            Dim c2 As New UdpClient(ClientOptions, "ChatClient2")
+
+            Server = s
+            Client1 = c1
+            Client2 = c2
+            AddHandler s.StoppedListening, AddressOf Server_UdpStoppedListening
 
             ' Logging
             AddHandler s.LogOutput, AddressOf Log
@@ -178,6 +227,11 @@ Public Class ChatTest
         ButtonC2.IsEnabled = False
     End Sub
 
+    Private Sub Server_UdpStoppedListening(sender As UdpServer)
+        ButtonC1.IsEnabled = False
+        ButtonC2.IsEnabled = False
+    End Sub
+
     Private Sub Client1_OnConnected(e As ConnectedEventArgs)
         ButtonC1.Content = "Disconnect"
         ButtonC1.IsEnabled = True
@@ -190,13 +244,31 @@ Public Class ChatTest
 
     Private Async Sub RefreshUserList()
         Dim isWebsocket = False
-        Dispatcher.Invoke(Sub() isWebsocket = WebSocket_Enabled.IsChecked)
+        Dim isUdp = False
+        Dispatcher.Invoke(Sub()
+                              isWebsocket = WebSocket_Enabled.IsChecked
+                              isUdp = UDP_Enabled.IsChecked
+                          End Sub)
         If isWebsocket Then
             Try
                 Dim Output As String = String.Empty
                 For Each client In Server.As(Of WebSocketServer)().Clients.Values
                     Dim username As String = Await client.GetMetaData("Username")
                     Output &= username & Environment.NewLine
+                Next
+
+                Dispatcher.Invoke(Sub() UserList.Text = Output)
+            Catch ex As Exception
+
+            End Try
+        ElseIf isUdp Then
+            Try
+                Dim Output As String = String.Empty
+                For Each client In Server.AsUdpServer().Clients.Values
+                    If client.Identity IsNot Nothing Then
+                        Dim username As String = Await client.Identity.GetMetaData("Username")
+                        Output &= username & Environment.NewLine
+                    End If
                 Next
 
                 Dispatcher.Invoke(Sub() UserList.Text = Output)
@@ -272,10 +344,16 @@ Public Class ChatTest
         ' When the client is identified, we can send the login object to the server.
         ' This is a dummy object for your login which lets anyone choose any username.
         ' You should replace it with your actual login logic.
-        Dim isChecked = False
-        Dispatcher.Invoke(Sub() isChecked = WebSocket_Enabled.IsChecked)
-        If isChecked Then
+        Dim isWs = False
+        Dim isUdp = False
+        Dispatcher.Invoke(Sub()
+                              isWs = WebSocket_Enabled.IsChecked
+                              isUdp = UDP_Enabled.IsChecked
+                          End Sub)
+        If isWs Then
             Client1.AsWsClient.Send(New LoginObj With {.UserName = "Client1"})
+        ElseIf isUdp Then
+            Client1.AsUdpClient.Send(New LoginObj With {.UserName = "Client1"})
         Else
             Client1.AsTcpClient.Send(New LoginObj With {.UserName = "Client1"})
         End If
@@ -292,10 +370,16 @@ Public Class ChatTest
         ' When the client is identified, we can send the login object to the server.
         ' This is a dummy object for your login which lets anyone choose any username.
         ' You should replace it with your actual login logic.
-        Dim isChecked = False
-        Dispatcher.Invoke(Sub() isChecked = WebSocket_Enabled.IsChecked)
-        If isChecked Then
+        Dim isWs = False
+        Dim isUdp = False
+        Dispatcher.Invoke(Sub()
+                              isWs = WebSocket_Enabled.IsChecked
+                              isUdp = UDP_Enabled.IsChecked
+                          End Sub)
+        If isWs Then
             Client2.AsWsClient.Send(New LoginObj With {.UserName = "Client2"})
+        ElseIf isUdp Then
+            Client2.AsUdpClient.Send(New LoginObj With {.UserName = "Client2"})
         Else
             Client2.AsTcpClient.Send(New LoginObj With {.UserName = "Client2"})
         End If
@@ -343,7 +427,7 @@ Public Class ChatTest
         End Get
         Set(value As Boolean)
             If Server Is Nothing Then Return
-            Dim isListening As Boolean = If(WebSocket_Enabled.IsChecked, Server.AsWsServer().IsListening, Server.AsTcpServer().IsListening)
+            Dim isListening As Boolean = CType(Server, Object).IsListening
             If value AndAlso Not isListening Then
                 ITest_StartTest()
             ElseIf Not value AndAlso isListening Then
@@ -359,11 +443,16 @@ Public Class ChatTest
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
             WebSocket_Enabled.IsEnabled = False
+            UDP_Enabled.IsEnabled = False
             ButtonStartStop.Content = "Starting.."
-            If If(WebSocket_Enabled.IsChecked, Server.AsWsServer().Listen(), Server.AsTcpServer().Listen()) Then
+            Dim listened As Boolean = CType(Server, Object).Listen()
+            If listened Then
                 If WebSocket_Enabled.IsChecked Then
                     Await Client1.AsWsClient.Connect("127.0.0.1", ServerPort)
                     Await Client2.AsWsClient.Connect("127.0.0.1", ServerPort)
+                ElseIf UDP_Enabled.IsChecked Then
+                    Await Client1.AsUdpClient.Connect("127.0.0.1", ServerPort)
+                    Await Client2.AsUdpClient.Connect("127.0.0.1", ServerPort)
                 Else
                     Dim s As TcpServer = Server.AsTcpServer()
                     Dim t As New Thread(Sub()
@@ -397,8 +486,10 @@ Public Class ChatTest
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
             WebSocket_Enabled.IsEnabled = True
+            UDP_Enabled.IsEnabled = True
             ButtonStartStop.Content = "Stopping.."
             Server.As(Of Object)().StopListening()
+            Cleanup()
             ButtonStartStop.Content = "Start Test"
             ButtonStartStop.IsEnabled = True
         End If
@@ -455,6 +546,8 @@ Public Class ChatTest
         Dim msg As New ChatMessage With {.Text = ChatMessage1.Text}
         If WebSocket_Enabled.IsChecked Then
             Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), msg)
+        ElseIf UDP_Enabled.IsChecked Then
+            Client1.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client1), msg)
         Else
             Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), msg)
         End If
@@ -466,6 +559,8 @@ Public Class ChatTest
         Dim msg As New ChatMessage With {.Text = ChatMessage2.Text}
         If WebSocket_Enabled.IsChecked Then
             Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), msg)
+        ElseIf UDP_Enabled.IsChecked Then
+            Client2.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client2), msg)
         Else
             Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), msg)
         End If
@@ -498,9 +593,13 @@ Public Class ChatTest
     Public Function GetOtherPeer(LocalClient As ClientNumber) As Identifier
         Select Case LocalClient
             Case ClientNumber.Client1
-                Return Client1.Peers.Where(Function(x) x.Value.ID <> Client1.RemoteIdentity.ID).FirstOrDefault().Value
+                If Client1 Is Nothing OrElse Client1.RemoteIdentity Is Nothing Then Return Nothing
+                Dim peer = Client1.Peers.Where(Function(x) x.Value.ID <> Client1.RemoteIdentity.ID).FirstOrDefault()
+                Return peer.Value
             Case ClientNumber.Client2
-                Return Client2.Peers.Where(Function(x) x.Value.ID <> Client2.RemoteIdentity.ID).FirstOrDefault().Value
+                If Client2 Is Nothing OrElse Client2.RemoteIdentity Is Nothing Then Return Nothing
+                Dim peer = Client2.Peers.Where(Function(x) x.Value.ID <> Client2.RemoteIdentity.ID).FirstOrDefault()
+                Return peer.Value
             Case Else
                 Return Nothing
         End Select
@@ -522,6 +621,8 @@ Public Class ChatTest
                     Dim bmp As New Bitmap(filePath)
                     If WebSocket_Enabled.IsChecked Then
                         Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), bmp)
+                    ElseIf UDP_Enabled.IsChecked Then
+                        Client1.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client1), bmp)
                     Else
                         Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), bmp)
                     End If
@@ -532,7 +633,7 @@ Public Class ChatTest
         End If
     End Sub
 
-    Private Sub SendButton2_Pic_Click(sender As Object, e As RoutedEventArgs) Handles SendButton2_Pic.Click
+    Private Sub SendButton2_Pic_Click()
         Dim ofd As New OpenFileDialog()
         ofd.Title = "Select an image"
         ofd.Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp;*.gif"
@@ -543,6 +644,8 @@ Public Class ChatTest
                     Dim bmp As New Bitmap(filePath)
                     If WebSocket_Enabled.IsChecked Then
                         Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), bmp)
+                    ElseIf UDP_Enabled.IsChecked Then
+                        Client2.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client2), bmp)
                     Else
                         Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), bmp)
                     End If
@@ -563,6 +666,8 @@ Public Class ChatTest
                 Dim fi As New FileContainer(filePath)
                 If WebSocket_Enabled.IsChecked Then
                     Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), fi)
+                ElseIf UDP_Enabled.IsChecked Then
+                    Client1.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client1), fi)
                 Else
                     Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), fi)
                 End If
@@ -570,7 +675,7 @@ Public Class ChatTest
         End If
     End Sub
 
-    Private Sub SendButton2_File_Click(sender As Object, e As RoutedEventArgs) Handles SendButton2_File.Click
+    Private Sub SendButton2_File_Click()
         Dim ofd As New OpenFileDialog()
         ofd.Title = "Select a file"
         ofd.Filter = "Files|*.*"
@@ -580,6 +685,8 @@ Public Class ChatTest
                 Dim fi As New FileContainer(filePath)
                 If WebSocket_Enabled.IsChecked Then
                     Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), fi)
+                ElseIf UDP_Enabled.IsChecked Then
+                    Client2.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client2), fi)
                 Else
                     Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), fi)
                 End If
@@ -587,12 +694,18 @@ Public Class ChatTest
         End If
     End Sub
 
-    Private Async Sub ButtonC1_Click(sender As Object, e As RoutedEventArgs) Handles ButtonC1.Click
+    Private Async Sub ButtonC1_Click()
         If WebSocket_Enabled.IsChecked Then
             If Client1.Connected Then
                 Client1.AsWsClient().CloseConnection()
             Else
                 Await Client1.AsWsClient.Connect("127.0.0.1", ServerPort)
+            End If
+        ElseIf UDP_Enabled.IsChecked Then
+            If Client1.Connected Then
+                Client1.AsUdpClient().Disconnect()
+            Else
+                Await Client1.AsUdpClient.Connect("127.0.0.1", ServerPort)
             End If
         Else
             If Client1.Connected Then
@@ -609,6 +722,12 @@ Public Class ChatTest
                 Client2.AsWsClient().CloseConnection()
             Else
                 Await Client2.AsWsClient.Connect("127.0.0.1", ServerPort)
+            End If
+        ElseIf UDP_Enabled.IsChecked Then
+            If Client2.Connected Then
+                Client2.AsUdpClient().Disconnect()
+            Else
+                Await Client2.AsUdpClient.Connect("127.0.0.1", ServerPort)
             End If
         Else
             If Client2.Connected Then
@@ -629,12 +748,14 @@ Public Class ChatTest
             sending = True
             'Task.Run(Sub()
             Dispatcher.InvokeAsync(Sub()
+                                       Dim pos As pPos = New pPos With {.X = CInt(e.GetPosition(Me).X), .Y = CInt(e.GetPosition(Me).Y)}
                                        If WebSocket_Enabled.IsChecked Then
-                                           Dim pos As pPos = New pPos With {.X = CInt(e.GetPosition(Me).X), .Y = CInt(e.GetPosition(Me).Y)}
                                            Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), pos)
                                            Client2.AsWsClient.Send(GetOtherPeer(ClientNumber.Client2), pos)
+                                       ElseIf UDP_Enabled.IsChecked Then
+                                           Client1.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client1), pos)
+                                           Client2.AsUdpClient.Send(GetOtherPeer(ClientNumber.Client2), pos)
                                        Else
-                                           Dim pos As pPos = New pPos With {.X = CInt(e.GetPosition(Me).X), .Y = CInt(e.GetPosition(Me).Y)}
                                            Client1.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client1), pos)
                                            Client2.AsTcpClient.Send(GetOtherPeer(ClientNumber.Client2), pos)
                                        End If
@@ -706,6 +827,17 @@ Public Class ChatTest
 
     End Sub
 
+    Private Sub WebSocket_Enabled_Checked(sender As Object, e As RoutedEventArgs) Handles WebSocket_Enabled.Checked
+        If UDP_Enabled IsNot Nothing Then UDP_Enabled.IsChecked = False
+    End Sub
+
+    Private Sub UDP_Enabled_Checked(sender As Object, e As RoutedEventArgs)
+        If WebSocket_Enabled IsNot Nothing Then WebSocket_Enabled.IsChecked = False
+    End Sub
+
+    Private Sub ChatTest_Loaded(sender As Object, e As RoutedEventArgs) Handles Me.Loaded
+        AddHandler UDP_Enabled.Checked, AddressOf UDP_Enabled_Checked
+    End Sub
 
 #End Region
 

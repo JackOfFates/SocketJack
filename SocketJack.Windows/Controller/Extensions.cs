@@ -19,6 +19,10 @@ namespace SocketJack.WPF {
                 return new ControlShareViewer(client, image, peer);
             }
 
+            public static ControlShareViewer ViewShare(this UdpClient client, Image image, Identifier peer) {
+                return new ControlShareViewer(client, image, peer);
+            }
+
             public static RemoteAction CreateAction(this FrameworkElement Element, RemoteAction.ActionType Action, string Arguments = "") {
                 return new RemoteAction(new ElementRoute(ref Element)) { Action = Action, Arguments = Arguments };
             }
@@ -47,25 +51,25 @@ namespace SocketJack.WPF {
             public static void EnableRemoteControl(this TcpServer Server) {
                 Server.RegisterCallback<RemoteAction>(Server_RemoteAction);
                 Server.Options.Whitelist.Add(typeof(ControlShareFrame));
-                Server.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+                Server.Options.Whitelist.Add(typeof(RemoteAction));
             }
 
             public static void EnableRemoteControl(this TcpClient Client) {
                 Client.RegisterCallback<RemoteAction>(Client_RemoteAction);
                 Client.Options.Whitelist.Add(typeof(ControlShareFrame));
-                Client.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+                Client.Options.Whitelist.Add(typeof(RemoteAction));
             }
 
             public static void EnableRemoteControl(this UdpServer Server) {
                 Server.RegisterCallback<RemoteAction>(Server_RemoteAction);
                 Server.Options.Whitelist.Add(typeof(ControlShareFrame));
-                Server.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+                Server.Options.Whitelist.Add(typeof(RemoteAction));
             }
 
             public static void EnableRemoteControl(this UdpClient Client) {
                 Client.RegisterCallback<RemoteAction>(Client_RemoteAction);
                 Client.Options.Whitelist.Add(typeof(ControlShareFrame));
-                Client.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+                Client.Options.Whitelist.Add(typeof(RemoteAction));
             }
 
             private static void Server_RemoteAction(ReceivedEventArgs<RemoteAction> a) {

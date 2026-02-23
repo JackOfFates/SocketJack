@@ -290,10 +290,6 @@ namespace SocketJack.Net {
             var argServer = (ISocket)this;
             Globals.UnregisterServer(ref argServer);
             IsListening = false;
-            _receiveCts?.Cancel();
-            _sendCts?.Cancel();
-            _heartbeatCts?.Cancel();
-            _timeoutCts?.Cancel();
             base.Dispose(disposing);
         }
 
@@ -385,7 +381,25 @@ namespace SocketJack.Net {
 
                 if (Socket != null) {
                     MethodExtensions.TryInvoke(Socket.Close);
+                    Socket = null;
                 }
+
+                // Drain the send queue
+                while (_sendQueue.TryDequeue(out _)) { }
+
+                // Clear internal tracking dictionaries
+                _clientLastActivity.Clear();
+                _clientTcpConnections.Clear();
+
+                // Dispose cancellation token sources
+                _receiveCts?.Dispose();
+                _sendCts?.Dispose();
+                _heartbeatCts?.Dispose();
+                _timeoutCts?.Dispose();
+                _receiveCts = null;
+                _sendCts = null;
+                _heartbeatCts = null;
+                _timeoutCts = null;
 
 #if UNITY
                 MainThread.Run(() => {
@@ -397,12 +411,11 @@ namespace SocketJack.Net {
                     StoppedListening?.Invoke(this);
                 });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
                 StoppedListening?.Invoke(this);
 #endif
                 Peers.Clear();
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
+                Connection = null;
             } else {
                 InvokeOnError(null, new Exception("Not listening."));
             }
@@ -536,10 +549,14 @@ namespace SocketJack.Net {
 
                             Task.Run(() => DeserializeAndDispatch(data, bytesRead, remoteEP));
                         }
-                    } catch (SocketException) when (token.IsCancellationRequested) {
+                    } catch (SocketException) when (token.IsCancellationRequested || !IsListening) {
                         break;
                     } catch (ObjectDisposedException) {
                         break;
+                    } catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset) {
+                        // WSAECONNRESET (10054) – a client became unreachable.
+                        // Harmless for a UDP server; just continue receiving.
+                        continue;
                     } catch (Exception ex) {
                         if (IsListening)
                             InvokeOnError(Connection, ex);

@@ -20,7 +20,15 @@ namespace SocketJack.Net {
 
         public delegate object RouteHandler(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken);
 
+        /// <summary>
+        /// Delegate for streaming routes. The handler receives a <see cref="ChunkedStream"/>
+        /// that sends each <see cref="ChunkedStream.WriteLine"/> as an HTTP chunk, keeping
+        /// the connection open until the handler returns or calls <see cref="ChunkedStream.Finish"/>.
+        /// </summary>
+        public delegate void StreamRouteHandler(NetworkConnection connection, HttpRequest request, ChunkedStream chunkedStream, CancellationToken cancellationToken);
+
         private readonly Dictionary<string, Dictionary<string, RouteHandler>> _routes = new Dictionary<string, Dictionary<string, RouteHandler>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, StreamRouteHandler>> _streamRoutes = new Dictionary<string, Dictionary<string, StreamRouteHandler>>(StringComparer.OrdinalIgnoreCase);
 
         public string IndexPageHtml { get; set; } = "<html><body><h1>SocketJack HttpServer</h1></body></html>";
 
@@ -45,19 +53,31 @@ namespace SocketJack.Net {
             return byPath.Remove(path);
         }
 
+        /// <summary>
+        /// Maps a streaming route. The handler receives a <see cref="ChunkedStream"/> it can
+        /// write to line-by-line. The connection stays open until the handler returns.
+        /// </summary>
+        public void MapStream(string method, string path, StreamRouteHandler handler) {
+            if (string.IsNullOrWhiteSpace(method))
+                throw new ArgumentException("Method is required.", nameof(method));
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Path is required.", nameof(path));
+            if (handler == null)
+                throw new ArgumentNullException(nameof(handler));
+
+            if (!_streamRoutes.TryGetValue(method, out var byPath)) {
+                byPath = new Dictionary<string, StreamRouteHandler>(StringComparer.OrdinalIgnoreCase);
+                _streamRoutes[method] = byPath;
+            }
+            byPath[path] = handler;
+        }
+
         private object ResolveRouteObject(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
             if (request == null)
                 return null;
 
             string method = request.Method;
-            string path = request.Path;
-            if (!string.IsNullOrEmpty(path)) {
-                var q = path.IndexOf('?');
-                if (q >= 0)
-                    path = path.Substring(0, q);
-                if (path.Length > 1 && path[path.Length - 1] == '/')
-                    path = path.Substring(0, path.Length - 1);
-            }
+            string path = NormalizePath(request.Path);
 
             if (method != null && path != null) {
                 if (_routes.TryGetValue(method, out var byPath)) {
@@ -73,6 +93,45 @@ namespace SocketJack.Net {
 
             return null;
         }
+
+        private StreamRouteHandler ResolveStreamRoute(HttpRequest request) {
+            if (request == null || _streamRoutes.Count == 0)
+                return null;
+
+            string method = request.Method;
+            string path = NormalizePath(request.Path);
+
+            if (method != null && path != null) {
+                if (_streamRoutes.TryGetValue(method, out var byPath)) {
+                    if (byPath.TryGetValue(path, out var handler))
+                        return handler;
+                }
+            }
+            return null;
+        }
+
+        private static string NormalizePath(string path) {
+            if (string.IsNullOrEmpty(path))
+                return path;
+            var q = path.IndexOf('?');
+            if (q >= 0)
+                path = path.Substring(0, q);
+            if (path.Length > 1 && path[path.Length - 1] == '/')
+                path = path.Substring(0, path.Length - 1);
+            return path;
+        }
+
+        /// <summary>
+        /// Minimum body size in bytes before the server switches to chunked transfer encoding.
+        /// Bodies smaller than this are sent with Content-Length in a single write.
+        /// Default is 8 KB.
+        /// </summary>
+        public int ChunkedThreshold { get; set; } = 8192;
+
+        /// <summary>
+        /// Size of each chunk when using chunked transfer encoding. Default is 4 KB.
+        /// </summary>
+        public int ChunkedSize { get; set; } = 4096;
 
         private void Disposing() {
             OnDisposing -= Disposing;
@@ -232,6 +291,19 @@ namespace SocketJack.Net {
 
                 var ct = default(CancellationToken);
 
+                // Check for streaming routes first — these keep the connection open
+                var streamHandler = ResolveStreamRoute(request);
+                if (streamHandler != null) {
+                    var chunked = new ChunkedStream(e.Connection.Stream, context.Response);
+                    try {
+                        streamHandler(e.Connection, request, chunked, ct);
+                    } catch {
+                    } finally {
+                        chunked.Finish();
+                    }
+                    return;
+                }
+
                 var handledByRoute = false;
                 if (_routes.Count > 0 || IndexPageHtml != null) {
                     var routeObj = ResolveRouteObject(e.Connection, request, ct);
@@ -264,11 +336,19 @@ namespace SocketJack.Net {
                         context.Response.Headers["Server"] = "SocketJack";
                 }
 
-                var (hdr, body) = context.Response.ToBytesWithHeader();
-                if (hdr != null && hdr.Length > 0)
-                    e.Connection.Stream.Write(hdr, 0, hdr.Length);
-                if (body != null && body.Length > 0)
-                    e.Connection.Stream.Write(body, 0, body.Length);
+                context.Response.EnsureBodyBytes();
+                var bodyLen = context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0;
+
+                if (bodyLen > ChunkedThreshold) {
+                    // Large response — stream in chunks so browsers can render progressively
+                    context.Response.WriteChunkedTo(e.Connection.Stream, ChunkedSize);
+                } else {
+                    var (hdr, body) = context.Response.ToBytesWithHeader();
+                    if (hdr != null && hdr.Length > 0)
+                        e.Connection.Stream.Write(hdr, 0, hdr.Length);
+                    if (body != null && body.Length > 0)
+                        e.Connection.Stream.Write(body, 0, body.Length);
+                }
             } catch (Exception ex) {
                 InvokeOnError(e.Connection, ex);
             }
@@ -550,7 +630,7 @@ namespace SocketJack.Net {
             }
         }
 
-        private void EnsureBodyBytes() {
+        internal void EnsureBodyBytes() {
             if (_BodyBytes == null) {
                 if (_Body == null)
                     _BodyBytes = Array.Empty<byte>();
@@ -618,6 +698,173 @@ namespace SocketJack.Net {
 
             var headerBytes = Encoding.UTF8.GetBytes(headerSb.ToString());
             return (headerBytes, _BodyBytes);
+        }
+
+        /// <summary>
+        /// Writes the response to <paramref name="stream"/> using HTTP/1.1 chunked transfer encoding.
+        /// Each line of text is sent as its own chunk so the client can render progressively.
+        /// For binary (non-text) bodies, falls back to fixed-size chunks.
+        /// </summary>
+        public void WriteChunkedTo(Stream stream, int chunkSize) {
+            EnsureBodyBytes();
+            if (chunkSize <= 0) chunkSize = 4096;
+
+            var headerSb = new StringBuilder();
+            headerSb.Append((Version ?? "HTTP/1.1") + " " + Context.StatusCode + "\r\n");
+            if (!Headers.ContainsKey("Content-Type"))
+                headerSb.Append("Content-Type: " + (ContentType ?? Context.ContentType) + "\r\n");
+            foreach (var h in Headers) {
+                headerSb.Append(h.Key + ": " + h.Value + "\r\n");
+            }
+            headerSb.Append("Transfer-Encoding: chunked\r\n");
+            headerSb.Append("Connection: close\r\n");
+            headerSb.Append("\r\n");
+
+            var headerBytes = Encoding.UTF8.GetBytes(headerSb.ToString());
+            stream.Write(headerBytes, 0, headerBytes.Length);
+            stream.Flush();
+
+            var crlf = new byte[] { (byte)'\r', (byte)'\n' };
+
+            // Determine if body is text so we can stream line-by-line
+            bool isText = !string.IsNullOrEmpty(_Body);
+
+            if (isText) {
+                // Stream line-by-line for visible progressive rendering
+                using (var reader = new StringReader(_Body)) {
+                    string line;
+                    while ((line = reader.ReadLine()) != null) {
+                        // Re-append the newline that ReadLine consumed
+                        var lineBytes = Encoding.UTF8.GetBytes(line + "\n");
+
+                        var sizeHex = Encoding.UTF8.GetBytes(lineBytes.Length.ToString("X") + "\r\n");
+                        stream.Write(sizeHex, 0, sizeHex.Length);
+                        stream.Write(lineBytes, 0, lineBytes.Length);
+                        stream.Write(crlf, 0, 2);
+                        stream.Flush();
+                    }
+                }
+            } else {
+                // Binary body — fall back to fixed-size chunks
+                int offset = 0;
+                while (offset < _BodyBytes.Length) {
+                    int remaining = _BodyBytes.Length - offset;
+                    int size = Math.Min(chunkSize, remaining);
+
+                    var sizeHex = Encoding.UTF8.GetBytes(size.ToString("X") + "\r\n");
+                    stream.Write(sizeHex, 0, sizeHex.Length);
+                    stream.Write(_BodyBytes, offset, size);
+                    stream.Write(crlf, 0, 2);
+                    stream.Flush();
+
+                    offset += size;
+                }
+            }
+
+            // Terminating chunk: 0\r\n\r\n
+            var terminator = Encoding.UTF8.GetBytes("0\r\n\r\n");
+            stream.Write(terminator, 0, terminator.Length);
+            stream.Flush();
+        }
+    }
+
+    /// <summary>
+    /// Wraps a network stream with HTTP/1.1 chunked transfer encoding.
+    /// Write lines or raw data; each write is sent as an individual chunk and flushed
+    /// immediately so the client can render progressively.
+    /// Call <see cref="Finish"/> (or let the server call it) to send the terminating chunk.
+    /// </summary>
+    public class ChunkedStream {
+        private readonly Stream _stream;
+        private bool _headerSent;
+        private bool _finished;
+        private readonly HttpResponse _response;
+        private static readonly byte[] Crlf = new byte[] { (byte)'\r', (byte)'\n' };
+
+        internal ChunkedStream(Stream stream, HttpResponse response) {
+            _stream = stream;
+            _response = response;
+        }
+
+        private void EnsureHeader() {
+            if (_headerSent) return;
+            _headerSent = true;
+
+            var sb = new StringBuilder();
+            sb.Append((_response.Version ?? "HTTP/1.1") + " " + _response.Context.StatusCode + "\r\n");
+            if (!_response.Headers.ContainsKey("Content-Type"))
+                sb.Append("Content-Type: " + (_response.ContentType ?? _response.Context.ContentType) + "\r\n");
+            foreach (var h in _response.Headers) {
+                sb.Append(h.Key + ": " + h.Value + "\r\n");
+            }
+            if (!_response.Headers.ContainsKey("Server"))
+                sb.Append("Server: SocketJack\r\n");
+            sb.Append("Transfer-Encoding: chunked\r\n");
+            sb.Append("Connection: keep-alive\r\n");
+            sb.Append("X-Content-Type-Options: nosniff\r\n");
+            sb.Append("\r\n");
+
+            var headerBytes = Encoding.UTF8.GetBytes(sb.ToString());
+            _stream.Write(headerBytes, 0, headerBytes.Length);
+            _stream.Flush();
+        }
+
+        /// <summary>
+        /// Sends a single line of text (with trailing newline) as one HTTP chunk.
+        /// </summary>
+        public void WriteLine(string text) {
+            if (_finished) return;
+            EnsureHeader();
+            var data = Encoding.UTF8.GetBytes(text + "\n");
+            WriteChunk(data);
+        }
+
+        /// <summary>
+        /// Sends text as one HTTP chunk without appending a newline.
+        /// </summary>
+        public void Write(string text) {
+            if (_finished) return;
+            EnsureHeader();
+            var data = Encoding.UTF8.GetBytes(text);
+            WriteChunk(data);
+        }
+
+        /// <summary>
+        /// Sends arbitrary bytes as one HTTP chunk.
+        /// </summary>
+        public void Write(byte[] data, int offset, int count) {
+            if (_finished) return;
+            EnsureHeader();
+            var sizeHex = Encoding.UTF8.GetBytes(count.ToString("X") + "\r\n");
+            _stream.Write(sizeHex, 0, sizeHex.Length);
+            _stream.Write(data, offset, count);
+            _stream.Write(Crlf, 0, 2);
+            _stream.Flush();
+        }
+
+        private void WriteChunk(byte[] data) {
+            var sizeHex = Encoding.UTF8.GetBytes(data.Length.ToString("X") + "\r\n");
+            _stream.Write(sizeHex, 0, sizeHex.Length);
+            _stream.Write(data, 0, data.Length);
+            _stream.Write(Crlf, 0, 2);
+            _stream.Flush();
+        }
+
+        /// <summary>
+        /// Sends the terminating zero-length chunk. Called automatically when the
+        /// stream route handler returns.
+        /// </summary>
+        public void Finish() {
+            if (_finished) return;
+            _finished = true;
+            EnsureHeader();
+            var terminator = Encoding.UTF8.GetBytes("0\r\n\r\n");
+            try {
+                _stream.Write(terminator, 0, terminator.Length);
+                _stream.Flush();
+            } catch {
+                // stream may already be closed
+            }
         }
     }
 }

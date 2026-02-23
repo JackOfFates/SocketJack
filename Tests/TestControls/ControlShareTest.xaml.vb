@@ -1,4 +1,5 @@
 Imports System.IO.Compression
+Imports System.Windows.Threading
 Imports SocketJack.Extensions
 Imports SocketJack.Net
 Imports SocketJack.WPF.Controller
@@ -12,14 +13,31 @@ Public Class ControlShareTest
     Implements ITest
 
     Private ServerPort As Integer = NIC.FindOpenPort(7600, 8000).Result
-    Public WithEvents Server As TcpServer
-    Public WithEvents Client1 As TcpClient
-    Public WithEvents Client2 As TcpClient
+    Public Server As ISocket
+    Public Client1 As ISocket
+    Public Client2 As ISocket
 
     Private ShareHandle As IDisposable
     Private Viewer As ControlShareViewer
+    Private WithEvents LatencyTimer As DispatcherTimer
+
+    Private Sub Cleanup()
+        If Client1 IsNot Nothing Then
+            Client1.Dispose()
+            Client1 = Nothing
+        End If
+        If Client2 IsNot Nothing Then
+            Client2.Dispose()
+            Client2 = Nothing
+        End If
+        If Server IsNot Nothing Then
+            Server.Dispose()
+            Server = Nothing
+        End If
+    End Sub
 
     Private Sub Setup()
+        Cleanup()
         Dim opts As New NetworkOptions With {
             .Logging = True,
             .LogReceiveEvents = False,
@@ -29,31 +47,55 @@ Public Class ControlShareTest
             .Fps = CInt(SliderFps.Value)
         }
 
-        Server = New TcpServer(ServerPort, "ShareServer") With {.Options = opts}
-        Client1 = New TcpClient("ShareClient1") With {.Options = opts}
-        Client2 = New TcpClient("ShareClient2") With {.Options = opts}
+        If UDP_Enabled.IsChecked Then
+            Dim s As New UdpServer(ServerPort, "ShareServer") With {.Options = opts}
+            Dim c1 As New UdpClient("ShareClient1") With {.Options = opts}
+            Dim c2 As New UdpClient("ShareClient2") With {.Options = opts}
+            Server = s
+            Client1 = c1
+            Client2 = c2
 
-        ' Logging
-        AddHandler Server.LogOutput, AddressOf Log
-        AddHandler Client1.LogOutput, AddressOf Log
-        AddHandler Client2.LogOutput, AddressOf Log
+            ' Logging
+            AddHandler s.LogOutput, AddressOf Log
+            AddHandler c1.LogOutput, AddressOf Log
+            AddHandler c2.LogOutput, AddressOf Log
 
-        AddHandler Client1.OnConnected, AddressOf Client1_OnConnected
-        AddHandler Client2.OnConnected, AddressOf Client2_OnConnected
-        AddHandler Client1.OnDisconnected, AddressOf Client_OnDisconnected
-        AddHandler Client2.OnDisconnected, AddressOf Client_OnDisconnected
+            AddHandler c1.OnConnected, AddressOf Client1_OnConnected
+            AddHandler c2.OnConnected, AddressOf Client2_OnConnected
+            AddHandler c1.OnDisconnected, AddressOf Client_OnDisconnected
+            AddHandler c2.OnDisconnected, AddressOf Client_OnDisconnected
 
-        ' Start sharing once both clients are identified and peers are known
-        AddHandler Client1.OnIdentified, AddressOf Client1_OnIdentified
-        AddHandler Client1.PeerConnected, AddressOf Client1_PeerConnected
+            AddHandler c1.OnIdentified, AddressOf Client1_OnIdentified
+            AddHandler c1.PeerConnected, AddressOf Client1_PeerConnected
+            AddHandler c2.OnIdentified, AddressOf Client2_OnIdentified
+            AddHandler c2.PeerConnected, AddressOf Client2_PeerConnected
+        Else
+            Dim s As New TcpServer(ServerPort, "ShareServer") With {.Options = opts}
+            Dim c1 As New TcpClient("ShareClient1") With {.Options = opts}
+            Dim c2 As New TcpClient("ShareClient2") With {.Options = opts}
+            Server = s
+            Client1 = c1
+            Client2 = c2
 
-        ' Start viewing once Client2 discovers Client1's peer identity
-        AddHandler Client2.OnIdentified, AddressOf Client2_OnIdentified
-        AddHandler Client2.PeerConnected, AddressOf Client2_PeerConnected
+            ' Logging
+            AddHandler s.LogOutput, AddressOf Log
+            AddHandler c1.LogOutput, AddressOf Log
+            AddHandler c2.LogOutput, AddressOf Log
+
+            AddHandler c1.OnConnected, AddressOf Client1_OnConnected
+            AddHandler c2.OnConnected, AddressOf Client2_OnConnected
+            AddHandler c1.OnDisconnected, AddressOf Client_OnDisconnected
+            AddHandler c2.OnDisconnected, AddressOf Client_OnDisconnected
+
+            AddHandler c1.OnIdentified, AddressOf Client1_OnIdentified
+            AddHandler c1.PeerConnected, AddressOf Client1_PeerConnected
+            AddHandler c2.OnIdentified, AddressOf Client2_OnIdentified
+            AddHandler c2.PeerConnected, AddressOf Client2_PeerConnected
+        End If
 
         ' Whitelist the control-share types on the server so it redirects them
         Server.Options.Whitelist.Add(GetType(ControlShareFrame))
-        Server.Options.Whitelist.Add(GetType(ControlShareRemoteAction))
+        Server.Options.Whitelist.Add(GetType(RemoteAction))
 
         ' Wire up event logging on the shared controls
         AddHandler SharedGroupBox.PreviewMouseMove, Sub(s, e)
@@ -137,7 +179,11 @@ Public Class ControlShareTest
 
         Log("Starting Viewer: receiving frames from peer " & client1Peer.ID)
         Dispatcher.Invoke(Sub()
-                              Viewer = Client2.ViewShare(ViewerImage, client1Peer)
+                              If Client2.AsUdpClient() IsNot Nothing Then
+                                  Viewer = Client2.AsUdpClient().ViewShare(ViewerImage, client1Peer)
+                              Else
+                                  Viewer = Client2.AsTcpClient().ViewShare(ViewerImage, client1Peer)
+                              End If
                           End Sub)
     End Sub
 
@@ -155,11 +201,43 @@ Public Class ControlShareTest
 
         Log("Starting Share: sending frames to peer " & client2Peer.ID)
         Dispatcher.Invoke(Sub()
-                              ShareHandle = SharedGroupBox.Share(Client1, client2Peer, fps)
-
-
+                              If Client1.AsUdpClient() IsNot Nothing Then
+                                  ShareHandle = SharedGroupBox.Share(Client1.AsUdpClient(), client2Peer, fps)
+                              Else
+                                  ShareHandle = SharedGroupBox.Share(Client1.AsTcpClient(), client2Peer, fps)
+                              End If
                           End Sub)
     End Sub
+
+#Region "Latency"
+
+    Private Sub StartLatencyTimer()
+        StopLatencyTimer()
+        LatencyTimer = New DispatcherTimer With {
+            .Interval = TimeSpan.FromSeconds(2)
+        }
+        AddHandler LatencyTimer.Tick, AddressOf LatencyTimer_Tick
+        LatencyTimer.Start()
+    End Sub
+
+    Private Sub StopLatencyTimer()
+        If LatencyTimer IsNot Nothing Then
+            LatencyTimer.Stop()
+            RemoveHandler LatencyTimer.Tick, AddressOf LatencyTimer_Tick
+            LatencyTimer = Nothing
+        End If
+    End Sub
+
+    Private Sub LatencyTimer_Tick(sender As Object, e As EventArgs)
+        Dim c1 As Long = 0
+        Dim c2 As Long = 0
+        If Client1 IsNot Nothing AndAlso Client1.Connected Then c1 = CType(Client1, Object).LatencyMs
+        If Client2 IsNot Nothing AndAlso Client2.Connected Then c2 = CType(Client2, Object).LatencyMs
+        TextClient1Latency.Text = c1 & " ms"
+        TextClient2Latency.Text = c2 & " ms"
+    End Sub
+
+#End Region
 
 #Region "UI"
 
@@ -178,13 +256,14 @@ Public Class ControlShareTest
     Public Property Running As Boolean Implements ITest.Running
         Get
             If Server Is Nothing Then Return False
-            Return Server.IsListening
+            Return CType(Server, Object).IsListening
         End Get
         Set(value As Boolean)
             If Server Is Nothing Then Return
-            If value AndAlso Not Server.IsListening Then
+            Dim isListening As Boolean = CType(Server, Object).IsListening
+            If value AndAlso Not isListening Then
                 ITest_StartTest()
-            ElseIf Not value AndAlso Server.IsListening Then
+            ElseIf Not value AndAlso isListening Then
                 ITest_StopTest()
             End If
         End Set
@@ -195,11 +274,19 @@ Public Class ControlShareTest
             Dispatcher.Invoke(AddressOf Setup)
             TextLog.Text = String.Empty
             ButtonStartStop.IsEnabled = False
+            UDP_Enabled.IsEnabled = False
             ButtonStartStop.Content = "Starting.."
 
-            If Server.Listen() Then
-                Await Client1.Connect("127.0.0.1", ServerPort)
-                Await Client2.Connect("127.0.0.1", ServerPort)
+            Dim listened As Boolean = CType(Server, Object).Listen()
+            If listened Then
+                If UDP_Enabled.IsChecked Then
+                    Await Client1.AsUdpClient.Connect("127.0.0.1", ServerPort)
+                    Await Client2.AsUdpClient.Connect("127.0.0.1", ServerPort)
+                Else
+                    Await Client1.AsTcpClient.Connect("127.0.0.1", ServerPort)
+                    Await Client2.AsTcpClient.Connect("127.0.0.1", ServerPort)
+                End If
+                StartLatencyTimer()
                 ButtonStartStop.IsEnabled = True
                 ButtonStartStop.Content = "Stop Test"
                 Log("Test Started.")
@@ -216,6 +303,8 @@ Public Class ControlShareTest
             ButtonStartStop.IsEnabled = False
             ButtonStartStop.Content = "Stopping.."
 
+            StopLatencyTimer()
+
             If ShareHandle IsNot Nothing Then
                 ShareHandle.Dispose()
                 ShareHandle = Nothing
@@ -226,10 +315,14 @@ Public Class ControlShareTest
                 Viewer = Nothing
             End If
 
-            Server.StopListening()
+            CType(Server, Object).StopListening()
+            Cleanup()
             ViewerImage.Source = Nothing
+            TextClient1Latency.Text = "-- ms"
+            TextClient2Latency.Text = "-- ms"
             ButtonStartStop.Content = "Start Test"
             ButtonStartStop.IsEnabled = True
+            UDP_Enabled.IsEnabled = True
             Log("Test Stopped.")
         End If
     End Sub

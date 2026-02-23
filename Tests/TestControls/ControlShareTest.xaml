@@ -86,13 +86,23 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Button x:Name="ButtonStartStop" Content="Start Test" Height="56" Width="126" HorizontalAlignment="Left"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center">
+                <CheckBox x:Name="UDP_Enabled" Content="Use UDP" Foreground="White" FontFamily="Segoe UI Light" VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <TextBlock Text="FPS:" Foreground="White" VerticalAlignment="Center" Margin="0,0,5,0"/>
                 <Slider x:Name="SliderFps" Width="100" Minimum="1" Maximum="30" Value="10" VerticalAlignment="Center" AutoToolTipPlacement="BottomRight" TickFrequency="1" IsSnapToTickEnabled="True"/>
             </StackPanel>
+            <GroupBox Grid.Column="2" Header="Latency" Foreground="#FFC5C5C5" BorderBrush="#FF555555" Margin="10,0,0,0" Padding="4,2" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Client1:" Foreground="#FFAAAAAA" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="TextClient1Latency" Text="-- ms" Foreground="#FF00B3FF" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <TextBlock Text="Client2:" Foreground="#FFAAAAAA" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="TextClient2Latency" Text="-- ms" Foreground="#FF00B3FF" VerticalAlignment="Center"/>
+                </StackPanel>
+            </GroupBox>
         </Grid>
     </Grid>
 </UserControl>

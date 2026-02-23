@@ -1,4 +1,4 @@
-﻿using SocketJack;
+using SocketJack;
 using SocketJack.Extensions;
 using SocketJack.Net;
 using SocketJack.Net.P2P;
@@ -180,7 +180,7 @@ namespace SocketJack.Net.WebSockets {
                 OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
 #endif
         }
@@ -195,7 +195,7 @@ namespace SocketJack.Net.WebSockets {
                 OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
 #endif
         }
@@ -215,7 +215,7 @@ namespace SocketJack.Net.WebSockets {
                 Internal_PeerConnectionRequest?.Invoke(sender, ref s);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             Internal_PeerConnectionRequest?.Invoke(sender, ref Server);
 #endif
 
@@ -231,7 +231,7 @@ namespace SocketJack.Net.WebSockets {
                 BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
 #endif
         }
@@ -246,7 +246,7 @@ namespace SocketJack.Net.WebSockets {
                 PeerServerShutdown?.Invoke(sender, Server);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerServerShutdown?.Invoke(sender, Server);
 #endif
         }
@@ -261,7 +261,7 @@ namespace SocketJack.Net.WebSockets {
                 PeerUpdate?.Invoke(sender, Peer);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerUpdate?.Invoke(sender, Peer);
 #endif
         }
@@ -280,7 +280,7 @@ namespace SocketJack.Net.WebSockets {
                 PeerConnected?.Invoke(sender, Peer);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerConnected?.Invoke(sender, Peer);
 #endif
         }
@@ -298,7 +298,7 @@ namespace SocketJack.Net.WebSockets {
                 PeerDisconnected?.Invoke(sender, Peer);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerDisconnected?.Invoke(sender, Peer);
 #endif
         }
@@ -323,7 +323,7 @@ namespace SocketJack.Net.WebSockets {
                     OnDisconnected?.Invoke(e);
                 });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(e);
 #endif
                 return true;
@@ -342,7 +342,7 @@ namespace SocketJack.Net.WebSockets {
                     OnConnected?.Invoke(e);
                 });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnConnected?.Invoke(e);
 #endif
             }
@@ -358,7 +358,7 @@ namespace SocketJack.Net.WebSockets {
                 InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
 #endif
         }
@@ -373,7 +373,7 @@ namespace SocketJack.Net.WebSockets {
                 InternalSentByteCounter?.Invoke(connection, chunkSize);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InternalSentByteCounter?.Invoke(connection, chunkSize);
 #endif
         }
@@ -388,7 +388,7 @@ namespace SocketJack.Net.WebSockets {
                 InternalSendEvent?.Invoke(connection, type, @object, length);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InternalSendEvent?.Invoke(connection, type, @object, length);
 #endif
         }
@@ -405,7 +405,7 @@ namespace SocketJack.Net.WebSockets {
                 OnReceive?.Invoke(ref eArgs);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnReceive?.Invoke(ref e);
 #endif
         }
@@ -420,7 +420,7 @@ namespace SocketJack.Net.WebSockets {
                 OnSent?.Invoke(sentEventArgs);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnSent?.Invoke(sentEventArgs);
 #endif
         }
@@ -435,7 +435,7 @@ namespace SocketJack.Net.WebSockets {
                 LogOutput?.Invoke(text);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             LogOutput?.Invoke(text);
 #endif
         }
@@ -451,7 +451,7 @@ namespace SocketJack.Net.WebSockets {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
 #endif
         }
@@ -467,7 +467,7 @@ namespace SocketJack.Net.WebSockets {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
 #endif
         }
@@ -484,7 +484,7 @@ namespace SocketJack.Net.WebSockets {
                 OnIdentified?.Invoke(sender, p);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnIdentified?.Invoke(sender, Peer);
 #endif
         }
@@ -499,7 +499,7 @@ namespace SocketJack.Net.WebSockets {
                 InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
 #endif
         }
@@ -515,7 +515,7 @@ namespace SocketJack.Net.WebSockets {
                 OnDisposing?.Invoke();
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisposing?.Invoke();
 #endif
         }
@@ -819,7 +819,7 @@ namespace SocketJack.Net.WebSockets {
                 obj = Object;
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             obj = Object;
 #endif
             byte[] serializedBytes = Options.Serializer.Serialize(new Wrapper(obj, this));
@@ -1061,7 +1061,7 @@ namespace SocketJack.Net.WebSockets {
                         cb(e);
                     });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
                 cb(e);
 #endif
                 }

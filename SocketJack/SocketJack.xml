@@ -232,12 +232,73 @@
             Minimal HTTP/HTTPS client supporting headers, content-length, chunked transfer, and redirects.
             </summary>
         </member>
+        <member name="T:SocketJack.Net.HttpServer.StreamRouteHandler">
+            <summary>
+            Delegate for streaming routes. The handler receives a <see cref="T:SocketJack.Net.ChunkedStream"/>
+            that sends each <see cref="M:SocketJack.Net.ChunkedStream.WriteLine(System.String)"/> as an HTTP chunk, keeping
+            the connection open until the handler returns or calls <see cref="M:SocketJack.Net.ChunkedStream.Finish"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapStream(System.String,System.String,SocketJack.Net.HttpServer.StreamRouteHandler)">
+            <summary>
+            Maps a streaming route. The handler receives a <see cref="T:SocketJack.Net.ChunkedStream"/> it can
+            write to line-by-line. The connection stays open until the handler returns.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.ChunkedThreshold">
+            <summary>
+            Minimum body size in bytes before the server switches to chunked transfer encoding.
+            Bodies smaller than this are sent with Content-Length in a single write.
+            Default is 8 KB.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.ChunkedSize">
+            <summary>
+            Size of each chunk when using chunked transfer encoding. Default is 4 KB.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.HttpServer.ParseHttpRequest(System.Byte[])">
             <summary>
             Parses a raw HTTP request string into an HttpRequest object.
             </summary>
             <param name="rawRequest">The raw HTTP request string.</param>
             <returns>HttpRequest object with parsed data.</returns>
+        </member>
+        <member name="M:SocketJack.Net.HttpResponse.WriteChunkedTo(System.IO.Stream,System.Int32)">
+            <summary>
+            Writes the response to <paramref name="stream"/> using HTTP/1.1 chunked transfer encoding.
+            Each line of text is sent as its own chunk so the client can render progressively.
+            For binary (non-text) bodies, falls back to fixed-size chunks.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.ChunkedStream">
+            <summary>
+            Wraps a network stream with HTTP/1.1 chunked transfer encoding.
+            Write lines or raw data; each write is sent as an individual chunk and flushed
+            immediately so the client can render progressively.
+            Call <see cref="M:SocketJack.Net.ChunkedStream.Finish"/> (or let the server call it) to send the terminating chunk.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.WriteLine(System.String)">
+            <summary>
+            Sends a single line of text (with trailing newline) as one HTTP chunk.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.Write(System.String)">
+            <summary>
+            Sends text as one HTTP chunk without appending a newline.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.Write(System.Byte[],System.Int32,System.Int32)">
+            <summary>
+            Sends arbitrary bytes as one HTTP chunk.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.Finish">
+            <summary>
+            Sends the terminating zero-length chunk. Called automatically when the
+            stream route handler returns.
+            </summary>
         </member>
         <member name="T:SocketJack.Net.NetworkBase">
             <summary>
@@ -258,6 +319,13 @@
             </summary>
             <param name="sender"></param>
             <param name="Peer"></param>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.Invoke(System.Action)">
+            <summary>
+            Dispatches <paramref name="action"/> on the UI / main thread.
+            On WPF, verifies <see cref="P:System.Windows.Application.Current"/> is still alive;
+            if the application has already shut down, calls <see cref="M:SocketJack.ThreadManager.Shutdown"/> instead.
+            </summary>
         </member>
         <member name="F:SocketJack.Net.NetworkBase._ControlShareSessions">
             <summary>

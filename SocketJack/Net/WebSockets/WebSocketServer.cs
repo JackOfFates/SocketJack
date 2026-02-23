@@ -1,4 +1,4 @@
-﻿using SocketJack;
+using SocketJack;
 using SocketJack.Extensions;
 using SocketJack.Net;
 using SocketJack.Net.P2P;
@@ -367,7 +367,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 action.Invoke();
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             action.Invoke();
 #endif
         }
@@ -379,7 +379,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
 #if WINDOWS
             return Application.Current.Dispatcher.InvokeAsync(action).Task;
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
            return action.BeginInvoke(null, null);
 #endif
         }
@@ -481,7 +481,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InvokeBytesPerSecondUpdate(connection.BytesPerSecondReceived, connection.BytesPerSecondSent);
 #endif
         }
@@ -498,7 +498,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                Internal_PeerConnectionRequest?.Invoke(sender, ref s); 
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             Internal_PeerConnectionRequest?.Invoke(sender, ref Server);
 #endif
         }
@@ -513,7 +513,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             BytesPerSecondUpdate?.Invoke(ReceivedPerSecond, SentPerSecond);
 #endif
         }
@@ -528,7 +528,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 PeerServerShutdown?.Invoke(sender, Server);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerServerShutdown?.Invoke(sender, Server);
 #endif
         }
@@ -543,7 +543,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 PeerUpdate?.Invoke(sender, Peer);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerUpdate?.Invoke(sender, Peer);
 #endif
         }
@@ -558,7 +558,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 PeerConnected?.Invoke(sender, Peer);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerConnected?.Invoke(sender, Peer);
 #endif
         }
@@ -573,7 +573,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 PeerDisconnected?.Invoke(sender, Peer);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             PeerDisconnected?.Invoke(sender, Peer);
 #endif
         }
@@ -588,7 +588,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
 #endif
         }
@@ -603,7 +603,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 InternalSentByteCounter?.Invoke(connection, chunkSize);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InternalSentByteCounter?.Invoke(connection, chunkSize);
 #endif
         }
@@ -618,7 +618,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 InternalSendEvent?.Invoke(connection, type, @object, length);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             InternalSendEvent?.Invoke(connection, type, @object, length);
 #endif
         }
@@ -635,7 +635,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 OnReceive?.Invoke(ref eArgs);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnReceive?.Invoke(ref e);
 #endif
         }
@@ -650,7 +650,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 OnSent?.Invoke(sentEventArgs);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnSent?.Invoke(sentEventArgs);
 #endif
         }
@@ -665,7 +665,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 LogOutput?.Invoke(text);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             LogOutput?.Invoke(text);
 #endif
         }
@@ -680,7 +680,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
 #endif
         }
@@ -697,7 +697,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnError?.Invoke(new ErrorEventArgs(this, Connection, e));
 #endif
         }
@@ -725,7 +725,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 ClientDisconnected?.Invoke(e);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             ClientDisconnected?.Invoke(e);
 #endif
             }
@@ -758,7 +758,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 OnDisposing?.Invoke();
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisposing?.Invoke();
 #endif
         }
@@ -848,7 +848,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                         cb(e);
                     });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
                 cb(e);
 #endif
                 }
@@ -929,7 +929,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 Obj = Object;
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             Obj = Object;
 #endif
             if (Client.Stream == null) Client._Stream = new NetworkStream(Client.Socket, ownsSocket: false);

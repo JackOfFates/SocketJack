@@ -27,5 +27,12 @@ namespace SocketJack.Extensions {
             return socket.As<TcpServer>();
         }
 
+        public static UdpClient AsUdpClient(this ISocket socket) {
+            return socket.As<UdpClient>();
+        }
+        public static UdpServer AsUdpServer(this ISocket socket) {
+            return socket.As<UdpServer>();
+        }
+
     }
 }

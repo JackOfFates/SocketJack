@@ -17,13 +17,21 @@ namespace SocketJack.WPF {
             private const int DefaultJpegQuality = 77;
 
             public static IDisposable Share(this FrameworkElement element, TcpClient client, Identifier peer, int fps = 10) {
+                return ShareInternal(element, client, peer, fps);
+            }
+
+            public static IDisposable Share(this FrameworkElement element, UdpClient client, Identifier peer, int fps = 10) {
+                return ShareInternal(element, client, peer, fps);
+            }
+
+            private static IDisposable ShareInternal(FrameworkElement element, ISocket client, Identifier peer, int fps) {
                 ArgumentNullException.ThrowIfNull(element);
                 ArgumentNullException.ThrowIfNull(client);
                 ArgumentNullException.ThrowIfNull(peer);
 
                 // Ensure message types are whitelisted.
                 client.Options.Whitelist.Add(typeof(ControlShareFrame));
-                client.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+                client.Options.Whitelist.Add(typeof(RemoteAction));
 
                 var route = new ElementRoute(ref element);
                 var cts = new CancellationTokenSource();
@@ -68,15 +76,15 @@ namespace SocketJack.WPF {
                 return new StopHandle(cts, () =>
                 {
                     try {
-                        client.RemoveCallback(actionCallback);
+                        client.RemoveCallback<RemoteAction>(actionCallback);
                     }
                     catch {
                     }
                 });
             }
 
-            private static Action<ReceivedEventArgs<ControlShareRemoteAction>> RegisterRemoteActionReplay(TcpClient client, Identifier peer, ElementRoute route, CancellationTokenSource cts) {
-                Action<ReceivedEventArgs<ControlShareRemoteAction>> cb = e =>
+            private static Action<ReceivedEventArgs<RemoteAction>> RegisterRemoteActionReplay(ISocket client, Identifier peer, ElementRoute route, CancellationTokenSource cts) {
+                Action<ReceivedEventArgs<RemoteAction>> cb = e =>
                 {
                     try {
                         if (cts.IsCancellationRequested)
@@ -88,35 +96,21 @@ namespace SocketJack.WPF {
                         if (e.From?.ID != peer.ID)
                             return;
 
-                        var cid = e.Object.ControlId;
+                        var cid = e.Object.Route?.ID;
                         if (string.IsNullOrWhiteSpace(cid))
                             cid = route.ID;
                         if (cid != route.ID)
                             return;
 
-                        var ra = new RemoteAction(route)
-                        {
-                            Action = e.Object.Action,
-                            Arguments = e.Object.Arguments,
-                            Duration = e.Object.Duration
-                        };
-
-                        _ = ra.PerformAction();
+                        e.Object.Route = route;
+                        _ = e.Object.PerformAction();
                     }
                     catch {
                     }
                 };
 
-                client.RegisterCallback(cb);
+                client.RegisterCallback<RemoteAction>(cb);
                 return cb;
-            }
-
-            private static void RegisterCallback(this TcpClient client, Action<ReceivedEventArgs<ControlShareRemoteAction>> cb) {
-                client.RegisterCallback<ControlShareRemoteAction>(cb);
-            }
-
-            private static void RemoveCallback(this TcpClient client, Action<ReceivedEventArgs<ControlShareRemoteAction>> cb) {
-                client.RemoveCallback<ControlShareRemoteAction>(cb);
             }
 
             private sealed class StopHandle : IDisposable {

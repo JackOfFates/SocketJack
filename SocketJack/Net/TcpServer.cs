@@ -1,4 +1,4 @@
-﻿using SocketJack.Extensions;
+using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using System;
 using System.Collections.Concurrent;
@@ -91,7 +91,7 @@ namespace SocketJack.Net {
                     ClientDisconnected?.Invoke(e);
                 });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
                 ClientDisconnected?.Invoke(e);
 #endif
             }
@@ -510,7 +510,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 StoppedListening?.Invoke(this);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
                 StoppedListening?.Invoke(this);
 #endif
                 Peers.Clear();

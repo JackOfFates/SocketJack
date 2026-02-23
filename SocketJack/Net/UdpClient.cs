@@ -156,7 +156,7 @@ namespace SocketJack.Net {
                 OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(new DisconnectedEventArgs(sender, Connection, DisconnectionReason.Unknown));
 #endif
         }
@@ -172,7 +172,7 @@ namespace SocketJack.Net {
                 OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnConnected?.Invoke(new ConnectedEventArgs(sender, Connection));
 #endif
         }
@@ -188,7 +188,7 @@ namespace SocketJack.Net {
                 OnIdentified?.Invoke(sender, Identity);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnIdentified?.Invoke(sender, Identity);
 #endif
         }
@@ -204,7 +204,7 @@ namespace SocketJack.Net {
                 OnDisconnected?.Invoke(e);
             });
 #endif
-#if NETSTANDARD1_0_OR_GREATER && !UNITY
+#if !UNITY && !WINDOWS
             OnDisconnected?.Invoke(e);
 #endif
         }
@@ -318,11 +318,20 @@ namespace SocketJack.Net {
 
         protected override void Dispose(bool disposing) {
             Options.AutoReconnect = false;
+            if (_Connected)
+                Disconnect();
             var argClient = (ISocket)this;
             Globals.UnregisterClient(ref argClient);
+            // Clean up anything Disconnect may not have reached
             _receiveCts?.Cancel();
+            _receiveCts?.Dispose();
             _sendCts?.Cancel();
+            _sendCts?.Dispose();
             _heartbeatCts?.Cancel();
+            _heartbeatCts?.Dispose();
+            _receiveCts = null;
+            _sendCts = null;
+            _heartbeatCts = null;
             if (UdpConn != null) {
                 UdpConn.Dispose();
                 UdpConn = null;
@@ -331,6 +340,7 @@ namespace SocketJack.Net {
                 MethodExtensions.TryInvoke(_Socket.Close);
                 _Socket = null;
             }
+            Connection = null;
             base.Dispose(disposing);
         }
 
@@ -467,11 +477,23 @@ namespace SocketJack.Net {
                 _sendCts?.Cancel();
                 _heartbeatCts?.Cancel();
                 if (UdpConn != null) {
-                    UdpConn.Close(this);
+                    UdpConn.Dispose();
+                    UdpConn = null;
                 }
-                InvokeOnDisconnected(new DisconnectedEventArgs(this, Connection, DisconnectionReason.LocalSocketClosed));
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
+                if (_Socket != null) {
+                    MethodExtensions.TryInvoke(_Socket.Close);
+                    _Socket = null;
+                }
+                var conn = Connection;
+                Connection = null;
+                InvokeOnDisconnected(new DisconnectedEventArgs(this, conn, DisconnectionReason.LocalSocketClosed));
+                Peers.Clear();
+                _receiveCts?.Dispose();
+                _sendCts?.Dispose();
+                _heartbeatCts?.Dispose();
+                _receiveCts = null;
+                _sendCts = null;
+                _heartbeatCts = null;
             }
         }
 
@@ -556,10 +578,37 @@ namespace SocketJack.Net {
 
                             Task.Run(() => DeserializeAndDispatch(data, bytesRead, (IPEndPoint)senderEP));
                         }
-                    } catch (SocketException) when (token.IsCancellationRequested || isDisposed) {
+                    } catch (SocketException) when (token.IsCancellationRequested || isDisposed || !_Connected) {
                         break;
                     } catch (ObjectDisposedException) {
                         break;
+                    } catch (SocketException ex) {
+                        // WSAECONNRESET (10054) occurs on Windows when the remote endpoint
+                        // is unreachable (e.g. server stopped).  Treat it as a disconnection
+                        // rather than a fatal error.
+                        if (ex.SocketErrorCode == SocketError.ConnectionReset) {
+                            if (_Connected) {
+                                _Connected = false;
+                                StopPingLoop();
+                                _sendCts?.Cancel();
+                                _heartbeatCts?.Cancel();
+                                if (UdpConn != null) {
+                                    UdpConn.Dispose();
+                                    UdpConn = null;
+                                }
+                                if (_Socket != null) {
+                                    MethodExtensions.TryInvoke(_Socket.Close);
+                                    _Socket = null;
+                                }
+                                var conn = Connection;
+                                Connection = null;
+                                InvokeOnDisconnected(new DisconnectedEventArgs(this, conn, DisconnectionReason.RemoteSocketClosed));
+                                Peers.Clear();
+                            }
+                            break;
+                        }
+                        if (!isDisposed && _Connected)
+                            InvokeOnError(Connection, ex);
                     } catch (Exception ex) {
                         if (!isDisposed && _Connected)
                             InvokeOnError(Connection, ex);

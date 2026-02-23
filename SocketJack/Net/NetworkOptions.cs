@@ -127,8 +127,8 @@ namespace SocketJack.Net {
                 isDownloadBuffered = MaximumDownloadMbps > 0;
                 // Calculate bytes per second from Mbps
                 MaximumDownloadBytesPerSecond = (int)(MaximumDownloadMbps * 1024 * 1024 / 8);
-                // Set buffer to 0.1s worth of data, minimum 32 bytes
-                DownloadBufferSize = Math.Max((int)Math.Round(MaximumDownloadBytesPerSecond * 0.6), 32);
+                // Set buffer to 1/16th of max bytes per second, minimum 32 bytes
+                DownloadBufferSize = Math.Max(MaximumDownloadBytesPerSecond / 16, 32);
             }
         }
         internal bool isDownloadBuffered = true;
@@ -142,7 +142,7 @@ namespace SocketJack.Net {
         /// <value>Integer</value>
         /// <remarks></remarks>
         /// </summary>
-        public int DownloadBufferSize { get; set; } = 65536;
+        public int DownloadBufferSize { get; set; } = 819200;
 
         /// <summary>
         /// Maximum Upload bandwidth.
@@ -161,8 +161,8 @@ namespace SocketJack.Net {
                 isUploadBuffered = MaximumUploadMbps > 0;
                 // Calculate bytes per second from Mbps
                 MaximumUploadBytesPerSecond = (int)(MaximumUploadMbps * 1024 * 1024 / 8);
-                // Set buffer to 0.1s worth of data, minimum 32 bytes
-                UploadBufferSize = Math.Max((int)(MaximumUploadBytesPerSecond * 0.6), 32);
+                // Set buffer to 1/16th of max bytes per second, minimum 32 bytes
+                UploadBufferSize = Math.Max(MaximumUploadBytesPerSecond / 16, 32);
             }
         }
         internal bool isUploadBuffered = true;
@@ -176,7 +176,7 @@ namespace SocketJack.Net {
         /// <value>Integer</value>
         /// <remarks></remarks>
         /// </summary>
-        public int UploadBufferSize { get; set; } = 65536;
+        public int UploadBufferSize { get; set; } = 819200;
 
         /// <summary>
         /// <para>Use compression for network transfer.</para>

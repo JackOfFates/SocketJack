@@ -11,7 +11,7 @@ namespace SocketJack.WPF {
     namespace Controller {
 
         public sealed class ControlShareViewer : IDisposable {
-            private readonly TcpClient _client;
+            private readonly ISocket _client;
             private readonly Image _image;
             private readonly Identifier _filterPeer;
 
@@ -30,7 +30,7 @@ namespace SocketJack.WPF {
             private DateTime _nextMoveSendAt = DateTime.MinValue;
             private DateTime _lastFrameReceivedUtc = DateTime.MinValue;
             private bool _mouseInside;
-            private bool _canSendP2p;
+            private bool _canSendP2p => _client != null && _client.RemoteIdentity != null;
             private DateTime _leftDownAtUtc = DateTime.MinValue;
             private DateTime _rightDownAtUtc = DateTime.MinValue;
             private Point _leftDownPosition;
@@ -46,25 +46,29 @@ namespace SocketJack.WPF {
                 }
             }
 
-            public ControlShareViewer(TcpClient client, Image image, Identifier peer = null) {
-                _client = client ?? throw new ArgumentNullException(nameof(client));
-                _image = image ?? throw new ArgumentNullException(nameof(image));
+            public ControlShareViewer(TcpClient client, Image image, Identifier peer = null)
+                : this((ISocket)client, image, peer) { }
+
+            public ControlShareViewer(UdpClient client, Image image, Identifier peer = null)
+                : this((ISocket)client, image, peer) { }
+
+            private ControlShareViewer(ISocket client, Image image, Identifier peer) {
+                ArgumentNullException.ThrowIfNull(client);
+                ArgumentNullException.ThrowIfNull(image);
+                _client = client;
+                _image = image;
                 _filterPeer = peer;
                 if (peer != null)
                     _sharePeer = peer;
 
                 _client.Options.Whitelist.Add(typeof(ControlShareFrame));
-                _client.Options.Whitelist.Add(typeof(ControlShareRemoteAction));
+                _client.Options.Whitelist.Add(typeof(RemoteAction));
 
                 _client.RegisterCallback<ControlShareFrame>(OnFrame);
-                _client.RegisterCallback<ControlShareRemoteAction>(OnRemoteAction);
-
-                // P2P sends require RemoteIdentity to be set; wait until identification.
-                _canSendP2p = _client.RemoteIdentity != null;
-                _client.OnIdentified += (_, _) => { _canSendP2p = true; };
+                _client.RegisterCallback<RemoteAction>(OnRemoteAction);
 
                 _image.IsHitTestVisible = true;
-                _image.Focusable = false;
+                _image.Focusable = true;
                 _image.PreviewMouseMove += Image_MouseMove;
                 _image.MouseEnter += Image_MouseEnter;
                 _image.MouseLeave += Image_MouseLeave;
@@ -72,11 +76,13 @@ namespace SocketJack.WPF {
                 _image.PreviewMouseRightButtonDown += Image_MouseRightButtonDown;
                 _image.PreviewMouseLeftButtonUp += Image_MouseLeftButtonUp;
                 _image.PreviewMouseRightButtonUp += Image_MouseRightButtonUp;
+                _image.PreviewKeyDown += Image_PreviewKeyDown;
+                _image.PreviewKeyUp += Image_PreviewKeyUp;
             }
 
-            private void OnRemoteAction(ReceivedEventArgs<ControlShareRemoteAction> e) {
+            private void OnRemoteAction(ReceivedEventArgs<RemoteAction> e) {
                 // If this client is currently the sharer, it can receive remote actions
-                // from the viewer. Convert to RemoteAction and execute.
+                // from the viewer and execute them.
                 if (e == null || e.Object == null)
                     return;
                 if (_filterPeer != null) {
@@ -86,17 +92,7 @@ namespace SocketJack.WPF {
                         return;
                 }
 
-                // RemoteAction needs a route; use ControlId to locate the element.
-                var route = new ElementRoute { ID = e.Object.ControlId };
-
-                var ra = new RemoteAction(route)
-                {
-                    Action = e.Object.Action,
-                    Arguments = e.Object.Arguments,
-                    Duration = e.Object.Duration
-                };
-
-                _ = ra.PerformAction();
+                _ = e.Object.PerformAction();
             }
 
             private void Image_MouseEnter(object sender, MouseEventArgs e) {
@@ -141,9 +137,9 @@ namespace SocketJack.WPF {
                     return;
 
                 try {
-                    _client.Send(_sharePeer, new ControlShareRemoteAction
+                    _client.Send(_sharePeer, new RemoteAction
                     {
-                        ControlId = _controlId,
+                        Route = new ElementRoute { ID = _controlId },
                         Action = type,
                         Arguments = args,
                         Duration = duration
@@ -289,6 +285,7 @@ namespace SocketJack.WPF {
             private void Image_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
                 try {
                     _image.CaptureMouse();
+                    _image.Focus();
                 }
                 catch {
                 }
@@ -350,6 +347,7 @@ namespace SocketJack.WPF {
             private void Image_MouseRightButtonDown(object sender, MouseButtonEventArgs e) {
                 try {
                     _image.CaptureMouse();
+                    _image.Focus();
                 }
                 catch {
                 }
@@ -406,6 +404,22 @@ namespace SocketJack.WPF {
                     holdMs);
             }
 
+            private void Image_PreviewKeyDown(object sender, KeyEventArgs e) {
+                // When Alt is held, e.Key becomes Key.System; the real key is in e.SystemKey.
+                var key = e.Key == Key.System ? e.SystemKey : e.Key;
+                var vk = KeyInterop.VirtualKeyFromKey(key);
+                if (vk <= 0)
+                    return;
+
+                SendRemoteAction(RemoteAction.ActionType.Keystrokes, ((char)vk).ToString(), 50);
+            }
+
+            private void Image_PreviewKeyUp(object sender, KeyEventArgs e) {
+                // SimulateKeystrokes already raises both KeyDown and KeyUp on the
+                // receiving side, so no additional action is needed here.  The
+                // handler is registered so the event can be extended in the future.
+            }
+
             public void Dispose() {
                 _image.PreviewMouseMove -= Image_MouseMove;
                 _image.MouseEnter -= Image_MouseEnter;
@@ -414,6 +428,8 @@ namespace SocketJack.WPF {
                 _image.PreviewMouseLeftButtonUp -= Image_MouseLeftButtonUp;
                 _image.PreviewMouseRightButtonDown -= Image_MouseRightButtonDown;
                 _image.PreviewMouseRightButtonUp -= Image_MouseRightButtonUp;
+                _image.PreviewKeyDown -= Image_PreviewKeyDown;
+                _image.PreviewKeyUp -= Image_PreviewKeyUp;
 
                 try {
                     _client.RemoveCallback<ControlShareFrame>(OnFrame);
@@ -422,7 +438,7 @@ namespace SocketJack.WPF {
                 }
 
                 try {
-                    _client.RemoveCallback<ControlShareRemoteAction>(OnRemoteAction);
+                    _client.RemoveCallback<RemoteAction>(OnRemoteAction);
                 }
                 catch {
                 }
