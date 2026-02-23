@@ -41,12 +41,12 @@
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
     <PackageReleaseNotes>Features for WPF:
 Bitmap encoding
-Network Framework Element sharing</PackageReleaseNotes>
+Remote Framework Element Sharing &amp; Control</PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack.WPF/</PackageProjectUrl>
-    <PackageIcon>SocketJackIcon.png</PackageIcon>
+    <PackageIcon>SocketJackWpfIcon.png</PackageIcon>
     <PackageReadmeFile>Readme_Gen.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/JackOfFates/SocketJack/</RepositoryUrl>
-    <PackageTags>Socket; Sockets; Jack; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; Generic; Compressed; Multi Threaded; Concurrent; Multi Platform; WebSocket; WebSockets; </PackageTags>
+    <RepositoryUrl>https://github.com/JackOfFates/SocketJack/tree/master/SocketJack.Windows</RepositoryUrl>
+    <PackageTags>Socket; Sockets; Jack; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; Generic; Compressed; Multi Threaded; Concurrent; Multi Platform; WebSocket; WebSockets; WPF; Remote; Control </PackageTags>
     <UseWPF>True</UseWPF>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|netstandard2.1|AnyCPU'">
@@ -360,6 +360,14 @@ Network Framework Element sharing</PackageReleaseNotes>
       <CustomToolNamespace>SocketJack.My</CustomToolNamespace>
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+    <None Update="Readme_Gen.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Update="SocketJackWpfIcon.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
     </None>
   </ItemGroup>
   <ItemGroup>
