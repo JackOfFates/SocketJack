@@ -14,7 +14,7 @@ namespace SocketJack.Net {
         public NetworkOptions Options { get; set; }
         public NetworkConnection Connection { get; }
         public PeerList Peers { get; set; }
-
+         
         public bool PeerToPeerInstance { get; }
         protected internal ConcurrentDictionary<string, PeerServer> P2P_ServerInformation { get; set; }
         protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Servers { get; set; }
