@@ -41,7 +41,7 @@
 🚀 New Features
 • UDP Transport — New UdpClient and UdpServer classes that mirror the TCP API using connectionless datagrams. Full support for serialization, compression, peer-to-peer relay, callbacks, and broadcasting over UDP. Configurable options for max datagram size, client timeout, receive buffer size, and broadcast mode.
 • HTTP Server — New HttpServer class (built on TcpServer) with route mapping (Map(method, path, handler)), HttpContext/HttpRequest support, request handling events, and a default index page.
-• WPFController – Live Control Sharing — New ControlShareViewer.cs library enabling real-time sharing of any WPF FrameworkElement over P2P. The sharer captures JPEG frames at a configurable FPS via element.Share(client, peer, fps), and the viewer displays them with ControlShareViewer while forwarding mouse input (moves, clicks, enter/leave) back to the sharer for replay on the original element.
+• WPF Network Controller – Live Control Sharing — New ControlShareViewer.cs library enabling real-time sharing of any WPF FrameworkElement over P2P. The sharer captures JPEG frames at a configurable FPS via element.Share(client, peer, fps), and the viewer displays them with ControlShareViewer while forwarding mouse input (moves, clicks, enter/leave) back to the sharer for replay on the original element.
 🎯 Target Framework Updates
 • Added .NET 9 and .NET 10 to supported targets (alongside .NET Standard 2.1, .NET 6, .NET 8).
 📝 Other

@@ -1,9 +1,59 @@
 <?xml version="1.0"?>
 <doc>
     <assembly>
-        <name>SocketJack</name>
+        <name>SocketJack.WPF</name>
     </assembly>
     <members>
+        <member name="M:SocketJack.WPF.Controller.Extensions.ViewShare(SocketJack.Net.TcpClient,System.Windows.Controls.Image,SocketJack.Net.P2P.Identifier)">
+            <summary>
+            Creates a <see cref="T:SocketJack.WPF.Controller.ControlShareViewer"/> that receives shared control frames
+            from the specified peer and displays them on the specified <see cref="T:System.Windows.Controls.Image"/> control.
+            </summary>
+        </member>
+        <member name="P:SocketJack.WPF.Controller.RemoteAction.Duration">
+            <summary>
+            <para>Time in Milliseconds to perform the action.</para>
+            <para>Default is 200.</para>
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="P:SocketJack.Globals.threadManager">
+            <summary>  
+            ThreadManager.Shutdown will dispose all Tcp Client and Servers thus ending active threads.  
+            </summary>  
+        </member>
+        <member name="T:SocketJack.ThreadManager">
+            <summary>
+            Manages all Tcp Client and Server threads.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.TcpClients">
+            <summary>
+            All TcpClient instances.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.TcpServers">
+            <summary>
+            All TcpServer instances.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.Timeout">
+            <summary>
+            Time in Milliseconds to wait before timing out.
+            </summary>
+        </member>
+        <member name="P:SocketJack.ThreadManager.UseGlobalTickLoop">
+            <summary>
+            When enabled, a single global tick loop will flush send queues for all connections
+            on the same cadence (based on the highest configured FPS across sockets).
+            Disabled by default to preserve legacy per-connection sending behavior.
+            </summary>
+        </member>
+        <member name="M:SocketJack.ThreadManager.Shutdown">
+            <summary>
+            Must be called on application shutdown to ensure all threads are closed.
+            </summary>
+        </member>
         <member name="M:SocketJack.Compression.ICompression.Compress(System.Byte[])">
             <summary>
             Compresses the input data.
@@ -146,11 +196,6 @@
             <param name="Obj">Serializable Object to send to the client.</param>
             <remarks></remarks>
         </member>
-        <member name="P:SocketJack.Globals.threadManager">
-            <summary>  
-            ThreadManager.Shutdown will dispose all Tcp Client and Servers thus ending active threads.  
-            </summary>  
-        </member>
         <member name="P:SocketJack.Net.IReceivedEventArgs.From">
             <summary>
             The Remote Client identity that sent this object.
@@ -213,6 +258,13 @@
             </summary>
             <param name="sender"></param>
             <param name="Peer"></param>
+        </member>
+        <member name="F:SocketJack.Net.NetworkBase._ControlShareSessions">
+            <summary>
+            Tracks active control-share sessions on the server: (SharerID, ViewerID).
+            Populated when a ControlShareFrame redirect passes through.
+            Used to block unauthorized ControlShareRemoteAction messages.
+            </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkBase.Name">
             <summary>
@@ -1579,38 +1631,6 @@
             This property should be type of Int64.
             </summary>
             <returns></returns>
-        </member>
-        <member name="T:SocketJack.ThreadManager">
-            <summary>
-            Manages all Tcp Client and Server threads.
-            </summary>
-        </member>
-        <member name="P:SocketJack.ThreadManager.TcpClients">
-            <summary>
-            All TcpClient instances.
-            </summary>
-        </member>
-        <member name="P:SocketJack.ThreadManager.TcpServers">
-            <summary>
-            All TcpServer instances.
-            </summary>
-        </member>
-        <member name="P:SocketJack.ThreadManager.Timeout">
-            <summary>
-            Time in Milliseconds to wait before timing out.
-            </summary>
-        </member>
-        <member name="P:SocketJack.ThreadManager.UseGlobalTickLoop">
-            <summary>
-            When enabled, a single global tick loop will flush send queues for all connections
-            on the same cadence (based on the highest configured FPS across sockets).
-            Disabled by default to preserve legacy per-connection sending behavior.
-            </summary>
-        </member>
-        <member name="M:SocketJack.ThreadManager.Shutdown">
-            <summary>
-            Must be called on application shutdown to ensure all threads are closed.
-            </summary>
         </member>
     </members>
 </doc>

@@ -1,9 +1,11 @@
 # SocketJack
 
+![SocketJack Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/SocketJackIcon.png)
+
 [![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A high-performance .NET networking library for building client-server and peer-to-peer applications. SocketJack wraps raw `System.Net.Sockets` TCP and UDP, `SslStream` TLS 1.2 encryption, and `System.Text.Json` serialization behind a unified, transport-agnostic API — so you can focus on your application logic instead of low-level networking.
+A high-performance .NET networking library for building client-server and peer-to-peer applications. SocketJack wraps raw `System.Net.Sockets` TCP and UDP, `SslStream` TLS 1.2 encryption, and `System.Text.Json` serialization behind a unified, transport-agnostic API -- so you can focus on your application logic instead of low-level networking.
 
 ---
 
@@ -19,7 +21,7 @@ A high-performance .NET networking library for building client-server and peer-t
 | **Security** | `SslStream` with TLS 1.2, `X509Certificate` authentication, and fine-grained control over allowed message types and connection policies. |
 | **Extensibility** | Rich event system for connection, disconnection, peer updates, and data receipt. Attach arbitrary metadata to any peer or connection for dynamic routing and discovery. |
 
-**Target frameworks:** .NET Standard 2.1 · .NET 6 · .NET 8 · .NET 9 · .NET 10
+**Target frameworks:** .NET Standard 2.1 * .NET 6 * .NET 8 * .NET 9 * .NET 10
 
 ---
 
@@ -27,11 +29,11 @@ A high-performance .NET networking library for building client-server and peer-t
 
 SocketJack is well-suited for a broad range of networked applications:
 
-- **Real-time multiplayer games** — low-latency communication with dynamic peer discovery.
-- **Distributed chat** — P2P messaging with metadata-driven room discovery.
-- **IoT device networks** — efficient, secure communication across flexible topologies.
-- **Remote control & automation** — event-driven command/control of remote systems.
-- **Custom protocols** — build domain-specific protocols on top of TCP, UDP, or WebSocket with full control over serialization and peer management.
+- **Real-time multiplayer games** -- low-latency communication with dynamic peer discovery.
+- **Distributed chat** -- P2P messaging with metadata-driven room discovery.
+- **IoT device networks** -- efficient, secure communication across flexible topologies.
+- **Remote control & automation** -- event-driven command/control of remote systems.
+- **Custom protocols** -- build domain-specific protocols on top of TCP, UDP, or WebSocket with full control over serialization and peer management.
 
 ---
 
@@ -417,7 +419,7 @@ client.PeerDisconnected += (sender, peer) => Console.WriteLine($"Peer left: {pee
 
 `WebSocketServer` can automatically generate JavaScript class constructors for all whitelisted types and send them to browser-based WebSocket clients. This allows browser clients to construct and send SocketJack-compatible objects without manual schema definition.
 
-### Key Differences from TCP
+### Key Differences from TcpClient
 
 | | TCP | WebSocket |
 |---|---|---|
@@ -431,9 +433,9 @@ client.PeerDisconnected += (sender, peer) => Console.WriteLine($"Peer left: {pee
 
 ---
 
-## WPFController — Live Control Sharing
+## WPF Network Controller -- Live Control Sharing
 
-The `SocketJack.WPFController` library lets you share any WPF `FrameworkElement` over a `TcpClient` connection. The sharer captures JPEG frames of the element at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in a WPF `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
+The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `TcpClient` connection. The sharer captures JPEG frames of the element at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in a WPF `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
 
 ### Sharing an Element
 
@@ -442,13 +444,13 @@ Call the `Share` extension method on any `FrameworkElement`. It returns an `IDis
 ```cs
 using SocketJack.Net;
 using SocketJack.Net.P2P;
-using SocketJack.WPFController;
+using SocketJack.WPF;
 
 // Both 'client' and 'peer' must already be connected and identified.
 // 'client' is your local TcpClient.
 // 'peer' is the Identifier of the remote peer who will view the element.
 
-// Share any FrameworkElement — a Canvas, Grid, Border, or even the entire Window.
+// Share any FrameworkElement -- a Canvas, Grid, Border, or even the entire Window.
 IDisposable shareHandle = myCanvas.Share(client, peer, fps: 10);
 
 // To stop sharing, dispose the handle.
@@ -459,16 +461,17 @@ Behind the scenes, `Share` captures the element as a JPEG bitmap on the UI threa
 
 ### Receiving a Shared Element
 
-Create a `ControlShareViewer` and give it a `TcpClient` and a WPF `Image` control. Incoming frames are decoded and displayed automatically, and every mouse click or move on the `Image` is forwarded back to the sharer.
+Call the `ViewShare` extension method on a `TcpClient`, passing the `Image` control and the peer `Identifier` of the sharer. Incoming frames are decoded and displayed automatically, and every mouse click or move on the `Image` is forwarded back to the sharer.
 
 ```cs
 using System.Windows.Controls;
 using SocketJack.Net;
-using SocketJack.WPFController;
+using SocketJack.WPF;
 
 // 'client' is your local TcpClient (already connected).
 // 'sharedImage' is an Image control defined in your XAML.
-var viewer = new ControlShareViewer(client, sharedImage);
+// 'sharerPeer' is the Identifier of the peer sharing the element.
+var viewer = client.ViewShare(sharedImage, sharerPeer);
 
 // The Image now shows live frames from the remote element.
 // Mouse clicks and moves on the Image are sent back to the sharer,
@@ -492,7 +495,7 @@ A typical setup uses two application instances connected through a `TcpServer`. 
 
 ```cs
 // After both clients have connected and identified each other:
-Identifier remotePeer = client.Peers.First(p => p.ID != client.RemoteIdentity.ID);
+Identifier remotePeer = client.Peers.FirstNotMe();
 
 // Share the game canvas at 10 frames per second.
 IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
@@ -502,7 +505,8 @@ IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
 
 ```cs
 // After connecting to the same server:
-var viewer = new ControlShareViewer(client, SharedImage);
+Identifier remotePeer = client.Peers.FirstNotMe();
+var viewer = client.ViewShare(SharedImage, remotePeer);
 
 // SharedImage now mirrors GameCanvas from Instance A.
 // Clicking SharedImage sends the click back to Instance A,
@@ -531,4 +535,4 @@ See [CONTRIBUTING.md](https://github.com/JackOfFates/SocketJack/blob/master/CONT
 
 ---
 
-**SocketJack** — Fast, flexible, and modern networking for .NET.
+**SocketJack** -- Fast, flexible, and modern networking for .NET.

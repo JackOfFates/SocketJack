@@ -433,7 +433,7 @@ client.PeerDisconnected += (sender, peer) => Console.WriteLine($"Peer left: {pee
 
 ---
 
-## WPFController -- Live Control Sharing
+## WPF Network Controller -- Live Control Sharing
 
 The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `TcpClient` connection. The sharer captures JPEG frames of the element at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in a WPF `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
 
@@ -444,7 +444,7 @@ Call the `Share` extension method on any `FrameworkElement`. It returns an `IDis
 ```cs
 using SocketJack.Net;
 using SocketJack.Net.P2P;
-using SocketJack.WPFController;
+using SocketJack.WPF;
 
 // Both 'client' and 'peer' must already be connected and identified.
 // 'client' is your local TcpClient.
@@ -461,16 +461,17 @@ Behind the scenes, `Share` captures the element as a JPEG bitmap on the UI threa
 
 ### Receiving a Shared Element
 
-Create a `ControlShareViewer` and give it a `TcpClient` and a WPF `Image` control. Incoming frames are decoded and displayed automatically, and every mouse click or move on the `Image` is forwarded back to the sharer.
+Call the `ViewShare` extension method on a `TcpClient`, passing the `Image` control and the peer `Identifier` of the sharer. Incoming frames are decoded and displayed automatically, and every mouse click or move on the `Image` is forwarded back to the sharer.
 
 ```cs
 using System.Windows.Controls;
 using SocketJack.Net;
-using SocketJack.WPFController;
+using SocketJack.WPF;
 
 // 'client' is your local TcpClient (already connected).
 // 'sharedImage' is an Image control defined in your XAML.
-var viewer = new ControlShareViewer(client, sharedImage);
+// 'sharerPeer' is the Identifier of the peer sharing the element.
+var viewer = client.ViewShare(sharedImage, sharerPeer);
 
 // The Image now shows live frames from the remote element.
 // Mouse clicks and moves on the Image are sent back to the sharer,
@@ -494,7 +495,7 @@ A typical setup uses two application instances connected through a `TcpServer`. 
 
 ```cs
 // After both clients have connected and identified each other:
-Identifier remotePeer = client.Peers.First(p => p.ID != client.RemoteIdentity.ID);
+Identifier remotePeer = client.Peers.FirstNotMe();
 
 // Share the game canvas at 10 frames per second.
 IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
@@ -504,7 +505,8 @@ IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
 
 ```cs
 // After connecting to the same server:
-var viewer = new ControlShareViewer(client, SharedImage);
+Identifier remotePeer = client.Peers.FirstNotMe();
+var viewer = client.ViewShare(SharedImage, remotePeer);
 
 // SharedImage now mirrors GameCanvas from Instance A.
 // Clicking SharedImage sends the click back to Instance A,
