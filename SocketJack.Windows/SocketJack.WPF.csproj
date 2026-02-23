@@ -15,7 +15,7 @@
    <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DocumentationFile>SocketJack.xml</DocumentationFile>
+    <DocumentationFile>C:\Users\Patho\source\repos\JackOfFates\SocketJack\SocketJack\SocketJack.xml</DocumentationFile>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
@@ -26,24 +26,26 @@
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
     <Copyright>Copyright © JackOfFates 2025</Copyright>
-    <AssemblyVersion>1.1.0.1</AssemblyVersion>
-    <FileVersion>1.1.0.1</FileVersion>
-    <GeneratePackageOnBuild>False</GeneratePackageOnBuild>
+    <AssemblyVersion>1.4.4</AssemblyVersion>
+    <FileVersion>1.4.4</FileVersion>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
-    <Description>Fast, Efficient, 100% Managed, Peer to Peer, Non Generic, Extensible TCP Client &amp; Server with built in Serialization that can be used to transmit any object.</Description>
+    <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 6, .NET 8, .NET 9, and .NET 10.</Description>
     <IsPackable>False</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.1.0.1</Version>
+    <Version>1.4.4</Version>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes></PackageReleaseNotes>
-    <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
+    <PackageReleaseNotes>Features for WPF:
+Bitmap encoding
+Network Framework Element sharing</PackageReleaseNotes>
+    <PackageProjectUrl>https://www.nuget.org/packages/SocketJack.WPF/</PackageProjectUrl>
     <PackageIcon>SocketJackIcon.png</PackageIcon>
-    <PackageReadmeFile>SocketJack v1.1.0.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/JackOfFates/SocketJack</RepositoryUrl>
+    <PackageReadmeFile>Readme_Gen.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/JackOfFates/SocketJack/</RepositoryUrl>
     <PackageTags>Socket; Sockets; Jack; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; Generic; Compressed; Multi Threaded; Concurrent; Multi Platform; WebSocket; WebSockets; </PackageTags>
     <UseWPF>True</UseWPF>
   </PropertyGroup>
@@ -327,6 +329,10 @@
     <Compile Include="..\SocketJack\Serialization\Wrapper.cs" Link="Serialization\Wrapper.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="..\SocketJack\License.txt" Link="License.txt" />
+    <Content Include="..\SocketJack\SocketJackIcon.png" Link="SocketJackIcon.png" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Mono.Nat" Version="3.0.4" />
     <PackageReference Include="System.Collections.Concurrent" Version="4.3.0" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.10" />
@@ -364,22 +370,14 @@
     <Import Include="System.Text.Json.Serialization" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\..\..\Desktop\SocketJackIcon.png">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\..\..\License.txt">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Include="..\..\..\SocketJack v1.1.0.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
     <Folder Include="Compression\" />
     <Folder Include="Net\P2P\" />
     <Folder Include="Serialization\Json\Converters\" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\SocketJack\License.txt">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
   </ItemGroup>
 </Project>

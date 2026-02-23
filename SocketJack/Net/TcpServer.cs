@@ -136,6 +136,15 @@ namespace SocketJack.Net {
             string id = new Func<string>(() => { if (args.Connection.Identity == null) { return "null"; } else { return args.Connection.Identity.ID.ToUpper(); } }).Invoke();
             LogFormat("[{0}] Client Disconnected.", new[] { Name + @"\" + id, Port.ToString() });
             _Clients.Remove(args.Connection.ID);
+#if WINDOWS
+            if (args.Connection.Identity != null) {
+                string disconnectedId = args.Connection.ID.ToString();
+                foreach (var key in _ControlShareSessions.Keys) {
+                    if (key.Sharer == disconnectedId || key.Viewer == disconnectedId)
+                        _ControlShareSessions.TryRemove(key, out _);
+                }
+            }
+#endif
             if (args.Connection.Identity != null && Peers.Contains(args.Connection.Identity)) {
                 Peers.Remove(args.Connection.Identity);
                 SendBroadcast(new Identifier(args.Connection.ID.ToString(), PeerAction.Dispose));

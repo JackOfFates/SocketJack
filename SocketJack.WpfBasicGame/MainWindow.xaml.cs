@@ -6,7 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using SocketJack.Extensions;
 using SocketJack.Net.P2P;
-using SocketJack.WPFController;
+using SocketJack.WPF.Controller;
 
 namespace SocketJack.WpfBasicGame;
 
@@ -481,11 +481,17 @@ public partial class MainWindow : Window {
             // Capture remote click coordinates before the library dispatches the
             // Click event. The normalized position is stored so TargetButton_Click
             // can translate it to canvas coordinates instead of using Mouse.GetPosition.
-            _client.RawClient.RegisterCallback<ControlShareInput>(e => {
-                if (e?.Object == null || !e.Object.IsClick)
+            _client.RawClient.RegisterCallback<ControlShareRemoteAction>(e => {
+                if (e?.Object == null || e.Object.Action != RemoteAction.ActionType.MouseDown)
+                    return;
+                var parts = e.Object.Arguments?.Split(',');
+                if (parts == null || parts.Length < 3)
+                    return;
+                if (!double.TryParse(parts[1].Trim(), out var nx) ||
+                    !double.TryParse(parts[2].Trim(), out var ny))
                     return;
                 lock (_remoteClickLock)
-                    _remoteClickNorm = new Point(e.Object.X, e.Object.Y);
+                    _remoteClickNorm = new Point(nx, ny);
             });
 
             RoundStatusText.Text = "Connecting...";

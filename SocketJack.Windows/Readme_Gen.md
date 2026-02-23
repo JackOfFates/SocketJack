@@ -1,8 +1,8 @@
 # SocketJack
 
-![SocketJack Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/SocketJackIcon.png)
+![SocketJack Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack.Windows/SocketJackWpfIcon.png)
 
-[![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
+[![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack.WPF)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A high-performance .NET networking library for building client-server and peer-to-peer applications. SocketJack wraps raw `System.Net.Sockets` TCP and UDP, `SslStream` TLS 1.2 encryption, and `System.Text.Json` serialization behind a unified, transport-agnostic API -- so you can focus on your application logic instead of low-level networking.
@@ -435,7 +435,11 @@ client.PeerDisconnected += (sender, peer) => Console.WriteLine($"Peer left: {pee
 
 ## WPFController -- Live Control Sharing
 
-The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `TcpClient` connection. The sharer captures JPEG frames of the element at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in a WPF `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
+The `SocketJack.WPFController` library lets you share any WPF `FrameworkElement` over a `TcpClient` connection. The sharer captures JPEG frames of the element at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in a WPF `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
+
+# NOTE
+[![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack.WPF)
+You MUST install the `SocketJack.WPF` instead of `SocketJack` NuGet package to use the features described in this section.
 
 ### Sharing an Element
 

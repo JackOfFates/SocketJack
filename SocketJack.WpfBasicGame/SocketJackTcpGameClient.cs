@@ -1,7 +1,7 @@
 using SocketJack.Net;
 using SocketJack.Extensions;
 using SocketJack.Net.P2P;
-using SocketJack.WPFController;
+using SocketJack.WPF.Controller;
 using System.Linq;
 using System.Threading;
 

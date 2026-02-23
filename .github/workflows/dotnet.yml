@@ -25,3 +25,15 @@ jobs:
 
     - name: "Push to NuGet"
       run: dotnet nuget push D:\a\SocketJack\SocketJack\nupkg\*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate
+
+    - name: "Restore WPF dependencies"
+      run: dotnet restore ./SocketJack.Windows/SocketJack.WPF.csproj
+
+    - name: "Build WPF"
+      run: dotnet build ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-restore -p:NoWarn=true
+
+    - name: "Pack WPF Project"
+      run: dotnet pack ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-build --include-symbols -o ./nupkg
+
+    - name: "Push WPF to NuGet"
+      run: dotnet nuget push D:\a\SocketJack\SocketJack\nupkg\*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate

@@ -2,7 +2,7 @@ using SocketJack.Net;
 using SocketJack.Extensions;
 using System.Collections.Concurrent;
 using Mono.Nat;
-using SocketJack.WPFController;
+using SocketJack.WPF.Controller;
 
 namespace SocketJack.WpfBasicGame;
 

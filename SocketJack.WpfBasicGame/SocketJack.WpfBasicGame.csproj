@@ -1,8 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
-    <ProjectReference Include="..\SocketJack.WPFController\SocketJack.WPFController.csproj" />
+    <ProjectReference Include="..\SocketJack.Windows\SocketJack.WPF.csproj" />
   </ItemGroup>
 
   <ItemGroup>

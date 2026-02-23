@@ -18,7 +18,7 @@ using System.Windows;
 namespace SocketJack.Net {
 
     /// <summary>
-    /// Base class for the Tcp Client and Server.
+    /// Base class for a Client / Server.
     /// </summary>
     /// <remarks></remarks>
     public abstract class NetworkBase : IDisposable, ISocket {
@@ -152,6 +152,20 @@ namespace SocketJack.Net {
 #endif
         }
         void ISocket.InvokePeerConnected(ISocket sender, Identifier Peer) {
+            // If this is a client that hasn't been identified yet, defer the
+            // event until RemoteIdentity is available so that subscribers can
+            // safely use Peers.FirstNotMe(), Send(peer, …), etc.
+            if (Connection != null && !Connection.IsServer && RemoteIdentity == null) {
+                Task.Run(async () => {
+                    while (RemoteIdentity == null && Connected && !isDisposed) {
+                        await Task.Delay(10);
+                    }
+                    if (RemoteIdentity != null && Connected && !isDisposed) {
+                        ((ISocket)this).InvokePeerConnected(sender, Peer);
+                    }
+                });
+                return;
+            }
 #if UNITY
             MainThread.Run(() => {
                 PeerConnected?.Invoke(sender, Peer);
@@ -415,6 +429,14 @@ namespace SocketJack.Net {
         protected internal ConcurrentDictionary<string, NetworkConnection> P2P_Clients = new();
         protected internal ConcurrentDictionary<Guid, byte[]> Buffers = new();
         protected internal Dictionary<Type, List<Action<IReceivedEventArgs>>> TypeCallbacks = new();
+#if WINDOWS
+        /// <summary>
+        /// Tracks active control-share sessions on the server: (SharerID, ViewerID).
+        /// Populated when a ControlShareFrame redirect passes through.
+        /// Used to block unauthorized ControlShareRemoteAction messages.
+        /// </summary>
+        protected internal ConcurrentDictionary<(string Sharer, string Viewer), byte> _ControlShareSessions = new();
+#endif
 
         void ISocket.HandleReceive(NetworkConnection connection, object obj, Type objType, int Length) {
             HandleReceive(connection, obj, objType, Length);
@@ -500,7 +522,17 @@ namespace SocketJack.Net {
                             InvokeAllCallbacks(receivedEventArgs);
 
                             if (receivedEventArgs.IsPeerRedirect && !NonGenericEventArgs.CancelPeerRedirect && !receivedEventArgs.CancelPeerRedirect) {
-                                if (Peers.TryGetValue(redirect.Recipient, out Identifier rID)) {
+                                bool allowRedirect = true;
+#if WINDOWS
+                                if (redirectType != null) {
+                                    if (redirectType.Name == "ControlShareFrame") {
+                                        _ControlShareSessions[(redirect.Sender, redirect.Recipient)] = 0;
+                                    } else if (redirectType.Name == "ControlShareRemoteAction") {
+                                        allowRedirect = _ControlShareSessions.ContainsKey((redirect.Recipient, redirect.Sender));
+                                    }
+                                }
+#endif
+                                if (allowRedirect && Peers.TryGetValue(redirect.Recipient, out Identifier rID)) {
                                     Send(rID, redirect);
                                     //SendBroadcast(redirect, Connection);
                                 }

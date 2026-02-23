@@ -30,6 +30,11 @@ Class TestWindow
         StartTest(t)
     End Sub
 
+    Private Sub ButtonControlShare_Click(sender As Object, e As RoutedEventArgs) Handles ButtonControlShare.Click
+        Dim t = New ControlShareTest With {.Name = "ControlShareTestControl"}
+        StartTest(t)
+    End Sub
+
     Private Sub StartTest(Test As ITest)
         If Not TestTabs.ContainsKey(Test.TestName) Then
 

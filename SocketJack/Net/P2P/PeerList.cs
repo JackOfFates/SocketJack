@@ -112,5 +112,39 @@ namespace SocketJack.Net.P2P {
                 AddOrUpdate(p);
         }
 
+        /// <summary>
+        /// Returns the first peer whose ID does not match the local client's <see cref="ISocket.RemoteIdentity"/>.
+        /// </summary>
+        public Identifier First() {
+            return Values?.FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Returns the first peer whose ID does not match the local client's <see cref="ISocket.RemoteIdentity"/>.
+        /// </summary>
+        public Identifier FirstNotMe() {
+            var me = Parent.RemoteIdentity;
+            if (me == null)
+                return null;
+            return Values.FirstOrDefault(p => p.ID != me.ID);
+        }
+
+        /// <summary>
+        /// Returns all peers whose ID does not match the local client's <see cref="ISocket.RemoteIdentity"/>.
+        /// </summary>
+        public Identifier[] AllNotMe() {
+            var me = Parent.RemoteIdentity;
+            if (me == null)
+                return Array.Empty<Identifier>();
+            return Values.Where(p => p.ID != me.ID).ToArray();
+        }
+
+        /// <summary>
+        /// Returns all peers in the list.
+        /// </summary>
+        public Identifier[] All() {
+            return Values.ToArray();
+        }
+
     }
 }

@@ -4,6 +4,19 @@
         <name>SocketJack.WPF</name>
     </assembly>
     <members>
+        <member name="M:SocketJack.WPF.Controller.Extensions.ViewShare(SocketJack.Net.TcpClient,System.Windows.Controls.Image,SocketJack.Net.P2P.Identifier)">
+            <summary>
+            Creates a <see cref="T:SocketJack.WPF.Controller.ControlShareViewer"/> that receives shared control frames
+            from the specified peer and displays them on the specified <see cref="T:System.Windows.Controls.Image"/> control.
+            </summary>
+        </member>
+        <member name="P:SocketJack.WPF.Controller.RemoteAction.Duration">
+            <summary>
+            <para>Time in Milliseconds to perform the action.</para>
+            <para>Default is 200.</para>
+            </summary>
+            <returns></returns>
+        </member>
         <member name="P:SocketJack.Globals.threadManager">
             <summary>  
             ThreadManager.Shutdown will dispose all Tcp Client and Servers thus ending active threads.  
@@ -228,7 +241,7 @@
         </member>
         <member name="T:SocketJack.Net.NetworkBase">
             <summary>
-            Base class for the Tcp Client and Server.
+            Base class for a Client / Server.
             </summary>
             <remarks></remarks>
         </member>
@@ -245,6 +258,13 @@
             </summary>
             <param name="sender"></param>
             <param name="Peer"></param>
+        </member>
+        <member name="F:SocketJack.Net.NetworkBase._ControlShareSessions">
+            <summary>
+            Tracks active control-share sessions on the server: (SharerID, ViewerID).
+            Populated when a ControlShareFrame redirect passes through.
+            Used to block unauthorized ControlShareRemoteAction messages.
+            </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkBase.Name">
             <summary>
@@ -903,6 +923,26 @@
             <param name="Serializer">Serializer used for this connection.</param>
             <param name="Name">Name of the TcpServer (Used for logging)</param>
             <returns>new TcpServer</returns>
+        </member>
+        <member name="M:SocketJack.Net.P2P.PeerList.First">
+            <summary>
+            Returns the first peer whose ID does not match the local client's <see cref="P:SocketJack.Net.ISocket.RemoteIdentity"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.P2P.PeerList.FirstNotMe">
+            <summary>
+            Returns the first peer whose ID does not match the local client's <see cref="P:SocketJack.Net.ISocket.RemoteIdentity"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.P2P.PeerList.AllNotMe">
+            <summary>
+            Returns all peers whose ID does not match the local client's <see cref="P:SocketJack.Net.ISocket.RemoteIdentity"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.P2P.PeerList.All">
+            <summary>
+            Returns all peers in the list.
+            </summary>
         </member>
         <member name="F:SocketJack.Net.P2P.PeerServer.PortLowerBound">
             <summary>
