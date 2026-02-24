@@ -1,7 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Jack-Debug\JackDebug.WPF.vbproj" />
     <ProjectReference Include="..\SocketJack.Windows\SocketJack.WPF.csproj" />
   </ItemGroup>
 
