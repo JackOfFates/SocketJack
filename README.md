@@ -5,7 +5,8 @@
 [![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A high-performance .NET networking library for building client-server and peer-to-peer applications. SocketJack wraps raw `System.Net.Sockets` TCP and UDP, `SslStream` TLS 1.2 encryption, and `System.Text.Json` serialization behind a unified, transport-agnostic API -- so you can focus on your application logic instead of low-level networking.
+.NET networking library. SocketJack lets you send and receive any object over TCP or UDP with a single method call. Powered by `System.Text.Json` serialization under the hood, SocketJack handles framing, segmentation, and deserialization automatically -- just call `Send(myObject)` on one end and register a typed callback on the other. No manual byte wrangling, no protocol boilerplate.
+High-performance .NET networking library for building client-server and peer-to-peer applications. SocketJack wraps raw `System.Net.Sockets` TCP and UDP, `SslStream` TLS 1.2 encryption, and `System.Text.Json` serialization behind a unified, transport-agnostic API -- so you can focus on your application logic instead of low-level networking.
 
 ---
 

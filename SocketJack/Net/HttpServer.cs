@@ -1,5 +1,6 @@
 ﻿
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -21,16 +22,69 @@ namespace SocketJack.Net {
         public delegate object RouteHandler(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken);
 
         /// <summary>
+        /// Typed route handler delegate. The request body is automatically deserialized to <typeparamref name="T"/>
+        /// and passed as the <paramref name="body"/> parameter.
+        /// </summary>
+        public delegate object RouteHandler<T>(NetworkConnection connection, T body, HttpRequest request, CancellationToken cancellationToken);
+
+        /// <summary>
         /// Delegate for streaming routes. The handler receives a <see cref="ChunkedStream"/>
         /// that sends each <see cref="ChunkedStream.WriteLine"/> as an HTTP chunk, keeping
         /// the connection open until the handler returns or calls <see cref="ChunkedStream.Finish"/>.
         /// </summary>
-        public delegate void StreamRouteHandler(NetworkConnection connection, HttpRequest request, ChunkedStream chunkedStream, CancellationToken cancellationToken);
+        public delegate Task StreamRouteHandler(NetworkConnection connection, HttpRequest request, ChunkedStream chunkedStream, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Delegate for upload-streaming routes. The handler receives an <see cref="UploadStream"/>
+        /// from which it can read incoming data chunks (e.g., OBS video) as they arrive on the
+        /// connection. The handler runs on a background task and should return when it is done
+        /// consuming data or when <see cref="UploadStream.ReadAsync"/> returns <see langword="null"/>.
+        /// </summary>
+        public delegate void UploadStreamRouteHandler(NetworkConnection connection, HttpRequest request, UploadStream uploadStream, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Delegate for RTMP publish routes. The handler receives an <see cref="UploadStream"/>
+        /// that yields media chunks as OBS (or another RTMP encoder) publishes. Each chunk is
+        /// prefixed with a single byte indicating the RTMP message type (8 = audio, 9 = video,
+        /// 18 = metadata) followed by the raw payload.
+        /// </summary>
+        public delegate Task RtmpPublishHandler(NetworkConnection connection, string app, string streamKey, UploadStream uploadStream, CancellationToken cancellationToken);
 
         private readonly Dictionary<string, Dictionary<string, RouteHandler>> _routes = new Dictionary<string, Dictionary<string, RouteHandler>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, StreamRouteHandler>> _streamRoutes = new Dictionary<string, Dictionary<string, StreamRouteHandler>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, UploadStreamRouteHandler>> _uploadStreamRoutes = new Dictionary<string, Dictionary<string, UploadStreamRouteHandler>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Tracks connections that currently have an active <see cref="MapStream"/> handler running.
+        /// Subsequent data on these connections is raw payload (e.g., OBS video) and must not be
+        /// parsed as HTTP. The data still flows through <see cref="NetworkBase.OnReceive"/> for
+        /// other subscribers to capture.
+        /// </summary>
+        private readonly ConcurrentDictionary<Guid, byte> _activeStreamConnections = new ConcurrentDictionary<Guid, byte>();
+
+        /// <summary>
+        /// Tracks connections that have an active <see cref="MapUploadStream"/> handler running.
+        /// Subsequent raw data on these connections is forwarded to the corresponding
+        /// <see cref="UploadStream"/> instead of being parsed as HTTP.
+        /// </summary>
+        private readonly ConcurrentDictionary<Guid, UploadStream> _activeUploadConnections = new ConcurrentDictionary<Guid, UploadStream>();
+
+        private readonly Dictionary<string, RtmpPublishHandler> _rtmpPublishRoutes = new Dictionary<string, RtmpPublishHandler>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Tracks connections running the RTMP protocol (e.g., OBS publishing via <c>rtmp://</c>).
+        /// Subsequent data on these connections is fed into the <see cref="RtmpSession"/> state
+        /// machine instead of being parsed as HTTP.
+        /// </summary>
+        private readonly ConcurrentDictionary<Guid, RtmpSession> _activeRtmpConnections = new ConcurrentDictionary<Guid, RtmpSession>();
 
         public string IndexPageHtml { get; set; } = "<html><body><h1>SocketJack HttpServer</h1></body></html>";
+
+        /// <summary>
+        /// Gets or sets the content served at <c>/robots.txt</c>. Set to <see langword="null"/> to
+        /// disable the built-in robots.txt route. Defaults to a permissive policy.
+        /// </summary>
+        public string Robots { get; set; } = "User-agent: *\nAllow: /\n";
 
         public void Map(string method, string path, RouteHandler handler) {
             if (string.IsNullOrWhiteSpace(method))
@@ -45,6 +99,32 @@ namespace SocketJack.Net {
                 _routes[method] = byPath;
             }
             byPath[path] = handler;
+        }
+
+        /// <summary>
+        /// Maps a route whose handler receives a deserialized body of type <typeparamref name="T"/>.
+        /// The request body is deserialized using the configured serializer before the handler is invoked.
+        /// </summary>
+        public void Map<T>(string method, string path, RouteHandler<T> handler) {
+            if (string.IsNullOrWhiteSpace(method))
+                throw new ArgumentException("Method is required.", nameof(method));
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Path is required.", nameof(path));
+            if (handler == null)
+                throw new ArgumentNullException(nameof(handler));
+
+            Map(method, path, (connection, request, cancellationToken) => {
+                T body = default;
+                if (request.BodyBytes != null && request.BodyBytes.Length > 0) {
+                    var wrapped = Options.Serializer.Deserialize(request.BodyBytes);
+                    if (wrapped != null) {
+                        var obj = wrapped.Unwrap(this as ISocket);
+                        if (obj is T typed)
+                            body = typed;
+                    }
+                }
+                return handler(connection, body, request, cancellationToken);
+            });
         }
 
         public bool RemoveRoute(string method, string path) {
@@ -72,6 +152,50 @@ namespace SocketJack.Net {
             byPath[path] = handler;
         }
 
+        /// <summary>
+        /// Maps an upload-streaming route. When an incoming HTTP request matches, the handler
+        /// runs on a background task and receives an <see cref="UploadStream"/> that yields
+        /// data chunks as they arrive (e.g., continuous OBS MPEG-TS video over HTTP POST).
+        /// </summary>
+        public void MapUploadStream(string method, string path, UploadStreamRouteHandler handler) {
+            if (string.IsNullOrWhiteSpace(method))
+                throw new ArgumentException("Method is required.", nameof(method));
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Path is required.", nameof(path));
+            if (handler == null)
+                throw new ArgumentNullException(nameof(handler));
+
+            if (!_uploadStreamRoutes.TryGetValue(method, out var byPath)) {
+                byPath = new Dictionary<string, UploadStreamRouteHandler>(StringComparer.OrdinalIgnoreCase);
+                _uploadStreamRoutes[method] = byPath;
+            }
+            byPath[path] = handler;
+        }
+
+        public bool RemoveUploadStreamRoute(string method, string path) {
+            if (!_uploadStreamRoutes.TryGetValue(method, out var byPath))
+                return false;
+            return byPath.Remove(path);
+        }
+
+        /// <summary>
+        /// Maps an RTMP publish route. When an OBS (or compatible) encoder connects via RTMP
+        /// and publishes to the given <paramref name="app"/> name, the <paramref name="handler"/>
+        /// runs on a background task and receives an <see cref="UploadStream"/> with media data.
+        /// Use <c>"*"</c> as a wildcard to match any app name.
+        /// </summary>
+        public void MapRtmpPublish(string app, RtmpPublishHandler handler) {
+            if (string.IsNullOrWhiteSpace(app))
+                throw new ArgumentException("App name is required.", nameof(app));
+            if (handler == null)
+                throw new ArgumentNullException(nameof(handler));
+            _rtmpPublishRoutes[app] = handler;
+        }
+
+        public bool RemoveRtmpPublishRoute(string app) {
+            return _rtmpPublishRoutes.Remove(app);
+        }
+
         private object ResolveRouteObject(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
             if (request == null)
                 return null;
@@ -84,11 +208,20 @@ namespace SocketJack.Net {
                     if (byPath.TryGetValue(path, out var handler))
                         return handler(connection, request, cancellationToken);
                 }
+                // HEAD should fall back to GET-mapped routes
+                if (method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) {
+                    if (_routes.TryGetValue("GET", out var getByPath)) {
+                        if (getByPath.TryGetValue(path, out var getHandler))
+                            return getHandler(connection, request, cancellationToken);
+                    }
+                }
             }
 
-            if (method != null && method.Equals("GET", StringComparison.OrdinalIgnoreCase)) {
+            if (method != null && (method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase))) {
                 if (path == "/" || string.IsNullOrEmpty(path))
                     return IndexPageHtml;
+                if (path == "/robots.txt" && Robots != null)
+                    return Robots;
             }
 
             return null;
@@ -108,6 +241,54 @@ namespace SocketJack.Net {
                 }
             }
             return null;
+        }
+
+        private UploadStreamRouteHandler ResolveUploadStreamRoute(HttpRequest request) {
+            if (request == null || _uploadStreamRoutes.Count == 0)
+                return null;
+
+            string method = request.Method;
+            string path = NormalizePath(request.Path);
+
+            if (method != null && path != null) {
+                if (_uploadStreamRoutes.TryGetValue(method, out var byPath)) {
+                    if (byPath.TryGetValue(path, out var handler))
+                        return handler;
+                }
+            }
+            return null;
+        }
+
+        private RtmpSession CreateRtmpSession(NetworkConnection conn) {
+            var session = new RtmpSession(conn);
+            _activeRtmpConnections.TryAdd(conn.ID, session);
+
+            session.OnPublishStart = (app, streamKey) => {
+                RtmpPublishHandler handler = null;
+                if (!_rtmpPublishRoutes.TryGetValue(app, out handler))
+                    _rtmpPublishRoutes.TryGetValue("*", out handler);
+
+                if (handler != null) {
+                    var upload = new UploadStream(conn);
+                    session.AttachUploadStream(upload);
+
+                    var connId = conn.ID;
+                    Task.Run(async () => {
+                        try {
+                            handler(conn, app, streamKey, upload, default).GetAwaiter().GetResult();
+                        } catch {
+                        } finally {
+                            upload.Complete();
+                        }
+                    });
+                }
+            };
+
+            session.OnPublishStop = () => {
+                _activeRtmpConnections.TryRemove(conn.ID, out _);
+            };
+
+            return session;
         }
 
         private static string NormalizePath(string path) {
@@ -136,6 +317,14 @@ namespace SocketJack.Net {
         private void Disposing() {
             OnDisposing -= Disposing;
             this.OnReceive -= GetRequestAsync;
+            foreach (var kv in _activeUploadConnections) {
+                kv.Value.Complete();
+            }
+            _activeUploadConnections.Clear();
+            foreach (var kv in _activeRtmpConnections) {
+                kv.Value.Stop();
+            }
+            _activeRtmpConnections.Clear();
         }
 
         public HttpServer(int Port, string Name = "HttpServer") : base(Port, Name) {
@@ -219,7 +408,41 @@ namespace SocketJack.Net {
                 if (e == null || e.Obj == null)
                     return;
 
-                // Only handle raw HTTP requests here. If this connection is carrying
+                // If this connection has an active streaming handler (e.g., OBS uploading video),
+                // skip HTTP parsing. The raw data is still available to other OnReceive subscribers.
+                if (e.Connection != null && _activeStreamConnections.ContainsKey(e.Connection.ID))
+                    return;
+
+                // If this connection has an active upload-stream handler, forward raw data to it.
+                if (e.Connection != null && _activeUploadConnections.TryGetValue(e.Connection.ID, out var activeUpload)) {
+                    var uploadBytes = TryGetRequestBytes(e.Obj);
+                    if (uploadBytes != null && uploadBytes.Length > 0) {
+                        activeUpload.Enqueue(uploadBytes);
+                    }
+                    return;
+                }
+
+                // If this connection has an active RTMP session, forward data to it.
+                if (e.Connection != null && _activeRtmpConnections.TryGetValue(e.Connection.ID, out var rtmpSession)) {
+                    var rtmpBytes = TryGetRequestBytes(e.Obj);
+                    if (rtmpBytes != null && rtmpBytes.Length > 0)
+                        rtmpSession.ProcessData(rtmpBytes);
+                    return;
+                }
+
+                // Detect new RTMP connections (version byte 0x03 + C1 zero field at offset 5-8)
+                if (_rtmpPublishRoutes.Count > 0 && e.Connection != null) {
+                    var probeBytes = TryGetRequestBytes(e.Obj);
+                    if (probeBytes != null && probeBytes.Length >= 9
+                        && probeBytes[0] == 0x03
+                        && probeBytes[5] == 0 && probeBytes[6] == 0 && probeBytes[7] == 0 && probeBytes[8] == 0) {
+                        var session = CreateRtmpSession(e.Connection);
+                        session.ProcessData(probeBytes);
+                        return;
+                    }
+                }
+
+                // Only handle raw HTTP requests here.
                 // SocketJack-serialized payloads (e.g., JSON-wrapped objects), ignore them.
                 if (e.Obj is string s) {
                     if (string.IsNullOrWhiteSpace(s))
@@ -294,28 +517,63 @@ namespace SocketJack.Net {
                 // Check for streaming routes first — these keep the connection open
                 var streamHandler = ResolveStreamRoute(request);
                 if (streamHandler != null) {
-                    var chunked = new ChunkedStream(e.Connection.Stream, context.Response);
-                    try {
-                        streamHandler(e.Connection, request, chunked, ct);
-                    } catch {
-                    } finally {
-                        chunked.Finish();
+                    _activeStreamConnections.TryAdd(e.Connection.ID, 0);
+                    var conn = e.Connection;
+                    var response = context.Response;
+                    Task.Factory.StartNew(async () => {
+                        var chunked = new ChunkedStream(conn.Stream, response);
+                        try {
+                            await streamHandler(conn, request, chunked, ct);
+                        } catch (Exception ex) {
+                            InvokeOnError(conn, ex);
+                        } finally {
+                            chunked.Finish();
+                            _activeStreamConnections.TryRemove(conn.ID, out _);
+                        }
+                    }, TaskCreationOptions.LongRunning);
+                    return;
+                }
+
+                // Check for upload-stream routes (e.g., OBS video ingest over HTTP POST)
+                var uploadHandler = ResolveUploadStreamRoute(request);
+                if (uploadHandler != null) {
+                    var upload = new UploadStream(e.Connection);
+                    _activeUploadConnections.TryAdd(e.Connection.ID, upload);
+
+                    // Queue initial body data if present in the first read
+                    if (request.BodyBytes != null && request.BodyBytes.Length > 0) {
+                        upload.Enqueue(request.BodyBytes);
                     }
+
+                    var connId = e.Connection.ID;
+                    var conn = e.Connection;
+                    Task.Run(() => {
+                        try {
+                            uploadHandler(conn, request, upload, ct);
+                        } catch {
+                        } finally {
+                            upload.Complete();
+                            _activeUploadConnections.TryRemove(connId, out _);
+                        }
+                    });
                     return;
                 }
 
                 var handledByRoute = false;
-                if (_routes.Count > 0 || IndexPageHtml != null) {
+                if (_routes.Count > 0 || IndexPageHtml != null || Robots != null) {
                     var routeObj = ResolveRouteObject(e.Connection, request, ct);
                     if (routeObj != null) {
                         handledByRoute = true;
                         context.Response.Body = routeObj;
 
-                        var isIndex = request.Method != null && request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) && (request.Path == "/" || string.IsNullOrEmpty(request.Path)) && IndexPageHtml != null;
+                        var isIndex = request.Method != null && (request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) && (request.Path == "/" || string.IsNullOrEmpty(request.Path)) && IndexPageHtml != null;
 
-                        if (routeObj is string) {
-                            if (isIndex) {
+                        if (routeObj is string strBody) {
+                            var trimmed = strBody.TrimStart();
+                            if (isIndex || trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase)) {
                                 context.Response.ContentType = "text/html";
+                            } else if (trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '[')) {
+                                context.Response.ContentType = "application/json";
                             } else {
                                 context.Response.ContentType = "text/plain";
                             }
@@ -331,15 +589,37 @@ namespace SocketJack.Net {
                     OnHttpRequest?.Invoke(e.Connection, ref context, ct);
                 }
 
+                // Return 404 for unmatched routes that were not handled by OnHttpRequest
+                //if (!handledByRoute && (context.Response.Body == null || (context.Response.Body is string sb && sb.Length == 0))) {
+                //    context.Response.StatusCodeNumber = 404;
+                //    context.Response.ReasonPhrase = "Not Found";
+                //}
+
                 if (context.Response != null && context.Response.Headers != null) {
                     if (!context.Response.Headers.ContainsKey("Server"))
                         context.Response.Headers["Server"] = "SocketJack";
+                    if (!context.Response.Headers.ContainsKey("Access-Control-Allow-Origin"))
+                        context.Response.Headers["Access-Control-Allow-Origin"] = "*";
+                    if (!context.Response.Headers.ContainsKey("Date"))
+                        context.Response.Headers["Date"] = DateTime.UtcNow.ToString("R");
+                }
+
+                if (Options.Logging) {
+                    var ua = request.Headers.ContainsKey("User-Agent") ? request.Headers["User-Agent"] : "";
+                    Log(request.Method + " " + request.Path + " > " + context.Response.StatusCodeNumber + " (" + (context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0) + " bytes) UA: " + ua + " - " + request.Context?.Connection.Socket.RemoteEndPoint.ToString());
                 }
 
                 context.Response.EnsureBodyBytes();
                 var bodyLen = context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0;
+                bool isHead = request.Method != null && request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
 
-                if (bodyLen > ChunkedThreshold) {
+                if (isHead) {
+                    // HEAD responses include Content-Length but no body
+                    var (hdr, _) = context.Response.ToBytesWithHeader();
+                    if (hdr != null && hdr.Length > 0)
+                        e.Connection.Stream.Write(hdr, 0, hdr.Length);
+                    e.Connection.Stream.Flush();
+                } else if (bodyLen > ChunkedThreshold) {
                     // Large response — stream in chunks so browsers can render progressively
                     context.Response.WriteChunkedTo(e.Connection.Stream, ChunkedSize);
                 } else {
@@ -348,7 +628,11 @@ namespace SocketJack.Net {
                         e.Connection.Stream.Write(hdr, 0, hdr.Length);
                     if (body != null && body.Length > 0)
                         e.Connection.Stream.Write(body, 0, body.Length);
+                    e.Connection.Stream.Flush();
                 }
+
+                // Honour Connection: close — shut down the TCP connection
+                try { CloseConnection(e.Connection, DisconnectionReason.LocalSocketClosed); } catch { }
             } catch (Exception ex) {
                 InvokeOnError(e.Connection, ex);
             }
@@ -473,6 +757,13 @@ namespace SocketJack.Net {
                         }
                         body = ms.ToArray();
                     }
+                } else if (bodyStart < rawRequestBytes.Length) {
+                    // No Content-Length or Transfer-Encoding; capture any remaining bytes
+                    // as the body. This covers streaming uploads (e.g., OBS MPEG-TS over POST)
+                    // where only partial data is available in the initial network read.
+                    var remaining = rawRequestBytes.Length - bodyStart;
+                    body = new byte[remaining];
+                    Array.Copy(rawRequestBytes, bodyStart, body, 0, remaining);
                 }
 
                 request.SetBody(body);
@@ -512,7 +803,8 @@ namespace SocketJack.Net {
                 if (string.IsNullOrWhiteSpace(value)) {
                     _ContentType = "text/json";
                 } else {
-                    _ContentType = value;
+                    var sc = value.IndexOf(';');
+                    _ContentType = sc >= 0 ? value.Substring(0, sc).Trim() : value;
                 }
             }
         }
@@ -611,7 +903,8 @@ namespace SocketJack.Net {
                 if (string.IsNullOrWhiteSpace(value)) {
                     _ContentType = "text/json";
                 } else {
-                    _ContentType = value;
+                    var sc = value.IndexOf(';');
+                    _ContentType = sc >= 0 ? value.Substring(0, sc).Trim() : value;
                 }
             }
         }
@@ -786,6 +1079,22 @@ namespace SocketJack.Net {
             _response = response;
         }
 
+        /// <summary>
+        /// Gets or sets the Content-Type header for the chunked response.
+        /// Must be set before the first call to <see cref="Write(string)"/>,
+        /// <see cref="WriteLine"/>, or <see cref="Write(byte[], int, int)"/>.
+        /// </summary>
+        public string ContentType {
+            get {
+                if (_response.Headers.TryGetValue("Content-Type", out var ct))
+                    return ct;
+                return _response.ContentType;
+            }
+            set {
+                _response.Headers["Content-Type"] = value;
+            }
+        }
+
         private void EnsureHeader() {
             if (_headerSent) return;
             _headerSent = true;
@@ -801,7 +1110,10 @@ namespace SocketJack.Net {
                 sb.Append("Server: SocketJack\r\n");
             sb.Append("Transfer-Encoding: chunked\r\n");
             sb.Append("Connection: keep-alive\r\n");
+            sb.Append("Cache-Control: no-cache, no-store\r\n");
             sb.Append("X-Content-Type-Options: nosniff\r\n");
+            if (!_response.Headers.ContainsKey("Access-Control-Allow-Origin"))
+                sb.Append("Access-Control-Allow-Origin: *\r\n");
             sb.Append("\r\n");
 
             var headerBytes = Encoding.UTF8.GetBytes(sb.ToString());
@@ -865,6 +1177,87 @@ namespace SocketJack.Net {
             } catch {
                 // stream may already be closed
             }
+        }
+    }
+
+    /// <summary>
+    /// Provides a stream-like interface for reading incoming data chunks on an HTTP
+    /// upload-streaming connection (e.g., OBS sending continuous MPEG-TS video via POST).
+    /// Data is enqueued by the server as it arrives and can be consumed asynchronously
+    /// by the <see cref="HttpServer.UploadStreamRouteHandler"/>.
+    /// </summary>
+    public class UploadStream : IDisposable {
+        private readonly ConcurrentQueue<byte[]> _queue = new ConcurrentQueue<byte[]>();
+        private readonly SemaphoreSlim _signal = new SemaphoreSlim(0);
+        private readonly NetworkConnection _connection;
+        private volatile bool _completed;
+
+        internal UploadStream(NetworkConnection connection) {
+            _connection = connection;
+        }
+
+        /// <summary>
+        /// Enqueues a chunk of raw data received from the network.
+        /// </summary>
+        internal void Enqueue(byte[] data) {
+            if (_completed) return;
+            _queue.Enqueue(data);
+            try { _signal.Release(); } catch (ObjectDisposedException) { }
+        }
+
+        /// <summary>
+        /// Marks the stream as complete. No more data will arrive.
+        /// </summary>
+        internal void Complete() {
+            _completed = true;
+            try { _signal.Release(); } catch (ObjectDisposedException) { }
+        }
+
+        /// <summary>
+        /// <see langword="true"/> when the stream is complete and all queued data has been consumed.
+        /// </summary>
+        public bool IsCompleted => _completed && _queue.IsEmpty;
+
+        /// <summary>
+        /// The <see cref="NetworkConnection"/> that this upload stream is associated with.
+        /// </summary>
+        public NetworkConnection Connection => _connection;
+
+        /// <summary>
+        /// Asynchronously reads the next chunk of data.
+        /// Returns <see langword="null"/> when the stream is complete or the connection is closed.
+        /// </summary>
+        public async Task<byte[]> ReadAsync(CancellationToken ct = default) {
+            while (true) {
+                if (_queue.TryDequeue(out var data)) return data;
+                if (_completed || _connection.Closed) return null;
+                try {
+                    // Use timeout to periodically check connection state
+                    await _signal.WaitAsync(1000, ct);
+                } catch (OperationCanceledException) {
+                    return null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Tries to read the next chunk of data synchronously.
+        /// Returns <see langword="false"/> when no data is available within the timeout
+        /// or the stream is complete.
+        /// </summary>
+        public bool TryRead(out byte[] data, int timeoutMs = 100) {
+            data = null;
+            if (_queue.TryDequeue(out data)) return true;
+            if (_completed || _connection.Closed) return false;
+            if (_signal.Wait(timeoutMs)) {
+                return _queue.TryDequeue(out data);
+            }
+            return false;
+        }
+
+        public void Dispose() {
+            Complete();
+            _signal.Dispose();
         }
     }
 }

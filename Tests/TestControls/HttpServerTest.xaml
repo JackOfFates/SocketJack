@@ -7,7 +7,34 @@
              mc:Ignorable="d" 
              d:DesignHeight="608.886" d:DesignWidth="1260.515">
     <Grid>
-        <Button x:Name="ButtonStartStop" Content="Start Test" Height="56" Margin="10,0,0,5" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="126"/>
+        <Grid VerticalAlignment="Bottom" Margin="10,0,10,5" Height="56">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="ButtonStartStop" Content="Start Test" Width="126"/>
+                <Button x:Name="ButtonRecord" Content="Record" Width="100" Margin="5,0,0,0"/>
+                <Button x:Name="ButtonSave" Content="Save Recording" Width="120" Margin="5,0,0,0"/>
+            </StackPanel>
+            <!-- RTMP stream stats -->
+            <Border x:Name="RtmpStatsPanel" Grid.Column="1" Background="#CC1A1A1A" CornerRadius="4" Padding="10,4" Margin="10,0,0,0" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse x:Name="RtmpStatusIndicator" Width="10" Height="10" Fill="Gray" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock x:Name="LabelRtmpStatus" Text="Idle" Foreground="#FFAAAAAA" VerticalAlignment="Center" FontFamily="Consolas" FontSize="12" Margin="0,0,14,0"/>
+                    <TextBlock Text="Bitrate:" Foreground="#FF888888" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="LabelBitrate" Text="0 kbps" Foreground="#FFEAEAEA" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Margin="0,0,14,0"/>
+                    <TextBlock Text="Video:" Foreground="#FF888888" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="LabelVideoFrames" Text="0" Foreground="#FF82C8FF" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,14,0"/>
+                    <TextBlock Text="Audio:" Foreground="#FF888888" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="LabelAudioFrames" Text="0" Foreground="#FF9CFF82" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,14,0"/>
+                    <TextBlock Text="Dropped:" Foreground="#FF888888" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="LabelDroppedFrames" Text="0" Foreground="#FFFF9A9A" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,14,0"/>
+                    <TextBlock Text="Total:" Foreground="#FF888888" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="LabelTotalBytes" Text="0 B" Foreground="#FFEAEAEA" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11"/>
+                </StackPanel>
+            </Border>
+        </Grid>
         <Grid Margin="10,10,10,66">
             <Grid.RowDefinitions>
                 <RowDefinition Height="1*"/>
@@ -71,6 +98,8 @@
                         <SyntaxBox:KeywordRule Foreground="#FF848484" Keywords="Connection" WholeWordsOnly="True" />
                         <SyntaxBox:KeywordRule Foreground="#FFFF9A9A" Keywords="Disconnected" WholeWordsOnly="True" />
                         <SyntaxBox:KeywordRule Foreground="#FFFF9A9A" Keywords="failed" WholeWordsOnly="True" />
+                        <SyntaxBox:KeywordRule Foreground="#FF82C8FF" Keywords="RTMP" WholeWordsOnly="True" />
+                        <SyntaxBox:KeywordRule Foreground="#FF9CFF82" Keywords="publishing,Publishing" WholeWordsOnly="True" />
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF0A8600"  Pattern="\s*\/\/.*" />
                         <SyntaxBox:RegexRule Op="Line" Foreground="Red" Pattern="\s(ERROR)"/>
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF656EFF" Pattern="^\[.*(S|s)erver.*\]\s"/>

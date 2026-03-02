@@ -7,3 +7,6 @@
 
 ## WPF Specific Instructions
 - When implementing the WPF shared-control viewer, do not hide the system cursor (avoid overriding cursor visibility).
+
+## Jack-Debug Project Instructions
+- In the DrawTimeline spatial rendering, do not pair consecutive points into rectangles. Always render individual points (Point, Vector types) as circles (Ellipse), never as rectangles.

@@ -356,6 +356,7 @@ namespace SocketJack.Net {
         }
 
 private NetworkConnection NewConnection(ref Socket handler) {
+    handler.NoDelay = true;
     var newConnection = new NetworkConnection(this, handler);
     newConnection._Stream = new NetworkStream(newConnection.Socket);
             try {

@@ -28,7 +28,13 @@ Public Class TestTemplate
     Public Sub Log(text As String)
         Dim isAtEnd As Boolean = TextboxLog.VerticalOffset >= (TextboxLog.ExtentHeight - TextboxLog.ViewportHeight) * 0.9
         Dispatcher.InvokeAsync(Sub()
-                                   TextboxLog.AppendText(vbCrLf & text)
+                                   ' Sanitize chars >= U+0100 that crash SyntaxBox AhoCorasickSearch (256-char limit)
+                                   Dim chars = text.ToCharArray()
+                                   For i = 0 To chars.Length - 1
+                                       If AscW(chars(i)) >= 256 Then chars(i) = "?"c
+                                   Next
+                                   Dim safe = New String(chars)
+                                   TextboxLog.AppendText(vbCrLf & safe)
                                    If isAtEnd Then TextboxLog.ScrollToEnd()
                                End Sub)
     End Sub

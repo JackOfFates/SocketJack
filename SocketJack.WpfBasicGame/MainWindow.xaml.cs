@@ -2,6 +2,8 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Shapes;
+using Windows.Devices.Sensors;
 
 namespace SocketJack.WpfBasicGame;
 
@@ -18,9 +20,9 @@ public partial class MainWindow : Window {
         PositionSideBySide(isHost: true);
         StartButton_Click(null, null);
         var w = new DebugWatcher(_game);
-        w.IsRecursive = true;
         w.StartSession();
         DebugWatcher.CreateDebugWindow();
+           
     }
 
     public MainWindow(int aaa) {

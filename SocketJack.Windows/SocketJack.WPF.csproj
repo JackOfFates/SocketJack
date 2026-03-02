@@ -26,22 +26,20 @@
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
     <Copyright>Copyright © JackOfFates 2025</Copyright>
-    <AssemblyVersion>1.4.5</AssemblyVersion>
-    <FileVersion>1.4.5</FileVersion>
+    <AssemblyVersion>1.5.0</AssemblyVersion>
+    <FileVersion>1.5.0</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
     <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.4.5</Version>
+    <Version>1.5.0</Version>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes>Features for WPF:
-Bitmap encoding
-Remote Framework Element Sharing &amp; Control</PackageReleaseNotes>
+    <PackageReleaseNotes></PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack.WPF/</PackageProjectUrl>
     <PackageIcon>SocketJackWpfIcon.png</PackageIcon>
     <PackageReadmeFile>Readme_Gen.md</PackageReadmeFile>
@@ -307,6 +305,8 @@ Remote Framework Element Sharing &amp; Control</PackageReleaseNotes>
     <Compile Include="..\SocketJack\Net\P2P\PeerRedirect.cs" Link="Net\P2P\PeerRedirect.cs" />
     <Compile Include="..\SocketJack\Net\P2P\PeerServer.cs" Link="Net\P2P\PeerServer.cs" />
     <Compile Include="..\SocketJack\Net\P2P\Ping.cs" Link="Net\P2P\Ping.cs" />
+    <Compile Include="..\SocketJack\Net\BroadcastServer.cs" Link="Net\BroadcastServer.cs" />
+    <Compile Include="..\SocketJack\Net\RtmpSession.cs" Link="Net\RtmpSession.cs" />
     <Compile Include="..\SocketJack\Net\Segment.cs" Link="Net\Segment.cs" />
     <Compile Include="..\SocketJack\Net\SendQueueItem.cs" Link="Net\SendQueueItem.cs" />
     <Compile Include="..\SocketJack\Net\TcpClient.cs" Link="Net\TcpClient.cs" />

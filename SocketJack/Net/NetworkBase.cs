@@ -584,7 +584,11 @@ namespace SocketJack.Net {
         /// <remarks></remarks>
         public IPEndPoint LocalIPEndPoint {
             get {
-                return (IPEndPoint)Socket.LocalEndPoint;
+                try {
+                    return (IPEndPoint)Socket?.LocalEndPoint;
+                } catch {
+                    return default;
+                }
             }
         }
 

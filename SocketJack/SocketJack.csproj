@@ -31,22 +31,13 @@
     <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.4.5</Version>
+    <Version>1.5.0</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes>SocketJack v1.4 – Release Notes
-🚀 New Features
-• UDP Transport — New UdpClient and UdpServer classes that mirror the TCP API using connectionless datagrams. Full support for serialization, compression, peer-to-peer relay, callbacks, and broadcasting over UDP. Configurable options for max datagram size, client timeout, receive buffer size, and broadcast mode.
-• HTTP Server — New HttpServer class (built on TcpServer) with route mapping (Map(method, path, handler)), HttpContext/HttpRequest support, request handling events, and a default index page.
-• WPF Network Controller – Live Control Sharing — New ControlShareViewer.cs library enabling real-time sharing of any WPF FrameworkElement over P2P. The sharer captures JPEG frames at a configurable FPS via element.Share(client, peer, fps), and the viewer displays them with ControlShareViewer while forwarding mouse input (moves, clicks, enter/leave) back to the sharer for replay on the original element.
-🎯 Target Framework Updates
-• Added .NET 9 and .NET 10 to supported targets (alongside .NET Standard 2.1, .NET 6, .NET 8).
-📝 Other
-• Updated NuGet package description, tags, and readme.
-• Unified transport-agnostic API across TCP, UDP, and WebSocket.</PackageReleaseNotes>
+    <PackageReleaseNotes></PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
     <PackageIcon>SocketJackIcon.png</PackageIcon>
     <PackageReadmeFile>Readme_Gen.md</PackageReadmeFile>
@@ -298,6 +289,7 @@
     <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="httpStream.PNG" />
     <None Remove="runtimeconfig.template.json" />
   </ItemGroup>
   <ItemGroup>
@@ -334,6 +326,10 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
+    <None Update="Readme_Gen.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
     </ItemGroup>
     <ItemGroup>
       <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
@@ -343,10 +339,6 @@
       <Import Include="System.Text.Json.Serialization" />
     </ItemGroup>
     <ItemGroup>
-      <None Include="Readme_Gen.md">
-        <Pack>True</Pack>
-        <PackagePath>\</PackagePath>
-      </None>
       <None Include="SocketJackIcon.png">
         <Pack>True</Pack>
         <PackagePath>\</PackagePath>

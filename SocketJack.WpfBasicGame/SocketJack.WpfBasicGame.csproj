@@ -1,12 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Jack-Debug\JackDebug.WPF.vbproj" />
     <ProjectReference Include="..\SocketJack.Windows\SocketJack.WPF.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ComputeSharp" Version="3.2.0" />
+    <PackageReference Include="JackDebug.WPF" Version="1.4.0" />
   </ItemGroup>
 
   <PropertyGroup>
