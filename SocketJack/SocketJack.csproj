@@ -40,7 +40,7 @@
     <PackageReleaseNotes></PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
     <PackageIcon>SocketJackIcon.png</PackageIcon>
-    <PackageReadmeFile>Readme_Gen.md</PackageReadmeFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/JackOfFates/SocketJack</RepositoryUrl>
     <PackageTags>TCP; UDP; WebSocket; Socket; Sockets; Networking; Client; Server; TcpClient; TcpServer; UdpClient; UdpServer; Peer-to-Peer; P2P; NAT-Traversal; Serialization; JSON; System.Text.Json; GZip; Compression; SSL; TLS; Encryption; Async; Real-Time; Multiplayer; Game-Networking; Remote-Control; IoT; HTTP; Managed; Cross-Platform; High-Performance; Bandwidth-Throttling; WPF</PackageTags>
   </PropertyGroup>
@@ -339,6 +339,10 @@
       <Import Include="System.Text.Json.Serialization" />
     </ItemGroup>
     <ItemGroup>
+      <None Include="..\README.md">
+        <Pack>True</Pack>
+        <PackagePath>\</PackagePath>
+      </None>
       <None Include="SocketJackIcon.png">
         <Pack>True</Pack>
         <PackagePath>\</PackagePath>
