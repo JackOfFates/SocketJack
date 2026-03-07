@@ -220,11 +220,6 @@ namespace SocketJack.WPF {
                             target = hit;
                     }
 
-                    // Raise on the child — WPF routes through the parent automatically
-                    (target as UIElement)?.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton) {
-                        RoutedEvent = UIElement.PreviewMouseDownEvent
-                    });
-
                     if (target is UIElement targetUie) {
                         targetUie.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton)
                         {
@@ -266,8 +261,39 @@ namespace SocketJack.WPF {
                     }
 
                     // Set IsPressed on the nearest ButtonBase so it reflects the
-                    // pressed visual state.  See SetButtonPressed for why this is needed.
+                    // pressed visual state.  This is purely visual; the actual click
+                    // logic runs in SimulateMouseUp which finds the button independently.
                     if (MouseButton == System.Windows.Input.MouseButton.Left) {
+                        // If a previous MouseDown never received its MouseUp (e.g. UDP
+                        // packet loss during fast clicking), auto-complete the stale
+                        // press so the button doesn't stay stuck in the pressed state.
+                        if (_lastPressedButton != null) {
+                            var stale = _lastPressedButton;
+                            _lastPressedButton = null;
+                            try {
+                                SetButtonPressed(stale, false);
+
+                                if (stale is RadioButton staleRadio) {
+                                    staleRadio.IsChecked = true;
+                                } else if (stale is System.Windows.Controls.Primitives.ToggleButton staleToggle) {
+                                    if (staleToggle.IsChecked == true)
+                                        staleToggle.IsChecked = staleToggle.IsThreeState ? null : (bool?)false;
+                                    else
+                                        staleToggle.IsChecked = staleToggle.IsChecked.HasValue ? (bool?)true : (bool?)false;
+                                }
+
+                                stale.RaiseEvent(new RoutedEventArgs(
+                                    System.Windows.Controls.Primitives.ButtonBase.ClickEvent, stale));
+
+                                var cmd = stale.Command;
+                                var param = stale.CommandParameter;
+                                if (cmd != null && cmd.CanExecute(param))
+                                    cmd.Execute(param);
+                            }
+                            catch {
+                            }
+                        }
+
                         DependencyObject ancestor = target as DependencyObject;
                         while (ancestor != null) {
                             if (ancestor is System.Windows.Controls.Primitives.ButtonBase bb) {
@@ -343,13 +369,52 @@ namespace SocketJack.WPF {
                     if (hasPos)
                         ClickIndicatorAdorner.Show(Element, new Point(nx * Math.Max(0, Element.ActualWidth), ny * Math.Max(0, Element.ActualHeight)), Brushes.White);
 
-                    // Reset the ButtonBase that was pressed in SimulateMouseDown.
-                    // We use the tracked reference instead of re-hit-testing because
-                    // the pressed visual state can shift the layout enough to cause
-                    // the hit test to miss the original button.
-                    if (_lastPressedButton != null) {
-                        SetButtonPressed(_lastPressedButton, false);
+                    // Find the nearest ButtonBase at the release position.
+                    // Falls back to the button tracked by SimulateMouseDown when
+                    // the hit-test resolves to a different element (e.g. layout
+                    // shifted due to IsPressed visual state change).
+                    System.Windows.Controls.Primitives.ButtonBase clickButton = null;
+                    if (MouseButton == System.Windows.Input.MouseButton.Left) {
+                        DependencyObject btnWalk = target as DependencyObject;
+                        while (btnWalk != null) {
+                            if (btnWalk is System.Windows.Controls.Primitives.ButtonBase bb) {
+                                clickButton = bb;
+                                break;
+                            }
+                            btnWalk = VisualTreeHelper.GetParent(btnWalk);
+                        }
+
+                        // Fallback: use the button recorded by SimulateMouseDown if
+                        // the hit-test missed (e.g. layout shift from IsPressed).
+                        if (clickButton == null && _lastPressedButton != null)
+                            clickButton = _lastPressedButton;
+
                         _lastPressedButton = null;
+                    }
+
+                    if (clickButton != null) {
+                        // Toggle for ToggleButton / CheckBox / RadioButton.
+                        if (clickButton is RadioButton radio) {
+                            radio.IsChecked = true;
+                        } else if (clickButton is System.Windows.Controls.Primitives.ToggleButton toggle) {
+                            if (toggle.IsChecked == true)
+                                toggle.IsChecked = toggle.IsThreeState ? null : (bool?)false;
+                            else
+                                toggle.IsChecked = toggle.IsChecked.HasValue ? (bool?)true : (bool?)false;
+                        }
+
+                        // Raise the Click routed event so subscribers see the click.
+                        clickButton.RaiseEvent(new RoutedEventArgs(
+                            System.Windows.Controls.Primitives.ButtonBase.ClickEvent, clickButton));
+
+                        // Execute the bound command if present.
+                        var cmd = clickButton.Command;
+                        var param = clickButton.CommandParameter;
+                        if (cmd != null && cmd.CanExecute(param))
+                            cmd.Execute(param);
+
+                        // Reset the pressed visual state.
+                        SetButtonPressed(clickButton, false);
                     }
 
                     // Release any residual mouse capture (safety net).

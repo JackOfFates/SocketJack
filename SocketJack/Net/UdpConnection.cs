@@ -17,7 +17,7 @@ namespace SocketJack.Net {
 
     /// <summary>
     /// Represents a UDP connection endpoint with send/receive capabilities.
-    /// Modeled after TcpConnection but adapted for connectionless UDP datagrams.
+    /// Modeled after NetworkConnection but adapted for connectionless UDP datagrams.
     /// </summary>
     public class UdpConnection : IDisposable {
 

@@ -100,7 +100,7 @@ namespace SocketJack.Net {
 #endif
 #if WINDOWS
 			if (Application.Current != null) {
-				Application.Current.Dispatcher.Invoke(action);
+				Application.Current?.Dispatcher.Invoke(action);
 			} else {
 				ThreadManager.Shutdown();
 			}
@@ -334,7 +334,21 @@ namespace SocketJack.Net {
                         //var e = new ReceivedEventArgs<PeerRedirect>(this, Connection, redirect, Length);
 
                         if (this.Connection.IsServer) {
-                            Type redirectType = Type.GetType(redirect.Type);
+                            Type redirectType = Wrapper.GetValueType(redirect.Type);
+                            if (redirectType == null) {
+                                // Inner type cannot be resolved — forward the redirect
+                                // without invoking typed callbacks.
+                                if (Connection.Identity == null || !Peers.TryGetValue(Connection.Identity.ID, out _)) break;
+                                bool allowUntyped = true;
+                                if (allowUntyped) {
+                                    if (redirect.Recipient == "#ALL#") {
+                                        SendBroadcast(redirect, Connection);
+                                    } else if (Peers.TryGetValue(redirect.Recipient, out Identifier rIDUntyped)) {
+                                        Send(rIDUntyped, redirect);
+                                    }
+                                }
+                                break;
+                            }
                             var genericType = typeof(ReceivedEventArgs<>).MakeGenericType(redirectType);
                             var receivedEventArgs = (IReceivedEventArgs)Activator.CreateInstance(genericType);
                             if (!Peers.TryGetValue(Connection.Identity.ID, out var from)) return;

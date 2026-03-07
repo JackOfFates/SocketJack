@@ -306,9 +306,9 @@ namespace SocketJack.Serialization {
                 string PropertyTypeName = Reference.Info.PropertyType.FullName;
                 Type vType = v.GetType();
                 if (iType == typeof(PeerRedirect) && vType == typeof(Wrapper)) {
-                    PeerRedirect redirect = (PeerRedirect)v;
-                    Type redirectType = System.Type.GetType(redirect.Type);
-                    v = Unwrap(redirectType, sender);
+                    PeerRedirect redirect = (PeerRedirect)Instance;
+                    Type redirectType = ResolveTypeCached(redirect.Type);
+                    v = redirectType != null ? ((Wrapper)v).Unwrap(redirectType, sender) : ((Wrapper)v).Unwrap(sender);
                 } else if(vType == typeof(Wrapper)) {
                     Wrapper wrapper = (Wrapper)v;
                     if (wrapper.Type == null || wrapper.value == null) {

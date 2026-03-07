@@ -558,10 +558,10 @@ namespace SocketJack.Net.WebSockets {
             Send(new PeerRedirect("#ALL#", Obj));
         }
         public void SendBroadcast(NetworkConnection[] Clients, object Obj, NetworkConnection Except) {
-            throw new NotImplementedException("You can only access SendBroadcast(TcpConnection Clients, object Obj, TcpConnection Except) from WebSocketServer.");
+            throw new NotImplementedException("You can only access SendBroadcast(NetworkConnection Clients, object Obj, NetworkConnection Except) from WebSocketServer.");
         }
         public void SendBroadcast(object Obj, NetworkConnection Except) {
-            throw new NotImplementedException("You can only access SendBroadcast(object Obj, TcpConnection Except) from WebSocketServer.");
+            throw new NotImplementedException("You can only access SendBroadcast(object Obj, NetworkConnection Except) from WebSocketServer.");
         }
         public void SendSegmented(NetworkConnection Client, object Obj) {
             byte[] SerializedBytes = Options.Serializer.Serialize(new Wrapper(Obj, this));

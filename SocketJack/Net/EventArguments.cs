@@ -32,7 +32,7 @@ namespace SocketJack.Net {
             if(IsPeerRedirect) {
                 var redirect = (PeerRedirect)obj;
                 this.Obj = redirect.Value;
-                this.Type = redirect.Value.GetType();
+                this.Type = redirect.Value?.GetType();
             } else {
                 this.Obj = obj;
             }
@@ -87,7 +87,7 @@ namespace SocketJack.Net {
             if (IsPeerRedirect) {
                 var redirect = (PeerRedirect)obj;
                 this.Object = (T)redirect.Value;
-                this.Type = redirect.Value.GetType();
+                this.Type = redirect.Value?.GetType();
             } else {
                 this.Object = (T)obj;
             }
@@ -141,6 +141,20 @@ namespace SocketJack.Net {
         InternetNotAvailable,
         ObjectDisposed,
         CompressionError
+    }
+
+    /// <summary>
+    /// Identifies the wire protocol detected on a <see cref="NetworkConnection"/>.
+    /// Set automatically by <see cref="MutableTcpServer"/> after the first bytes
+    /// are inspected.
+    /// </summary>
+    public enum TcpProtocol {
+        /// <summary>Protocol has not yet been determined.</summary>
+        Unknown,
+        /// <summary>HTTP request/response protocol.</summary>
+        Http,
+        /// <summary>SocketJack length-prefixed framed protocol.</summary>
+        SocketJack
     }
 
     public class ConnectedEventArgs {

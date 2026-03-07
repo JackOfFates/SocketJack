@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/Tests/TestControls/MultiTest.xaml.vb
+/.gitignore
+/Tests/TestControls/MultiTest.xaml

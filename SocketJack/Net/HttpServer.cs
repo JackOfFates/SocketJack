@@ -69,6 +69,8 @@ namespace SocketJack.Net {
         /// </summary>
         private readonly ConcurrentDictionary<Guid, UploadStream> _activeUploadConnections = new ConcurrentDictionary<Guid, UploadStream>();
 
+        private readonly Dictionary<string, string> _directoryMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         private readonly Dictionary<string, RtmpPublishHandler> _rtmpPublishRoutes = new Dictionary<string, RtmpPublishHandler>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
@@ -85,6 +87,15 @@ namespace SocketJack.Net {
         /// disable the built-in robots.txt route. Defaults to a permissive policy.
         /// </summary>
         public string Robots { get; set; } = "User-agent: *\nAllow: /\n";
+
+        /// <summary>
+        /// When <see langword="true"/>, mapped directories that contain no
+        /// <c>index.html</c> / <c>index.htm</c> will return an auto-generated
+        /// HTML listing of their contents. Defaults to <see langword="false"/>.
+        /// A <c>.htaccess</c> file inside the directory can override this
+        /// per-directory with <c>Options +Indexes</c> or <c>Options -Indexes</c>.
+        /// </summary>
+        public bool AllowDirectoryListing { get; set; } = false;
 
         public void Map(string method, string path, RouteHandler handler) {
             if (string.IsNullOrWhiteSpace(method))
@@ -196,6 +207,272 @@ namespace SocketJack.Net {
             return _rtmpPublishRoutes.Remove(app);
         }
 
+        /// <summary>
+        /// Maps a local directory to a URL prefix so that files inside the directory are
+        /// served when a GET (or HEAD) request matches. For example,
+        /// <c>MapDirectory("/static", @"C:\wwwroot")</c> serves <c>C:\wwwroot\style.css</c>
+        /// when the client requests <c>/static/style.css</c>.
+        /// If <paramref name="urlPrefix"/> is <c>"/"</c>, the directory is served at the root.
+        /// </summary>
+        /// <param name="urlPrefix">The URL path prefix (e.g., <c>"/static"</c>).</param>
+        /// <param name="localDirectory">The absolute or relative path to the local directory.</param>
+        public void MapDirectory(string urlPrefix, string localDirectory) {
+            if (string.IsNullOrWhiteSpace(urlPrefix))
+                throw new ArgumentException("URL prefix is required.", nameof(urlPrefix));
+            if (string.IsNullOrWhiteSpace(localDirectory))
+                throw new ArgumentException("Local directory is required.", nameof(localDirectory));
+            if (!Directory.Exists(localDirectory))
+                throw new DirectoryNotFoundException("Directory not found: " + localDirectory);
+
+            var normalized = urlPrefix.TrimEnd('/');
+            if (string.IsNullOrEmpty(normalized))
+                normalized = "/";
+            _directoryMappings[normalized] = Path.GetFullPath(localDirectory);
+        }
+
+        /// <summary>
+        /// Maps a local directory to a URL prefix and configures a <c>.htaccess</c> file
+        /// using the fluent <see cref="HtAccessBuilder"/> API for directory-level security.
+        /// </summary>
+        /// <param name="urlPrefix">The URL path prefix (e.g., <c>"/secure"</c>).</param>
+        /// <param name="localDirectory">The absolute or relative path to the local directory.</param>
+        /// <param name="configure">A delegate that configures the <see cref="HtAccessBuilder"/>.</param>
+        public void MapDirectory(string urlPrefix, string localDirectory, Action<HtAccessBuilder> configure) {
+            MapDirectory(urlPrefix, localDirectory);
+            if (configure != null) {
+                var builder = new HtAccessBuilder();
+                configure(builder);
+                builder.WriteTo(Path.GetFullPath(localDirectory));
+            }
+        }
+
+        /// <summary>
+        /// Removes a previously mapped directory route.
+        /// </summary>
+        public bool RemoveDirectoryMapping(string urlPrefix) {
+            var normalized = urlPrefix.TrimEnd('/');
+            if (string.IsNullOrEmpty(normalized))
+                normalized = "/";
+            return _directoryMappings.Remove(normalized);
+        }
+
+        private bool TryResolveDirectoryFile(string method, string path, out byte[] fileBytes, out string contentType, out HtAccessResult accessResult, out string authRealm, out Dictionary<string, string> extraHeaders) {
+            fileBytes = null;
+            contentType = null;
+            accessResult = HtAccessResult.Allowed;
+            authRealm = null;
+            extraHeaders = null;
+
+            if (_directoryMappings.Count == 0)
+                return false;
+
+            if (method == null || !(method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            if (string.IsNullOrEmpty(path))
+                return false;
+
+            // Block .htaccess from ever being served to clients.
+            var fileName = path.Substring(path.LastIndexOf('/') + 1);
+            if (fileName.Equals(".htaccess", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            foreach (var kv in _directoryMappings) {
+                var prefix = kv.Key;
+                var localDir = kv.Value;
+
+                string relativePath = null;
+                if (prefix == "/") {
+                    relativePath = path;
+                } else if (path.Equals(prefix, StringComparison.OrdinalIgnoreCase)) {
+                    // Exact match on prefix with no trailing path — try index files
+                    relativePath = "/";
+                } else if (path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase)) {
+                    relativePath = path.Substring(prefix.Length);
+                }
+
+                if (relativePath == null)
+                    continue;
+
+                // Convert URL slashes to OS path separators and strip leading slash
+                var localRelative = relativePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                var fullPath = string.IsNullOrEmpty(localRelative)
+                    ? localDir
+                    : Path.Combine(localDir, localRelative);
+                fullPath = Path.GetFullPath(fullPath);
+
+                // Security: ensure the resolved path is still within the mapped directory
+                if (!fullPath.StartsWith(localDir, StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                // Evaluate .htaccess access rules before serving any content.
+                string resolvedFileName = Path.GetFileName(fullPath);
+                string htDir = Directory.Exists(fullPath) ? fullPath : Path.GetDirectoryName(fullPath);
+                accessResult = HtAccessEvaluator.Evaluate(htDir, resolvedFileName, null, null, out authRealm, out extraHeaders);
+                if (accessResult != HtAccessResult.Allowed)
+                    return true;
+
+                // If path points to a directory, try common index files
+                if (Directory.Exists(fullPath)) {
+                    var indexHtml = Path.Combine(fullPath, "index.html");
+                    var indexHtm = Path.Combine(fullPath, "index.htm");
+                    if (File.Exists(indexHtml))
+                        fullPath = indexHtml;
+                    else if (File.Exists(indexHtm))
+                        fullPath = indexHtm;
+                    else {
+                        // Check if directory listing is allowed.
+                        if (IsDirectoryListingAllowed(fullPath)) {
+                            fileBytes = Encoding.UTF8.GetBytes(GenerateDirectoryListing(fullPath, path));
+                            contentType = "text/html";
+                            return true;
+                        }
+                        continue;
+                    }
+                }
+
+                if (!File.Exists(fullPath))
+                    continue;
+
+                // Block .htaccess at the file level as well.
+                if (Path.GetFileName(fullPath).Equals(".htaccess", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                fileBytes = File.ReadAllBytes(fullPath);
+                contentType = GetMimeType(Path.GetExtension(fullPath));
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether directory listing is allowed for the given local
+        /// directory. Checks for a <c>.htaccess</c> file first; if it contains
+        /// <c>Options +Indexes</c> listing is allowed, <c>Options -Indexes</c>
+        /// denies it. Falls back to <see cref="AllowDirectoryListing"/>.
+        /// </summary>
+        private bool IsDirectoryListingAllowed(string localDirectory) {
+            try {
+                var htaccess = Path.Combine(localDirectory, ".htaccess");
+                if (File.Exists(htaccess)) {
+                    var lines = File.ReadAllLines(htaccess);
+                    for (int i = lines.Length - 1; i >= 0; i--) {
+                        var line = lines[i].Trim();
+                        if (line.StartsWith("#") || line.Length == 0) continue;
+                        if (line.StartsWith("Options", StringComparison.OrdinalIgnoreCase)) {
+                            if (line.IndexOf("+Indexes", StringComparison.OrdinalIgnoreCase) >= 0)
+                                return true;
+                            if (line.IndexOf("-Indexes", StringComparison.OrdinalIgnoreCase) >= 0)
+                                return false;
+                        }
+                    }
+                }
+            } catch { }
+            return AllowDirectoryListing;
+        }
+
+        /// <summary>
+        /// Generates an HTML page listing the contents of a directory.
+        /// </summary>
+        private static string GenerateDirectoryListing(string localDirectory, string urlPath) {
+            var sb = new StringBuilder();
+            sb.Append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">");
+            sb.Append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+            sb.Append("<title>Index of " + System.Net.WebUtility.HtmlEncode(urlPath) + "</title>");
+            sb.Append("<style>");
+            sb.Append("*{margin:0;padding:0;box-sizing:border-box}");
+            sb.Append("body{font-family:'Segoe UI',system-ui,sans-serif;background:#111;color:#e8e8e8;padding:2rem}");
+            sb.Append("h1{font-weight:300;margin-bottom:1rem;color:#0078d4}");
+            sb.Append("table{width:100%;border-collapse:collapse}");
+            sb.Append("th,td{text-align:left;padding:.5rem .75rem;border-bottom:1px solid rgba(255,255,255,.08)}");
+            sb.Append("th{color:#888;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em}");
+            sb.Append("a{color:#0078d4;text-decoration:none}a:hover{text-decoration:underline}");
+            sb.Append("tr:hover{background:rgba(0,120,212,.06)}");
+            sb.Append(".size{color:#888;font-variant-numeric:tabular-nums}");
+            sb.Append(".date{color:#888}");
+            sb.Append("</style></head><body>");
+            sb.Append("<h1>Index of " + System.Net.WebUtility.HtmlEncode(urlPath) + "</h1>");
+            sb.Append("<table><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody>");
+
+            // Parent directory link
+            if (urlPath != "/" && urlPath.Length > 1) {
+                var parent = urlPath.TrimEnd('/');
+                var lastSlash = parent.LastIndexOf('/');
+                parent = lastSlash > 0 ? parent.Substring(0, lastSlash) : "/";
+                sb.Append("<tr><td><a href=\"" + parent + "\">⬆ ..</a></td><td></td><td></td></tr>");
+            }
+
+            try {
+                // Directories first
+                foreach (var dir in Directory.GetDirectories(localDirectory)) {
+                    var name = Path.GetFileName(dir);
+                    var info = new DirectoryInfo(dir);
+                    var href = urlPath.TrimEnd('/') + "/" + Uri.EscapeDataString(name) + "/";
+                    sb.Append("<tr><td><a href=\"" + href + "\">📁 " + System.Net.WebUtility.HtmlEncode(name) + "/</a></td>");
+                    sb.Append("<td class=\"size\">—</td>");
+                    sb.Append("<td class=\"date\">" + info.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "</td></tr>");
+                }
+                // Files (skip .htaccess)
+                foreach (var file in Directory.GetFiles(localDirectory)) {
+                    var name = Path.GetFileName(file);
+                    if (name.Equals(".htaccess", StringComparison.OrdinalIgnoreCase)) continue;
+                    var info = new FileInfo(file);
+                    var href = urlPath.TrimEnd('/') + "/" + Uri.EscapeDataString(name);
+                    sb.Append("<tr><td><a href=\"" + href + "\">" + System.Net.WebUtility.HtmlEncode(name) + "</a></td>");
+                    sb.Append("<td class=\"size\">" + FormatFileSize(info.Length) + "</td>");
+                    sb.Append("<td class=\"date\">" + info.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "</td></tr>");
+                }
+            } catch { }
+
+            sb.Append("</tbody></table></body></html>");
+            return sb.ToString();
+        }
+
+        private static string FormatFileSize(long bytes) {
+            if (bytes < 1024) return bytes + " B";
+            if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("N1") + " KB";
+            if (bytes < 1024 * 1024 * 1024L) return (bytes / (1024.0 * 1024)).ToString("N1") + " MB";
+            return (bytes / (1024.0 * 1024 * 1024)).ToString("N2") + " GB";
+        }
+
+        private static string GetMimeType(string extension) {
+            if (string.IsNullOrEmpty(extension))
+                return "application/octet-stream";
+            switch (extension.ToLowerInvariant()) {
+                case ".html":
+                case ".htm":  return "text/html";
+                case ".css":  return "text/css";
+                case ".js":   return "application/javascript";
+                case ".json": return "application/json";
+                case ".xml":  return "application/xml";
+                case ".txt":  return "text/plain";
+                case ".csv":  return "text/csv";
+                case ".svg":  return "image/svg+xml";
+                case ".png":  return "image/png";
+                case ".jpg":
+                case ".jpeg": return "image/jpeg";
+                case ".gif":  return "image/gif";
+                case ".ico":  return "image/x-icon";
+                case ".webp": return "image/webp";
+                case ".bmp":  return "image/bmp";
+                case ".woff": return "font/woff";
+                case ".woff2":return "font/woff2";
+                case ".ttf":  return "font/ttf";
+                case ".otf":  return "font/otf";
+                case ".eot":  return "application/vnd.ms-fontobject";
+                case ".pdf":  return "application/pdf";
+                case ".zip":  return "application/zip";
+                case ".mp3":  return "audio/mpeg";
+                case ".mp4":  return "video/mp4";
+                case ".webm": return "video/webm";
+                case ".ogg":  return "audio/ogg";
+                case ".wav":  return "audio/wav";
+                case ".wasm": return "application/wasm";
+                default:       return "application/octet-stream";
+            }
+        }
+
         private object ResolveRouteObject(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
             if (request == null)
                 return null;
@@ -297,9 +574,35 @@ namespace SocketJack.Net {
             var q = path.IndexOf('?');
             if (q >= 0)
                 path = path.Substring(0, q);
+            // URL-decode the path portion so percent-encoded segments
+            // (e.g. %20, %2B) match the plain-text route registration.
+            try { path = Uri.UnescapeDataString(path); } catch { }
             if (path.Length > 1 && path[path.Length - 1] == '/')
                 path = path.Substring(0, path.Length - 1);
             return path;
+        }
+
+        /// <summary>
+        /// Returns <see langword="true"/> when the request body appears to be fully
+        /// available in <see cref="HttpRequest.BodyBytes"/> (as opposed to a streaming
+        /// upload that arrives over multiple reads).
+        /// </summary>
+        private static bool IsBodyComplete(HttpRequest request) {
+            if (request.Headers != null
+                && request.Headers.TryGetValue("Content-Length", out var clStr)
+                && long.TryParse(clStr, out var cl)
+                && cl > 0) {
+                return request.BodyBytes != null && request.BodyBytes.Length >= cl;
+            }
+            // Chunked transfer encoding = streaming, not complete.
+            if (request.Headers != null
+                && request.Headers.TryGetValue("Transfer-Encoding", out var te)
+                && te != null
+                && te.IndexOf("chunked", StringComparison.OrdinalIgnoreCase) >= 0) {
+                return false;
+            }
+            // No Content-Length and not chunked — body is whatever was received.
+            return true;
         }
 
         /// <summary>
@@ -385,7 +688,7 @@ namespace SocketJack.Net {
             }
         }
 
-        private void InvokeCallbacks(IReceivedEventArgs e) {
+        internal void InvokeCallbacks(IReceivedEventArgs e) {
             if (e == null || e.Obj == null) return;
             var t = e.Obj.GetType();
             if (TypeCallbacks.ContainsKey(t)) {
@@ -537,26 +840,49 @@ namespace SocketJack.Net {
                 // Check for upload-stream routes (e.g., OBS video ingest over HTTP POST)
                 var uploadHandler = ResolveUploadStreamRoute(request);
                 if (uploadHandler != null) {
-                    var upload = new UploadStream(e.Connection);
-                    _activeUploadConnections.TryAdd(e.Connection.ID, upload);
-
-                    // Queue initial body data if present in the first read
-                    if (request.BodyBytes != null && request.BodyBytes.Length > 0) {
-                        upload.Enqueue(request.BodyBytes);
+                    // When a regular Map route also exists for the same method+path,
+                    // prefer it if the request body is already fully available (i.e.,
+                    // a normal form POST rather than a streaming upload).
+                    bool preferRegularRoute = false;
+                    if (_routes.Count > 0) {
+                        var np = NormalizePath(request.Path);
+                        if (request.Method != null && np != null
+                            && _routes.TryGetValue(request.Method, out var routeByPath)
+                            && routeByPath.ContainsKey(np)) {
+                            preferRegularRoute = IsBodyComplete(request);
+                        }
                     }
 
-                    var connId = e.Connection.ID;
-                    var conn = e.Connection;
-                    Task.Run(() => {
-                        try {
-                            uploadHandler(conn, request, upload, ct);
-                        } catch {
-                        } finally {
-                            upload.Complete();
-                            _activeUploadConnections.TryRemove(connId, out _);
+                    if (!preferRegularRoute) {
+                        var upload = new UploadStream(e.Connection);
+                        _activeUploadConnections.TryAdd(e.Connection.ID, upload);
+
+                        // Queue initial body data if present in the first read
+                        if (request.BodyBytes != null && request.BodyBytes.Length > 0) {
+                            upload.Enqueue(request.BodyBytes);
                         }
-                    });
-                    return;
+
+                        // If the full body was already received in the initial request,
+                        // complete the upload stream so the handler's ReadAsync loop
+                        // terminates instead of blocking forever waiting for data.
+                        if (IsBodyComplete(request)) {
+                            upload.Complete();
+                            _activeUploadConnections.TryRemove(e.Connection.ID, out _);
+                        }
+
+                        var connId = e.Connection.ID;
+                        var conn = e.Connection;
+                        Task.Run(() => {
+                            try {
+                                uploadHandler(conn, request, upload, ct);
+                            } catch {
+                            } finally {
+                                upload.Complete();
+                                _activeUploadConnections.TryRemove(connId, out _);
+                            }
+                        });
+                        return;
+                    }
                 }
 
                 var handledByRoute = false;
@@ -581,6 +907,39 @@ namespace SocketJack.Net {
                             // SocketJack returns wrapped object payloads as binary;
                             // mark them as json so our HttpClient will attempt to deserialize.
                             context.Response.ContentType = "application/json";
+                        }
+                    }
+                }
+
+                // Check mapped directories for static file serving
+                if (!handledByRoute) {
+                    var normalizedPath = NormalizePath(request.Path);
+                    if (TryResolveDirectoryFile(request.Method, normalizedPath, out var fileBytes, out var fileMime, out var htAccessResult, out var htAuthRealm, out var htExtraHeaders)) {
+                        if (htAccessResult == HtAccessResult.Denied) {
+                            context.StatusCodeNumber = 403;
+                            context.ReasonPhrase = "Forbidden";
+                            context.Response.Body = "403 Forbidden";
+                            context.Response.ContentType = "text/plain";
+                            handledByRoute = true;
+                        } else if (htAccessResult == HtAccessResult.AuthRequired) {
+                            context.StatusCodeNumber = 401;
+                            context.ReasonPhrase = "Unauthorized";
+                            context.Response.Body = "401 Unauthorized";
+                            context.Response.ContentType = "text/plain";
+                            if (context.Response.Headers == null)
+                                context.Response.Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            context.Response.Headers["WWW-Authenticate"] = "Basic realm=\"" + (htAuthRealm ?? "Restricted") + "\"";
+                            handledByRoute = true;
+                        } else {
+                            handledByRoute = true;
+                            context.Response.BodyBytes = fileBytes;
+                            context.Response.ContentType = fileMime;
+                        }
+                        if (htExtraHeaders != null && htExtraHeaders.Count > 0) {
+                            if (context.Response.Headers == null)
+                                context.Response.Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var kv in htExtraHeaders)
+                                context.Response.Headers[kv.Key] = kv.Value;
                         }
                     }
                 }
@@ -709,6 +1068,16 @@ namespace SocketJack.Net {
                 request.Path = parts[1];
                 request.Version = parts.Length > 2 ? parts[2] : "HTTP/1.1";
 
+                // Separate query string from path so route matching works with
+                // URL-encoded parameters and handlers can access them via
+                // request.QueryString / request.QueryParameters.
+                var qIdx = request.Path.IndexOf('?');
+                if (qIdx >= 0) {
+                    request.QueryString = request.Path.Substring(qIdx + 1);
+                    request.Path = request.Path.Substring(0, qIdx);
+                    ParseQueryParameters(request);
+                }
+
                 string line;
                 while (!string.IsNullOrEmpty(line = reader.ReadLine())) {
                     var separatorIndex = line.IndexOf(':');
@@ -768,6 +1137,23 @@ namespace SocketJack.Net {
 
                 request.SetBody(body);
                 return request;
+            }
+        }
+
+        private static void ParseQueryParameters(HttpRequest request) {
+            if (string.IsNullOrEmpty(request.QueryString)) return;
+            foreach (var pair in request.QueryString.Split('&')) {
+                if (string.IsNullOrEmpty(pair)) continue;
+                var eqIdx = pair.IndexOf('=');
+                string key, value;
+                if (eqIdx >= 0) {
+                    key = Uri.UnescapeDataString(pair.Substring(0, eqIdx).Replace('+', ' '));
+                    value = Uri.UnescapeDataString(pair.Substring(eqIdx + 1).Replace('+', ' '));
+                } else {
+                    key = Uri.UnescapeDataString(pair.Replace('+', ' '));
+                    value = "";
+                }
+                request.QueryParameters[key] = value;
             }
         }
     }
@@ -840,6 +1226,16 @@ namespace SocketJack.Net {
         public string Method { get; set; }
         public string Path { get; set; }
         public string Version { get; set; }
+        /// <summary>
+        /// The raw query string from the request URL (everything after the <c>?</c>),
+        /// or <see langword="null"/> if no query string was present.
+        /// </summary>
+        public string QueryString { get; set; }
+        /// <summary>
+        /// URL-decoded key/value pairs parsed from the query string.
+        /// Both <c>%XX</c> and <c>+</c> (as space) encodings are handled.
+        /// </summary>
+        public Dictionary<string, string> QueryParameters { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public long ContentLength {
             get {
@@ -923,6 +1319,26 @@ namespace SocketJack.Net {
             }
         }
 
+        /// <summary>
+        /// Builds the full HTTP status line (e.g. <c>HTTP/1.1 200 OK</c>),
+        /// always falling back to <c>HTTP/1.1 200 OK</c> when any component is
+        /// missing or empty.
+        /// </summary>
+        internal string StatusLine {
+            get {
+                var version = string.IsNullOrWhiteSpace(Version) ? "HTTP/1.1" : Version;
+                string statusCode;
+                if (Context != null) {
+                    statusCode = Context.StatusCode;
+                    if (string.IsNullOrWhiteSpace(statusCode))
+                        statusCode = "200 OK";
+                } else {
+                    statusCode = "200 OK";
+                }
+                return version + " " + statusCode;
+            }
+        }
+
         internal void EnsureBodyBytes() {
             if (_BodyBytes == null) {
                 if (_Body == null)
@@ -935,7 +1351,7 @@ namespace SocketJack.Net {
         public override string ToString() {
             EnsureBodyBytes();
             var sb = new StringBuilder();
-            sb.Append((Version ?? "HTTP/1.1") + " " + Context.StatusCode + "\r\n");
+            sb.Append(StatusLine + "\r\n");
             if (!Headers.ContainsKey("Content-Type"))
                 sb.Append("Content-Type: " + (ContentType ?? Context.ContentType) + "\r\n");
             foreach (var h in Headers) {
@@ -957,7 +1373,7 @@ namespace SocketJack.Net {
             EnsureBodyBytes();
             // Build header bytes and append raw body bytes (binary-safe)
             var headerSb = new StringBuilder();
-            headerSb.Append((Version ?? "HTTP/1.1") + " " + Context.StatusCode + "\r\n");
+            headerSb.Append(StatusLine + "\r\n");
             if (!Headers.ContainsKey("Content-Type"))
                 headerSb.Append("Content-Type: " + (ContentType ?? Context.ContentType) + "\r\n");
             foreach (var h in Headers) {
@@ -979,7 +1395,7 @@ namespace SocketJack.Net {
         public (byte[] header, byte[] body) ToBytesWithHeader() {
             EnsureBodyBytes();
             var headerSb = new StringBuilder();
-            headerSb.Append((Version ?? "HTTP/1.1") + " " + Context.StatusCode + "\r\n");
+            headerSb.Append(StatusLine + "\r\n");
             if (!Headers.ContainsKey("Content-Type"))
                 headerSb.Append("Content-Type: " + (ContentType ?? Context.ContentType) + "\r\n");
             foreach (var h in Headers) {
@@ -1003,7 +1419,7 @@ namespace SocketJack.Net {
             if (chunkSize <= 0) chunkSize = 4096;
 
             var headerSb = new StringBuilder();
-            headerSb.Append((Version ?? "HTTP/1.1") + " " + Context.StatusCode + "\r\n");
+            headerSb.Append(StatusLine + "\r\n");
             if (!Headers.ContainsKey("Content-Type"))
                 headerSb.Append("Content-Type: " + (ContentType ?? Context.ContentType) + "\r\n");
             foreach (var h in Headers) {
@@ -1100,7 +1516,7 @@ namespace SocketJack.Net {
             _headerSent = true;
 
             var sb = new StringBuilder();
-            sb.Append((_response.Version ?? "HTTP/1.1") + " " + _response.Context.StatusCode + "\r\n");
+            sb.Append(_response.StatusLine + "\r\n");
             if (!_response.Headers.ContainsKey("Content-Type"))
                 sb.Append("Content-Type: " + (_response.ContentType ?? _response.Context.ContentType) + "\r\n");
             foreach (var h in _response.Headers) {

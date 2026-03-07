@@ -227,9 +227,323 @@
             <para>LocalSocketClosed can be due to connection timeout.</para>
             </summary>
         </member>
+        <member name="T:SocketJack.Net.TcpProtocol">
+            <summary>
+            Identifies the wire protocol detected on a <see cref="T:SocketJack.Net.NetworkConnection"/>.
+            Set automatically by <see cref="T:SocketJack.Net.MutableTcpServer"/> after the first bytes
+            are inspected.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.TcpProtocol.Unknown">
+            <summary>Protocol has not yet been determined.</summary>
+        </member>
+        <member name="F:SocketJack.Net.TcpProtocol.Http">
+            <summary>HTTP request/response protocol.</summary>
+        </member>
+        <member name="F:SocketJack.Net.TcpProtocol.SocketJack">
+            <summary>SocketJack length-prefixed framed protocol.</summary>
+        </member>
+        <member name="T:SocketJack.Net.HtAccessResult">
+            <summary>
+            Result of evaluating <c>.htaccess</c> rules against an incoming request.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.HtAccessResult.Allowed">
+            <summary>Access is allowed.</summary>
+        </member>
+        <member name="F:SocketJack.Net.HtAccessResult.Denied">
+            <summary>Access is denied (403 Forbidden).</summary>
+        </member>
+        <member name="F:SocketJack.Net.HtAccessResult.AuthRequired">
+            <summary>Authentication is required (401 Unauthorized).</summary>
+        </member>
+        <member name="T:SocketJack.Net.HtAccessBuilder">
+            <summary>
+            Fluent builder for generating <c>.htaccess</c> files that control directory
+            security and access when used with <see cref="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String)"/> or
+            <see cref="M:SocketJack.Net.HttpProtocolHandler.MapDirectory(System.String,System.String)"/>.
+            <para>
+            Example usage:
+            <code>
+            server.Http.MapDirectory("/Update", updateDir, htaccess =&gt; {
+                htaccess
+                    .DenyDirectoryListing()
+                    .AllowFrom("192.168.1.0/24")
+                    .DenyFiles("*.log", "*.bak")
+                    .RequireBasicAuth("Admin Area", "admin", "secret");
+            });
+            </code>
+            </para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.DenyDirectoryListing">
+            <summary>Disables auto-generated directory listings (<c>Options -Indexes</c>).</summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.AllowDirectoryListing">
+            <summary>Enables auto-generated directory listings (<c>Options +Indexes</c>).</summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.DenyAll">
+            <summary>Denies all access to the directory (<c>Require all denied</c>).</summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.AllowAll">
+            <summary>Grants access to all clients (<c>Require all granted</c>).</summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.AllowFrom(System.String[])">
+            <summary>
+            Allows access from the specified IP addresses or CIDR ranges.
+            <para>Example: <c>.AllowFrom("192.168.1.0/24", "10.0.0.1")</c></para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.DenyFrom(System.String[])">
+            <summary>
+            Denies access from the specified IP addresses or CIDR ranges.
+            <para>Example: <c>.DenyFrom("10.0.0.5")</c></para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.Order(System.String)">
+            <summary>
+            Sets the evaluation order for Allow/Deny rules.
+            <c>"deny,allow"</c> = deny first, then allow overrides (default).
+            <c>"allow,deny"</c> = allow first, then deny overrides.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.RequireBasicAuth(System.String,System.String[])">
+            <summary>
+            Requires HTTP Basic authentication with the given realm and credentials.
+            Credentials are stored as <c># AuthCredential user:password</c> comment
+            directives inside the <c>.htaccess</c> file.
+            </summary>
+            <param name="realm">The authentication realm displayed to the user.</param>
+            <param name="credentials">
+            One or more username/password pairs as <c>"user:password"</c> strings.
+            </param>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.DenyFiles(System.String[])">
+            <summary>
+            Denies access to files matching the given glob patterns.
+            <para>Example: <c>.DenyFiles("*.log", "*.bak", ".env")</c></para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.AllowOnlyFiles(System.String[])">
+            <summary>
+            Restricts access to only the specified file patterns; all others are denied.
+            <para>Example: <c>.AllowOnlyFiles("*.html", "*.css", "*.js")</c></para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.AddHeader(System.String,System.String)">
+            <summary>
+            Adds a response header for all files served from this directory.
+            <para>Example: <c>.AddHeader("X-Frame-Options", "DENY")</c></para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.AddDirective(System.String)">
+            <summary>
+            Appends a raw directive line to the <c>.htaccess</c> file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.AddComment(System.String)">
+            <summary>
+            Appends a comment line to the <c>.htaccess</c> file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.Build">
+            <summary>
+            Builds the <c>.htaccess</c> content as a string.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessBuilder.WriteTo(System.String)">
+            <summary>
+            Writes the generated <c>.htaccess</c> file to the specified directory.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HtAccessEvaluator">
+            <summary>
+            Evaluates <c>.htaccess</c> rules against incoming HTTP requests.
+            Used internally by <see cref="T:SocketJack.Net.HttpServer"/> and <see cref="T:SocketJack.Net.HttpProtocolHandler"/>
+            to enforce directory-level access control.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HtAccessEvaluator.HtAccessRules">
+            <summary>
+            Parsed representation of an <c>.htaccess</c> file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HtAccessEvaluator.Evaluate(System.String,System.String,System.String,System.String,System.String@,System.Collections.Generic.Dictionary{System.String,System.String}@)">
+            <summary>
+            Checks whether the request should be allowed based on <c>.htaccess</c> rules
+            in the given directory. Also populates <paramref name="authRealm"/> when
+            authentication is required but not provided.
+            </summary>
+            <param name="localDirectory">The local directory being accessed.</param>
+            <param name="fileName">The file name being requested (for FilesMatch rules), or null for directory access.</param>
+            <param name="clientIp">The connecting client's IP address.</param>
+            <param name="authorizationHeader">The value of the <c>Authorization</c> request header, or null.</param>
+            <param name="authRealm">Set to the realm name when <see cref="F:SocketJack.Net.HtAccessResult.AuthRequired"/> is returned.</param>
+            <param name="responseHeaders">Populated with any <c>Header set</c> directives.</param>
+        </member>
         <member name="T:SocketJack.Net.HttpClient">
             <summary>
             Minimal HTTP/HTTPS client supporting headers, content-length, chunked transfer, and redirects.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpClient.RegisterProtocol(SocketJack.Net.IProtocolHandler)">
+            <summary>
+            Registers a protocol handler used for detecting response formats.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpClient.RemoveProtocol(SocketJack.Net.IProtocolHandler)">
+            <summary>
+            Removes a previously registered protocol handler.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HttpServer.RouteHandler`1">
+            <summary>
+            Typed route handler delegate. The request body is automatically deserialized to <typeparamref name="T"/>
+            and passed as the <paramref name="body"/> parameter.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HttpServer.StreamRouteHandler">
+            <summary>
+            Delegate for streaming routes. The handler receives a <see cref="T:SocketJack.Net.ChunkedStream"/>
+            that sends each <see cref="M:SocketJack.Net.ChunkedStream.WriteLine(System.String)"/> as an HTTP chunk, keeping
+            the connection open until the handler returns or calls <see cref="M:SocketJack.Net.ChunkedStream.Finish"/>.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HttpServer.UploadStreamRouteHandler">
+            <summary>
+            Delegate for upload-streaming routes. The handler receives an <see cref="T:SocketJack.Net.UploadStream"/>
+            from which it can read incoming data chunks (e.g., OBS video) as they arrive on the
+            connection. The handler runs on a background task and should return when it is done
+            consuming data or when <see cref="M:SocketJack.Net.UploadStream.ReadAsync(System.Threading.CancellationToken)"/> returns <see langword="null"/>.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HttpServer.RtmpPublishHandler">
+            <summary>
+            Delegate for RTMP publish routes. The handler receives an <see cref="T:SocketJack.Net.UploadStream"/>
+            that yields media chunks as OBS (or another RTMP encoder) publishes. Each chunk is
+            prefixed with a single byte indicating the RTMP message type (8 = audio, 9 = video,
+            18 = metadata) followed by the raw payload.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.HttpServer._activeStreamConnections">
+            <summary>
+            Tracks connections that currently have an active <see cref="M:SocketJack.Net.HttpServer.MapStream(System.String,System.String,SocketJack.Net.HttpServer.StreamRouteHandler)"/> handler running.
+            Subsequent data on these connections is raw payload (e.g., OBS video) and must not be
+            parsed as HTTP. The data still flows through <see cref="E:SocketJack.Net.NetworkBase.OnReceive"/> for
+            other subscribers to capture.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.HttpServer._activeUploadConnections">
+            <summary>
+            Tracks connections that have an active <see cref="M:SocketJack.Net.HttpServer.MapUploadStream(System.String,System.String,SocketJack.Net.HttpServer.UploadStreamRouteHandler)"/> handler running.
+            Subsequent raw data on these connections is forwarded to the corresponding
+            <see cref="T:SocketJack.Net.UploadStream"/> instead of being parsed as HTTP.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.HttpServer._activeRtmpConnections">
+            <summary>
+            Tracks connections running the RTMP protocol (e.g., OBS publishing via <c>rtmp://</c>).
+            Subsequent data on these connections is fed into the <see cref="T:SocketJack.Net.RtmpSession"/> state
+            machine instead of being parsed as HTTP.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.Robots">
+            <summary>
+            Gets or sets the content served at <c>/robots.txt</c>. Set to <see langword="null"/> to
+            disable the built-in robots.txt route. Defaults to a permissive policy.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.AllowDirectoryListing">
+            <summary>
+            When <see langword="true"/>, mapped directories that contain no
+            <c>index.html</c> / <c>index.htm</c> will return an auto-generated
+            HTML listing of their contents. Defaults to <see langword="false"/>.
+            A <c>.htaccess</c> file inside the directory can override this
+            per-directory with <c>Options +Indexes</c> or <c>Options -Indexes</c>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.Map``1(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler{``0})">
+            <summary>
+            Maps a route whose handler receives a deserialized body of type <typeparamref name="T"/>.
+            The request body is deserialized using the configured serializer before the handler is invoked.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapStream(System.String,System.String,SocketJack.Net.HttpServer.StreamRouteHandler)">
+            <summary>
+            Maps a streaming route. The handler receives a <see cref="T:SocketJack.Net.ChunkedStream"/> it can
+            write to line-by-line. The connection stays open until the handler returns.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapUploadStream(System.String,System.String,SocketJack.Net.HttpServer.UploadStreamRouteHandler)">
+            <summary>
+            Maps an upload-streaming route. When an incoming HTTP request matches, the handler
+            runs on a background task and receives an <see cref="T:SocketJack.Net.UploadStream"/> that yields
+            data chunks as they arrive (e.g., continuous OBS MPEG-TS video over HTTP POST).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapRtmpPublish(System.String,SocketJack.Net.HttpServer.RtmpPublishHandler)">
+            <summary>
+            Maps an RTMP publish route. When an OBS (or compatible) encoder connects via RTMP
+            and publishes to the given <paramref name="app"/> name, the <paramref name="handler"/>
+            runs on a background task and receives an <see cref="T:SocketJack.Net.UploadStream"/> with media data.
+            Use <c>"*"</c> as a wildcard to match any app name.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String)">
+            <summary>
+            Maps a local directory to a URL prefix so that files inside the directory are
+            served when a GET (or HEAD) request matches. For example,
+            <c>MapDirectory("/static", @"C:\wwwroot")</c> serves <c>C:\wwwroot\style.css</c>
+            when the client requests <c>/static/style.css</c>.
+            If <paramref name="urlPrefix"/> is <c>"/"</c>, the directory is served at the root.
+            </summary>
+            <param name="urlPrefix">The URL path prefix (e.g., <c>"/static"</c>).</param>
+            <param name="localDirectory">The absolute or relative path to the local directory.</param>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String,System.Action{SocketJack.Net.HtAccessBuilder})">
+            <summary>
+            Maps a local directory to a URL prefix and configures a <c>.htaccess</c> file
+            using the fluent <see cref="T:SocketJack.Net.HtAccessBuilder"/> API for directory-level security.
+            </summary>
+            <param name="urlPrefix">The URL path prefix (e.g., <c>"/secure"</c>).</param>
+            <param name="localDirectory">The absolute or relative path to the local directory.</param>
+            <param name="configure">A delegate that configures the <see cref="T:SocketJack.Net.HtAccessBuilder"/>.</param>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RemoveDirectoryMapping(System.String)">
+            <summary>
+            Removes a previously mapped directory route.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.IsDirectoryListingAllowed(System.String)">
+            <summary>
+            Determines whether directory listing is allowed for the given local
+            directory. Checks for a <c>.htaccess</c> file first; if it contains
+            <c>Options +Indexes</c> listing is allowed, <c>Options -Indexes</c>
+            denies it. Falls back to <see cref="P:SocketJack.Net.HttpServer.AllowDirectoryListing"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.GenerateDirectoryListing(System.String,System.String)">
+            <summary>
+            Generates an HTML page listing the contents of a directory.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.IsBodyComplete(SocketJack.Net.HttpRequest)">
+            <summary>
+            Returns <see langword="true"/> when the request body appears to be fully
+            available in <see cref="P:SocketJack.Net.HttpRequest.BodyBytes"/> (as opposed to a streaming
+            upload that arrives over multiple reads).
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.ChunkedThreshold">
+            <summary>
+            Minimum body size in bytes before the server switches to chunked transfer encoding.
+            Bodies smaller than this are sent with Content-Length in a single write.
+            Default is 8 KB.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.ChunkedSize">
+            <summary>
+            Size of each chunk when using chunked transfer encoding. Default is 4 KB.
             </summary>
         </member>
         <member name="M:SocketJack.Net.HttpServer.ParseHttpRequest(System.Byte[])">
@@ -238,6 +552,354 @@
             </summary>
             <param name="rawRequest">The raw HTTP request string.</param>
             <returns>HttpRequest object with parsed data.</returns>
+        </member>
+        <member name="P:SocketJack.Net.HttpRequest.QueryString">
+            <summary>
+            The raw query string from the request URL (everything after the <c>?</c>),
+            or <see langword="null"/> if no query string was present.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpRequest.QueryParameters">
+            <summary>
+            URL-decoded key/value pairs parsed from the query string.
+            Both <c>%XX</c> and <c>+</c> (as space) encodings are handled.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpResponse.StatusLine">
+            <summary>
+            Builds the full HTTP status line (e.g. <c>HTTP/1.1 200 OK</c>),
+            always falling back to <c>HTTP/1.1 200 OK</c> when any component is
+            missing or empty.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpResponse.WriteChunkedTo(System.IO.Stream,System.Int32)">
+            <summary>
+            Writes the response to <paramref name="stream"/> using HTTP/1.1 chunked transfer encoding.
+            Each line of text is sent as its own chunk so the client can render progressively.
+            For binary (non-text) bodies, falls back to fixed-size chunks.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.ChunkedStream">
+            <summary>
+            Wraps a network stream with HTTP/1.1 chunked transfer encoding.
+            Write lines or raw data; each write is sent as an individual chunk and flushed
+            immediately so the client can render progressively.
+            Call <see cref="M:SocketJack.Net.ChunkedStream.Finish"/> (or let the server call it) to send the terminating chunk.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.ChunkedStream.ContentType">
+            <summary>
+            Gets or sets the Content-Type header for the chunked response.
+            Must be set before the first call to <see cref="M:SocketJack.Net.ChunkedStream.Write(System.String)"/>,
+            <see cref="M:SocketJack.Net.ChunkedStream.WriteLine(System.String)"/>, or <see cref="M:SocketJack.Net.ChunkedStream.Write(System.Byte[],System.Int32,System.Int32)"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.WriteLine(System.String)">
+            <summary>
+            Sends a single line of text (with trailing newline) as one HTTP chunk.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.Write(System.String)">
+            <summary>
+            Sends text as one HTTP chunk without appending a newline.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.Write(System.Byte[],System.Int32,System.Int32)">
+            <summary>
+            Sends arbitrary bytes as one HTTP chunk.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.ChunkedStream.Finish">
+            <summary>
+            Sends the terminating zero-length chunk. Called automatically when the
+            stream route handler returns.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.UploadStream">
+            <summary>
+            Provides a stream-like interface for reading incoming data chunks on an HTTP
+            upload-streaming connection (e.g., OBS sending continuous MPEG-TS video via POST).
+            Data is enqueued by the server as it arrives and can be consumed asynchronously
+            by the <see cref="T:SocketJack.Net.HttpServer.UploadStreamRouteHandler"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UploadStream.Enqueue(System.Byte[])">
+            <summary>
+            Enqueues a chunk of raw data received from the network.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UploadStream.Complete">
+            <summary>
+            Marks the stream as complete. No more data will arrive.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UploadStream.IsCompleted">
+            <summary>
+            <see langword="true"/> when the stream is complete and all queued data has been consumed.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.UploadStream.Connection">
+            <summary>
+            The <see cref="T:SocketJack.Net.NetworkConnection"/> that this upload stream is associated with.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UploadStream.ReadAsync(System.Threading.CancellationToken)">
+            <summary>
+            Asynchronously reads the next chunk of data.
+            Returns <see langword="null"/> when the stream is complete or the connection is closed.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.UploadStream.TryRead(System.Byte[]@,System.Int32)">
+            <summary>
+            Tries to read the next chunk of data synchronously.
+            Returns <see langword="false"/> when no data is available within the timeout
+            or the stream is complete.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.IProtocolHandler">
+            <summary>
+            Defines a protocol handler that can detect and process incoming data
+            on a <see cref="T:SocketJack.Net.MutableTcpServer"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.IProtocolHandler.Name">
+            <summary>
+            Display name used for logging.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.IProtocolHandler.CanHandle(System.Byte[])">
+            <summary>
+            Inspects the first bytes received on a connection to determine
+            whether this handler can process the data.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.IProtocolHandler.ProcessReceive(SocketJack.Net.MutableTcpServer,SocketJack.Net.NetworkConnection,SocketJack.Net.IReceivedEventArgs@)">
+            <summary>
+            Processes incoming data for a connection assigned to this handler.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.IProtocolHandler.OnDisconnected(SocketJack.Net.MutableTcpServer,SocketJack.Net.NetworkConnection)">
+            <summary>
+            Called when a connection assigned to this handler disconnects.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.MutableTcpServer">
+            <summary>
+            A TCP server that detects the incoming byte format (e.g. HTTP request vs
+            SocketJack-framed JSON) and routes each connection to the appropriate
+            <see cref="T:SocketJack.Net.IProtocolHandler"/>. This allows a single listening port to serve
+            multiple protocols simultaneously.
+            <para>
+            By default a <see cref="T:SocketJack.Net.SocketJackProtocolHandler"/> and an
+            <see cref="T:SocketJack.Net.HttpProtocolHandler"/> are registered. Additional handlers can be
+            added via <see cref="M:SocketJack.Net.MutableTcpServer.RegisterProtocol(SocketJack.Net.IProtocolHandler)"/>; they are evaluated in registration
+            order, with built-in handlers checked last.
+            </para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.#ctor(System.Int32,System.String)">
+            <summary>
+            Initializes a new <see cref="T:SocketJack.Net.MutableTcpServer"/> that listens on the given port.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.#ctor(SocketJack.Net.NetworkOptions,System.Int32,System.String)">
+            <summary>
+            Initializes a new <see cref="T:SocketJack.Net.MutableTcpServer"/> with explicit options.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.RegisterProtocol(SocketJack.Net.IProtocolHandler)">
+            <summary>
+            Registers a custom protocol handler. Custom handlers are evaluated before
+            the built-in HTTP and SocketJack handlers.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.RemoveProtocol(SocketJack.Net.IProtocolHandler)">
+            <summary>
+            Removes a previously registered custom protocol handler.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.MutableTcpServer.Http">
+            <summary>
+            Returns the built-in <see cref="T:SocketJack.Net.HttpProtocolHandler"/> for configuring HTTP
+            routes, directory mappings, and other HTTP-specific settings.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.MutableTcpServer.SocketJack">
+            <summary>
+            Returns the built-in <see cref="T:SocketJack.Net.SocketJackProtocolHandler"/> for reference.
+            SocketJack-protocol connections are also handled through the normal
+            <see cref="E:SocketJack.Net.NetworkBase.OnReceive"/> event and registered callbacks.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.MutableTcpServer.SocketJackClientConnected">
+            <summary>
+            Raised when a connection's first data is identified as SocketJack protocol.
+            Use this instead of <see cref="E:SocketJack.Net.TcpServer.ClientConnected"/> when you need
+            to send SocketJack-framed objects only to SocketJack clients (not HTTP).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.SyncPeer(SocketJack.Net.NetworkConnection)">
+            <summary>
+            Overrides peer synchronization so that only connections confirmed as
+            SocketJack receive broadcast peer updates.  Without this filter,
+            <see cref="M:SocketJack.Extensions.ConnectedClientExtensions.SendBroadcast(System.Collections.Concurrent.ConcurrentDictionary{System.Guid,SocketJack.Net.NetworkConnection},System.Object,SocketJack.Net.NetworkConnection)"/> pushes
+            SocketJack-framed bytes into every connection's send queue —
+            including HTTP connections — corrupting their response stream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.SendBroadcast(System.Object)">
+            <inheritdoc />
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.SendBroadcast(System.Object,SocketJack.Net.NetworkConnection)">
+            <inheritdoc />
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.SendBroadcast(SocketJack.Net.NetworkConnection[],System.Object,SocketJack.Net.NetworkConnection)">
+            <inheritdoc />
+        </member>
+        <member name="T:SocketJack.Net.MutableTcpServer.RtmpDelegateHandler">
+            <summary>
+            Lightweight handler that delegates RTMP connections to the base
+            <see cref="M:SocketJack.Net.HttpServer.GetRequestAsync(SocketJack.Net.IReceivedEventArgs@)"/> method, which contains
+            the full RTMP handshake, session, and publish-route pipeline.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.SocketJackProtocolHandler">
+            <summary>
+            Detects and processes SocketJack length-prefixed framed messages.
+            When <see cref="T:SocketJack.Net.MutableTcpServer"/> receives raw bytes that begin with a
+            15-byte padded length header, this handler extracts the payload, deserializes
+            it through the SocketJack serializer, and dispatches it through the normal
+            <see cref="M:SocketJack.Net.NetworkBase.HandleReceive(SocketJack.Net.NetworkConnection,System.Object,System.Type,System.Int32)"/> pipeline.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.SocketJackProtocolHandler._buffers">
+            <summary>
+            Per-connection buffer for accumulating partial SocketJack frames.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.SocketJackProtocolHandler.CanHandle(System.Byte[])">
+            <summary>
+            Returns <see langword="true"/> if <paramref name="data"/> starts with a
+            15-byte NUL-padded numeric length header (the SocketJack framing format).
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HttpProtocolHandler">
+            <summary>
+            Detects and processes HTTP requests. Provides the same route-mapping API
+            surface as <see cref="T:SocketJack.Net.HttpServer"/> (Map, MapStream, MapUploadStream,
+            MapDirectory) but runs inside a <see cref="T:SocketJack.Net.MutableTcpServer"/>.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.HttpProtocolHandler.RouteHandler">
+            <inheritdoc cref="T:SocketJack.Net.HttpServer.RouteHandler"/>
+        </member>
+        <member name="T:SocketJack.Net.HttpProtocolHandler.RouteHandler`1">
+            <inheritdoc cref="T:SocketJack.Net.HttpServer.RouteHandler`1"/>
+        </member>
+        <member name="T:SocketJack.Net.HttpProtocolHandler.StreamRouteHandler">
+            <inheritdoc cref="T:SocketJack.Net.HttpServer.StreamRouteHandler"/>
+        </member>
+        <member name="T:SocketJack.Net.HttpProtocolHandler.UploadStreamRouteHandler">
+            <inheritdoc cref="T:SocketJack.Net.HttpServer.UploadStreamRouteHandler"/>
+        </member>
+        <member name="P:SocketJack.Net.HttpProtocolHandler.IndexPageHtml">
+            <summary>
+            HTML served at the root path (<c>/</c>) for GET requests.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpProtocolHandler.Robots">
+            <summary>
+            Content served at <c>/robots.txt</c>. Set to <see langword="null"/> to disable.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpProtocolHandler.ChunkedThreshold">
+            <summary>
+            Minimum body size in bytes before the server switches to chunked transfer encoding.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpProtocolHandler.ChunkedSize">
+            <summary>
+            Size of each chunk when using chunked transfer encoding.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpProtocolHandler.AllowDirectoryListing">
+            <summary>
+            When <see langword="true"/>, mapped directories that contain no
+            <c>index.html</c> / <c>index.htm</c> will return an auto-generated
+            HTML listing of their contents. Defaults to <see langword="false"/>.
+            A <c>.htaccess</c> file inside the directory can override this
+            per-directory with <c>Options +Indexes</c> or <c>Options -Indexes</c>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.Map(System.String,System.String,SocketJack.Net.HttpProtocolHandler.RouteHandler)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.Map(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.Map``1(System.String,System.String,SocketJack.Net.HttpProtocolHandler.RouteHandler{``0})">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.Map``1(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler{``0})"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveRoute(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveRoute(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapStream(System.String,System.String,SocketJack.Net.HttpProtocolHandler.StreamRouteHandler)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapStream(System.String,System.String,SocketJack.Net.HttpServer.StreamRouteHandler)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapUploadStream(System.String,System.String,SocketJack.Net.HttpProtocolHandler.UploadStreamRouteHandler)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapUploadStream(System.String,System.String,SocketJack.Net.HttpServer.UploadStreamRouteHandler)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveUploadStreamRoute(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveUploadStreamRoute(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapDirectory(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapDirectory(System.String,System.String,System.Action{SocketJack.Net.HtAccessBuilder})">
+            <summary>
+            Maps a local directory to a URL prefix and configures a <c>.htaccess</c> file
+            using the fluent <see cref="T:SocketJack.Net.HtAccessBuilder"/> API for directory-level security.
+            <para>
+            Example:
+            <code>
+            server.Http.MapDirectory("/secure", @"C:\data", htaccess => {
+                htaccess.DenyDirectoryListing()
+                        .AllowFrom("192.168.1.0/24")
+                        .DenyFiles("*.log", "*.bak")
+                        .RequireBasicAuth("Admin", "admin:secret");
+            });
+            </code>
+            </para>
+            </summary>
+            <param name="urlPrefix">The URL path prefix (e.g., <c>"/secure"</c>).</param>
+            <param name="localDirectory">The absolute or relative path to the local directory.</param>
+            <param name="configure">A delegate that configures the <see cref="T:SocketJack.Net.HtAccessBuilder"/>.</param>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveDirectoryMapping(System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveDirectoryMapping(System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.CanHandle(System.Byte[])">
+            <summary>
+            Returns <see langword="true"/> when the first bytes look like an HTTP request
+            (start with a known HTTP method keyword).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.IsDirectoryListingAllowed(System.String)">
+            <summary>
+            Determines whether directory listing is allowed for the given local
+            directory. Checks for a <c>.htaccess</c> file first; if it contains
+            <c>Options +Indexes</c> listing is allowed, <c>Options -Indexes</c>
+            denies it. Falls back to <see cref="P:SocketJack.Net.HttpProtocolHandler.AllowDirectoryListing"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.GenerateDirectoryListing(System.String,System.String)">
+            <summary>
+            Generates an HTML page listing the contents of a directory.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.IsBodyComplete(SocketJack.Net.HttpRequest)">
+            <summary>
+            Returns <see langword="true"/> when the request body appears to be fully
+            available in <see cref="P:SocketJack.Net.HttpRequest.BodyBytes"/> (as opposed to a streaming
+            upload that arrives over multiple reads).
+            </summary>
         </member>
         <member name="T:SocketJack.Net.NetworkBase">
             <summary>
@@ -258,6 +920,13 @@
             </summary>
             <param name="sender"></param>
             <param name="Peer"></param>
+        </member>
+        <member name="M:SocketJack.Net.NetworkBase.Invoke(System.Action)">
+            <summary>
+            Dispatches <paramref name="action"/> on the UI / main thread.
+            On WPF, verifies <see cref="P:System.Windows.Application.Current"/> is still alive;
+            if the application has already shut down, calls <see cref="M:SocketJack.ThreadManager.Shutdown"/> instead.
+            </summary>
         </member>
         <member name="F:SocketJack.Net.NetworkBase._ControlShareSessions">
             <summary>
@@ -410,6 +1079,13 @@
             Parent of this connection.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.NetworkConnection.Protocol">
+            <summary>
+            The wire protocol detected for this connection.
+            Set by <see cref="T:SocketJack.Net.MutableTcpServer"/> when the first data arrives
+            and the protocol is identified.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.NetworkConnection.Active">
             <summary>
             True if connection sending or receiving.
@@ -475,6 +1151,14 @@
             <see langword="True"/> if created by a TcpServer.
             </summary>
         </member>
+        <member name="F:SocketJack.Net.NetworkConnection._forceRawMode">
+            <summary>
+            When set, this connection uses the raw-byte receive path regardless
+            of <see cref="P:SocketJack.Net.NetworkOptions.UseTerminatedStreams"/>. This is
+            activated automatically when the first bytes on the connection look
+            like an HTTP request rather than a SocketJack length header.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.NetworkConnection.SendLocalIdentity">
             <summary>
             Sends the remote client their remote Identity and IP.
@@ -499,6 +1183,12 @@
             Initializes the SSL stream for this connection.
             </summary>
             <param name="targetHost">Target host name (required for client-side).</param>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.IsHttpPrefix(System.Byte[],System.Int32)">
+            <summary>
+            Returns <see langword="true"/> when <paramref name="data"/> begins with
+            a known HTTP method keyword (GET, POST, PUT, …).
+            </summary>
         </member>
         <member name="M:SocketJack.Net.NetworkConnection.Send(SocketJack.Net.P2P.Identifier,System.Object)">
             <summary>
@@ -1001,6 +1691,274 @@
             The original timestamp from the <see cref="T:SocketJack.Net.P2P.Ping"/> that triggered this response.
             </summary>
         </member>
+        <member name="T:SocketJack.Net.BroadcastServer">
+            <summary>
+            Manages live broadcast relay for an <see cref="T:SocketJack.Net.HttpServer"/>. Handles OBS upload
+            (PUT/POST) and RTMP publish ingestion, FLV muxing, viewer queue fan-out, byte
+            recording, and serves an HTML player page. Call <see cref="M:SocketJack.Net.BroadcastServer.Register"/> to wire up
+            the default routes on the underlying server.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.ViewerQueueCapacity">
+            <summary>
+            Maximum number of queued byte-array items per viewer before <see cref="M:SocketJack.Net.BroadcastServer.BroadcastToViewers(System.Byte[])"/>
+            starts dropping frames. A larger value tolerates slow readers at the cost of memory.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.ViewerWriteBufferSize">
+            <summary>
+            Size (in bytes) of the per-viewer write buffer used to batch small FLV tags into
+            larger HTTP chunks. Defaults to 2 MB. Larger values produce fewer, bigger writes
+            which improves throughput at the expense of latency.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.StreamKey">
+            <summary>
+            Gets or sets the stream key required for RTMP publish connections.
+            Publishers must supply this key to begin streaming. A random 24-character
+            key is generated by default. Set to <see langword="null"/> or empty to
+            allow any key.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.GenerateStreamKey(System.Int32)">
+            <summary>
+            Generates a cryptographically random stream key of the specified length
+            using URL-safe alphanumeric characters (A-Z, a-z, 0-9).
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.BroadcastServer.LogOutput">
+            <summary>Raised when the broadcast server wants to write a log message.</summary>
+        </member>
+        <member name="E:SocketJack.Net.BroadcastServer.StatsUpdated">
+            <summary>
+            Raised once per second (or whenever the consumer calls <see cref="M:SocketJack.Net.BroadcastServer.UpdateStats"/>)
+            with the latest RTMP statistics snapshot.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.Server">
+            <summary>The underlying <see cref="T:SocketJack.Net.HttpServer"/> this broadcast server is attached to.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.Recording">
+            <summary>Gets or sets whether incoming bytes are recorded.</summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.GetRecordedBytes">
+            <summary>Returns a snapshot of the currently recorded byte chunks.</summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.ClearRecording">
+            <summary>Clears all recorded byte chunks.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.RtmpActive">
+            <summary>Whether an RTMP publish session is currently active.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.IsPublishing">
+            <summary>Whether any publish source (RTMP or OBS upload) is currently active.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.ViewerCount">
+            <summary>The number of viewers currently connected to the stream.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.StreamKeys">
+            <summary>
+            Maps stream keys to usernames for per-user authentication.
+            Use <see cref="M:SocketJack.Net.BroadcastServer.GetOrCreateStreamKey(System.String)"/> to generate keys.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.ActivePublisherName">
+            <summary>
+            The username of the currently active publisher, resolved from <see cref="P:SocketJack.Net.BroadcastServer.StreamKeys"/>.
+            Empty when no one is streaming or when the global <see cref="P:SocketJack.Net.BroadcastServer.StreamKey"/> was used.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.GetOrCreateStreamKey(System.String)">
+            <summary>
+            Returns the existing stream key for the given <paramref name="username"/>,
+            or creates and stores a new one if none exists.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.GetOrCreateUserStream(System.String)">
+            <summary>
+            Returns the <see cref="T:SocketJack.Net.BroadcastServer.UserStreamContext"/> for the given <paramref name="username"/>,
+            creating one if it does not already exist.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.IsUserStreaming(System.String)">
+            <summary>Returns <see langword="true"/> if the specified user is currently publishing a stream.</summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.GetActiveStreamers">
+            <summary>Returns the usernames of all users who are currently publishing a stream.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.UserStreams">
+            <summary>Per-user stream contexts keyed by username.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.RtmpApp">
+            <summary>The current RTMP app name (empty when idle).</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.RtmpStreamKey">
+            <summary>The current RTMP stream key (empty when idle).</summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.#ctor(SocketJack.Net.HttpServer)">
+            <summary>
+            Creates a new <see cref="T:SocketJack.Net.BroadcastServer"/> attached to the given <paramref name="server"/>.
+            Call <see cref="M:SocketJack.Net.BroadcastServer.Register"/> to set up the default streaming routes.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.#ctor(SocketJack.Net.MutableTcpServer)">
+            <summary>
+            Creates a new <see cref="T:SocketJack.Net.BroadcastServer"/> attached to a <see cref="T:SocketJack.Net.MutableTcpServer"/>.
+            HTTP streaming routes are registered via the server's <see cref="P:SocketJack.Net.MutableTcpServer.Http"/> handler.
+            RTMP publish routes are registered on the base <see cref="T:SocketJack.Net.HttpServer"/> and handled via
+            <see cref="T:SocketJack.Net.MutableTcpServer"/>'s built-in RTMP protocol detection.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.Register">
+            <summary>
+            Registers the default streaming routes on the underlying <see cref="T:SocketJack.Net.HttpServer"/>:
+            <list type="bullet">
+              <item><c>GET /stream</c> – HTML player page (mpegts.js)</item>
+              <item><c>GET /stream/data</c> – raw FLV relay for the player / VLC</item>
+              <item><c>PUT /Upload</c> and <c>POST /Upload</c> – OBS upload ingestion</item>
+              <item>RTMP wildcard publish route</item>
+            </list>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.BroadcastToViewers(System.Byte[])">
+            <summary>
+            Broadcasts raw data to all connected stream viewers.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.UpdateStats">
+            <summary>
+            Calculates the current RTMP bitrate and returns a statistics snapshot.
+            Call this periodically (e.g., once per second) from a timer.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.BuildFlvTag(System.Byte,System.Int32,System.Byte[],System.Int32,System.Int32)">
+            <summary>
+            Builds a complete FLV tag (11-byte header + data + 4-byte PreviousTagSize).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.FormatBytes(System.Int64)">
+            <summary>
+            Formats a byte count into a human-readable string (B, KB, MB, GB).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.GetStreamPlayerHtml">
+            <summary>
+            Returns the HTML for an in-browser live stream player that uses mpegts.js to play
+            an FLV stream from <c>/stream/data</c>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.LoadStreamKeys">
+            <summary>
+            Loads persisted stream keys from <c>%APPDATA%\SocketJack\Keys\streamkeys.txt</c>.
+            Each line is in the format <c>key=username</c>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.SaveStreamKeys">
+            <summary>
+            Persists all current stream keys to <c>%APPDATA%\SocketJack\Keys\streamkeys.txt</c>.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.BroadcastServer.UserStreamContext">
+            <summary>
+            Holds per-user stream state: viewer queues, cached FLV headers, and publishing status.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.BroadcastServer.UserStreamContext.Username">
+            <summary>The username this context belongs to.</summary>
+        </member>
+        <member name="F:SocketJack.Net.BroadcastServer.UserStreamContext.CachedVideoHeaderTag">
+            <summary>The cached AVC/HEVC sequence header FLV tag replayed to late-joining viewers.</summary>
+        </member>
+        <member name="F:SocketJack.Net.BroadcastServer.UserStreamContext.LastVideoKeyframeTag">
+            <summary>The most recent video keyframe FLV tag, used for thumbnail extraction.</summary>
+        </member>
+        <member name="F:SocketJack.Net.BroadcastServer.UserStreamContext.HeaderLock">
+            <summary>Lock object for synchronizing access to cached header and keyframe tags.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.UserStreamContext.Title">
+            <summary>User-settable stream title displayed in the stream directory.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.UserStreamContext.IsPublishing">
+            <summary>Whether this user is currently publishing a stream.</summary>
+        </member>
+        <member name="P:SocketJack.Net.BroadcastServer.UserStreamContext.ViewerCount">
+            <summary>The number of viewers currently watching this user's stream.</summary>
+        </member>
+        <member name="M:SocketJack.Net.BroadcastServer.UserStreamContext.BroadcastToViewers(System.Byte[])">
+            <summary>Broadcasts raw data to all viewers of this user's stream.</summary>
+        </member>
+        <member name="T:SocketJack.Net.MyPayload">
+            <summary>
+            Payload returned by the <c>/stream/active</c> endpoint with the current broadcast status.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.MyPayload.Active">
+            <summary>Whether any publish source (RTMP or OBS upload) is currently active.</summary>
+        </member>
+        <member name="P:SocketJack.Net.MyPayload.Viewers">
+            <summary>The number of viewers currently connected.</summary>
+        </member>
+        <member name="P:SocketJack.Net.MyPayload.Rtmp">
+            <summary>Whether an RTMP publish session is active.</summary>
+        </member>
+        <member name="P:SocketJack.Net.MyPayload.Upload">
+            <summary>Whether an OBS upload connection is active.</summary>
+        </member>
+        <member name="T:SocketJack.Net.RtmpStats">
+            <summary>
+            Snapshot of RTMP stream statistics returned by <see cref="M:SocketJack.Net.BroadcastServer.UpdateStats"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.Active">
+            <summary>Whether an RTMP session is currently active.</summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.App">
+            <summary>The RTMP app name.</summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.StreamKey">
+            <summary>The RTMP stream key.</summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.VideoFrames">
+            <summary>Total video frames received.</summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.AudioFrames">
+            <summary>Total audio frames received.</summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.DroppedFrames">
+            <summary>Total dropped frames.</summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.TotalBytes">
+            <summary>Total bytes received.</summary>
+        </member>
+        <member name="P:SocketJack.Net.RtmpStats.BitrateKbps">
+            <summary>Current bitrate in kilobits per second.</summary>
+        </member>
+        <member name="T:SocketJack.Net.RtmpSession">
+            <summary>
+            Manages a single RTMP connection — handshake, chunk-stream de-mux,
+            AMF0 command processing, and media forwarding for OBS-style publishers.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.RtmpSession.OnPublishStart">
+            <summary>Fired when a client sends a <c>publish</c> command. Args: app, streamKey.</summary>
+        </member>
+        <member name="F:SocketJack.Net.RtmpSession.OnMediaData">
+            <summary>Fired when media data arrives. Args: messageTypeId (8=audio, 9=video, 18=data), payload.</summary>
+        </member>
+        <member name="F:SocketJack.Net.RtmpSession.OnPublishStop">
+            <summary>Fired when the publish session ends.</summary>
+        </member>
+        <member name="M:SocketJack.Net.RtmpSession.ProcessData(System.Byte[])">
+            <summary>
+            Feed raw bytes received from the network into the session.
+            Thread-safe — callers may invoke from the receive-event thread.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.RtmpSession.EnqueueMedia(System.Byte,System.Int32,System.Byte[])">
+            <summary>
+            Enqueue format: [typeId:1][timestamp_ms big-endian:4][payload]
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.TcpClient">
             <summary>
             Multithreaded TCP Client.
@@ -1179,6 +2137,28 @@
             <para>Not case sensitive.</para>
             </summary>
         </member>
+        <member name="M:SocketJack.Net.TcpServer.SyncPeer(SocketJack.Net.NetworkConnection)">
+            <summary>
+            Sends the current peer list to the given client and broadcasts the
+            new peer to all other clients.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.TcpServer.InitializePeer(SocketJack.Net.NetworkConnection)">
+            <summary>
+            Registers a connection as a peer and synchronizes peer lists.
+            <see cref="!:Peers.AddOrUpdate"/> runs synchronously so the peer is
+            immediately visible to message handlers; the network sync runs
+            asynchronously.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.TcpServer.DeferPeerInitialization">
+            <summary>
+            When <see langword="true"/>, <see cref="M:SocketJack.Net.TcpServer.NewConnection(System.Net.Sockets.Socket@)"/> will not call
+            <see cref="M:SocketJack.Net.TcpServer.InitializePeer(SocketJack.Net.NetworkConnection)"/> automatically.  Derived classes (e.g.
+            <see cref="T:SocketJack.Net.MutableTcpServer"/>) set this so that peer initialization
+            is deferred until the connection's protocol has been identified.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.TcpServer.#ctor(System.Int32,System.String)">
             <summary>
             Initializes a new instance of TcpServer.
@@ -1208,17 +2188,17 @@
             <summary>
             Sends an object to a client.
             </summary>
-            <param name="Client">The Client's TcpConnection.</param>
+            <param name="Client">The Client's NetworkConnection.</param>
             <param name="Obj">Object to send to the client.</param>
-            <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+            <remarks>Can also be accessed directly via NetworkConnection.Send()</remarks>
         </member>
         <member name="M:SocketJack.Net.TcpServer.Send(SocketJack.Net.P2P.Identifier,System.Object)">
             <summary>
             Sends an object to a peer.
             </summary>
-            <param name="Client">The Client's TcpConnection.</param>
+            <param name="Client">The Client's NetworkConnection.</param>
             <param name="Obj">Object to send to the client.</param>
-            <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+            <remarks>Can also be accessed directly via NetworkConnection.Send()</remarks>
         </member>
         <member name="M:SocketJack.Net.TcpServer.Send(System.String,System.Object)">
             <summary>
@@ -1226,7 +2206,7 @@
             </summary>
             <param name="ID">The clients's ID.</param>
             <param name="Obj">An object.</param>
-            <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+            <remarks>Can also be accessed directly via NetworkConnection.Send()</remarks>
         </member>
         <member name="M:SocketJack.Net.TcpServer.Send(System.Guid,System.Object)">
             <summary>
@@ -1234,11 +2214,11 @@
             </summary>
             <param name="ID">The clients's ID.</param>
             <param name="Obj">An Object.</param>
-            <remarks>Can also be accessed directly from TcpConnection.Send()</remarks>
+            <remarks>Can also be accessed directly from NetworkConnection.Send()</remarks>
         </member>
         <member name="M:SocketJack.Net.TcpServer.SendBroadcast(SocketJack.Net.NetworkConnection[],System.Object,SocketJack.Net.NetworkConnection)">
             <summary>
-            Send an object to an array of TcpConnection.
+            Send an object to an array of NetworkConnection.
             </summary>
             <param name="Clients">An array of ConnectedSocket</param>
             <param name="Obj">Object to send to the client.</param>
@@ -1356,7 +2336,7 @@
         <member name="T:SocketJack.Net.UdpConnection">
             <summary>
             Represents a UDP connection endpoint with send/receive capabilities.
-            Modeled after TcpConnection but adapted for connectionless UDP datagrams.
+            Modeled after NetworkConnection but adapted for connectionless UDP datagrams.
             </summary>
         </member>
         <member name="P:SocketJack.Net.UdpConnection.Socket">
@@ -1486,9 +2466,9 @@
             Track last activity time per client endpoint.
             </summary>
         </member>
-        <member name="F:SocketJack.Net.UdpServer._clientTcpConnections">
+        <member name="F:SocketJack.Net.UdpServer._clientNetworkConnections">
             <summary>
-            Map from client endpoint key to their TcpConnection (for HandleReceive compatibility).
+            Map from client endpoint key to their NetworkConnection (for HandleReceive compatibility).
             </summary>
         </member>
         <member name="M:SocketJack.Net.UdpServer.#ctor(System.Int32,System.String)">

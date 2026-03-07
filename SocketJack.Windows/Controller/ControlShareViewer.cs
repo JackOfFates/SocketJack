@@ -1,11 +1,16 @@
 using SocketJack.Net;
 using SocketJack.Net.P2P;
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace SocketJack.WPF {
     namespace Controller {
@@ -37,8 +42,21 @@ namespace SocketJack.WPF {
             private Point _rightDownPosition;
             private bool _leftDownPending;
             private bool _rightDownPending;
+            private bool _suppressMouseEvents;
+
+            private Border _border;
+            private DispatcherTimer _stateTimer;
+            private ConnectionState _connectionState;
+            private DateTime _disconnectedAtUtc = DateTime.MinValue;
+
+            private readonly ConcurrentQueue<RemoteAction> _actionQueue = new();
+            private int _drainingActions;
 
             private const double FrameTimeoutSeconds = 3.0;
+            private const double DisconnectFadeSeconds = 2.0;
+            private const string StatusBorderTag = "ControlShareViewer_StatusBorder";
+
+            private enum ConnectionState { Idle, Connected, Disconnecting, Reconnecting }
 
             private bool IsReceivingFrames {
                 get {
@@ -68,16 +86,51 @@ namespace SocketJack.WPF {
                 _client.RegisterCallback<RemoteAction>(OnRemoteAction);
 
                 _image.IsHitTestVisible = true;
-                _image.Focusable = true;
-                _image.PreviewMouseMove += Image_MouseMove;
-                _image.MouseEnter += Image_MouseEnter;
-                _image.MouseLeave += Image_MouseLeave;
-                _image.PreviewMouseLeftButtonDown += Image_MouseLeftButtonDown;
-                _image.PreviewMouseRightButtonDown += Image_MouseRightButtonDown;
-                _image.PreviewMouseLeftButtonUp += Image_MouseLeftButtonUp;
-                _image.PreviewMouseRightButtonUp += Image_MouseRightButtonUp;
-                _image.PreviewKeyDown += Image_PreviewKeyDown;
-                _image.PreviewKeyUp += Image_PreviewKeyUp;
+
+                if (_image.Parent is Border existing && existing.Tag is string tag && tag == StatusBorderTag) {
+                    _border = existing;
+                } else {
+                    _border = new Border {
+                        BorderThickness = new Thickness(0),
+                        BorderBrush = new SolidColorBrush(Colors.Red),
+                        Tag = StatusBorderTag
+                    };
+
+                    var parent = _image.Parent;
+                    if (parent is Panel panel) {
+                        var idx = panel.Children.IndexOf(_image);
+                        panel.Children.Remove(_image);
+                        _border.Child = _image;
+                        panel.Children.Insert(idx, _border);
+                    } else if (parent is ContentControl cc) {
+                        cc.Content = null;
+                        _border.Child = _image;
+                        cc.Content = _border;
+                    } else if (parent is Decorator dec) {
+                        dec.Child = null;
+                        _border.Child = _image;
+                        dec.Child = _border;
+                    } else {
+                        _border.Child = _image;
+                    }
+                }
+
+                _border.Focusable = true;
+                _border.Background = Brushes.Transparent;
+                _border.PreviewMouseMove += Image_MouseMove;
+                _border.MouseEnter += Image_MouseEnter;
+                _border.MouseLeave += Image_MouseLeave;
+                _border.PreviewMouseLeftButtonDown += Image_MouseLeftButtonDown;
+                _border.PreviewMouseRightButtonDown += Image_MouseRightButtonDown;
+                _border.PreviewMouseLeftButtonUp += Image_MouseLeftButtonUp;
+                _border.PreviewMouseRightButtonUp += Image_MouseRightButtonUp;
+                _border.PreviewKeyDown += Image_PreviewKeyDown;
+                _border.PreviewKeyUp += Image_PreviewKeyUp;
+
+                _stateTimer = new DispatcherTimer();
+                _stateTimer.Interval = TimeSpan.FromMilliseconds(500);
+                _stateTimer.Tick += StateTimer_Tick;
+                _stateTimer.Start();
             }
 
             private void OnRemoteAction(ReceivedEventArgs<RemoteAction> e) {
@@ -92,10 +145,31 @@ namespace SocketJack.WPF {
                         return;
                 }
 
-                _ = e.Object.PerformAction();
+                _actionQueue.Enqueue(e.Object);
+                DrainActionQueue();
+            }
+
+            private async void DrainActionQueue() {
+                if (Interlocked.CompareExchange(ref _drainingActions, 1, 0) != 0)
+                    return;
+                try {
+                    while (_actionQueue.TryDequeue(out var action)) {
+                        try {
+                            await action.PerformAction();
+                        }
+                        catch {
+                        }
+                    }
+                }
+                finally {
+                    Volatile.Write(ref _drainingActions, 0);
+                }
+                if (!_actionQueue.IsEmpty)
+                    DrainActionQueue();
             }
 
             private void Image_MouseEnter(object sender, MouseEventArgs e) {
+                if (_suppressMouseEvents) return;
                 _mouseInside = true;
                 if (!TryGetRenderedBitmapMetrics(out var drawW, out var drawH, out var offsetX, out var offsetY)) {
                     SendRemoteAction(RemoteAction.ActionType.MouseEnter, "");
@@ -108,6 +182,7 @@ namespace SocketJack.WPF {
             }
 
             private void Image_MouseLeave(object sender, MouseEventArgs e) {
+                if (_suppressMouseEvents) return;
                 // While dragging (mouse captured), WPF still fires MouseLeave when
                 // the cursor physically exits the image bounds.  Suppress it so
                 // that MouseMove continues to relay position updates during drag.
@@ -246,16 +321,7 @@ namespace SocketJack.WPF {
             }
 
             private void Image_MouseMove(object sender, MouseEventArgs e) {
-                if (_client == null || !_client.Connected)
-                    return;
-                if (!_canSendP2p)
-                    return;
-                if (_sharePeer == null || string.IsNullOrWhiteSpace(_sharePeer.ID))
-                    return;
-                if (string.IsNullOrWhiteSpace(_controlId))
-                    return;
-                if (!IsReceivingFrames)
-                    return;
+                if (_suppressMouseEvents) return;
 
                 var now = DateTime.UtcNow;
                 if (now < _nextMoveSendAt)
@@ -266,17 +332,8 @@ namespace SocketJack.WPF {
                     return;
 
                 var p = e.GetPosition(_image);
-                var x = (p.X - offsetX) / drawW;
-                var y = (p.Y - offsetY) / drawH;
-
-                if (x < 0)
-                    x = 0;
-                if (y < 0)
-                    y = 0;
-                if (x > 1)
-                    x = 1;
-                if (y > 1)
-                    y = 1;
+                var x = Math.Clamp((p.X - offsetX) / drawW, 0, 1);
+                var y = Math.Clamp((p.Y - offsetY) / drawH, 0, 1);
 
                 if (_mouseInside || _leftDownPending || _rightDownPending)
                     SendRemoteAction(RemoteAction.ActionType.MouseMove, $"{x:0.####},{y:0.####}");
@@ -284,22 +341,15 @@ namespace SocketJack.WPF {
 
             private void Image_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) {
                 try {
-                    _image.CaptureMouse();
-                    _image.Focus();
+                    _suppressMouseEvents = true;
+                    _border.CaptureMouse();
+                    _border.Focus();
                 }
                 catch {
                 }
-
-                if (_client == null || !_client.Connected)
-                    return;
-                if (!_canSendP2p)
-                    return;
-                if (_sharePeer == null || string.IsNullOrWhiteSpace(_sharePeer.ID))
-                    return;
-                if (string.IsNullOrWhiteSpace(_controlId))
-                    return;
-                if (!IsReceivingFrames)
-                    return;
+                finally {
+                    _suppressMouseEvents = false;
+                }
 
                 if (!TryGetRenderedBitmapMetrics(out var drawW, out var drawH, out var offsetX, out var offsetY))
                     return;
@@ -322,10 +372,14 @@ namespace SocketJack.WPF {
 
             private void Image_MouseLeftButtonUp(object sender, MouseButtonEventArgs e) {
                 try {
-                    if (Mouse.Captured == _image)
+                    _suppressMouseEvents = true;
+                    if (Mouse.Captured == _border)
                         Mouse.Capture(null);
                 }
                 catch {
+                }
+                finally {
+                    _suppressMouseEvents = false;
                 }
                 if (!_leftDownPending)
                     return;
@@ -346,25 +400,19 @@ namespace SocketJack.WPF {
 
             private void Image_MouseRightButtonDown(object sender, MouseButtonEventArgs e) {
                 try {
-                    _image.CaptureMouse();
-                    _image.Focus();
+                    _suppressMouseEvents = true;
+                    _border.CaptureMouse();
+                    _border.Focus();
                 }
                 catch {
+                }
+                finally {
+                    _suppressMouseEvents = false;
                 }
                 if (_rightDownPending) {
                     _rightDownPending = false;
                     SendRemoteAction(RemoteAction.ActionType.MouseUp, $"Right,{_rightDownPosition.X:0.####},{_rightDownPosition.Y:0.####}", 50);
                 }
-                if (_client == null || !_client.Connected)
-                    return;
-                if (!_canSendP2p)
-                    return;
-                if (_sharePeer == null || string.IsNullOrWhiteSpace(_sharePeer.ID))
-                    return;
-                if (string.IsNullOrWhiteSpace(_controlId))
-                    return;
-                if (!IsReceivingFrames)
-                    return;
 
                 if (!TryGetRenderedBitmapMetrics(out var drawW, out var drawH, out var offsetX, out var offsetY))
                     return;
@@ -382,10 +430,14 @@ namespace SocketJack.WPF {
 
             private void Image_MouseRightButtonUp(object sender, MouseButtonEventArgs e) {
                 try {
-                    if (Mouse.Captured == _image)
+                    _suppressMouseEvents = true;
+                    if (Mouse.Captured == _border)
                         Mouse.Capture(null);
                 }
                 catch {
+                }
+                finally {
+                    _suppressMouseEvents = false;
                 }
                 if (!_rightDownPending)
                     return;
@@ -420,16 +472,96 @@ namespace SocketJack.WPF {
                 // handler is registered so the event can be extended in the future.
             }
 
+            private void StateTimer_Tick(object sender, EventArgs e) {
+                var receiving = IsReceivingFrames;
+
+                switch (_connectionState) {
+                    case ConnectionState.Idle:
+                        if (receiving) {
+                            _connectionState = ConnectionState.Reconnecting;
+                            AnimateReconnecting();
+                        }
+                        break;
+
+                    case ConnectionState.Connected:
+                        if (!receiving) {
+                            _connectionState = ConnectionState.Disconnecting;
+                            _disconnectedAtUtc = DateTime.UtcNow;
+                            AnimateDisconnected();
+                        }
+                        break;
+
+                    case ConnectionState.Disconnecting:
+                        if (receiving) {
+                            _connectionState = ConnectionState.Reconnecting;
+                            AnimateReconnecting();
+                        } else if ((DateTime.UtcNow - _disconnectedAtUtc).TotalSeconds >= DisconnectFadeSeconds) {
+                            _connectionState = ConnectionState.Idle;
+                            AnimateIdle();
+                        }
+                        break;
+
+                    case ConnectionState.Reconnecting:
+                        if (receiving) {
+                            _connectionState = ConnectionState.Connected;
+                            AnimateConnected();
+                        } else {
+                            _connectionState = ConnectionState.Disconnecting;
+                            _disconnectedAtUtc = DateTime.UtcNow;
+                            AnimateDisconnected();
+                        }
+                        break;
+                }
+            }
+
+            private void AnimateConnected() {
+                _border.BorderBrush = new SolidColorBrush(Colors.LimeGreen);
+                var anim = new ThicknessAnimation(new Thickness(2), TimeSpan.FromMilliseconds(300));
+                _border.BeginAnimation(Border.BorderThicknessProperty, anim);
+            }
+
+            private void AnimateReconnecting() {
+                _border.BorderBrush = new SolidColorBrush(Colors.Orange);
+                var anim = new ThicknessAnimation(new Thickness(2), TimeSpan.FromMilliseconds(300));
+                _border.BeginAnimation(Border.BorderThicknessProperty, anim);
+            }
+
+            private void AnimateDisconnected() {
+                _border.BorderBrush = new SolidColorBrush(Colors.Red);
+            }
+
+            private void AnimateIdle() {
+                var anim = new ThicknessAnimation(new Thickness(0), TimeSpan.FromMilliseconds(300));
+                _border.BeginAnimation(Border.BorderThicknessProperty, anim);
+            }
+
             public void Dispose() {
-                _image.PreviewMouseMove -= Image_MouseMove;
-                _image.MouseEnter -= Image_MouseEnter;
-                _image.MouseLeave -= Image_MouseLeave;
-                _image.PreviewMouseLeftButtonDown -= Image_MouseLeftButtonDown;
-                _image.PreviewMouseLeftButtonUp -= Image_MouseLeftButtonUp;
-                _image.PreviewMouseRightButtonDown -= Image_MouseRightButtonDown;
-                _image.PreviewMouseRightButtonUp -= Image_MouseRightButtonUp;
-                _image.PreviewKeyDown -= Image_PreviewKeyDown;
-                _image.PreviewKeyUp -= Image_PreviewKeyUp;
+                try {
+                    _stateTimer.Stop();
+                    _stateTimer.Tick -= StateTimer_Tick;
+                }
+                catch {
+                }
+
+                while (_actionQueue.TryDequeue(out _)) { }
+
+                try {
+                    _border.BorderBrush = new SolidColorBrush(Colors.Red);
+                    var anim = new ThicknessAnimation(new Thickness(0), TimeSpan.FromMilliseconds(300));
+                    _border.BeginAnimation(Border.BorderThicknessProperty, anim);
+                }
+                catch {
+                }
+
+                _border.PreviewMouseMove -= Image_MouseMove;
+                _border.MouseEnter -= Image_MouseEnter;
+                _border.MouseLeave -= Image_MouseLeave;
+                _border.PreviewMouseLeftButtonDown -= Image_MouseLeftButtonDown;
+                _border.PreviewMouseLeftButtonUp -= Image_MouseLeftButtonUp;
+                _border.PreviewMouseRightButtonDown -= Image_MouseRightButtonDown;
+                _border.PreviewMouseRightButtonUp -= Image_MouseRightButtonUp;
+                _border.PreviewKeyDown -= Image_PreviewKeyDown;
+                _border.PreviewKeyUp -= Image_PreviewKeyUp;
 
                 try {
                     _client.RemoveCallback<ControlShareFrame>(OnFrame);

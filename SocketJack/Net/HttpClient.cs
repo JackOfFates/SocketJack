@@ -97,6 +97,23 @@ namespace SocketJack.Net {
             Options.UsePeerToPeer = false;
         }
 
+        private readonly List<IProtocolHandler> _protocolHandlers = new List<IProtocolHandler>();
+
+        /// <summary>
+        /// Registers a protocol handler used for detecting response formats.
+        /// </summary>
+        public void RegisterProtocol(IProtocolHandler handler) {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+            _protocolHandlers.Add(handler);
+        }
+
+        /// <summary>
+        /// Removes a previously registered protocol handler.
+        /// </summary>
+        public bool RemoveProtocol(IProtocolHandler handler) {
+            return _protocolHandlers.Remove(handler);
+        }
+
         public new void Dispose() { }
 
         public async Task<Net.HttpResponse> GetAsync(string url, Stream responseStream = null, Action<byte[], int> onChunk = null, CancellationToken cancellationToken = default) {

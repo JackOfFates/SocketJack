@@ -146,11 +146,16 @@ namespace SocketJack {
                         if (TcpServers.Count - 1 < i) return;
                         var Server = TcpServers.Values.ElementAt(i);
                         if (Server.Connection != null) {
-                            if (Server.GetType() == typeof(TcpServer)) {
-                                var clients = Server.AsTcpServer().Clients.Values;
+                            if (Server is TcpServer tcpServer) {
+                                var clients = tcpServer.Clients.Values;
                                 foreach (var c in clients) {
+                                    c._SentBytesPerSecond = c.SentBytesCounter;
+                                    c._ReceivedBytesPerSecond = c.ReceivedBytesCounter;
+                                    c.RecordBpsSample();
                                     Server.Connection.SentBytesCounter += c.SentBytesCounter;
                                     Server.Connection.ReceivedBytesCounter += c.ReceivedBytesCounter;
+                                    c.SentBytesCounter = 0;
+                                    c.ReceivedBytesCounter = 0;
                                 }
                             }
 

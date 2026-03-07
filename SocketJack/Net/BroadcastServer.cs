@@ -3,6 +3,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +19,15 @@ namespace SocketJack.Net {
     public class BroadcastServer {
 
         private readonly HttpServer _server;
+        private readonly MutableTcpServer _mutableServer;
+
+        // Per-user stream keys: streamKey -> username
+        private readonly ConcurrentDictionary<string, string> _streamKeys = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, UserStreamContext> _userStreams = new ConcurrentDictionary<string, UserStreamContext>(StringComparer.OrdinalIgnoreCase);
+        private string _activePublisherName = "";
+        private static readonly string KeysDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SocketJack", "Keys");
+        private static readonly string KeysFilePath = Path.Combine(KeysDirectory, "streamkeys.txt");
+        private readonly object _keysFileLock = new object();
 
         // OBS upload relay state
         private Guid _uploadConnectionId = Guid.Empty;
@@ -127,10 +137,78 @@ namespace SocketJack.Net {
         public bool RtmpActive => _rtmpActive;
 
         /// <summary>Whether any publish source (RTMP or OBS upload) is currently active.</summary>
-        public bool IsPublishing => _rtmpActive || _uploadConnectionId != Guid.Empty;
+        public bool IsPublishing {
+            get {
+                if (_rtmpActive || _uploadConnectionId != Guid.Empty) return true;
+                foreach (var ctx in _userStreams.Values)
+                    if (ctx.IsPublishing) return true;
+                return false;
+            }
+        }
 
         /// <summary>The number of viewers currently connected to the stream.</summary>
-        public int ViewerCount => _viewerQueues.Count;
+        public int ViewerCount {
+            get {
+                int count = _viewerQueues.Count;
+                foreach (var ctx in _userStreams.Values)
+                    count += ctx.ViewerCount;
+                return count;
+            }
+        }
+
+        /// <summary>
+        /// Maps stream keys to usernames for per-user authentication.
+        /// Use <see cref="GetOrCreateStreamKey"/> to generate keys.
+        /// </summary>
+        public ConcurrentDictionary<string, string> StreamKeys => _streamKeys;
+
+        /// <summary>
+        /// The username of the currently active publisher, resolved from <see cref="StreamKeys"/>.
+        /// Empty when no one is streaming or when the global <see cref="StreamKey"/> was used.
+        /// </summary>
+        public string ActivePublisherName => _activePublisherName;
+
+        /// <summary>
+        /// Returns the existing stream key for the given <paramref name="username"/>,
+        /// or creates and stores a new one if none exists.
+        /// </summary>
+        public string GetOrCreateStreamKey(string username) {
+            if (string.IsNullOrEmpty(username)) return null;
+            foreach (var kvp in _streamKeys) {
+                if (string.Equals(kvp.Value, username, StringComparison.OrdinalIgnoreCase))
+                    return kvp.Key;
+            }
+            var key = GenerateStreamKey();
+            _streamKeys[key] = username;
+            SaveStreamKeys();
+            return key;
+        }
+
+        /// <summary>
+        /// Returns the <see cref="UserStreamContext"/> for the given <paramref name="username"/>,
+        /// creating one if it does not already exist.
+        /// </summary>
+        public UserStreamContext GetOrCreateUserStream(string username) {
+            if (string.IsNullOrEmpty(username)) return null;
+            return _userStreams.GetOrAdd(username, u => new UserStreamContext(u, ViewerQueueCapacity));
+        }
+
+        /// <summary>Returns <see langword="true"/> if the specified user is currently publishing a stream.</summary>
+        public bool IsUserStreaming(string username) {
+            return !string.IsNullOrEmpty(username) && _userStreams.TryGetValue(username, out var ctx) && ctx.IsPublishing;
+        }
+
+        /// <summary>Returns the usernames of all users who are currently publishing a stream.</summary>
+        public List<string> GetActiveStreamers() {
+            var list = new List<string>();
+            foreach (var kvp in _userStreams) {
+                if (kvp.Value.IsPublishing) list.Add(kvp.Key);
+            }
+            return list;
+        }
+
+        /// <summary>Per-user stream contexts keyed by username.</summary>
+        public ConcurrentDictionary<string, UserStreamContext> UserStreams => _userStreams;
 
         /// <summary>The current RTMP app name (empty when idle).</summary>
         public string RtmpApp => _rtmpApp;
@@ -145,6 +223,18 @@ namespace SocketJack.Net {
         public BroadcastServer(HttpServer server) {
             _server = server ?? throw new ArgumentNullException(nameof(server));
             _server.OnReceive += OnServerRawReceive;
+            LoadStreamKeys();
+        }
+
+        /// <summary>
+        /// Creates a new <see cref="BroadcastServer"/> attached to a <see cref="MutableTcpServer"/>.
+        /// HTTP streaming routes are registered via the server's <see cref="MutableTcpServer.Http"/> handler.
+        /// RTMP publish routes are registered on the base <see cref="HttpServer"/> and handled via
+        /// <see cref="MutableTcpServer"/>'s built-in RTMP protocol detection.
+        /// </summary>
+        public BroadcastServer(MutableTcpServer server) {
+            _mutableServer = server ?? throw new ArgumentNullException(nameof(server));
+            LoadStreamKeys();
         }
 
         /// <summary>
@@ -157,6 +247,10 @@ namespace SocketJack.Net {
         /// </list>
         /// </summary>
         public void Register() {
+            if (_mutableServer != null) {
+                RegisterMutable();
+                return;
+            }
             // Serve HTML player page at /stream
             _server.Map("GET", "/stream", (conn, req, ct) => {
                 return GetStreamPlayerHtml();
@@ -276,6 +370,141 @@ namespace SocketJack.Net {
             _server.MapRtmpPublish("*", HandleRtmpPublish);
         }
 
+        private void RegisterMutable() {
+            var http = _mutableServer.Http;
+
+            http.Map("GET", "/stream/active", (conn, req, ct) => {
+                var user = GetQueryParam(req.QueryString, "user");
+                if (!string.IsNullOrEmpty(user)) {
+                    bool userActive = IsUserStreaming(user);
+                    int userViewers = _userStreams.TryGetValue(user, out var uctx) ? uctx.ViewerCount : 0;
+                    string userTitle = (_userStreams.TryGetValue(user, out var uttl) ? (uttl.Title ?? "") : "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    return "{\"active\":" + (userActive ? "true" : "false") +
+                           ",\"viewers\":" + userViewers +
+                           ",\"title\":\"" + userTitle + "\"" +
+                           ",\"user\":\"" + user.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
+                }
+                var streamers = GetActiveStreamers();
+                var streamerJson = new List<string>();
+                foreach (var s in streamers) {
+                    var safeS = s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    int vc = _userStreams.TryGetValue(s, out var sctx) ? sctx.ViewerCount : 0;
+                    string ttl = (_userStreams.TryGetValue(s, out var tctx) ? (tctx.Title ?? "") : "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    streamerJson.Add("{\"username\":\"" + safeS + "\",\"viewers\":" + vc + ",\"title\":\"" + ttl + "\"}");
+                }
+                return "{\"active\":" + (IsPublishing ? "true" : "false") +
+                       ",\"viewers\":" + ViewerCount +
+                       ",\"rtmp\":" + (_rtmpActive ? "true" : "false") +
+                       ",\"upload\":" + (_uploadConnectionId != Guid.Empty ? "true" : "false") +
+                       ",\"streamers\":[" + string.Join(",", streamerJson) + "]}";
+            });
+
+            http.MapStream("GET", "/stream/data", async (conn, req, chunked, ct) => {
+                await Task.Run(async () => {
+                    var user = GetQueryParam(req.QueryString, "user");
+                    UserStreamContext ctx = null;
+                    ConcurrentDictionary<Guid, BlockingCollection<byte[]>> targetQueues;
+                    if (!string.IsNullOrEmpty(user)) {
+                        ctx = GetOrCreateUserStream(user);
+                        targetQueues = ctx.ViewerQueues;
+                    } else {
+                        targetQueues = _viewerQueues;
+                    }
+
+                    chunked.ContentType = "video/x-flv";
+                    var viewerQueue = new BlockingCollection<byte[]>(ViewerQueueCapacity);
+                    targetQueues.TryAdd(conn.ID, viewerQueue);
+                    Log("Stream viewer connected" + (ctx != null ? " for " + user : "") + ": " + conn.EndPoint.ToString());
+                    chunked.Write(FlvHeader, 0, FlvHeader.Length);
+
+                    byte[] metaTag, videoTag, audioTag;
+                    if (ctx != null) {
+                        lock (ctx.HeaderLock) { metaTag = ctx.CachedMetadataTag; videoTag = ctx.CachedVideoHeaderTag; audioTag = ctx.CachedAudioHeaderTag; }
+                    } else {
+                        lock (_headerLock) { metaTag = _cachedMetadataTag; videoTag = _cachedVideoHeaderTag; audioTag = _cachedAudioHeaderTag; }
+                    }
+                    if (metaTag != null) chunked.Write(metaTag, 0, metaTag.Length);
+                    if (videoTag != null) chunked.Write(videoTag, 0, videoTag.Length);
+                    if (audioTag != null) chunked.Write(audioTag, 0, audioTag.Length);
+
+                    try {
+                        var writeBuf = new byte[ViewerWriteBufferSize];
+                        int bufPos = 0;
+                        while (conn.Socket != null && conn.Socket.Connected) {
+                            byte[] data;
+                            if (viewerQueue.TryTake(out data, 100)) {
+                                if (data.Length > writeBuf.Length) {
+                                    try { if (bufPos > 0) { chunked.Write(writeBuf, 0, bufPos); bufPos = 0; } chunked.Write(data, 0, data.Length); } catch { break; }
+                                    continue;
+                                }
+                                if (bufPos + data.Length > writeBuf.Length) { try { chunked.Write(writeBuf, 0, bufPos); } catch { break; } bufPos = 0; }
+                                Buffer.BlockCopy(data, 0, writeBuf, bufPos, data.Length); bufPos += data.Length;
+                                while (bufPos < writeBuf.Length && viewerQueue.TryTake(out data, 0)) {
+                                    if (bufPos + data.Length > writeBuf.Length) { try { chunked.Write(writeBuf, 0, bufPos); } catch { break; } bufPos = 0; }
+                                    if (data.Length > writeBuf.Length) { try { chunked.Write(data, 0, data.Length); } catch { break; } continue; }
+                                    Buffer.BlockCopy(data, 0, writeBuf, bufPos, data.Length); bufPos += data.Length;
+                                }
+                                if (bufPos > 0) { try { chunked.Write(writeBuf, 0, bufPos); } catch { break; } bufPos = 0; }
+                            }
+                        }
+                    } finally {
+                        BlockingCollection<byte[]> removed;
+                        targetQueues.TryRemove(conn.ID, out removed);
+                        viewerQueue.Dispose();
+                        Log("Stream viewer disconnected" + (ctx != null ? " from " + user : "") + ".");
+                    }
+                    await Task.CompletedTask;
+                });
+            });
+
+            http.MapUploadStream("PUT", "/stream/upload", HandleOBSUploadMutable);
+            http.MapUploadStream("POST", "/stream/upload", HandleOBSUploadMutable);
+
+            // Register RTMP publish route on the base HttpServer so that
+            // MutableTcpServer's RTMP detection can delegate to it.
+            _mutableServer.MapRtmpPublish("*", HandleRtmpPublish);
+        }
+
+        private void HandleOBSUploadMutable(NetworkConnection conn, HttpRequest req, UploadStream upload, CancellationToken ct) {
+            // Resolve per-user stream from stream key query parameter
+            var streamKey = GetQueryParam(req.QueryString, "key");
+            UserStreamContext userCtx = null;
+            string publisher = null;
+            if (!string.IsNullOrEmpty(streamKey) && _streamKeys.TryGetValue(streamKey, out var userName) && !string.IsNullOrEmpty(userName)) {
+                publisher = userName;
+                userCtx = GetOrCreateUserStream(userName);
+                userCtx.Publishing = true;
+                _activePublisherName = userName;
+            }
+
+            _uploadConnectionId = conn.ID;
+            if (req.Headers != null && req.Headers.ContainsKey("Content-Type")) {
+                _uploadContentType = req.Headers["Content-Type"];
+            }
+            Log("OBS upload started" + (publisher != null ? " for " + publisher : "") + " from " + conn.EndPoint.ToString());
+            try {
+                byte[] data = upload.ReadAsync(ct).GetAwaiter().GetResult();
+                while (data != null && data.Length > 0) {
+                    if (userCtx != null) {
+                        userCtx.BroadcastToViewers(data);
+                    } else {
+                        BroadcastToViewers(data);
+                    }
+                    data = upload.ReadAsync(ct).GetAwaiter().GetResult();
+                }
+            } catch (OperationCanceledException) {
+            } catch (Exception ex) {
+                Log("OBS upload error: " + ex.Message);
+            } finally {
+                _uploadConnectionId = Guid.Empty;
+                if (userCtx != null) {
+                    userCtx.Publishing = false;
+                    _activePublisherName = "";
+                }
+                Log("OBS upload ended.");
+            }
+        }
+
         /// <summary>
         /// Broadcasts raw data to all connected stream viewers.
         /// </summary>
@@ -358,9 +587,23 @@ namespace SocketJack.Net {
         }
 
         private async Task HandleRtmpPublish(NetworkConnection conn, string app, string streamKey, UploadStream upload, CancellationToken ct) {
-            if (!string.IsNullOrEmpty(StreamKey) && !string.Equals(streamKey, StreamKey, StringComparison.Ordinal)) {
+            // Check per-user stream keys first, then fall back to global StreamKey
+            string publisher = null;
+            if (_streamKeys.TryGetValue(streamKey ?? "", out var userName)) {
+                publisher = userName;
+            } else if (!string.IsNullOrEmpty(StreamKey) && string.Equals(streamKey, StreamKey, StringComparison.Ordinal)) {
+                publisher = "";
+            } else {
                 Log("RTMP publish rejected: invalid stream key from " + conn.EndPoint.ToString());
                 return;
+            }
+            _activePublisherName = publisher;
+
+            // Get or create per-user stream context
+            UserStreamContext userCtx = null;
+            if (!string.IsNullOrEmpty(publisher)) {
+                userCtx = GetOrCreateUserStream(publisher);
+                userCtx.Publishing = true;
             }
 
             _rtmpActive = true;
@@ -403,20 +646,39 @@ namespace SocketJack.Net {
                             break;
                     }
 
-                    // Build FLV tag and broadcast to HTTP viewers
+                    // Build FLV tag and broadcast to viewers
                     if (payloadLen > 0) {
                         byte[] flvTag = BuildFlvTag(msgType, timestamp, chunk, 5, payloadLen);
-                        BroadcastToViewers(flvTag);
+
+                        // Broadcast to per-user viewers if publishing under a username,
+                        // otherwise broadcast to global viewer queues.
+                        if (userCtx != null) {
+                            userCtx.BroadcastToViewers(flvTag);
+                        } else {
+                            BroadcastToViewers(flvTag);
+                        }
 
                         // Cache initialization tags for late-joining viewers.
-                        // Video/audio sequence headers have packet-type byte 0x00
-                        // at chunk[6] (second payload byte).
-                        if (msgType == 18) {
-                            lock (_headerLock) { _cachedMetadataTag = flvTag; }
-                        } else if (msgType == 9 && payloadLen >= 2 && chunk[6] == 0x00) {
-                            lock (_headerLock) { _cachedVideoHeaderTag = flvTag; }
-                        } else if (msgType == 8 && payloadLen >= 2 && chunk[6] == 0x00) {
-                            lock (_headerLock) { _cachedAudioHeaderTag = flvTag; }
+                        if (userCtx != null) {
+                            if (msgType == 18) {
+                                lock (userCtx.HeaderLock) { userCtx.CachedMetadataTag = flvTag; }
+                            } else if (msgType == 9 && payloadLen >= 2 && chunk[6] == 0x00) {
+                                lock (userCtx.HeaderLock) { userCtx.CachedVideoHeaderTag = flvTag; }
+                            } else if (msgType == 8 && payloadLen >= 2 && chunk[6] == 0x00) {
+                                lock (userCtx.HeaderLock) { userCtx.CachedAudioHeaderTag = flvTag; }
+                            }
+                            // Cache the last video keyframe (not sequence header) for thumbnail extraction.
+                            if (msgType == 9 && payloadLen >= 2 && (chunk[5] & 0xF0) == 0x10 && chunk[6] != 0x00) {
+                                lock (userCtx.HeaderLock) { userCtx.LastVideoKeyframeTag = flvTag; }
+                            }
+                        } else {
+                            if (msgType == 18) {
+                                lock (_headerLock) { _cachedMetadataTag = flvTag; }
+                            } else if (msgType == 9 && payloadLen >= 2 && chunk[6] == 0x00) {
+                                lock (_headerLock) { _cachedVideoHeaderTag = flvTag; }
+                            } else if (msgType == 8 && payloadLen >= 2 && chunk[6] == 0x00) {
+                                lock (_headerLock) { _cachedAudioHeaderTag = flvTag; }
+                            }
                         }
                     }
 
@@ -435,12 +697,22 @@ namespace SocketJack.Net {
             }
 
             _rtmpActive = false;
+            _activePublisherName = "";
+            if (userCtx != null) {
+                userCtx.Publishing = false;
+                lock (userCtx.HeaderLock) {
+                    userCtx.CachedMetadataTag = null;
+                    userCtx.CachedVideoHeaderTag = null;
+                    userCtx.CachedAudioHeaderTag = null;
+                    userCtx.LastVideoKeyframeTag = null;
+                }
+            }
             lock (_headerLock) {
                 _cachedMetadataTag = null;
                 _cachedVideoHeaderTag = null;
                 _cachedAudioHeaderTag = null;
             }
-            Log("RTMP publishing stopped. Video=" + _rtmpVideoFrames + " Audio=" + _rtmpAudioFrames +
+            Log("RTMP publishing stopped. user=" + (publisher ?? "(global)") + " Video=" + _rtmpVideoFrames + " Audio=" + _rtmpAudioFrames +
                 " Dropped=" + _rtmpDroppedFrames + " Total=" + FormatBytes(Interlocked.Read(ref _rtmpTotalBytes)));
         }
 
@@ -505,15 +777,18 @@ namespace SocketJack.Net {
         public static string GetStreamPlayerHtml() {
             return "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
                    "<title>SocketJack Live Stream</title>" +
+                   "<link rel=\"icon\" href=\"/Images/favicon.ico\" type=\"image/x-icon\">" +
                    // Open Graph metadata for Steam chat / Discord / Slack link previews
                    "<meta property=\"og:title\" content=\"SocketJack Live Stream\">" +
                    "<meta property=\"og:description\" content=\"Live video stream powered by SocketJack\">" +
+                   "<meta property=\"og:image\" content=\"/Images/wShare.png\">" +
                    "<meta property=\"og:type\" content=\"video.other\">" +
                    "<meta property=\"og:site_name\" content=\"SocketJack\">" +
                    // Twitter Card metadata (also used by many chat clients)
-                   "<meta name=\"twitter:card\" content=\"summary\">" +
+                   "<meta name=\"twitter:card\" content=\"summary_large_image\">" +
                    "<meta name=\"twitter:title\" content=\"SocketJack Live Stream\">" +
                    "<meta name=\"twitter:description\" content=\"Live video stream powered by SocketJack\">" +
+                   "<meta name=\"twitter:image\" content=\"/Images/wShare.png\">" +
                    // Theme color used by Steam, Discord, and others for the embed accent
                    "<meta name=\"theme-color\" content=\"#111111\">" +
                    "<style>" +
@@ -563,8 +838,103 @@ namespace SocketJack.Net {
 
         #endregion
 
+        /// <summary>
+        /// Loads persisted stream keys from <c>%APPDATA%\SocketJack\Keys\streamkeys.txt</c>.
+        /// Each line is in the format <c>key=username</c>.
+        /// </summary>
+        private void LoadStreamKeys() {
+            try {
+                if (!File.Exists(KeysFilePath)) return;
+                lock (_keysFileLock) {
+                    var lines = File.ReadAllLines(KeysFilePath);
+                    foreach (var line in lines) {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        var sep = line.IndexOf('=');
+                        if (sep <= 0 || sep >= line.Length - 1) continue;
+                        var key = line.Substring(0, sep);
+                        var user = line.Substring(sep + 1);
+                        _streamKeys[key] = user;
+                    }
+                }
+            } catch { }
+        }
+
+        /// <summary>
+        /// Persists all current stream keys to <c>%APPDATA%\SocketJack\Keys\streamkeys.txt</c>.
+        /// </summary>
+        private void SaveStreamKeys() {
+            try {
+                lock (_keysFileLock) {
+                    if (!Directory.Exists(KeysDirectory))
+                        Directory.CreateDirectory(KeysDirectory);
+                    var lines = new List<string>();
+                    foreach (var kvp in _streamKeys) {
+                        lines.Add(kvp.Key + "=" + kvp.Value);
+                    }
+                    File.WriteAllLines(KeysFilePath, lines);
+                }
+            } catch { }
+        }
+
+        private static string GetQueryParam(string queryString, string name) {
+            if (string.IsNullOrEmpty(queryString)) return null;
+            var qs = queryString.TrimStart('?');
+            foreach (var part in qs.Split('&')) {
+                var eq = part.IndexOf('=');
+                if (eq > 0 && string.Equals(part.Substring(0, eq), name, StringComparison.OrdinalIgnoreCase)) {
+                    return Uri.UnescapeDataString(part.Substring(eq + 1));
+                }
+            }
+            return null;
+        }
+
         private void Log(string text) {
             LogOutput?.Invoke(text);
+        }
+
+        /// <summary>
+        /// Holds per-user stream state: viewer queues, cached FLV headers, and publishing status.
+        /// </summary>
+        public class UserStreamContext {
+            /// <summary>The username this context belongs to.</summary>
+            public readonly string Username;
+            internal readonly ConcurrentDictionary<Guid, BlockingCollection<byte[]>> ViewerQueues = new ConcurrentDictionary<Guid, BlockingCollection<byte[]>>();
+            internal byte[] CachedMetadataTag;
+
+            /// <summary>The cached AVC/HEVC sequence header FLV tag replayed to late-joining viewers.</summary>
+            public byte[] CachedVideoHeaderTag;
+
+            internal byte[] CachedAudioHeaderTag;
+
+            /// <summary>The most recent video keyframe FLV tag, used for thumbnail extraction.</summary>
+            public byte[] LastVideoKeyframeTag;
+
+            /// <summary>Lock object for synchronizing access to cached header and keyframe tags.</summary>
+            public readonly object HeaderLock = new object();
+
+            /// <summary>User-settable stream title displayed in the stream directory.</summary>
+            public string Title { get; set; } = "";
+
+            internal volatile bool Publishing;
+            private readonly int _queueCapacity;
+
+            internal UserStreamContext(string username, int queueCapacity) {
+                Username = username;
+                _queueCapacity = queueCapacity;
+            }
+
+            /// <summary>Whether this user is currently publishing a stream.</summary>
+            public bool IsPublishing => Publishing;
+
+            /// <summary>The number of viewers currently watching this user's stream.</summary>
+            public int ViewerCount => ViewerQueues.Count;
+
+            /// <summary>Broadcasts raw data to all viewers of this user's stream.</summary>
+            public void BroadcastToViewers(byte[] data) {
+                foreach (var kvp in ViewerQueues) {
+                    try { kvp.Value.TryAdd(data); } catch { }
+                }
+            }
         }
     }
 

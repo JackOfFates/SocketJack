@@ -191,9 +191,9 @@ namespace SocketJack.Net {
         private ConcurrentDictionary<string, DateTime> _clientLastActivity = new ConcurrentDictionary<string, DateTime>();
 
         /// <summary>
-        /// Map from client endpoint key to their TcpConnection (for HandleReceive compatibility).
+        /// Map from client endpoint key to their NetworkConnection (for HandleReceive compatibility).
         /// </summary>
-        private ConcurrentDictionary<string, NetworkConnection> _clientTcpConnections = new ConcurrentDictionary<string, NetworkConnection>();
+        private ConcurrentDictionary<string, NetworkConnection> _clientNetworkConnections = new ConcurrentDictionary<string, NetworkConnection>();
 
         private async void Init(int Port, string Name = "UdpServer") {
             try {
@@ -226,7 +226,7 @@ namespace SocketJack.Net {
                 tcpConn.ID = conn.ID;
                 tcpConn._Identity = conn._Identity;
                 tcpConn.EndPoint = remoteEP;
-                _clientTcpConnections.TryAdd(key, tcpConn);
+                _clientNetworkConnections.TryAdd(key, tcpConn);
 
                 LogFormat("[{0}] Client Connected.", new[] { Name + @"\" + conn.Identity.ID.ToUpper(), Port.ToString() });
 
@@ -252,7 +252,7 @@ namespace SocketJack.Net {
                 }
 
                 NetworkConnection tcpConn = null;
-                _clientTcpConnections.TryRemove(key, out tcpConn);
+                _clientNetworkConnections.TryRemove(key, out tcpConn);
                 Clients.TryRemove(key, out _);
                 _clientLastActivity.TryRemove(key, out _);
 
@@ -270,8 +270,8 @@ namespace SocketJack.Net {
 
         private void SyncPeer(UdpConnection conn) {
             string key = conn.EndPoint.ToString();
-            if (_clientTcpConnections.ContainsKey(key)) {
-                var tcpConn = _clientTcpConnections[key];
+            if (_clientNetworkConnections.ContainsKey(key)) {
+                var tcpConn = _clientNetworkConnections[key];
                 SendTo(conn, Peers.ToArrayWithLocal(tcpConn));
                 foreach (var kvp in Clients) {
                     if (kvp.Key != key) {
@@ -389,7 +389,7 @@ namespace SocketJack.Net {
 
                 // Clear internal tracking dictionaries
                 _clientLastActivity.Clear();
-                _clientTcpConnections.Clear();
+                _clientNetworkConnections.Clear();
 
                 // Dispose cancellation token sources
                 _receiveCts?.Dispose();
@@ -541,7 +541,7 @@ namespace SocketJack.Net {
 
                             string key = remoteEP.ToString();
                             NetworkConnection tcpConn = null;
-                            _clientTcpConnections.TryGetValue(key, out tcpConn);
+                            _clientNetworkConnections.TryGetValue(key, out tcpConn);
 
                             if (tcpConn != null) {
                                 ((ISocket)this).InvokeInternalReceivedByteCounter(tcpConn, bytesRead);
@@ -581,7 +581,7 @@ namespace SocketJack.Net {
                             }
 
                             NetworkConnection tcpConn = null;
-                            _clientTcpConnections.TryGetValue(key, out tcpConn);
+                            _clientNetworkConnections.TryGetValue(key, out tcpConn);
                             if (tcpConn != null) {
                                 ((ISocket)this).InvokeInternalSentByteCounter(tcpConn, item.Data.Length);
                                 ((ISocket)this).InvokeInternalSendEvent(tcpConn, typeof(byte[]), "[DATAGRAM]", item.Data.Length);
@@ -674,7 +674,7 @@ namespace SocketJack.Net {
                 }
 
                 NetworkConnection tcpConn = null;
-                _clientTcpConnections.TryGetValue(key, out tcpConn);
+                _clientNetworkConnections.TryGetValue(key, out tcpConn);
 
                 var valueType = wrapper.GetValueType();
                 if (wrapper.value != null || wrapper.Type != "") {

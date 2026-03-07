@@ -1,6 +1,7 @@
 using SocketJack.Net.P2P;
 using SocketJack.Net;
 using System;
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -84,6 +85,9 @@ namespace SocketJack.WPF {
             }
 
             private static Action<ReceivedEventArgs<RemoteAction>> RegisterRemoteActionReplay(ISocket client, Identifier peer, ElementRoute route, CancellationTokenSource cts) {
+                var actionQueue = new ConcurrentQueue<RemoteAction>();
+                var draining = new int[] { 0 };
+
                 Action<ReceivedEventArgs<RemoteAction>> cb = e =>
                 {
                     try {
@@ -103,7 +107,8 @@ namespace SocketJack.WPF {
                             return;
 
                         e.Object.Route = route;
-                        _ = e.Object.PerformAction();
+                        actionQueue.Enqueue(e.Object);
+                        DrainReplayQueue(actionQueue, draining);
                     }
                     catch {
                     }
@@ -111,6 +116,25 @@ namespace SocketJack.WPF {
 
                 client.RegisterCallback<RemoteAction>(cb);
                 return cb;
+            }
+
+            private static async void DrainReplayQueue(ConcurrentQueue<RemoteAction> queue, int[] draining) {
+                if (Interlocked.CompareExchange(ref draining[0], 1, 0) != 0)
+                    return;
+                try {
+                    while (queue.TryDequeue(out var action)) {
+                        try {
+                            await action.PerformAction();
+                        }
+                        catch {
+                        }
+                    }
+                }
+                finally {
+                    Volatile.Write(ref draining[0], 0);
+                }
+                if (!queue.IsEmpty)
+                    DrainReplayQueue(queue, draining);
             }
 
             private sealed class StopHandle : IDisposable {

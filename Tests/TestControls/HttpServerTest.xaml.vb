@@ -9,7 +9,7 @@ Imports SocketJack.Net.P2P
 Public Class HttpServerTest
     Implements ITest
 
-    Private ServerPort As Integer = 24014
+    Private ServerPort As Integer = 21040
     Public WithEvents Server As HttpServer
     Private _broadcast As BroadcastServer
     Private _statsTimer As DispatcherTimer

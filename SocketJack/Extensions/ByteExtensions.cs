@@ -61,7 +61,7 @@ namespace SocketJack.Extensions {
         public static byte[] Terminate(this byte[] Data) {
             var length = Data.Length.ToString().PadLeft(15, (char)0);
             return Encoding.UTF8.GetBytes(length).Concat(Data);
-            //return ByteExtensions.Concat(new[] { Data, TcpConnection.Terminator });
+            //return ByteExtensions.Concat(new[] { Data, NetworkConnection.Terminator });
         }
 
         /// <summary>

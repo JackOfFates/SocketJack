@@ -15,7 +15,7 @@
    <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DocumentationFile>C:\Users\Patho\source\repos\JackOfFates\SocketJack\SocketJack\SocketJack.xml</DocumentationFile>
+    <DocumentationFile>SocketJack.xml</DocumentationFile>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
@@ -290,9 +290,11 @@
     <Compile Include="..\SocketJack\Extensions\ObjectExtensions.cs" Link="Extensions\ObjectExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\StreamExtensions.cs" Link="Extensions\StreamExtensions.cs" />
     <Compile Include="..\SocketJack\Net\EventArguments.cs" Link="Net\EventArguments.cs" />
+    <Compile Include="..\SocketJack\Net\HtAccessBuilder.cs" Link="Net\HtAccessBuilder.cs" />
     <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
     <Compile Include="..\SocketJack\Net\HttpServer.cs" Link="Net\HttpServer.cs" />
     <Compile Include="..\SocketJack\Net\ISocket.cs" Link="Net\ISocket.cs" />
+    <Compile Include="..\SocketJack\Net\MutableTcpServer.cs" Link="Net\MutableTcpServer.cs" />
     <Compile Include="..\SocketJack\Net\NetworkBase.cs" Link="Net\NetworkBase.cs" />
     <Compile Include="..\SocketJack\Net\NetworkConnection.cs" Link="Net\NetworkConnection.cs" />
     <Compile Include="..\SocketJack\Net\NetworkOptions.cs" Link="Net\NetworkOptions.cs" />

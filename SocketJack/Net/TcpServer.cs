@@ -255,17 +255,27 @@ namespace SocketJack.Net {
                 }
             }
         }
-        private void SyncPeer(NetworkConnection Client) {
+        /// <summary>
+        /// Sends the current peer list to the given client and broadcasts the
+        /// new peer to all other clients.
+        /// </summary>
+        protected internal virtual void SyncPeer(NetworkConnection Client) {
             Task.Run(() => {
                 Client.Send(Peers.ToArrayWithLocal(Client));
                 Clients.SendBroadcast(Client.Identity, Client);
             });
         }
-        private void InitializePeer(NetworkConnection Client) {
-            Task.Run(() => {
-                Peers.AddOrUpdate(Client.Identity);
-                SyncPeer(Client);
-            });
+
+        /// <summary>
+        /// Registers a connection as a peer and synchronizes peer lists.
+        /// <see cref="Peers.AddOrUpdate"/> runs synchronously so the peer is
+        /// immediately visible to message handlers; the network sync runs
+        /// asynchronously.
+        /// </summary>
+        protected internal void InitializePeer(NetworkConnection Client) {
+            if (Client?.Identity == null) return;
+            Peers.AddOrUpdate(Client.Identity);
+            SyncPeer(Client);
         }
         private void OnReceived_MetadataKeyValue(ReceivedEventArgs<MetadataKeyValue> Args) {
             if (string.IsNullOrEmpty(Args.Object.Key)) return;
@@ -296,6 +306,14 @@ namespace SocketJack.Net {
         private bool DelayListen = false;
         protected internal int ActiveClients = 0;
         protected internal int PendingConnections = 0;
+
+        /// <summary>
+        /// When <see langword="true"/>, <see cref="NewConnection"/> will not call
+        /// <see cref="InitializePeer"/> automatically.  Derived classes (e.g.
+        /// <see cref="MutableTcpServer"/>) set this so that peer initialization
+        /// is deferred until the connection's protocol has been identified.
+        /// </summary>
+        protected internal bool DeferPeerInitialization = false;
 
         private void DelayListenDelegate(int MTU, IPAddress LocalIP) => InvokeDelayedListen();
         private async void Init(int Port, string Name = "TcpServer") {
@@ -376,7 +394,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
             newConnection.StartReceiving();
             newConnection.StartSending();
             newConnection.StartConnectionTester();
-            if (Options.UsePeerToPeer)
+            if (Options.UsePeerToPeer && !DeferPeerInitialization)
                 InitializePeer(newConnection);
             return newConnection;
         }
@@ -525,9 +543,9 @@ private NetworkConnection NewConnection(ref Socket handler) {
         /// <summary>
         /// Sends an object to a client.
         /// </summary>
-        /// <param name="Client">The Client's TcpConnection.</param>
+        /// <param name="Client">The Client's NetworkConnection.</param>
         /// <param name="Obj">Object to send to the client.</param>
-        /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+        /// <remarks>Can also be accessed directly via NetworkConnection.Send()</remarks>
         public new void Send(NetworkConnection Client, object Obj) {
             if (Client != null && !Client.Closed && Client.Socket.Connected) {
                 base.Send(Client, Obj);
@@ -537,9 +555,9 @@ private NetworkConnection NewConnection(ref Socket handler) {
         /// <summary>
         /// Sends an object to a peer.
         /// </summary>
-        /// <param name="Client">The Client's TcpConnection.</param>
+        /// <param name="Client">The Client's NetworkConnection.</param>
         /// <param name="Obj">Object to send to the client.</param>
-        /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+        /// <remarks>Can also be accessed directly via NetworkConnection.Send()</remarks>
         public override void Send(Identifier Recipient, object Obj) {
             if (Recipient != null) {
                 var Client = Clients.Where(Clients => Clients.Value.Identity != null && Clients.Value.Identity.ID == Recipient.ID).Select(Clients => Clients.Value).FirstOrDefault();
@@ -552,7 +570,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
         /// </summary>
         /// <param name="ID">The clients's ID.</param>
         /// <param name="Obj">An object.</param>
-        /// <remarks>Can also be accessed directly via TcpConnection.Send()</remarks>
+        /// <remarks>Can also be accessed directly via NetworkConnection.Send()</remarks>
         public void Send(string ID, object Obj) {
             Guid ClientGuid = default;
             if (Guid.TryParse(ID, out ClientGuid)) {
@@ -565,7 +583,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
         /// </summary>
         /// <param name="ID">The clients's ID.</param>
         /// <param name="Obj">An Object.</param>
-        /// <remarks>Can also be accessed directly from TcpConnection.Send()</remarks>
+        /// <remarks>Can also be accessed directly from NetworkConnection.Send()</remarks>
         public void Send(Guid ID, object Obj) {
             if (Clients.ContainsKey(ID)) {
                 var Client = Clients[ID];
@@ -574,7 +592,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
         }
 
         /// <summary>
-        /// Send an object to an array of TcpConnection.
+        /// Send an object to an array of NetworkConnection.
         /// </summary>
         /// <param name="Clients">An array of ConnectedSocket</param>
         /// <param name="Obj">Object to send to the client.</param>

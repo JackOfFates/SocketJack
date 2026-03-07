@@ -96,6 +96,18 @@ namespace SocketJack.Net {
         }
 
         /// <summary>
+        /// The wire protocol detected for this connection.
+        /// Set by <see cref="MutableTcpServer"/> when the first data arrives
+        /// and the protocol is identified.
+        /// </summary>
+        public TcpProtocol Protocol {
+            get {
+                return _Protocol;
+            }
+        }
+        protected internal TcpProtocol _Protocol = TcpProtocol.Unknown;
+
+        /// <summary>
         /// True if connection sending or receiving.
         /// </summary>
         public bool Active {
@@ -300,6 +312,14 @@ namespace SocketJack.Net {
         protected internal bool IsServer = false;
 
         /// <summary>
+        /// When set, this connection uses the raw-byte receive path regardless
+        /// of <see cref="NetworkOptions.UseTerminatedStreams"/>. This is
+        /// activated automatically when the first bytes on the connection look
+        /// like an HTTP request rather than a SocketJack length header.
+        /// </summary>
+        protected internal volatile bool _forceRawMode = false;
+
+        /// <summary>
         /// Sends the remote client their remote Identity and IP.
         /// </summary>
         internal void SendLocalIdentity() {
@@ -317,7 +337,7 @@ namespace SocketJack.Net {
                     return false;
                 } else if (!Socket.Connected || Closed || Closing) {
                     return false;
-                } else if (!Active && Socket.Poll(10000, SelectMode.SelectRead) && Socket.Available == 0) {
+                } else if (Socket.Poll(10000, SelectMode.SelectRead) && Socket.Available == 0) {
                     return false;
                 } else {
                     return true;
@@ -435,27 +455,32 @@ namespace SocketJack.Net {
         public event ClientDisconnectedEventHandler OnDisconnected;
         public delegate void ClientDisconnectedEventHandler(NetworkConnection sender, DisconnectedEventArgs e);
 
-        protected internal void InvokeDisconnected(ISocket sender, DisconnectedEventArgs e) {
-            if (e.Connection.Closed) return;
-            var senderTypeName = sender.GetType().Name;
-            if (!(senderTypeName == "WebSocketClient") && !(senderTypeName == "WebSocketClient") && !(sender is TcpServer) && !(senderTypeName == "WebSocketServer")) {
-                ((ISocket)sender).InvokeOnDisconnected(sender, e.Connection);
-                e.Connection.Closed = true;
-            }
+		protected internal void InvokeDisconnected(ISocket sender, DisconnectedEventArgs e) {
+			if (e.Connection.Closed) return;
+			if (sender is TcpServer tcpServer) {
+				e.Connection.Closed = true;
+				tcpServer.InvokeOnDisconnected(e);
+			} else {
+				var senderTypeName = sender.GetType().Name;
+				if (!(senderTypeName == "WebSocketClient") && !(senderTypeName == "WebSocketServer")) {
+					((ISocket)sender).InvokeOnDisconnected(sender, e.Connection);
+					e.Connection.Closed = true;
+				}
+			}
 #if UNITY
-            MainThread.Run(() => {
-		        OnDisconnected?.Invoke(this, e);
-            });
+			MainThread.Run(() => {
+				OnDisconnected?.Invoke(this, e);
+			});
 #endif
 #if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                OnDisconnected?.Invoke(this, e);
-            });
+			Application.Current.Dispatcher.Invoke(() => {
+				OnDisconnected?.Invoke(this, e);
+			});
 #endif
 #if !UNITY && !WINDOWS
-            OnDisconnected?.Invoke(this, e);
+			OnDisconnected?.Invoke(this, e);
 #endif
-        }
+		}
 
         #endregion
 
@@ -580,8 +605,9 @@ namespace SocketJack.Net {
         private async Task ReceiveData() {
                 var options = Parent.Options;
                 var stream = Stream;
-                // If terminated streams are disabled treat this as a raw TCP stream (e.g. HTTP)
-                if (!options.UseTerminatedStreams) {
+                // If terminated streams are disabled (or this connection was switched
+                // to raw mode after detecting non-SocketJack data) treat as a raw TCP stream.
+                if (_forceRawMode || !options.UseTerminatedStreams) {
                     var bufSize = options.DownloadBufferSize > 0 ? options.DownloadBufferSize : 8192;
                     var buffer = ArrayPool<byte>.Shared.Rent(bufSize);
                     try {
@@ -649,6 +675,38 @@ namespace SocketJack.Net {
 
                 string lengthStr = Encoding.UTF8.GetString(_lengthHeaderBuffer, 0, lengthRead).Trim(LengthTrimChars);
                 if (!int.TryParse(lengthStr, out int Length)) {
+                    // The first bytes are not a valid SocketJack length header.
+                    // If they look like an HTTP request, switch this connection to
+                    // raw-byte mode and re-dispatch so the protocol detection layer
+                    // (e.g. MutableTcpServer / HttpServer) can route it correctly.
+                    if (IsHttpPrefix(_lengthHeaderBuffer, lengthRead)) {
+                        _forceRawMode = true;
+                        var raw = new List<byte>(lengthRead + 256);
+                        raw.AddRange(new ArraySegment<byte>(_lengthHeaderBuffer, 0, lengthRead));
+                        if (_Stream != null) {
+                            var bufSize = options.DownloadBufferSize > 0 ? options.DownloadBufferSize : 8192;
+                            var extraBuf = ArrayPool<byte>.Shared.Rent(bufSize);
+                            try {
+                                while (_Stream.DataAvailable) {
+                                    int n = await stream.ReadAsync(extraBuf, 0, bufSize);
+                                    if (n <= 0) break;
+                                    Interlocked.Add(ref _TotalBytesReceived, n);
+                                    Parent.InvokeInternalReceivedByteCounter(this, n);
+                                    raw.AddRange(new ArraySegment<byte>(extraBuf, 0, n));
+                                }
+                            } catch { } finally {
+                                ArrayPool<byte>.Shared.Return(extraBuf);
+                            }
+                        }
+                        if (raw.Count > 0) {
+                            var rawCopy = raw;
+                            Task.Run(() => {
+                                Parent.HandleReceive(this, rawCopy, ByteArrayType, rawCopy.Count);
+                            });
+                        }
+                        IsReceiving = false;
+                        return;
+                    }
                     Parent.InvokeOnError(this, new FormatException("Failed to parse message length."));
                     Parent.CloseConnection(this, DisconnectionReason.Unknown);
                     IsReceiving = false;
@@ -703,6 +761,25 @@ namespace SocketJack.Net {
                 }
 
                 IsReceiving = false;
+        }
+
+        /// <summary>
+        /// Returns <see langword="true"/> when <paramref name="data"/> begins with
+        /// a known HTTP method keyword (GET, POST, PUT, …).
+        /// </summary>
+        private static bool IsHttpPrefix(byte[] data, int length) {
+            if (data == null || length < 3) return false;
+            byte b0 = data[0];
+            if (b0 != (byte)'G' && b0 != (byte)'P' && b0 != (byte)'H' &&
+                b0 != (byte)'D' && b0 != (byte)'O' && b0 != (byte)'T' &&
+                b0 != (byte)'C')
+                return false;
+            string prefix = Encoding.UTF8.GetString(data, 0, Math.Min(length, 10));
+            return prefix.StartsWith("GET ") || prefix.StartsWith("POST ") ||
+                   prefix.StartsWith("PUT ") || prefix.StartsWith("DELETE ") ||
+                   prefix.StartsWith("HEAD ") || prefix.StartsWith("OPTIONS") ||
+                   prefix.StartsWith("PATCH ") || prefix.StartsWith("TRACE ") ||
+                   prefix.StartsWith("CONNECT ");
         }
 
         private async Task ReceiveData_old(bool DataAvailable) {
@@ -840,13 +917,13 @@ namespace SocketJack.Net {
                         segments[i] = Buffer.Part(prevEnd, TerminatorIndices[i]);
                     }
 
-                    // Process all segments in parallel
-                    var tasks = new Task[segments.Length];
+                    // Process segments sequentially to preserve TCP message ordering.
+                    // Parallel dispatch can reorder callbacks (e.g. MouseUp before MouseDown)
+                    // when multiple messages arrive in the same TCP read.
                     for (int i = 0; i < segments.Length; i++) {
                         var segment = segments[i];
-                        tasks[i] = Task.Run(() => DeserializeAndDispatch(segment, segment.Length, Sender, Target));
+                        await Task.Run(() => DeserializeAndDispatch(segment, segment.Length, Sender, Target));
                     }
-                    await Task.WhenAll(tasks);
 
                     // Clean up consumed bytes from buffer
                     int consumedEnd = lastTerminatorIndex + Terminator.Length;
@@ -860,9 +937,11 @@ namespace SocketJack.Net {
             } else {
                 var tempBuffer = new List<byte>(Buffer);
                 Buffer.Clear();
-                Task.Run(() => {
-                    Target.HandleReceive(Sender, tempBuffer, ByteArrayType, tempBuffer.Count);
-                });
+                // Dispatch synchronously so that protocol-detection layers
+                // (MutableTcpServer.RouteReceive, HttpServer.GetRequestAsync)
+                // finish assigning a handler before the next ReceiveData
+                // iteration reads more data from the socket.
+                Target.HandleReceive(Sender, tempBuffer, ByteArrayType, tempBuffer.Count);
 
                 return Buffer;
             }
