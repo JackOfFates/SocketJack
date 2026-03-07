@@ -16,11 +16,13 @@ A .NET networking library that lets you send and receive any object over TCP or 
 | Category | Highlights |
 |---|---|
 | **Transport** | Built on `System.Net.Sockets.Socket` and `NetworkStream`. Unified `TcpClient` / `TcpServer`, `UdpClient` / `UdpServer`, and WebSocket API with consistent connection lifecycle events. |
+| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, and RTMP on a single port. Register custom `IProtocolHandler` implementations for any binary protocol. |
+| **HTTP** | Full HTTP server with route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file serving via `MapDirectory`, `.htaccess` security with `HtAccessBuilder`, chunked transfer encoding, and RTMP ingest via `MapRtmpPublish`. |
 | **Serialization** | Default `System.Text.Json` serializer with pluggable `ISerializer` interface, custom `JsonConverter` support (e.g., `Bitmap`, `byte[]`, `Type`), and type whitelist/blacklist for secure deserialization. |
 | **Peer-to-Peer** | Automatic peer discovery, host/client role management, relay-based NAT traversal, and metadata propagation via the `Identifier` class. |
 | **Compression** | Pluggable `ICompression` interface with built-in `GZipStream` and `DeflateStream` implementations, configurable `CompressionLevel`. |
 | **Performance** | Large configurable buffers (default 100 MB), fully async I/O, automatic message segmentation, outbound chunking with configurable flush interval, and upload/download bandwidth throttling (Mbps). |
-| **Security** | `SslStream` with TLS 1.2, `X509Certificate` authentication, and fine-grained control over allowed message types and connection policies. |
+| **Security** | `SslStream` with TLS 1.2, `X509Certificate` authentication, `.htaccess`-based access control with IP allow/deny, HTTP Basic auth, and file-pattern restrictions. |
 | **Extensibility** | Rich event system for connection, disconnection, peer updates, and data receipt. Attach arbitrary metadata to any peer or connection for dynamic routing and discovery. |
 
 ---
@@ -44,15 +46,17 @@ The core transport. `TcpClient` and `TcpServer` provide reliable, ordered, strea
 
 ### HTTP
 
-`HttpServer` and `HttpClient` layer a familiar HTTP API on top of the TCP transport. Route mapping, typed callbacks, chunked transfer-encoding, HTTPS/TLS, and automatic redirects are all built in.
+`HttpServer` and `HttpClient` layer a familiar HTTP API on top of the TCP transport. Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file serving (`MapDirectory`), `.htaccess` security, typed callbacks, chunked transfer-encoding, RTMP ingest, HTTPS/TLS, and automatic redirects are all built in.
 
 | Class | Description |
 |---|---|
-| `HttpServer` | Extends `TcpServer`. Parses HTTP requests, resolves routes, and writes responses. |
+| `HttpServer` | Extends `TcpServer`. Parses HTTP requests, resolves routes, serves static files, and writes responses. |
 | `HttpClient` | Extends `TcpClient`. Sends HTTP/HTTPS requests with redirect and chunked-transfer support. |
+| `MutableTcpServer` | Extends `HttpServer`. Auto-detects protocol (HTTP, SocketJack, RTMP, or custom) per-connection on a single port. |
 | `BroadcastServer` | Attaches to an `HttpServer` to relay live video from OBS (RTMP or HTTP upload) to browser and VLC viewers via FLV. |
+| `HtAccessBuilder` | Fluent builder for `.htaccess` rules: IP allow/deny, HTTP Basic auth, file restrictions, custom headers. |
 | `HttpContext` | Carries the `HttpRequest`, `HttpResponse`, status code, and content type for a single request cycle. |
-| `HttpRequest` | Parsed request: `Method`, `Path`, `Headers`, `Body`, `BodyBytes`. |
+| `HttpRequest` | Parsed request: `Method`, `Path`, `Headers`, `Body`, `BodyBytes`, `QueryString`, `QueryParameters`. |
 | `HttpResponse` | Response: `StatusCodeNumber`, `Headers`, `Body`/`BodyBytes`, `ContentType`. |
 
 ### WebSocket
@@ -214,6 +218,89 @@ server.OnHttpRequest += (connection, ref context, ct) =>
 };
 ```
 
+### HTTP — Typed Routes
+
+Automatically deserialize the request body to a typed parameter:
+
+```cs
+server.Map<LoginRequest>("POST", "/login", (connection, body, request, ct) =>
+{
+    // body is already deserialized to LoginRequest
+    return new LoginResponse(body.Username);
+});
+```
+
+### HTTP — Static File Serving
+
+Map a local directory to a URL prefix to serve static files with automatic MIME type detection:
+
+```cs
+// Serve files from C:\wwwroot at /static
+server.MapDirectory("/static", @"C:\wwwroot");
+
+// Enable auto-generated directory listings for directories without index.html
+server.AllowDirectoryListing = true;
+
+server.RemoveDirectoryMapping("/static");
+```
+
+### HTTP — .htaccess Security
+
+Use the `HtAccessBuilder` fluent API to configure per-directory access rules:
+
+```cs
+server.MapDirectory("/secure", @"C:\data", htaccess =>
+{
+    htaccess
+        .DenyDirectoryListing()
+        .AllowFrom("192.168.1.0/24")
+        .DenyFiles("*.log", "*.bak")
+        .RequireBasicAuth("Admin Area", "admin:secret")
+        .AddHeader("X-Frame-Options", "DENY");
+});
+```
+
+### HTTP — Streaming Routes
+
+Keep a connection open for server-sent events or long-lived responses:
+
+```cs
+// Chunked streaming response
+server.MapStream("GET", "/events", async (connection, request, chunkedStream, ct) =>
+{
+    for (int i = 0; i < 10; i++)
+    {
+        chunkedStream.WriteLine("event: " + i);
+        await Task.Delay(1000, ct);
+    }
+});
+
+// Upload streaming (e.g., continuous video ingest)
+server.MapUploadStream("POST", "/upload", (connection, request, uploadStream, ct) =>
+{
+    byte[] chunk;
+    while ((chunk = uploadStream.ReadAsync(ct).GetAwaiter().GetResult()) != null)
+    {
+        // Process each incoming data chunk
+    }
+});
+```
+
+### HTTP — RTMP Ingest
+
+Accept RTMP publish connections (e.g., from OBS) directly on the HTTP server port:
+
+```cs
+server.MapRtmpPublish("live", async (connection, app, streamKey, uploadStream, ct) =>
+{
+    byte[] chunk;
+    while ((chunk = await uploadStream.ReadAsync(ct)) != null)
+    {
+        // Process RTMP media chunks (prefixed with type byte: 8=audio, 9=video)
+    }
+});
+```
+
 ### HTTP — Client
 
 ```cs
@@ -356,6 +443,74 @@ client.OnConnected    += (e) => Console.WriteLine("Connected!");
 client.OnDisconnected += (e) => Console.WriteLine("Disconnected.");
 client.PeerConnected    += (sender, peer) => Console.WriteLine($"Peer joined: {peer.ID}");
 client.PeerDisconnected += (sender, peer) => Console.WriteLine($"Peer left: {peer.ID}");
+```
+
+### MutableTcpServer — Multi-Protocol on a Single Port
+
+`MutableTcpServer` extends `HttpServer` and auto-detects the protocol for each incoming connection. HTTP, SocketJack-framed, and RTMP connections can all share a single listening port. Custom protocols are supported via the `IProtocolHandler` interface.
+
+```cs
+var server = new MutableTcpServer(port: 9000);
+
+// HTTP routes are configured through the Http property
+server.Http.Map("GET", "/api/status", (connection, request, ct) =>
+{
+    return "{ \"status\": \"ok\" }";
+});
+
+// Serve static files through the HTTP handler
+server.Http.MapDirectory("/www", @"C:\wwwroot");
+
+// SocketJack clients connect to the same port and are routed automatically
+server.SocketJackClientConnected += (connection) =>
+{
+    Console.WriteLine($"SocketJack client connected: {connection.ID}");
+};
+
+// Normal SocketJack callbacks work as usual
+server.RegisterCallback<CustomMessage>((args) =>
+{
+    Console.WriteLine($"Received: {args.Object.Message}");
+});
+
+server.Listen();
+
+// SocketJack clients connect normally:
+var client = new TcpClient();
+await client.Connect("127.0.0.1", 9000);
+client.Send(new CustomMessage("Hello!"));
+
+// HTTP clients hit the same port:
+// curl http://localhost:9000/api/status
+```
+
+### MutableTcpServer — Custom Protocol Handler
+
+Implement `IProtocolHandler` to add support for any binary protocol:
+
+```cs
+public class MyProtocolHandler : IProtocolHandler
+{
+    public string Name => "MyProtocol";
+
+    public bool CanHandle(byte[] data)
+    {
+        // Detect your protocol by inspecting the first bytes
+        return data.Length >= 4 && data[0] == 0xAB;
+    }
+
+    public void ProcessReceive(MutableTcpServer server, NetworkConnection connection, ref IReceivedEventArgs e)
+    {
+        // Handle incoming data for this protocol
+    }
+
+    public void OnDisconnected(MutableTcpServer server, NetworkConnection connection)
+    {
+        // Clean up when a connection using this protocol disconnects
+    }
+}
+
+server.RegisterProtocol(new MyProtocolHandler());
 ```
 
 ### WPF — Sharing a Control

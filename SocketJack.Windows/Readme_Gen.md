@@ -139,11 +139,13 @@ This package includes the full [SocketJack](https://www.nuget.org/packages/Socke
 | Category | Highlights |
 |---|---|
 | **Transport** | Unified `TcpClient` / `TcpServer`, `UdpClient` / `UdpServer`, and WebSocket API. |
+| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, and RTMP on a single port. |
+| **HTTP** | Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file serving via `MapDirectory`, `.htaccess` security, RTMP ingest. |
 | **Serialization** | `System.Text.Json` with pluggable `ISerializer`, type whitelist/blacklist. |
 | **Peer-to-Peer** | Automatic discovery, relay-based NAT traversal, metadata propagation. |
 | **Compression** | `GZipStream` / `DeflateStream` with configurable `CompressionLevel`. |
 | **Performance** | Async I/O, automatic segmentation, bandwidth throttling. |
-| **Security** | `SslStream` TLS 1.2, `X509Certificate` authentication. |
+| **Security** | `SslStream` TLS 1.2, `X509Certificate` authentication, `.htaccess` access control. |
 
 ### TCP — Quick Start
 
@@ -186,6 +188,31 @@ Must be set before creating any Client or Server instance.
 
 ```cs
 NetworkOptions.DefaultOptions.UsePeerToPeer = true;
+```
+
+### MutableTcpServer — Multi-Protocol Quick Start
+
+`MutableTcpServer` auto-detects HTTP, SocketJack, and RTMP per-connection on a single port:
+
+```cs
+var server = new MutableTcpServer(port: 9000);
+
+// HTTP routes via the Http property
+server.Http.Map("GET", "/api/status", (connection, request, ct) =>
+{
+    return "{ \"status\": \"ok\" }";
+});
+
+// Serve static files
+server.Http.MapDirectory("/www", @"C:\wwwroot");
+
+// SocketJack callbacks work as usual
+server.RegisterCallback<CustomMessage>((args) =>
+{
+    Console.WriteLine($"Received: {args.Object.Message}");
+});
+
+server.Listen();
 ```
 
 ---
