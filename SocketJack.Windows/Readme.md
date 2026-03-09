@@ -14,7 +14,7 @@ Built on top of the full SocketJack networking stack: `System.Text.Json` seriali
 
 ---
 
-## ?? What's New in v1.6.2
+## ? What's New in v1.6.6
 
 - **WebSocket support in `MutableTcpServer`** — HTTP, SocketJack, WebSocket, and RTMP now all auto-detect on a single port. Browser clients connect alongside native SocketJack and HTTP clients seamlessly.
 - **`WebSocketClientConnected` event** — fires after a successful WebSocket upgrade handshake for easy browser-client initialization.
