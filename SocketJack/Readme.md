@@ -8,11 +8,11 @@
 
 A .NET networking library that lets you send and receive any object over TCP or UDP with a single method call. Powered by `System.Text.Json` serialization, SocketJack handles framing, segmentation, and deserialization automatically — just call `Send(myObject)` on one end and register a typed callback on the other. No manual byte wrangling, no protocol boilerplate. Built on `System.Net.Sockets` with optional `SslStream` TLS 1.2 encryption, peer-to-peer relay, and a unified API across TCP, UDP, HTTP, and WebSocket transports.
 
-**Target frameworks:** .NET Standard 2.1 · .NET 8 · .NET 9 · .NET 10
+**Target frameworks:** .NET 8 · .NET 9 · .NET 10
 
 ---
 
-## ? What's New in v1.6.6
+## What's New in v1.6.6?
 
 - **WebSocket support in `MutableTcpServer`** — HTTP, SocketJack, WebSocket, and RTMP now all auto-detect on a single port. Browser-based WebSocket clients connect alongside native SocketJack and HTTP clients with zero extra configuration.
 - **`WebSocketClientConnected` event** — fires after a successful WebSocket upgrade handshake, making it easy to initialize browser clients.

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0-windows7.0</TargetFramework>
 
@@ -25,7 +25,7 @@
   <PropertyGroup>
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
-    <Copyright>Copyright © JackOfFates 2025</Copyright>
+    <Copyright>Copyright � JackOfFates 2025</Copyright>
     <AssemblyVersion>1.5.0</AssemblyVersion>
     <FileVersion>1.5.0</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
@@ -272,6 +272,8 @@
   </PropertyGroup>
   <ItemGroup>
     <None Remove="runtimeconfig.template.json" />
+    <None Remove="Readme.md" />
+    <None Remove="SocketJackWpfIcon.png" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\SocketJack\Compression\DeflateCompression.cs" Link="Compression\DeflateCompression.cs" />
@@ -364,31 +366,31 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
-    <None Update="Readme.md">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-    <None Update="SocketJackWpfIcon.png">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
-  </ItemGroup>
-  <ItemGroup>
-    <Import Include="System.Text.Json" />
-    <Import Include="System.Text.Json.Serialization" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Compression\" />
-    <Folder Include="Net\P2P\" />
-    <Folder Include="Serialization\Json\Converters\" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\SocketJack\License.txt">
-      <Pack>True</Pack>
-      <PackagePath>\</PackagePath>
-    </None>
-  </ItemGroup>
+    </ItemGroup>
+    <ItemGroup>
+      <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
+    </ItemGroup>
+    <ItemGroup>
+      <Import Include="System.Text.Json" />
+      <Import Include="System.Text.Json.Serialization" />
+    </ItemGroup>
+    <ItemGroup>
+      <Folder Include="Compression\" />
+      <Folder Include="Net\P2P\" />
+      <Folder Include="Serialization\Json\Converters\" />
+    </ItemGroup>
+    <ItemGroup>
+      <None Include="Readme.md">
+        <Pack>True</Pack>
+        <PackagePath>\</PackagePath>
+      </None>
+      <None Include="SocketJackWpfIcon.png">
+        <Pack>True</Pack>
+        <PackagePath>\</PackagePath>
+      </None>
+      <None Include="..\SocketJack\License.txt">
+        <Pack>True</Pack>
+        <PackagePath>\</PackagePath>
+      </None>
+    </ItemGroup>
 </Project>
