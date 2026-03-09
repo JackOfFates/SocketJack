@@ -12,7 +12,7 @@ A .NET networking library that lets you send and receive any object over TCP or 
 
 ---
 
-## ✨ What's New in v1.6.2
+## ✨ What's New in v1.6.6
 
 - **WebSocket support in `MutableTcpServer`** — HTTP, SocketJack, WebSocket, and RTMP now all auto-detect on a single port. Browser-based WebSocket clients connect alongside native SocketJack and HTTP clients with zero extra configuration.
 - **`WebSocketClientConnected` event** — fires after a successful WebSocket upgrade handshake, making it easy to initialize browser clients.
