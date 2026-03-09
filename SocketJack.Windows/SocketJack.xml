@@ -466,6 +466,41 @@
             machine instead of being parsed as HTTP.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.HttpServer.HttpTotalBytesSent">
+            <summary>
+            Running total of bytes sent across all HTTP responses (including headers).
+            This counter persists across connection lifetimes, unlike per-connection
+            counters which are lost when short-lived HTTP connections close.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.HttpTotalBytesReceived">
+            <summary>
+            Running total of bytes received across all HTTP requests.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.HttpServer._httpBytesSentSnapshot">
+            <summary>
+            Bytes sent via HTTP responses since the last call to <see cref="M:SocketJack.Net.HttpServer.SnapshotHttpBytesSent"/>.
+            Use this to compute an HTTP bytes-per-second rate from the WPF metrics timer.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.HttpServer._httpBytesReceivedSnapshot">
+            <summary>
+            Bytes received via HTTP requests since the last call to <see cref="M:SocketJack.Net.HttpServer.SnapshotHttpBytesReceived"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.SnapshotHttpBytesSent">
+            <summary>
+            Returns the number of HTTP bytes sent since the last snapshot and resets the delta.
+            Call once per second to get a bytes-per-second rate.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.SnapshotHttpBytesReceived">
+            <summary>
+            Returns the number of HTTP bytes received since the last snapshot and resets the delta.
+            Call once per second to get a bytes-per-second rate.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.HttpServer.Robots">
             <summary>
             Gets or sets the content served at <c>/robots.txt</c>. Set to <see langword="null"/> to
@@ -598,6 +633,14 @@
             Called on client disconnection.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.HttpServer.TrackHttpBytesSent(SocketJack.Net.NetworkConnection,System.Int32)">
+            <summary>
+            Tracks bytes written directly to an HTTP connection's stream so that
+            <see cref="P:SocketJack.Net.NetworkConnection.TotalBytesSent"/> and the per-second
+            counters remain accurate for HTTP traffic. Also updates the server-level
+            <see cref="P:SocketJack.Net.HttpServer.HttpTotalBytesSent"/> aggregate counter.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.HttpServer.ParseHttpRequest(System.Byte[])">
             <summary>
             Parses a raw HTTP request string into an HttpRequest object.
@@ -624,7 +667,7 @@
             missing or empty.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.HttpResponse.WriteChunkedTo(System.IO.Stream,System.Int32)">
+        <member name="M:SocketJack.Net.HttpResponse.WriteChunkedTo(System.IO.Stream,System.Int32,SocketJack.Net.NetworkConnection)">
             <summary>
             Writes the response to <paramref name="stream"/> using HTTP/1.1 chunked transfer encoding.
             Each line of text is sent as its own chunk so the client can render progressively.

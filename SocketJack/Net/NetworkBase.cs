@@ -411,17 +411,7 @@ namespace SocketJack.Net {
             }
         }
         public void CloseConnection(NetworkConnection Connection, DisconnectionReason Reason = DisconnectionReason.Unknown) {
-            if (!Connection.Closed) {
-                Connection.Closed = true;
-                if (Connection.Stream != null) {
-                    MethodExtensions.TryInvoke(Connection.Stream.Close);
-                    MethodExtensions.TryInvoke(Connection.Stream.Dispose);
-                }
-                if (Connection.Socket != null) {
-                    MethodExtensions.TryInvoke(() => { Socket.Shutdown(SocketShutdown.Both); });
-                    MethodExtensions.TryInvoke(Connection.Socket.Close);
-                }
-            }
+            Connection.Close(this, Reason);
         }
         protected internal void Bind(int Port) {
             this.Socket.Bind(new IPEndPoint(IPAddress.Any, Port));

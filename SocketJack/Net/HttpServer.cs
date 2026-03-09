@@ -1,4 +1,4 @@
-Ôªø
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -87,6 +87,53 @@ namespace SocketJack.Net {
         /// machine instead of being parsed as HTTP.
         /// </summary>
         private readonly ConcurrentDictionary<Guid, RtmpSession> _activeRtmpConnections = new ConcurrentDictionary<Guid, RtmpSession>();
+
+        /// <summary>
+        /// Running total of bytes sent across all HTTP responses (including headers).
+        /// This counter persists across connection lifetimes, unlike per-connection
+        /// counters which are lost when short-lived HTTP connections close.
+        /// </summary>
+        public long HttpTotalBytesSent => Interlocked.Read(ref _httpTotalBytesSent);
+        private long _httpTotalBytesSent;
+
+        /// <summary>
+        /// Running total of bytes received across all HTTP requests.
+        /// </summary>
+        public long HttpTotalBytesReceived => Interlocked.Read(ref _httpTotalBytesReceived);
+        private long _httpTotalBytesReceived;
+
+        /// <summary>
+        /// Bytes sent via HTTP responses since the last call to <see cref="SnapshotHttpBytesSent"/>.
+        /// Use this to compute an HTTP bytes-per-second rate from the WPF metrics timer.
+        /// </summary>
+        private long _httpBytesSentSnapshot;
+
+        /// <summary>
+        /// Bytes received via HTTP requests since the last call to <see cref="SnapshotHttpBytesReceived"/>.
+        /// </summary>
+        private long _httpBytesReceivedSnapshot;
+
+        /// <summary>
+        /// Returns the number of HTTP bytes sent since the last snapshot and resets the delta.
+        /// Call once per second to get a bytes-per-second rate.
+        /// </summary>
+        public long SnapshotHttpBytesSent() {
+            var current = Interlocked.Read(ref _httpTotalBytesSent);
+            var delta = current - _httpBytesSentSnapshot;
+            _httpBytesSentSnapshot = current;
+            return delta;
+        }
+
+        /// <summary>
+        /// Returns the number of HTTP bytes received since the last snapshot and resets the delta.
+        /// Call once per second to get a bytes-per-second rate.
+        /// </summary>
+        public long SnapshotHttpBytesReceived() {
+            var current = Interlocked.Read(ref _httpTotalBytesReceived);
+            var delta = current - _httpBytesReceivedSnapshot;
+            _httpBytesReceivedSnapshot = current;
+            return delta;
+        }
 
         public string IndexPageHtml { get; set; } = "<html><body><h1>SocketJack HttpServer</h1></body></html>";
 
@@ -329,7 +376,7 @@ namespace SocketJack.Net {
                 if (prefix == "/") {
                     relativePath = path;
                 } else if (path.Equals(prefix, StringComparison.OrdinalIgnoreCase)) {
-                    // Exact match on prefix with no trailing path ‚Äî try index files
+                    // Exact match on prefix with no trailing path ó try index files
                     relativePath = "/";
                 } else if (path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase)) {
                     relativePath = path.Substring(prefix.Length);
@@ -445,7 +492,7 @@ namespace SocketJack.Net {
                 var parent = urlPath.TrimEnd('/');
                 var lastSlash = parent.LastIndexOf('/');
                 parent = lastSlash > 0 ? parent.Substring(0, lastSlash) : "/";
-                sb.Append("<tr><td><a href=\"" + parent + "\">‚¨Ü ..</a></td><td></td><td></td></tr>");
+                sb.Append("<tr><td><a href=\"" + parent + "\">? ..</a></td><td></td><td></td></tr>");
             }
 
             try {
@@ -454,8 +501,8 @@ namespace SocketJack.Net {
                     var name = Path.GetFileName(dir);
                     var info = new DirectoryInfo(dir);
                     var href = urlPath.TrimEnd('/') + "/" + Uri.EscapeDataString(name) + "/";
-                    sb.Append("<tr><td><a href=\"" + href + "\">üìÅ " + System.Net.WebUtility.HtmlEncode(name) + "/</a></td>");
-                    sb.Append("<td class=\"size\">‚Äî</td>");
+                    sb.Append("<tr><td><a href=\"" + href + "\">?? " + System.Net.WebUtility.HtmlEncode(name) + "/</a></td>");
+                    sb.Append("<td class=\"size\">ó</td>");
                     sb.Append("<td class=\"date\">" + info.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "</td></tr>");
                 }
                 // Files (skip .htaccess)
@@ -712,7 +759,7 @@ namespace SocketJack.Net {
                 && te.IndexOf("chunked", StringComparison.OrdinalIgnoreCase) >= 0) {
                 return false;
             }
-            // No Content-Length and not chunked ‚Äî body is whatever was received.
+            // No Content-Length and not chunked ó body is whatever was received.
             return true;
         }
 
@@ -836,6 +883,23 @@ namespace SocketJack.Net {
             this.ClientDisconnected += OnHttpClientDisconnected;
         }
 
+        /// <summary>
+        /// Tracks bytes written directly to an HTTP connection's stream so that
+        /// <see cref="NetworkConnection.TotalBytesSent"/> and the per-second
+        /// counters remain accurate for HTTP traffic. Also updates the server-level
+        /// <see cref="HttpTotalBytesSent"/> aggregate counter.
+        /// </summary>
+        internal static void TrackHttpBytesSent(NetworkConnection connection, int byteCount) {
+            if (byteCount <= 0) return;
+            if (connection != null) {
+                Interlocked.Add(ref connection._TotalBytesSent, byteCount);
+                Interlocked.Add(ref connection.SentBytesCounter, byteCount);
+                if (connection.Parent is HttpServer httpServer) {
+                    Interlocked.Add(ref httpServer._httpTotalBytesSent, byteCount);
+                }
+            }
+        }
+
         internal void GetRequestAsync(ref IReceivedEventArgs e) {
             try {
                 if (e == null || e.Obj == null || e.Connection == null)
@@ -864,7 +928,7 @@ namespace SocketJack.Net {
                 }
 
                 // Check if we're already buffering an HTTP request for this connection.
-                // If so, skip protocol detection and HTTP validation ‚Äî just accumulate data.
+                // If so, skip protocol detection and HTTP validation ó just accumulate data.
                 bool isBuffering = _requestBuffers.ContainsKey(e.Connection.ID);
 
                 if (!isBuffering) {
@@ -949,6 +1013,9 @@ namespace SocketJack.Net {
                 }
                 _requestBuffers.TryRemove(e.Connection.ID, out _);
 
+                // Track HTTP received bytes at the server level
+                Interlocked.Add(ref _httpTotalBytesReceived, rawRequestBytes.Length);
+
                 var request = ParseHttpRequest(rawRequestBytes);
 
                 // If any callbacks registered for deserialized types, attempt to deserialize body and invoke
@@ -981,14 +1048,14 @@ namespace SocketJack.Net {
 
                 var ct = default(CancellationToken);
 
-                // Check for streaming routes first ‚Äî these keep the connection open
+                // Check for streaming routes first ó these keep the connection open
                 var streamHandler = ResolveStreamRoute(request);
                 if (streamHandler != null) {
                     _activeStreamConnections.TryAdd(e.Connection.ID, 0);
                     var conn = e.Connection;
                     var response = context.Response;
                     Task.Factory.StartNew(async () => {
-                        var chunked = new ChunkedStream(conn.Stream, response);
+                        var chunked = new ChunkedStream(conn.Stream, response, conn);
                         try {
                             await streamHandler(conn, request, chunked, ct);
                         } catch (Exception ex) {
@@ -1059,6 +1126,7 @@ namespace SocketJack.Net {
                                         responseStream.Write(okHeader, 0, okHeader.Length);
                                         responseStream.Write(okBody, 0, okBody.Length);
                                         responseStream.Flush();
+                                        TrackHttpBytesSent(conn, okHeader.Length + okBody.Length);
                                     }
                                 } catch { }
 
@@ -1215,7 +1283,7 @@ namespace SocketJack.Net {
                 // network immediately rather than waiting for a full TCP segment.
                 try { e.Connection.Socket.NoDelay = true; } catch { }
 
-                // Capture the stream reference once ‚Äî a background thread
+                // Capture the stream reference once ó a background thread
                 // can dispose the socket between property accesses.
                 var responseStream = e.Connection.Stream;
                 if (responseStream != null && !e.Connection.Closed && !e.Connection.Closing) {
@@ -1234,18 +1302,26 @@ namespace SocketJack.Net {
                     try {
                         if (isHead) {
                             var (hdr, _) = context.Response.ToBytesWithHeader();
-                            if (hdr != null && hdr.Length > 0)
+                            if (hdr != null && hdr.Length > 0) {
                                 responseStream.Write(hdr, 0, hdr.Length);
+                                TrackHttpBytesSent(e.Connection, hdr.Length);
+                            }
                             responseStream.Flush();
                         } else if (bodyLen > ChunkedThreshold) {
-                            context.Response.WriteChunkedTo(responseStream, ChunkedSize);
+                            context.Response.WriteChunkedTo(responseStream, ChunkedSize, e.Connection);
                         } else {
                             var (hdr, body) = context.Response.ToBytesWithHeader();
-                            if (hdr != null && hdr.Length > 0)
+                            int written = 0;
+                            if (hdr != null && hdr.Length > 0) {
                                 responseStream.Write(hdr, 0, hdr.Length);
-                            if (body != null && body.Length > 0)
+                                written += hdr.Length;
+                            }
+                            if (body != null && body.Length > 0) {
                                 responseStream.Write(body, 0, body.Length);
+                                written += body.Length;
+                            }
                             responseStream.Flush();
+                            TrackHttpBytesSent(e.Connection, written);
                         }
                     } catch (ObjectDisposedException) {
                     } catch (IOException) { }
@@ -1253,7 +1329,7 @@ namespace SocketJack.Net {
 
                 // Graceful HTTP close sequence:
                 // 1. Set linger so the OS waits for the send buffer to drain on Close().
-                // 2. Shut down the send direction first ‚Äî this queues a FIN *after*
+                // 2. Shut down the send direction first ó this queues a FIN *after*
                 //    any remaining response bytes, preventing an RST.
                 // 3. Call Close() for resource cleanup.
                 try {
@@ -1280,6 +1356,7 @@ namespace SocketJack.Net {
                         errStream.Write(errHeader, 0, errHeader.Length);
                         errStream.Write(errBody, 0, errBody.Length);
                         errStream.Flush();
+                        TrackHttpBytesSent(e.Connection, errHeader.Length + errBody.Length);
                     }
                 } catch { }
                 try {
@@ -1710,9 +1787,10 @@ namespace SocketJack.Net {
         /// Each line of text is sent as its own chunk so the client can render progressively.
         /// For binary (non-text) bodies, falls back to fixed-size chunks.
         /// </summary>
-        public void WriteChunkedTo(Stream stream, int chunkSize) {
+        public void WriteChunkedTo(Stream stream, int chunkSize, NetworkConnection connection = null) {
             EnsureBodyBytes();
             if (chunkSize <= 0) chunkSize = 4096;
+            int totalWritten = 0;
 
             var headerSb = new StringBuilder();
             headerSb.Append(StatusLine + "\r\n");
@@ -1728,6 +1806,7 @@ namespace SocketJack.Net {
             var headerBytes = Encoding.UTF8.GetBytes(headerSb.ToString());
             stream.Write(headerBytes, 0, headerBytes.Length);
             stream.Flush();
+            totalWritten += headerBytes.Length;
 
             var crlf = new byte[] { (byte)'\r', (byte)'\n' };
 
@@ -1747,10 +1826,11 @@ namespace SocketJack.Net {
                         stream.Write(lineBytes, 0, lineBytes.Length);
                         stream.Write(crlf, 0, 2);
                         stream.Flush();
+                        totalWritten += sizeHex.Length + lineBytes.Length + 2;
                     }
                 }
             } else {
-                // Binary body ‚Äî fall back to fixed-size chunks
+                // Binary body ó fall back to fixed-size chunks
                 int offset = 0;
                 while (offset < _BodyBytes.Length) {
                     int remaining = _BodyBytes.Length - offset;
@@ -1761,6 +1841,7 @@ namespace SocketJack.Net {
                     stream.Write(_BodyBytes, offset, size);
                     stream.Write(crlf, 0, 2);
                     stream.Flush();
+                    totalWritten += sizeHex.Length + size + 2;
 
                     offset += size;
                 }
@@ -1770,6 +1851,9 @@ namespace SocketJack.Net {
             var terminator = Encoding.UTF8.GetBytes("0\r\n\r\n");
             stream.Write(terminator, 0, terminator.Length);
             stream.Flush();
+            totalWritten += terminator.Length;
+
+            HttpServer.TrackHttpBytesSent(connection, totalWritten);
         }
     }
 
@@ -1800,14 +1884,16 @@ namespace SocketJack.Net {
     /// </summary>
     public class ChunkedStream {
         private readonly Stream _stream;
+        private readonly NetworkConnection _connection;
         private bool _headerSent;
         private bool _finished;
         private readonly HttpResponse _response;
         private static readonly byte[] Crlf = new byte[] { (byte)'\r', (byte)'\n' };
 
-        internal ChunkedStream(Stream stream, HttpResponse response) {
+        internal ChunkedStream(Stream stream, HttpResponse response, NetworkConnection connection = null) {
             _stream = stream;
             _response = response;
+            _connection = connection;
         }
 
         /// <summary>
@@ -1850,6 +1936,7 @@ namespace SocketJack.Net {
             var headerBytes = Encoding.UTF8.GetBytes(sb.ToString());
             _stream.Write(headerBytes, 0, headerBytes.Length);
             _stream.Flush();
+            HttpServer.TrackHttpBytesSent(_connection, headerBytes.Length);
         }
 
         /// <summary>
@@ -1883,6 +1970,7 @@ namespace SocketJack.Net {
             _stream.Write(data, offset, count);
             _stream.Write(Crlf, 0, 2);
             _stream.Flush();
+            HttpServer.TrackHttpBytesSent(_connection, sizeHex.Length + count + 2);
         }
 
         private void WriteChunk(byte[] data) {
@@ -1891,6 +1979,7 @@ namespace SocketJack.Net {
             _stream.Write(data, 0, data.Length);
             _stream.Write(Crlf, 0, 2);
             _stream.Flush();
+            HttpServer.TrackHttpBytesSent(_connection, sizeHex.Length + data.Length + 2);
         }
 
         /// <summary>
@@ -1905,6 +1994,7 @@ namespace SocketJack.Net {
             try {
                 _stream.Write(terminator, 0, terminator.Length);
                 _stream.Flush();
+                HttpServer.TrackHttpBytesSent(_connection, terminator.Length);
             } catch {
                 // stream may already be closed
             }
