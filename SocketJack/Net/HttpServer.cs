@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Mime;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -70,6 +71,13 @@ namespace SocketJack.Net {
         private readonly ConcurrentDictionary<Guid, UploadStream> _activeUploadConnections = new ConcurrentDictionary<Guid, UploadStream>();
 
         private readonly Dictionary<string, string> _directoryMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _fileMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Per-connection buffer for accumulating partial HTTP requests
+        /// that span multiple TCP segments.
+        /// </summary>
+        private readonly ConcurrentDictionary<Guid, List<byte>> _requestBuffers = new ConcurrentDictionary<Guid, List<byte>>();
 
         private readonly Dictionary<string, RtmpPublishHandler> _rtmpPublishRoutes = new Dictionary<string, RtmpPublishHandler>(StringComparer.OrdinalIgnoreCase);
 
@@ -96,6 +104,17 @@ namespace SocketJack.Net {
         /// per-directory with <c>Options +Indexes</c> or <c>Options -Indexes</c>.
         /// </summary>
         public bool AllowDirectoryListing { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the <c>Cache-Control</c> header value added to every HTTP response.
+        /// When <see langword="null"/> (the default), no <c>Cache-Control</c> header is emitted.
+        /// Example values: <c>"public, max-age=3600"</c>, <c>"no-cache"</c>,
+        /// <c>"private, max-age=86400"</c>.
+        /// For static files served via <see cref="MapDirectory"/>, an <c>ETag</c> and
+        /// <c>Last-Modified</c> header are also sent, and <c>If-None-Match</c> /
+        /// <c>If-Modified-Since</c> conditional requests are honoured with <c>304 Not Modified</c>.
+        /// </summary>
+        public string CacheControl { get; set; } = null;
 
         public void Map(string method, string path, RouteHandler handler) {
             if (string.IsNullOrWhiteSpace(method))
@@ -256,12 +275,37 @@ namespace SocketJack.Net {
             return _directoryMappings.Remove(normalized);
         }
 
-        private bool TryResolveDirectoryFile(string method, string path, out byte[] fileBytes, out string contentType, out HtAccessResult accessResult, out string authRealm, out Dictionary<string, string> extraHeaders) {
+        /// <summary>
+        /// Maps a URL path to a specific local file. When a GET (or HEAD) request
+        /// matches the <paramref name="urlPath"/>, the file at <paramref name="localFilePath"/>
+        /// is served with the appropriate MIME type. For example,
+        /// <c>MapFile("/js/widget.js", @"C:\Pages\widget.js")</c> serves the file
+        /// when the client requests <c>/js/widget.js</c>.
+        /// </summary>
+        /// <param name="urlPath">The URL path to match (e.g., <c>"/js/widget.js"</c>).</param>
+        /// <param name="localFilePath">The absolute or relative path to the local file.</param>
+        public void MapFile(string urlPath, string localFilePath) {
+            if (string.IsNullOrWhiteSpace(urlPath))
+                throw new ArgumentException("URL path is required.", nameof(urlPath));
+            if (string.IsNullOrWhiteSpace(localFilePath))
+                throw new ArgumentException("Local file path is required.", nameof(localFilePath));
+            _fileMappings[NormalizePath(urlPath)] = Path.GetFullPath(localFilePath);
+        }
+
+        /// <summary>
+        /// Removes a previously mapped file route.
+        /// </summary>
+        public bool RemoveFileMapping(string urlPath) {
+            return _fileMappings.Remove(NormalizePath(urlPath));
+        }
+
+        private bool TryResolveDirectoryFile(string method, string path, string clientIp, string authHeader, out byte[] fileBytes, out string contentType, out HtAccessResult accessResult, out string authRealm, out Dictionary<string, string> extraHeaders, out DateTime? lastModifiedUtc) {
             fileBytes = null;
             contentType = null;
             accessResult = HtAccessResult.Allowed;
             authRealm = null;
             extraHeaders = null;
+            lastModifiedUtc = null;
 
             if (_directoryMappings.Count == 0)
                 return false;
@@ -308,7 +352,7 @@ namespace SocketJack.Net {
                 // Evaluate .htaccess access rules before serving any content.
                 string resolvedFileName = Path.GetFileName(fullPath);
                 string htDir = Directory.Exists(fullPath) ? fullPath : Path.GetDirectoryName(fullPath);
-                accessResult = HtAccessEvaluator.Evaluate(htDir, resolvedFileName, null, null, out authRealm, out extraHeaders);
+                accessResult = HtAccessEvaluator.Evaluate(htDir, resolvedFileName, clientIp, authHeader, out authRealm, out extraHeaders);
                 if (accessResult != HtAccessResult.Allowed)
                     return true;
 
@@ -340,6 +384,7 @@ namespace SocketJack.Net {
 
                 fileBytes = File.ReadAllBytes(fullPath);
                 contentType = GetMimeType(Path.GetExtension(fullPath));
+                try { lastModifiedUtc = File.GetLastWriteTimeUtc(fullPath); } catch { }
                 return true;
             }
 
@@ -434,6 +479,32 @@ namespace SocketJack.Net {
             if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("N1") + " KB";
             if (bytes < 1024 * 1024 * 1024L) return (bytes / (1024.0 * 1024)).ToString("N1") + " MB";
             return (bytes / (1024.0 * 1024 * 1024)).ToString("N2") + " GB";
+        }
+
+        private bool TryResolveFileMapping(string method, string path, out byte[] fileBytes, out string contentType, out DateTime? lastModifiedUtc) {
+            fileBytes = null;
+            contentType = null;
+            lastModifiedUtc = null;
+
+            if (_fileMappings.Count == 0)
+                return false;
+
+            if (method == null || !(method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            if (string.IsNullOrEmpty(path))
+                return false;
+
+            var normalized = NormalizePath(path);
+            if (_fileMappings.TryGetValue(normalized, out var filePath)) {
+                if (File.Exists(filePath)) {
+                    fileBytes = File.ReadAllBytes(filePath);
+                    contentType = GetMimeType(Path.GetExtension(filePath));
+                    try { lastModifiedUtc = File.GetLastWriteTimeUtc(filePath); } catch { }
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static string GetMimeType(string extension) {
@@ -582,6 +653,46 @@ namespace SocketJack.Net {
             return path;
         }
 
+        private static int FindHeaderEnd(List<byte> buffer) {
+            for (int i = 0; i <= buffer.Count - 4; i++) {
+                if (buffer[i] == (byte)'\r' && buffer[i + 1] == (byte)'\n' &&
+                    buffer[i + 2] == (byte)'\r' && buffer[i + 3] == (byte)'\n')
+                    return i + 4;
+            }
+            return -1;
+        }
+
+        private static long ExtractContentLength(List<byte> buffer, int hdrEnd) {
+            var headerText = Encoding.UTF8.GetString(buffer.GetRange(0, hdrEnd).ToArray());
+            foreach (var line in headerText.Split(new[] { "\r\n" }, StringSplitOptions.None)) {
+                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) {
+                    if (long.TryParse(line.Substring(15).Trim(), out long cl))
+                        return cl;
+                }
+            }
+            return -1;
+        }
+
+        private bool IsUploadStreamRoute(List<byte> buffer, int hdrEnd) {
+            if (_uploadStreamRoutes.Count == 0) return false;
+            int lineEnd = -1;
+            for (int i = 0; i < Math.Min(hdrEnd, buffer.Count) - 1; i++) {
+                if (buffer[i] == (byte)'\r' && buffer[i + 1] == (byte)'\n') {
+                    lineEnd = i;
+                    break;
+                }
+            }
+            if (lineEnd <= 0) return false;
+            var requestLine = Encoding.UTF8.GetString(buffer.GetRange(0, lineEnd).ToArray());
+            var parts = requestLine.Split(' ');
+            if (parts.Length < 2) return false;
+            var method = parts[0];
+            var path = NormalizePath(parts[1]);
+            return method != null && path != null &&
+                   _uploadStreamRoutes.TryGetValue(method, out var byPath) &&
+                   byPath.ContainsKey(path);
+        }
+
         /// <summary>
         /// Returns <see langword="true"/> when the request body appears to be fully
         /// available in <see cref="HttpRequest.BodyBytes"/> (as opposed to a streaming
@@ -620,6 +731,7 @@ namespace SocketJack.Net {
         private void Disposing() {
             OnDisposing -= Disposing;
             this.OnReceive -= GetRequestAsync;
+            _requestBuffers.Clear();
             foreach (var kv in _activeUploadConnections) {
                 kv.Value.Complete();
             }
@@ -630,11 +742,28 @@ namespace SocketJack.Net {
             _activeRtmpConnections.Clear();
         }
 
+        /// <summary>
+        /// Cleans up per-connection HTTP state (buffers, active streams, uploads).
+        /// Called on client disconnection.
+        /// </summary>
+        internal void CleanupHttpConnection(Guid connId) {
+            _requestBuffers.TryRemove(connId, out _);
+            _activeStreamConnections.TryRemove(connId, out _);
+            if (_activeUploadConnections.TryRemove(connId, out var upload))
+                upload.Complete();
+        }
+
+        private void OnHttpClientDisconnected(DisconnectedEventArgs e) {
+            if (e.Connection != null)
+                CleanupHttpConnection(e.Connection.ID);
+        }
+
         public HttpServer(int Port, string Name = "HttpServer") : base(Port, Name) {
             Options.UseTerminatedStreams = false;
             Options.UsePeerToPeer = false;
             OnDisposing += Disposing;
             this.OnReceive += GetRequestAsync;
+            this.ClientDisconnected += OnHttpClientDisconnected;
         }
 
         // Local callback registry mirroring TcpBase behavior
@@ -704,20 +833,21 @@ namespace SocketJack.Net {
             Options.UsePeerToPeer = false;
             OnDisposing += Disposing;
             this.OnReceive += GetRequestAsync;
+            this.ClientDisconnected += OnHttpClientDisconnected;
         }
 
         internal void GetRequestAsync(ref IReceivedEventArgs e) {
             try {
-                if (e == null || e.Obj == null)
+                if (e == null || e.Obj == null || e.Connection == null)
                     return;
 
                 // If this connection has an active streaming handler (e.g., OBS uploading video),
                 // skip HTTP parsing. The raw data is still available to other OnReceive subscribers.
-                if (e.Connection != null && _activeStreamConnections.ContainsKey(e.Connection.ID))
+                if (_activeStreamConnections.ContainsKey(e.Connection.ID))
                     return;
 
                 // If this connection has an active upload-stream handler, forward raw data to it.
-                if (e.Connection != null && _activeUploadConnections.TryGetValue(e.Connection.ID, out var activeUpload)) {
+                if (_activeUploadConnections.TryGetValue(e.Connection.ID, out var activeUpload)) {
                     var uploadBytes = TryGetRequestBytes(e.Obj);
                     if (uploadBytes != null && uploadBytes.Length > 0) {
                         activeUpload.Enqueue(uploadBytes);
@@ -726,64 +856,98 @@ namespace SocketJack.Net {
                 }
 
                 // If this connection has an active RTMP session, forward data to it.
-                if (e.Connection != null && _activeRtmpConnections.TryGetValue(e.Connection.ID, out var rtmpSession)) {
+                if (_activeRtmpConnections.TryGetValue(e.Connection.ID, out var rtmpSession)) {
                     var rtmpBytes = TryGetRequestBytes(e.Obj);
                     if (rtmpBytes != null && rtmpBytes.Length > 0)
                         rtmpSession.ProcessData(rtmpBytes);
                     return;
                 }
 
-                // Detect new RTMP connections (version byte 0x03 + C1 zero field at offset 5-8)
-                if (_rtmpPublishRoutes.Count > 0 && e.Connection != null) {
-                    var probeBytes = TryGetRequestBytes(e.Obj);
-                    if (probeBytes != null && probeBytes.Length >= 9
-                        && probeBytes[0] == 0x03
-                        && probeBytes[5] == 0 && probeBytes[6] == 0 && probeBytes[7] == 0 && probeBytes[8] == 0) {
-                        var session = CreateRtmpSession(e.Connection);
-                        session.ProcessData(probeBytes);
-                        return;
-                    }
-                }
+                // Check if we're already buffering an HTTP request for this connection.
+                // If so, skip protocol detection and HTTP validation — just accumulate data.
+                bool isBuffering = _requestBuffers.ContainsKey(e.Connection.ID);
 
-                // Only handle raw HTTP requests here.
-                // SocketJack-serialized payloads (e.g., JSON-wrapped objects), ignore them.
-                if (e.Obj is string s) {
-                    if (string.IsNullOrWhiteSpace(s))
-                        return;
-                    var prefix = s.Length > 16 ? s.Substring(0, 16) : s;
-                    if (!(prefix.StartsWith("GET ") || prefix.StartsWith("POST ") || prefix.StartsWith("PUT ") || prefix.StartsWith("DELETE ") || prefix.StartsWith("HEAD ") || prefix.StartsWith("OPTIONS ") || prefix.StartsWith("PATCH ") || prefix.StartsWith("TRACE "))) {
-                        return;
-                    }
-                } else if (e.Obj is byte[] || e.Obj is List<byte> || e.Obj is IEnumerable<byte> || e.Obj is ArraySegment<byte>) {
-                    var bytes = TryGetRequestBytes(e.Obj);
-                    if (bytes == null || bytes.Length < 5)
-                        return;
-                    // Fast check for common methods in ASCII
-                    if (!(bytes[0] == (byte)'G' || bytes[0] == (byte)'P' || bytes[0] == (byte)'H' || bytes[0] == (byte)'D' || bytes[0] == (byte)'O' || bytes[0] == (byte)'T'))
-                        return;
-
-                    // Additional guard: require an HTTP header terminator near the start.
-                    // This filters out SocketJack-framed payloads that may start with arbitrary bytes.
-                    var scanLimit = bytes.Length;
-                    if (scanLimit > 4096)
-                        scanLimit = 4096;
-                    var foundTerminator = false;
-                    for (int i = 0; i < scanLimit - 3; i++) {
-                        if (bytes[i] == (byte)'\r' && bytes[i + 1] == (byte)'\n' && bytes[i + 2] == (byte)'\r' && bytes[i + 3] == (byte)'\n') {
-                            foundTerminator = true;
-                            break;
+                if (!isBuffering) {
+                    // Detect new RTMP connections (version byte 0x03 + C1 zero field at offset 5-8)
+                    if (_rtmpPublishRoutes.Count > 0) {
+                        var probeBytes = TryGetRequestBytes(e.Obj);
+                        if (probeBytes != null && probeBytes.Length >= 9
+                            && probeBytes[0] == 0x03
+                            && probeBytes[5] == 0 && probeBytes[6] == 0 && probeBytes[7] == 0 && probeBytes[8] == 0) {
+                            var session = CreateRtmpSession(e.Connection);
+                            session.ProcessData(probeBytes);
+                            return;
                         }
                     }
-                    if (!foundTerminator)
+
+                    // Only handle raw HTTP requests here.
+                    // SocketJack-serialized payloads (e.g., JSON-wrapped objects), ignore them.
+                    if (e.Obj is string s) {
+                        if (string.IsNullOrWhiteSpace(s))
+                            return;
+                        var prefix = s.Length > 16 ? s.Substring(0, 16) : s;
+                        if (!(prefix.StartsWith("GET ") || prefix.StartsWith("POST ") || prefix.StartsWith("PUT ") || prefix.StartsWith("DELETE ") || prefix.StartsWith("HEAD ") || prefix.StartsWith("OPTIONS ") || prefix.StartsWith("PATCH ") || prefix.StartsWith("TRACE "))) {
+                            return;
+                        }
+                    } else if (e.Obj is byte[] || e.Obj is List<byte> || e.Obj is IEnumerable<byte> || e.Obj is ArraySegment<byte>) {
+                        var bytes = TryGetRequestBytes(e.Obj);
+                        if (bytes == null || bytes.Length < 5)
+                            return;
+                        // Fast check for common methods in ASCII
+                        if (!(bytes[0] == (byte)'G' || bytes[0] == (byte)'P' || bytes[0] == (byte)'H' || bytes[0] == (byte)'D' || bytes[0] == (byte)'O' || bytes[0] == (byte)'T'))
+                            return;
+
+                        // Additional guard: require an HTTP header terminator near the start.
+                        // This filters out SocketJack-framed payloads that may start with arbitrary bytes.
+                        var scanLimit = bytes.Length;
+                        if (scanLimit > 4096)
+                            scanLimit = 4096;
+                        var foundTerminator = false;
+                        for (int i = 0; i < scanLimit - 3; i++) {
+                            if (bytes[i] == (byte)'\r' && bytes[i + 1] == (byte)'\n' && bytes[i + 2] == (byte)'\r' && bytes[i + 3] == (byte)'\n') {
+                                foundTerminator = true;
+                                break;
+                            }
+                        }
+                        if (!foundTerminator)
+                            return;
+                    } else {
+                        // Not a raw HTTP payload.
                         return;
-                } else {
-                    // Not a raw HTTP payload.
-                    return;
+                    }
                 }
 
-                var rawRequestBytes = TryGetRequestBytes(e.Obj);
-                if (rawRequestBytes == null || rawRequestBytes.Length == 0)
+                // Accumulate incoming bytes into a per-connection buffer so that
+                // HTTP requests spanning multiple TCP segments are fully received
+                // before parsing. Without this, large POST uploads are parsed from
+                // the first segment alone and the connection is closed prematurely.
+                var incoming = TryGetRequestBytes(e.Obj);
+                if (incoming == null || incoming.Length == 0)
                     return;
+
+                var buffer = _requestBuffers.GetOrAdd(e.Connection.ID, _ => new List<byte>());
+                byte[] rawRequestBytes;
+                lock (buffer) {
+                    buffer.AddRange(incoming);
+
+                    // Wait until complete HTTP headers have arrived (\r\n\r\n).
+                    int hdrEnd = FindHeaderEnd(buffer);
+                    if (hdrEnd == -1)
+                        return;
+
+                    // If Content-Length is present, wait for the full body unless
+                    // an upload-stream route matches (those start processing with
+                    // partial body data and receive the rest incrementally).
+                    long contentLength = ExtractContentLength(buffer, hdrEnd);
+                    if (contentLength > 0 && buffer.Count < hdrEnd + contentLength) {
+                        if (!IsUploadStreamRoute(buffer, hdrEnd))
+                            return;
+                    }
+
+                    rawRequestBytes = buffer.ToArray();
+                    buffer.Clear();
+                }
+                _requestBuffers.TryRemove(e.Connection.ID, out _);
 
                 var request = ParseHttpRequest(rawRequestBytes);
 
@@ -872,6 +1036,7 @@ namespace SocketJack.Net {
 
                         var connId = e.Connection.ID;
                         var conn = e.Connection;
+                        var self = this;
                         Task.Run(() => {
                             try {
                                 uploadHandler(conn, request, upload, ct);
@@ -879,6 +1044,26 @@ namespace SocketJack.Net {
                             } finally {
                                 upload.Complete();
                                 _activeUploadConnections.TryRemove(connId, out _);
+
+                                // Send a 200 OK response so the HTTP client doesn't hang
+                                // waiting for a response that never comes.
+                                try {
+                                    var responseStream = conn.Stream;
+                                    if (responseStream != null && !conn.Closed && !conn.Closing) {
+                                        var okBody = Encoding.UTF8.GetBytes("OK");
+                                        var okHeader = Encoding.UTF8.GetBytes(
+                                            "HTTP/1.1 200 OK\r\n" +
+                                            "Content-Type: text/plain\r\n" +
+                                            "Content-Length: " + okBody.Length + "\r\n" +
+                                            "Connection: close\r\n\r\n");
+                                        responseStream.Write(okHeader, 0, okHeader.Length);
+                                        responseStream.Write(okBody, 0, okBody.Length);
+                                        responseStream.Flush();
+                                    }
+                                } catch { }
+
+                                // Graceful connection close
+                                try { self.CloseConnection(conn, DisconnectionReason.LocalSocketClosed); } catch { }
                             }
                         });
                         return;
@@ -889,32 +1074,53 @@ namespace SocketJack.Net {
                 if (_routes.Count > 0 || IndexPageHtml != null || Robots != null) {
                     var routeObj = ResolveRouteObject(e.Connection, request, ct);
                     if (routeObj != null) {
-                        handledByRoute = true;
-                        context.Response.Body = routeObj;
-
-                        var isIndex = request.Method != null && (request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) && (request.Path == "/" || string.IsNullOrEmpty(request.Path)) && IndexPageHtml != null;
-
-                        if (routeObj is string strBody) {
-                            var trimmed = strBody.TrimStart();
-                            if (isIndex || trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase)) {
-                                context.Response.ContentType = "text/html";
-                            } else if (trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '[')) {
-                                context.Response.ContentType = "application/json";
-                            } else {
-                                context.Response.ContentType = "text/plain";
-                            }
+                        // FileResponse allows route handlers to return binary data with an explicit content type.
+                        if (routeObj is FileResponse fileResp) {
+                            handledByRoute = true;
+                            context.Response.BodyBytes = fileResp.Data;
+                            context.Response.ContentType = fileResp.ContentType ?? "application/octet-stream";
                         } else {
-                            // SocketJack returns wrapped object payloads as binary;
-                            // mark them as json so our HttpClient will attempt to deserialize.
-                            context.Response.ContentType = "application/json";
+                            handledByRoute = true;
+                            context.Response.Body = routeObj;
+
+                            var isIndex = request.Method != null && (request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) && (request.Path == "/" || string.IsNullOrEmpty(request.Path)) && IndexPageHtml != null;
+
+                            if (routeObj is string strBody) {
+                                var trimmed = strBody.TrimStart();
+                                if (isIndex || trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase)) {
+                                    context.Response.ContentType = "text/html";
+                                } else if (trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '[')) {
+                                    context.Response.ContentType = "application/json";
+                                } else {
+                                    context.Response.ContentType = "text/plain";
+                                }
+                            } else {
+                                // SocketJack returns wrapped object payloads as binary;
+                                // mark them as json so our HttpClient will attempt to deserialize.
+                                context.Response.ContentType = "application/json";
+                            }
                         }
+                    }
+                }
+
+                // Check file mappings (URL-to-file routes)
+                if (!handledByRoute) {
+                    var fileNormalizedPath = NormalizePath(request.Path);
+                    if (TryResolveFileMapping(request.Method, fileNormalizedPath, out var fileMapBytes, out var fileMapMime, out var fileMapLastMod)) {
+                        handledByRoute = true;
+                        context.Response.BodyBytes = fileMapBytes;
+                        context.Response.ContentType = fileMapMime;
                     }
                 }
 
                 // Check mapped directories for static file serving
                 if (!handledByRoute) {
                     var normalizedPath = NormalizePath(request.Path);
-                    if (TryResolveDirectoryFile(request.Method, normalizedPath, out var fileBytes, out var fileMime, out var htAccessResult, out var htAuthRealm, out var htExtraHeaders)) {
+                    string clientIp = null;
+                    string authHeader = null;
+                    try { clientIp = e.Connection?.EndPoint?.Address?.ToString(); } catch { }
+                    try { if (request?.Headers != null) request.Headers.TryGetValue("Authorization", out authHeader); } catch { }
+                    if (TryResolveDirectoryFile(request.Method, normalizedPath, clientIp, authHeader, out var fileBytes, out var fileMime, out var htAccessResult, out var htAuthRealm, out var htExtraHeaders, out var fileLastModified)) {
                         if (htAccessResult == HtAccessResult.Denied) {
                             context.StatusCodeNumber = 403;
                             context.ReasonPhrase = "Forbidden";
@@ -932,8 +1138,46 @@ namespace SocketJack.Net {
                             handledByRoute = true;
                         } else {
                             handledByRoute = true;
-                            context.Response.BodyBytes = fileBytes;
-                            context.Response.ContentType = fileMime;
+
+                            // Compute ETag and Last-Modified for cache validation
+                            string etag = null;
+                            if (fileBytes != null && fileBytes.Length > 0) {
+                                using (var sha = System.Security.Cryptography.SHA256.Create()) {
+                                    var hash = sha.ComputeHash(fileBytes);
+                                    etag = "\"" + BitConverter.ToString(hash).Replace("-", "").Substring(0, 16).ToLowerInvariant() + "\"";
+                                }
+                            }
+
+                            if (context.Response.Headers == null)
+                                context.Response.Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                            if (etag != null)
+                                context.Response.Headers["ETag"] = etag;
+                            if (fileLastModified.HasValue)
+                                context.Response.Headers["Last-Modified"] = fileLastModified.Value.ToString("R");
+
+                            // Handle conditional requests (304 Not Modified)
+                            bool notModified = false;
+                            if (etag != null && request.Headers.TryGetValue("If-None-Match", out var ifNoneMatch)) {
+                                notModified = ifNoneMatch.Trim() == etag || ifNoneMatch.Trim() == "*";
+                            }
+                            if (!notModified && fileLastModified.HasValue && request.Headers.TryGetValue("If-Modified-Since", out var ifModSince)) {
+                                if (DateTime.TryParse(ifModSince, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal, out var sinceDate)) {
+                                    // Truncate to second precision for comparison (HTTP dates have no sub-second)
+                                    var fileMod = new DateTime(fileLastModified.Value.Ticks - (fileLastModified.Value.Ticks % TimeSpan.TicksPerSecond), DateTimeKind.Utc);
+                                    notModified = fileMod <= sinceDate;
+                                }
+                            }
+
+                            if (notModified) {
+                                context.StatusCodeNumber = 304;
+                                context.ReasonPhrase = "Not Modified";
+                                context.Response.BodyBytes = Array.Empty<byte>();
+                                context.Response.ContentType = fileMime;
+                            } else {
+                                context.Response.BodyBytes = fileBytes;
+                                context.Response.ContentType = fileMime;
+                            }
                         }
                         if (htExtraHeaders != null && htExtraHeaders.Count > 0) {
                             if (context.Response.Headers == null)
@@ -961,39 +1205,91 @@ namespace SocketJack.Net {
                         context.Response.Headers["Access-Control-Allow-Origin"] = "*";
                     if (!context.Response.Headers.ContainsKey("Date"))
                         context.Response.Headers["Date"] = DateTime.UtcNow.ToString("R");
+                    if (!context.Response.Headers.ContainsKey("Connection"))
+                        context.Response.Headers["Connection"] = "close";
+                    if (CacheControl != null && !context.Response.Headers.ContainsKey("Cache-Control"))
+                        context.Response.Headers["Cache-Control"] = CacheControl;
                 }
 
-                if (Options.Logging) {
-                    var ua = request.Headers.ContainsKey("User-Agent") ? request.Headers["User-Agent"] : "";
-                    Log(request.Method + " " + request.Path + " > " + context.Response.StatusCodeNumber + " (" + (context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0) + " bytes) UA: " + ua + " - " + request.Context?.Connection.Socket.RemoteEndPoint.ToString());
+                // Disable Nagle's algorithm so the response is pushed to the
+                // network immediately rather than waiting for a full TCP segment.
+                try { e.Connection.Socket.NoDelay = true; } catch { }
+
+                // Capture the stream reference once — a background thread
+                // can dispose the socket between property accesses.
+                var responseStream = e.Connection.Stream;
+                if (responseStream != null && !e.Connection.Closed && !e.Connection.Closing) {
+                    context.Response.EnsureBodyBytes();
+                    int bodyLen = context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0;
+
+                    if (Options.Logging) {
+                        try {
+                            var ua = request.Headers != null && request.Headers.ContainsKey("User-Agent") ? request.Headers["User-Agent"] : "";
+                            var ep = e.Connection.Socket?.RemoteEndPoint?.ToString() ?? "";
+                            Log(request.Method + " " + request.Path + " > " + context.StatusCodeNumber + " (" + bodyLen + " bytes) UA: " + ua + " - " + ep);
+                        } catch { }
+                    }
+                    bool isHead = request.Method != null && request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+
+                    try {
+                        if (isHead) {
+                            var (hdr, _) = context.Response.ToBytesWithHeader();
+                            if (hdr != null && hdr.Length > 0)
+                                responseStream.Write(hdr, 0, hdr.Length);
+                            responseStream.Flush();
+                        } else if (bodyLen > ChunkedThreshold) {
+                            context.Response.WriteChunkedTo(responseStream, ChunkedSize);
+                        } else {
+                            var (hdr, body) = context.Response.ToBytesWithHeader();
+                            if (hdr != null && hdr.Length > 0)
+                                responseStream.Write(hdr, 0, hdr.Length);
+                            if (body != null && body.Length > 0)
+                                responseStream.Write(body, 0, body.Length);
+                            responseStream.Flush();
+                        }
+                    } catch (ObjectDisposedException) {
+                    } catch (IOException) { }
                 }
 
-                context.Response.EnsureBodyBytes();
-                var bodyLen = context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0;
-                bool isHead = request.Method != null && request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
-
-                if (isHead) {
-                    // HEAD responses include Content-Length but no body
-                    var (hdr, _) = context.Response.ToBytesWithHeader();
-                    if (hdr != null && hdr.Length > 0)
-                        e.Connection.Stream.Write(hdr, 0, hdr.Length);
-                    e.Connection.Stream.Flush();
-                } else if (bodyLen > ChunkedThreshold) {
-                    // Large response — stream in chunks so browsers can render progressively
-                    context.Response.WriteChunkedTo(e.Connection.Stream, ChunkedSize);
-                } else {
-                    var (hdr, body) = context.Response.ToBytesWithHeader();
-                    if (hdr != null && hdr.Length > 0)
-                        e.Connection.Stream.Write(hdr, 0, hdr.Length);
-                    if (body != null && body.Length > 0)
-                        e.Connection.Stream.Write(body, 0, body.Length);
-                    e.Connection.Stream.Flush();
-                }
-
-                // Honour Connection: close — shut down the TCP connection
+                // Graceful HTTP close sequence:
+                // 1. Set linger so the OS waits for the send buffer to drain on Close().
+                // 2. Shut down the send direction first — this queues a FIN *after*
+                //    any remaining response bytes, preventing an RST.
+                // 3. Call Close() for resource cleanup.
+                try {
+                    var socket = e.Connection.Socket;
+                    if (socket != null && socket.Connected) {
+                        socket.LingerState = new LingerOption(true, 2);
+                        socket.Shutdown(SocketShutdown.Send);
+                    }
+                } catch { }
                 try { CloseConnection(e.Connection, DisconnectionReason.LocalSocketClosed); } catch { }
             } catch (Exception ex) {
                 InvokeOnError(e.Connection, ex);
+                // Ensure the client always receives a valid HTTP response,
+                // even when an exception occurs during request processing.
+                try {
+                    var errStream = e.Connection.Stream;
+                    if (errStream != null && !e.Connection.Closed && !e.Connection.Closing) {
+                        var errBody = Encoding.UTF8.GetBytes("500 Internal Server Error");
+                        var errHeader = Encoding.UTF8.GetBytes(
+                            "HTTP/1.1 500 Internal Server Error\r\n" +
+                            "Content-Type: text/plain\r\n" +
+                            "Content-Length: " + errBody.Length + "\r\n" +
+                            "Connection: close\r\n\r\n");
+                        errStream.Write(errHeader, 0, errHeader.Length);
+                        errStream.Write(errBody, 0, errBody.Length);
+                        errStream.Flush();
+                    }
+                } catch { }
+                try {
+                    var socket = e.Connection.Socket;
+                    if (socket != null && socket.Connected) {
+                        socket.LingerState = new LingerOption(true, 2);
+                        socket.Shutdown(SocketShutdown.Send);
+                    }
+                } catch { }
+                try { CloseConnection(e.Connection, DisconnectionReason.LocalSocketClosed); } catch { }
             }
         }
 
@@ -1474,6 +1770,25 @@ namespace SocketJack.Net {
             var terminator = Encoding.UTF8.GetBytes("0\r\n\r\n");
             stream.Write(terminator, 0, terminator.Length);
             stream.Flush();
+        }
+    }
+
+    /// <summary>
+    /// Represents a binary file response from a route handler.
+    /// Return an instance of this from a <see cref="HttpServer.RouteHandler"/> to send
+    /// raw bytes (e.g., an image or PDF) with an explicit content type instead of the
+    /// default JSON serialization behaviour.
+    /// </summary>
+    public class FileResponse {
+        /// <summary>The raw response body bytes.</summary>
+        public byte[] Data { get; set; }
+        /// <summary>The MIME content type (e.g., <c>"image/png"</c>).</summary>
+        public string ContentType { get; set; }
+
+        public FileResponse() { }
+        public FileResponse(byte[] data, string contentType) {
+            Data = data;
+            ContentType = contentType;
         }
     }
 

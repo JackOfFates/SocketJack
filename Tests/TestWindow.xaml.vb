@@ -35,6 +35,11 @@ Class TestWindow
         StartTest(t)
     End Sub
 
+    Private Sub ButtonMutableTcpServer_Click(sender As Object, e As RoutedEventArgs) Handles ButtonMutableTcpServer.Click
+        Dim t = New MutableTcpServerTest With {.Name = "MutableTcpServerTestControl"}
+        StartTest(t)
+    End Sub
+
     Private Sub StartTest(Test As ITest)
         If Not TestTabs.ContainsKey(Test.TestName) Then
 

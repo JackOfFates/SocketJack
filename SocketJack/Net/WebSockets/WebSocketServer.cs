@@ -27,38 +27,11 @@ using System.Buffers;
 namespace SocketJack.Net.WebSockets {
     public class WebSocketServer : IDisposable, ISocket {
 
-        private static int GetWebSocketHeaderLength(int payloadLength) {
-            if (payloadLength <= 125)
-                return 2;
-            if (payloadLength <= 65535)
-                return 4;
-            return 10;
-        }
+        private static int GetWebSocketHeaderLength(int payloadLength)
+            => WebSocketFrameHelper.GetHeaderLength(payloadLength);
 
-        private static int WriteWebSocketHeader(Span<byte> dest, bool useBinaryFrame, int payloadLength) {
-            dest[0] = useBinaryFrame ? (byte)0x82 : (byte)0x81;
-            if (payloadLength <= 125) {
-                dest[1] = (byte)payloadLength;
-                return 2;
-            }
-            if (payloadLength <= 65535) {
-                dest[1] = 126;
-                dest[2] = (byte)((payloadLength >> 8) & 0xFF);
-                dest[3] = (byte)(payloadLength & 0xFF);
-                return 4;
-            }
-            dest[1] = 127;
-            ulong len = (ulong)payloadLength;
-            dest[2] = (byte)((len >> 56) & 0xFF);
-            dest[3] = (byte)((len >> 48) & 0xFF);
-            dest[4] = (byte)((len >> 40) & 0xFF);
-            dest[5] = (byte)((len >> 32) & 0xFF);
-            dest[6] = (byte)((len >> 24) & 0xFF);
-            dest[7] = (byte)((len >> 16) & 0xFF);
-            dest[8] = (byte)((len >> 8) & 0xFF);
-            dest[9] = (byte)(len & 0xFF);
-            return 10;
-        }
+        private static int WriteWebSocketHeader(Span<byte> dest, bool useBinaryFrame, int payloadLength)
+            => WebSocketFrameHelper.WriteHeader(dest, useBinaryFrame, payloadLength);
 
         #region Internal
         private readonly int _port;
@@ -320,30 +293,7 @@ private NetworkConnection NewConnection(ref Socket handler) {
         }
 
         private void SendConstructors(ref NetworkConnection connection) {
-            var javascript = new StringBuilder();
-            // For each whitelisted type, generate a JS constructor
-            foreach (var t in Options.Whitelist) {
-                Type type = Wrapper.GetValueType(t);
-                if (type == typeof(string) || type == typeof(Wrapper)) continue;
-                if (type == null) continue;
-                if (!type.IsClass || type.IsAbstract || type.IsGenericType) continue;
-                var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                string className = $"{type.Name}";
-                javascript.Append($"class {className} {{{Environment.NewLine}");
-                javascript.Append("    constructor(");
-                for (int i = 0; i < properties.Length; i++) {
-                    javascript.Append(properties[i].Name);
-                    if (i < properties.Length - 1) javascript.Append(", ");
-                }
-                javascript.Append($") {{{Environment.NewLine}");
-                for (int i = 0; i < properties.Length; i++) {
-                    javascript.Append($"        this.{properties[i].Name} = {properties[i].Name};{Environment.NewLine}");
-                }
-                javascript.Append($"    }}{Environment.NewLine}");
-                javascript.Append($"}}{Environment.NewLine}");
-                javascript.Append($"if (typeof window !== 'undefined') {{ window['{className}'] = {className}; }}{Environment.NewLine}{Environment.NewLine}");
-            }
-            JSContructors script = new JSContructors(javascript.ToString());
+            var script = new JSContructors(WebSocketFrameHelper.GenerateJSConstructors(Options.Whitelist));
             if (connection != null) {
                 Send(connection, script);
             }

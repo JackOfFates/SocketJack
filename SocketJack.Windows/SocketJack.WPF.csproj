@@ -34,7 +34,7 @@
     <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.6.0</Version>
+    <Version>1.6.1</Version>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
@@ -316,6 +316,7 @@
     <Compile Include="..\SocketJack\Net\UdpClient.cs" Link="Net\UdpClient.cs" />
     <Compile Include="..\SocketJack\Net\UdpConnection.cs" Link="Net\UdpConnection.cs" />
     <Compile Include="..\SocketJack\Net\UdpServer.cs" Link="Net\UdpServer.cs" />
+    <Compile Include="..\SocketJack\Net\WebSocketFrameHelper.cs" Link="Net\WebSocketFrameHelper.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketClient.cs" Link="Net\WebSockets\WebSocketClient.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketServer.cs" Link="Net\WebSockets\WebSocketServer.cs" />
     <Compile Include="..\SocketJack\Serialization\ISerializer.cs" Link="Serialization\ISerializer.cs" />

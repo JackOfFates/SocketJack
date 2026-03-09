@@ -1,22 +1,37 @@
 # SocketJack.WPF
 
-![SocketJack WPF Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack.Windows/SocketJackWpfIcon.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack.Windows/SocketJackWpfIcon.png" alt="SocketJack WPF Icon" width="128" />
+</p>
 
-[![NuGet](https://img.shields.io/nuget/v/SocketJack.WPF.svg)](https://www.nuget.org/packages/SocketJack.WPF)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://www.nuget.org/packages/SocketJack.WPF"><img src="https://img.shields.io/nuget/v/SocketJack.WPF.svg?style=flat-square&color=blue" alt="NuGet" /></a>
+  <a href="https://www.nuget.org/packages/SocketJack.WPF"><img src="https://img.shields.io/nuget/dt/SocketJack.WPF.svg?style=flat-square&color=green" alt="NuGet Downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT" /></a>
+</p>
 
-WPF extension for [SocketJack](https://www.nuget.org/packages/SocketJack) that adds live control sharing over the network. Share any `FrameworkElement` â€” a `Canvas`, `Grid`, `Border`, or entire `Window` â€” as a JPEG stream to a remote peer, and let the viewer interact with it as if it were local. Mouse input is automatically forwarded back and replayed on the original element.
+WPF extension for [SocketJack](https://www.nuget.org/packages/SocketJack) that adds live control sharing over the network. Share any `FrameworkElement` — a `Canvas`, `Grid`, `Border`, or entire `Window` — as a JPEG stream to a remote peer, and let the viewer interact with it as if it were local. Mouse input is automatically forwarded back and replayed on the original element.
 
 Built on top of the full SocketJack networking stack: `System.Text.Json` serialization, TCP/UDP/WebSocket transports, peer-to-peer relay, compression, and TLS encryption.
 
-**Target frameworks:** .NET 8 Â· .NET 9 Â· .NET 10
+**Target frameworks:** .NET 8 · .NET 9 · .NET 10
+
+---
+
+## ?? What's New in v1.6.2
+
+- **WebSocket support in `MutableTcpServer`** — HTTP, SocketJack, WebSocket, and RTMP now all auto-detect on a single port. Browser clients connect alongside native SocketJack and HTTP clients seamlessly.
+- **`WebSocketClientConnected` event** — fires after a successful WebSocket upgrade handshake for easy browser-client initialization.
+- **`MapFile`** — map an individual file to a URL path (e.g., `MapFile("/js/app.js", @"C:\Pages\app.js")`).
+- **`CacheControl` property** — global `Cache-Control` header for all HTTP responses, plus `ETag` / `Last-Modified` with `304 Not Modified` support for static files.
+- **Protocol-aware broadcasting** — `SendBroadcast` on `MutableTcpServer` serializes once per protocol type (SocketJack vs WebSocket) to eliminate redundant work.
 
 ---
 
 ## How It Works
 
-1. **Sharer** calls `element.Share(client, peer, fps)` â€” captures the element as a JPEG bitmap each frame and streams `ControlShareFrame` messages via P2P.
-2. **Viewer** calls `client.ViewShare(image, peer)` â€” decodes incoming frames into a WPF `Image` and forwards mouse events back to the sharer.
+1. **Sharer** calls `element.Share(client, peer, fps)` — captures the element as a JPEG bitmap each frame and streams `ControlShareFrame` messages via P2P.
+2. **Viewer** calls `client.ViewShare(image, peer)` — decodes incoming frames into a WPF `Image` and forwards mouse events back to the sharer.
 3. Mouse clicks and moves on the viewer are replayed on the original element as real input events.
 
 ---
@@ -86,7 +101,7 @@ var viewer = client.ViewShare(SharedImage, remotePeer);
 
 ## HTTP Live Streaming with BroadcastServer
 
-`BroadcastServer` turns any `HttpServer` into a live video relay. Point OBS (or any RTMP encoder) at the server and viewers can watch in a browser or VLC â€” no additional dependencies required.
+`BroadcastServer` turns any `HttpServer` into a live video relay. Point OBS (or any RTMP encoder) at the server and viewers can watch in a browser or VLC — no additional dependencies required.
 
 ![OBS streaming to SocketJack HttpServer via BroadcastServer](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/httpStream.PNG)
 
@@ -97,11 +112,11 @@ using SocketJack.Net;
 var server = new HttpServer(port: 8080);
 
 // Attach BroadcastServer and register the default streaming routes:
-//   GET  /stream       â€” HTML player page (mpegts.js)
-//   GET  /stream/data  â€” raw FLV relay for the player / VLC
-//   PUT  /Upload       â€” OBS Custom Output (HTTP)
-//   POST /Upload       â€” OBS Custom Output (HTTP)
-//   RTMP rtmp://host:port/live  â€” OBS RTMP publish
+//   GET  /stream       — HTML player page (mpegts.js)
+//   GET  /stream/data  — raw FLV relay for the player / VLC
+//   PUT  /Upload       — OBS Custom Output (HTTP)
+//   POST /Upload       — OBS Custom Output (HTTP)
+//   RTMP rtmp://host:port/live  — OBS RTMP publish
 var broadcast = new BroadcastServer(server);
 broadcast.Register();
 
@@ -139,15 +154,15 @@ This package includes the full [SocketJack](https://www.nuget.org/packages/Socke
 | Category | Highlights |
 |---|---|
 | **Transport** | Unified `TcpClient` / `TcpServer`, `UdpClient` / `UdpServer`, and WebSocket API. |
-| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, and RTMP on a single port. |
-| **HTTP** | Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file serving via `MapDirectory`, `.htaccess` security, RTMP ingest. |
+| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, WebSocket, and RTMP on a single port. |
+| **HTTP** | Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file & directory serving via `MapFile` / `MapDirectory`, `.htaccess` security, `Cache-Control` / `ETag` / `304`, RTMP ingest. |
 | **Serialization** | `System.Text.Json` with pluggable `ISerializer`, type whitelist/blacklist. |
 | **Peer-to-Peer** | Automatic discovery, relay-based NAT traversal, metadata propagation. |
 | **Compression** | `GZipStream` / `DeflateStream` with configurable `CompressionLevel`. |
 | **Performance** | Async I/O, automatic segmentation, bandwidth throttling. |
 | **Security** | `SslStream` TLS 1.2, `X509Certificate` authentication, `.htaccess` access control. |
 
-### TCP â€” Quick Start
+### TCP — Quick Start
 
 ```cs
 var server = new TcpServer(port: 12345);
@@ -165,7 +180,7 @@ server.RegisterCallback<CustomMessage>((args) =>
 });
 ```
 
-### UDP â€” Quick Start
+### UDP — Quick Start
 
 ```cs
 var server = new UdpServer(port: 12345);
@@ -190,9 +205,9 @@ Must be set before creating any Client or Server instance.
 NetworkOptions.DefaultOptions.UsePeerToPeer = true;
 ```
 
-### MutableTcpServer â€” Multi-Protocol Quick Start
+### MutableTcpServer — Multi-Protocol Quick Start
 
-`MutableTcpServer` auto-detects HTTP, SocketJack, and RTMP per-connection on a single port:
+`MutableTcpServer` auto-detects **HTTP, SocketJack, WebSocket, and RTMP** per-connection on a single port:
 
 ```cs
 var server = new MutableTcpServer(port: 9000);
@@ -206,7 +221,13 @@ server.Http.Map("GET", "/api/status", (connection, request, ct) =>
 // Serve static files
 server.Http.MapDirectory("/www", @"C:\wwwroot");
 
-// SocketJack callbacks work as usual
+// WebSocket clients are detected automatically
+server.WebSocketClientConnected += (connection) =>
+{
+    Console.WriteLine($"WebSocket client connected: {connection.ID}");
+};
+
+// SocketJack callbacks work as usual (for both SocketJack and WebSocket clients)
 server.RegisterCallback<CustomMessage>((args) =>
 {
     Console.WriteLine($"Received: {args.Object.Message}");
@@ -232,4 +253,7 @@ Contributions, bug reports, and feature requests are welcome! See [CONTRIBUTING.
 
 ---
 
-**SocketJack.WPF** â€” Live control sharing for WPF, powered by SocketJack.
+<p align="center">
+  <strong>SocketJack.WPF</strong> — Live control sharing for WPF, powered by SocketJack.<br/>
+  <a href="https://www.nuget.org/packages/SocketJack.WPF">NuGet</a> · <a href="https://github.com/JackOfFates/SocketJack">GitHub</a> · <a href="https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls">Examples</a>
+</p>

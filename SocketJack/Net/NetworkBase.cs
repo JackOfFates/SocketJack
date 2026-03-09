@@ -156,14 +156,14 @@ namespace SocketJack.Net {
 			});
 		}
 		void ISocket.InvokeInternalReceivedByteCounter(NetworkConnection Connection, int BytesReceived) {
-			Invoke(() => {
-				InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
-			});
+			// Byte counters use Interlocked.Add and are thread-safe;
+			// skip Dispatcher marshaling to avoid blocking the receive path.
+			InternalReceivedByteCounter?.Invoke(Connection, BytesReceived);
 		}
 		void ISocket.InvokeInternalSentByteCounter(NetworkConnection connection, int chunkSize) {
-			Invoke(() => {
-				InternalSentByteCounter?.Invoke(connection, chunkSize);
-			});
+			// Byte counters use Interlocked.Add and are thread-safe;
+			// skip Dispatcher marshaling to avoid blocking the send path.
+			InternalSentByteCounter?.Invoke(connection, chunkSize);
 		}
 		void ISocket.InvokeInternalSendEvent(NetworkConnection connection, Type type, object @object, int length) {
 			Invoke(() => {

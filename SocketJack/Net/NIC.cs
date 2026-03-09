@@ -163,10 +163,13 @@ namespace SocketJack.Net {
             bool isAvailable = true;
 
             var ipGlobalProperties = IPGlobalProperties.GetIPGlobalProperties();
-            TcpConnectionInformation[] tcpConnInfoArray = ipGlobalProperties.GetActiveTcpConnections();
+            // Use GetActiveTcpListeners() instead of GetActiveTcpConnections():
+            // listeners is a much smaller set (only bound ports) and avoids
+            // enumerating every active TCP connection on the system.
+            IPEndPoint[] listeners = ipGlobalProperties.GetActiveTcpListeners();
 
-            foreach (TcpConnectionInformation tcpi in tcpConnInfoArray) {
-                if (tcpi.LocalEndPoint.Port == port) {
+            for (int i = 0; i < listeners.Length; i++) {
+                if (listeners[i].Port == port) {
                     isAvailable = false;
                     break;
                 }

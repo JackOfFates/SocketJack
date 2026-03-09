@@ -133,7 +133,7 @@ namespace SocketJack.Net {
             }
         }
         private void TcpServer_OnClientDisconnected(DisconnectedEventArgs args) {
-            string id = new Func<string>(() => { if (args.Connection.Identity == null) { return "null"; } else { return args.Connection.Identity.ID.ToUpper(); } }).Invoke();
+            string id = args.Connection.Identity == null ? "null" : args.Connection.Identity.ID.ToUpper();
             LogFormat("[{0}] Client Disconnected.", new[] { Name + @"\" + id, Port.ToString() });
             _Clients.Remove(args.Connection.ID);
 #if WINDOWS
@@ -341,11 +341,11 @@ namespace SocketJack.Net {
                                 Interlocked.Increment(ref PendingConnections);
                                 Socket.BeginAccept(new AsyncCallback(AcceptCallback), null);
                             }
-                        });
-                    }
-                    await Task.Delay(1);
-                }
-                LogFormat("[{0}] Shutdown Started *:{1}", new[] { Name, Port.ToString() });
+                            });
+                            }
+                            await Task.Delay(10);
+                        }
+                        LogFormat("[{0}] Shutdown Started *:{1}", new[] { Name, Port.ToString() });
                 Clients.ToList().ForEach((KeyValuePair<Guid, NetworkConnection> kvp) => {
                     if (kvp.Value != null && !kvp.Value.Closed) {
                         ClientDisconnected?.Invoke(new DisconnectedEventArgs(this, kvp.Value, DisconnectionReason.LocalSocketClosed));
@@ -384,11 +384,11 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 InvokeOnError(newConnection, ex);
                 CloseConnection(newConnection, DisconnectionReason.Unknown);
             }
-            bool Success = false;
-            while (!Success) {
+            // GUID collisions are practically impossible; assign directly
+            // without sleeping to avoid unnecessary latency per connection.
+            newConnection.ID = Guid.NewGuid();
+            while (!Clients.TryAdd(newConnection.ID, newConnection)) {
                 newConnection.ID = Guid.NewGuid();
-                Success = Clients.TryAdd(newConnection.ID, newConnection);
-                Thread.Sleep(1);
             }
             newConnection._Identity = Identifier.Create(newConnection);
             newConnection.StartReceiving();
@@ -451,8 +451,6 @@ private NetworkConnection NewConnection(ref Socket handler) {
         public TcpServer(NetworkOptions Options, int Port, string Name = "TcpServer") : base() {
             this.Options = Options;
             Init(Port, Name);
-            var argServer = (ISocket)this;
-            Globals.RegisterServer(ref argServer);
             PeerServerShutdown += TcpServer_PeerServerShutdown;
             PeerRefusedConnection += TcpServer_PeerRefusedConnection;
             PeerConnectionRequest += TcpServer_PeerConnectionRequest;
@@ -512,33 +510,51 @@ private NetworkConnection NewConnection(ref Socket handler) {
             }
         }
 
-        /// <summary>
-        /// Stops listening.
-        /// </summary>
-        public void StopListening() {
-            if (IsListening) {
-                IsListening = false;
-                Connection.Close(this);
+		/// <summary>
+		/// Stops listening.
+		/// </summary>
+		public void StopListening() {
+			if (IsListening) {
+				IsListening = false;
+
+				// Close all connected clients
+				foreach (var kvp in Clients.ToArray()) {
+					var conn = kvp.Value;
+					if (conn != null && !conn.Closed) {
+						conn.Close(this, DisconnectionReason.LocalSocketClosed);
+					}
+				}
+				Clients.Clear();
+
+				Connection.Close(this);
+
+				// Explicitly close the listener socket (it is not "Connected" so
+				// NetworkConnection.Close will skip it).
+				if (Socket != null) {
+					MethodExtensions.TryInvoke(Socket.Close);
+					Socket = null;
+				}
+
 #if UNITY
-            MainThread.Run(() => {
-		        StoppedListening?.Invoke(this);
-            });
+			MainThread.Run(() => {
+				StoppedListening?.Invoke(this);
+			});
 #endif
 #if WINDOWS
-            Application.Current.Dispatcher.Invoke(() => {
-                StoppedListening?.Invoke(this);
-            });
+			Application.Current.Dispatcher.Invoke(() => {
+				StoppedListening?.Invoke(this);
+			});
 #endif
 #if !UNITY && !WINDOWS
-                StoppedListening?.Invoke(this);
+				StoppedListening?.Invoke(this);
 #endif
-                Peers.Clear();
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-            } else {
-                InvokeOnError(null, new Exception("Not listening."));
-            }
-        }
+				Peers.Clear();
+				GC.Collect();
+				GC.WaitForPendingFinalizers();
+			} else {
+				InvokeOnError(null, new Exception("Not listening."));
+			}
+		}
 
         /// <summary>
         /// Sends an object to a client.

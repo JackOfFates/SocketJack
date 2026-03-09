@@ -1,4 +1,4 @@
-﻿using SocketJack.Net.P2P;
+using SocketJack.Net.P2P;
 using System;
 using System.ComponentModel;
 
@@ -23,6 +23,11 @@ namespace SocketJack.Net {
         public Type Type { get; set; }
         public int BytesReceived { get; set; }
         public object Obj { get; set; }
+
+        /// <summary>
+        /// The TCP protocol detected on the connection that sent this object.
+        /// </summary>
+        public TcpProtocol Protocol => Connection?.Protocol ?? TcpProtocol.Unknown;
 
         public void Initialize(ISocket sender, NetworkConnection Client, object obj, int BytesReceived, string From = null) {
             this.sender = sender;
@@ -69,6 +74,11 @@ namespace SocketJack.Net {
         public NetworkConnection Connection { get; set; }
         public Type Type { get; set; }
         public int BytesReceived { get; set; }
+
+        /// <summary>
+        /// The TCP protocol detected on the connection that sent this object.
+        /// </summary>
+        public TcpProtocol Protocol => Connection?.Protocol ?? TcpProtocol.Unknown;
 
         public T Object { get { return (T)_obj; } private set { _obj = value; } }
         object IReceivedEventArgs.Obj { get => _obj; set => _obj = value; }
@@ -154,7 +164,9 @@ namespace SocketJack.Net {
         /// <summary>HTTP request/response protocol.</summary>
         Http,
         /// <summary>SocketJack length-prefixed framed protocol.</summary>
-        SocketJack
+        SocketJack,
+        /// <summary>WebSocket (RFC 6455) protocol.</summary>
+        WebSocket
     }
 
     public class ConnectedEventArgs {

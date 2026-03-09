@@ -748,6 +748,10 @@ Public Class ChatTest
             sending = True
             'Task.Run(Sub()
             Dispatcher.InvokeAsync(Sub()
+                                       If Client1 Is Nothing Or Client2 Is Nothing Then
+                                           sending = False
+                                           Return
+                                       End If
                                        Dim pos As pPos = New pPos With {.X = CInt(e.GetPosition(Me).X), .Y = CInt(e.GetPosition(Me).Y)}
                                        If WebSocket_Enabled.IsChecked Then
                                            Client1.AsWsClient.Send(GetOtherPeer(ClientNumber.Client1), pos)
