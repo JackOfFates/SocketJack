@@ -1,14 +1,10 @@
 # SocketJack.WPF
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack.Windows/SocketJackWpfIcon.png" alt="SocketJack WPF Icon" width="128" />
-</p>
+![SocketJack WPF Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack.Windows/SocketJackWpfIcon.png)
 
-<p align="center">
-  <a href="https://www.nuget.org/packages/SocketJack.WPF"><img src="https://img.shields.io/nuget/v/SocketJack.WPF.svg?style=flat-square&color=blue" alt="NuGet" /></a>
-  <a href="https://www.nuget.org/packages/SocketJack.WPF"><img src="https://img.shields.io/nuget/dt/SocketJack.WPF.svg?style=flat-square&color=green" alt="NuGet Downloads" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT" /></a>
-</p>
+[![NuGet](https://img.shields.io/nuget/v/SocketJack.WPF.svg)](https://www.nuget.org/packages/SocketJack.WPF)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/SocketJack.WPF.svg)](https://www.nuget.org/packages/SocketJack.WPF)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 WPF extension for [SocketJack](https://www.nuget.org/packages/SocketJack) that adds live control sharing over the network. Share any `FrameworkElement` — a `Canvas`, `Grid`, `Border`, or entire `Window` — as a JPEG stream to a remote peer, and let the viewer interact with it as if it were local. Mouse input is automatically forwarded back and replayed on the original element.
 
@@ -253,7 +249,6 @@ Contributions, bug reports, and feature requests are welcome! See [CONTRIBUTING.
 
 ---
 
-<p align="center">
-  <strong>SocketJack.WPF</strong> — Live control sharing for WPF, powered by SocketJack.<br/>
-  <a href="https://www.nuget.org/packages/SocketJack.WPF">NuGet</a> · <a href="https://github.com/JackOfFates/SocketJack">GitHub</a> · <a href="https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls">Examples</a>
-</p>
+**SocketJack.WPF** — Live control sharing for WPF, powered by SocketJack.
+
+[NuGet](https://www.nuget.org/packages/SocketJack.WPF) · [GitHub](https://github.com/JackOfFates/SocketJack) · [Examples](https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls)

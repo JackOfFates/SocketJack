@@ -1,14 +1,10 @@
 # SocketJack
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/SocketJackIcon.png" alt="SocketJack Icon" width="128" />
-</p>
+![SocketJack Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/SocketJackIcon.png)
 
-<p align="center">
-  <a href="https://www.nuget.org/packages/SocketJack"><img src="https://img.shields.io/nuget/v/SocketJack.svg?style=flat-square&color=blue" alt="NuGet" /></a>
-  <a href="https://www.nuget.org/packages/SocketJack"><img src="https://img.shields.io/nuget/dt/SocketJack.svg?style=flat-square&color=green" alt="NuGet Downloads" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT" /></a>
-</p>
+[![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A .NET networking library that lets you send and receive any object over TCP or UDP with a single method call. Powered by `System.Text.Json` serialization, SocketJack handles framing, segmentation, and deserialization automatically — just call `Send(myObject)` on one end and register a typed callback on the other. No manual byte wrangling, no protocol boilerplate. Built on `System.Net.Sockets` with optional `SslStream` TLS 1.2 encryption, peer-to-peer relay, and a unified API across TCP, UDP, HTTP, and WebSocket transports.
 
@@ -611,7 +607,6 @@ Contributions, bug reports, and feature requests are welcome! See [CONTRIBUTING.
 
 ---
 
-<p align="center">
-  <strong>SocketJack</strong> — Fast, flexible, and modern networking for .NET.<br/>
-  <a href="https://www.nuget.org/packages/SocketJack">NuGet</a> · <a href="https://github.com/JackOfFates/SocketJack">GitHub</a> · <a href="https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls">Examples</a>
-</p>
+**SocketJack** — Fast, flexible, and modern networking for .NET.
+
+[NuGet](https://www.nuget.org/packages/SocketJack) · [GitHub](https://github.com/JackOfFates/SocketJack) · [Examples](https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls)
