@@ -364,3 +364,4 @@ FodyWeavers.xsd
 /Tests/TestControls/MultiTest.xaml.vb
 /.gitignore
 /Tests/TestControls/MultiTest.xaml
+/SocketJack.Tests
