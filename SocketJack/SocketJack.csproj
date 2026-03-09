@@ -339,6 +339,10 @@
       <Import Include="System.Text.Json.Serialization" />
     </ItemGroup>
     <ItemGroup>
+      <None Include="..\SocketJack.Windows\Readme_Gen.md">
+        <Pack>True</Pack>
+        <PackagePath>\</PackagePath>
+      </None>
       <None Include="SocketJackIcon.png">
         <Pack>True</Pack>
         <PackagePath>\</PackagePath>
