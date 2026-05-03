@@ -40,7 +40,7 @@
     <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.7.0</Version>
+    <Version>1.7.1</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
@@ -51,7 +51,7 @@
     <PackageIcon>SocketJackIcon.png</PackageIcon>
     <PackageReadmeFile>Readme.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/JackOfFates/SocketJack</RepositoryUrl>
-    <PackageTags>TCP; UDP; WebSocket; Socket; Sockets; Networking; Client; Server; TcpClient; TcpServer; UdpClient; UdpServer; Peer-to-Peer; P2P; NAT-Traversal; Serialization; JSON; System.Text.Json; GZip; Compression; SSL; TLS; Encryption; Async; Real-Time; Multiplayer; Game-Networking; Remote-Control; IoT; HTTP; Managed; Cross-Platform; High-Performance; Bandwidth-Throttling; WPF</PackageTags>
+    <PackageTags>TCP; UDP; WebSocket; Socket; Sockets; Networking; Client; Server; TcpClient; TcpServer; UdpClient; UdpServer; Peer-to-Peer; P2P; NAT-Traversal; Serialization; JSON; System.Text.Json; GZip; Compression; SSL; TLS; Encryption; Async; Real-Time; Multiplayer; Game-Networking; Remote-Control; IoT; HTTP; Managed; Cross-Platform; High-Performance; Bandwidth-Throttling; WPF; LM Studio; Github; Link; Tools; AI; LLM; Copilot</PackageTags>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|netstandard2.1|AnyCPU'">
     <WarningLevel>0</WarningLevel>

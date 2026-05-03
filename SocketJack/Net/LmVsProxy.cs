@@ -2035,10 +2035,10 @@ prompt.focus();
         private async Task StreamAdaptedChatCompletionsToClientAsync(HttpContent upstreamContent, Stream clientStream, string requestBody) {
             var nativeBuilders = new Dictionary<int, ToolCallBuilder>();
             var qwenToolText = new StringBuilder();
+            var reasoningBuffer = new StringBuilder();
             bool sawNativeToolCalls = false;
             bool sawQwenToolCalls = false;
             bool wroteDone = false;
-            bool thinkingOpen = false;
             string model = ExtractJsonStringProperty(requestBody, "model");
             if (string.IsNullOrWhiteSpace(model))
                 model = "lm-studio";
@@ -2092,12 +2092,7 @@ prompt.focus();
                                         StringBuilder visibleDelta = null;
                                         if (!string.IsNullOrEmpty(reasoning)) {
                                             suppressRawFrame = true;
-                                            visibleDelta = new StringBuilder();
-                                            if (!thinkingOpen) {
-                                                visibleDelta.Append("**Thinking**\n\n");
-                                                thinkingOpen = true;
-                                            }
-                                            visibleDelta.Append(FormatVisibleReasoningText(reasoning));
+                                            reasoningBuffer.Append(reasoning);
                                         }
 
                                         if (delta.TryGetProperty("content", out JsonElement contentElement) &&
@@ -2108,12 +2103,13 @@ prompt.focus();
                                                 suppressRawFrame = true;
                                             }
 
-                                            if ((visibleDelta != null || thinkingOpen) && !string.IsNullOrEmpty(passThroughContent)) {
+                                            if (reasoningBuffer.Length > 0 && !string.IsNullOrEmpty(passThroughContent)) {
                                                 suppressRawFrame = true;
-                                                if (visibleDelta == null)
-                                                    visibleDelta = new StringBuilder();
+                                                visibleDelta = new StringBuilder();
+                                                visibleDelta.Append("**Thinking**\n\n");
+                                                visibleDelta.Append(FormatVisibleReasoningText(reasoningBuffer.ToString()));
                                                 visibleDelta.Append("\n\n");
-                                                thinkingOpen = false;
+                                                reasoningBuffer.Clear();
                                             }
 
                                             if (visibleDelta != null)
@@ -2148,15 +2144,17 @@ prompt.focus();
                 }
             }
 
-            if (thinkingOpen) {
-                await WriteRawSseTextAsync(clientStream, BuildSingleContentDeltaSse("\n\n", model));
-                thinkingOpen = false;
+            if (reasoningBuffer.Length > 0) {
+                string thinkingBlock = "**Thinking**\n\n" + FormatVisibleReasoningText(reasoningBuffer.ToString()) + "\n\n";
+                await WriteRawSseTextAsync(clientStream, BuildSingleContentDeltaSse(thinkingBlock, model));
+                reasoningBuffer.Clear();
             }
 
             if (sawNativeToolCalls && nativeBuilders.Count > 0) {
                 var toolCalls = BuildToolCallsFromBuilders(nativeBuilders, requestBody);
                 if (toolCalls.Count > 0) {
                     LogToolCalls("live native repaired", toolCalls);
+                    await WriteRawSseTextAsync(clientStream, BuildSingleContentDeltaSse(BuildVisibleToolCallSummary(toolCalls), model));
                     await WriteRawSseTextAsync(clientStream, BuildToolCallSseResponse(toolCalls, model));
                     wroteDone = true;
                 }
@@ -2172,6 +2170,7 @@ prompt.focus();
                                                    !availableTools.Contains(toolCall.Name));
                 if (toolCalls.Count > 0) {
                     LogToolCalls("live qwen repaired", toolCalls);
+                    await WriteRawSseTextAsync(clientStream, BuildSingleContentDeltaSse(BuildVisibleToolCallSummary(toolCalls), model));
                     await WriteRawSseTextAsync(clientStream, BuildToolCallSseResponse(toolCalls, model));
                     wroteDone = true;
                 }
@@ -2269,13 +2268,16 @@ prompt.focus();
                 return "";
 
             string formatted = text.Replace("\r\n", "\n").Replace('\r', '\n');
+            formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<=\S)(?=\d+\.\s)", "\n");
             formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<=[A-Za-z])(?=\d)", " ");
             formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<=\d)(?=[A-Za-z])", " ");
+            formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<=\d)\s*x\s*(?=\d)", "x", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<=[.!?])(?=[A-Z])", " ");
             formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<!\n)(?<=:)(?=\d+\.)", "\n");
             formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<!\n)(?<=\s)(?=\d+\.\s)", "\n");
+            formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"(?<=\S)(?=Let me\b)", "\n\n");
             formatted = System.Text.RegularExpressions.Regex.Replace(formatted, @"\n{3,}", "\n\n");
-            return formatted;
+            return formatted.Trim();
         }
 
         private string BuildSingleContentDeltaSse(string content, string model) {
@@ -2286,6 +2288,55 @@ prompt.focus();
                    ",\"model\":\"" + EscapeJson(model ?? "lm-studio") +
                    "\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + EscapeJson(content ?? "") +
                    "\"},\"finish_reason\":null}]}\n\n";
+        }
+
+        private string BuildVisibleToolCallSummary(List<ToolCallData> toolCalls) {
+            if (toolCalls == null || toolCalls.Count == 0)
+                return "";
+
+            var sb = new StringBuilder();
+            sb.Append("**Tool call");
+            if (toolCalls.Count != 1)
+                sb.Append("s");
+            sb.Append("**\n\n");
+
+            for (int i = 0; i < toolCalls.Count; i++) {
+                ToolCallData toolCall = toolCalls[i];
+                if (toolCall == null)
+                    continue;
+
+                sb.Append(i + 1).Append(". `").Append(toolCall.Name ?? "<missing>").Append("`");
+                string arguments = PrettyPrintToolArguments(toolCall.ArgumentsJson);
+                if (!string.IsNullOrWhiteSpace(arguments)) {
+                    sb.Append("\n```json\n");
+                    sb.Append(arguments);
+                    sb.Append("\n```");
+                }
+                sb.Append("\n\n");
+            }
+
+            return sb.ToString();
+        }
+
+        private string PrettyPrintToolArguments(string argumentsJson) {
+            if (string.IsNullOrWhiteSpace(argumentsJson))
+                return "{}";
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(argumentsJson)) {
+                    var options = new JsonWriterOptions {
+                        Indented = true
+                    };
+                    using (var stream = new MemoryStream())
+                    using (var writer = new Utf8JsonWriter(stream, options)) {
+                        document.RootElement.WriteTo(writer);
+                        writer.Flush();
+                        return Encoding.UTF8.GetString(stream.ToArray());
+                    }
+                }
+            } catch {
+                return TruncateForLog(argumentsJson, 1200);
+            }
         }
 
         private async Task WriteRawSseFrameAsync(Stream stream, string frameLine) {
@@ -4554,6 +4605,7 @@ prompt.focus();
             if (!originalRequest.Url.AbsolutePath.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
                 return requestBody;
 
+            requestBody = RepairConversationToolCallHistory(requestBody);
             requestBody = AddCreateFileHintAfterRepeatedFileSearchMisses(requestBody);
             requestBody = AddToolSchemaRecoveryHints(requestBody);
             requestBody = AddBuildErrorRepairHint(requestBody);
@@ -5018,6 +5070,161 @@ prompt.focus();
         /// </summary>
         private bool IsToolAdvertised(string requestBody, string toolName) {
             return GetAvailableToolNames(requestBody).Contains(toolName);
+        }
+
+        /// <summary>
+        /// Repairs malformed tool-call history before forwarding it back to LM Studio.
+        /// </summary>
+        private string RepairConversationToolCallHistory(string requestBody) {
+            try {
+                bool changed = false;
+                var toolCallNames = new Dictionary<string, string>(StringComparer.Ordinal);
+
+                using (JsonDocument document = JsonDocument.Parse(requestBody))
+                using (var stream = new MemoryStream())
+                using (var writer = new Utf8JsonWriter(stream)) {
+                    writer.WriteStartObject();
+                    foreach (JsonProperty property in document.RootElement.EnumerateObject()) {
+                        if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array) {
+                            writer.WritePropertyName("messages");
+                            writer.WriteStartArray();
+                            foreach (JsonElement message in property.Value.EnumerateArray())
+                                WriteMessageWithRepairedToolHistory(writer, message, toolCallNames, ref changed);
+                            writer.WriteEndArray();
+                            continue;
+                        }
+
+                        property.WriteTo(writer);
+                    }
+
+                    writer.WriteEndObject();
+                    writer.Flush();
+
+                    if (!changed)
+                        return requestBody;
+
+                    LogMessage("[Tool History Repair] Repaired malformed tool-call history before forwarding request.");
+                    return Encoding.UTF8.GetString(stream.ToArray());
+                }
+            } catch (Exception ex) {
+                LogMessage("[Tool History Repair] Error: " + ex.Message);
+                return requestBody;
+            }
+        }
+
+        private void WriteMessageWithRepairedToolHistory(Utf8JsonWriter writer, JsonElement message, Dictionary<string, string> toolCallNames, ref bool changed) {
+            if (message.ValueKind != JsonValueKind.Object) {
+                message.WriteTo(writer);
+                return;
+            }
+
+            string role = message.TryGetProperty("role", out JsonElement roleElement) &&
+                          roleElement.ValueKind == JsonValueKind.String
+                ? roleElement.GetString()
+                : "";
+
+            writer.WriteStartObject();
+            foreach (JsonProperty property in message.EnumerateObject()) {
+                if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase) &&
+                    property.NameEquals("tool_calls") &&
+                    property.Value.ValueKind == JsonValueKind.Array) {
+                    writer.WritePropertyName("tool_calls");
+                    writer.WriteStartArray();
+                    foreach (JsonElement toolCall in property.Value.EnumerateArray())
+                        WriteToolCallWithRepairedArguments(writer, toolCall, toolCallNames, ref changed);
+                    writer.WriteEndArray();
+                    continue;
+                }
+
+                if (role.Equals("tool", StringComparison.OrdinalIgnoreCase) &&
+                    property.NameEquals("content") &&
+                    ShouldRepairToolHistoryResult(message, toolCallNames)) {
+                    writer.WriteString("content", "update_plan_progress arguments were repaired by LmVsProxy. Retry update_plan_progress with stepId, status, message, and autoAdvance.");
+                    changed = true;
+                    continue;
+                }
+
+                property.WriteTo(writer);
+            }
+            writer.WriteEndObject();
+        }
+
+        private void WriteToolCallWithRepairedArguments(Utf8JsonWriter writer, JsonElement toolCall, Dictionary<string, string> toolCallNames, ref bool changed) {
+            if (toolCall.ValueKind != JsonValueKind.Object) {
+                toolCall.WriteTo(writer);
+                return;
+            }
+
+            string id = toolCall.TryGetProperty("id", out JsonElement idElement) &&
+                        idElement.ValueKind == JsonValueKind.String
+                ? idElement.GetString()
+                : "";
+
+            string toolName = "";
+            if (toolCall.TryGetProperty("function", out JsonElement function) &&
+                function.ValueKind == JsonValueKind.Object)
+                toolName = ExtractStringProperty(function, "name") ?? "";
+
+            if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(toolName))
+                toolCallNames[id] = toolName;
+
+            writer.WriteStartObject();
+            foreach (JsonProperty property in toolCall.EnumerateObject()) {
+                if (property.NameEquals("function") && property.Value.ValueKind == JsonValueKind.Object) {
+                    WriteFunctionWithRepairedArguments(writer, property.Value, toolName, ref changed);
+                    continue;
+                }
+
+                property.WriteTo(writer);
+            }
+            writer.WriteEndObject();
+        }
+
+        private void WriteFunctionWithRepairedArguments(Utf8JsonWriter writer, JsonElement function, string toolName, ref bool changed) {
+            string arguments = function.TryGetProperty("arguments", out JsonElement argumentsElement)
+                ? (argumentsElement.ValueKind == JsonValueKind.String ? argumentsElement.GetString() : argumentsElement.ToString())
+                : "{}";
+            string repairedArguments = string.IsNullOrWhiteSpace(toolName)
+                ? arguments
+                : RepairKnownToolArguments(toolName, arguments);
+            bool wroteArguments = false;
+
+            writer.WritePropertyName("function");
+            writer.WriteStartObject();
+            foreach (JsonProperty property in function.EnumerateObject()) {
+                if (property.NameEquals("arguments")) {
+                    writer.WriteString("arguments", repairedArguments ?? "{}");
+                    wroteArguments = true;
+                    if (!string.Equals(arguments ?? "{}", repairedArguments ?? "{}", StringComparison.Ordinal))
+                        changed = true;
+                    continue;
+                }
+
+                property.WriteTo(writer);
+            }
+
+            if (!wroteArguments && !string.IsNullOrWhiteSpace(toolName)) {
+                writer.WriteString("arguments", repairedArguments ?? "{}");
+                changed = true;
+            }
+
+            writer.WriteEndObject();
+        }
+
+        private bool ShouldRepairToolHistoryResult(JsonElement message, Dictionary<string, string> toolCallNames) {
+            string toolCallId = message.TryGetProperty("tool_call_id", out JsonElement toolCallIdElement) &&
+                                toolCallIdElement.ValueKind == JsonValueKind.String
+                ? toolCallIdElement.GetString()
+                : "";
+            if (string.IsNullOrWhiteSpace(toolCallId) ||
+                !toolCallNames.TryGetValue(toolCallId, out string toolName) ||
+                !toolName.Equals("update_plan_progress", StringComparison.Ordinal))
+                return false;
+
+            string content = message.TryGetProperty("content", out JsonElement contentElement)
+                ? contentElement.ToString()
+                : "";
+            return content.IndexOf("missing parameter autoAdvance", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         /// <summary>

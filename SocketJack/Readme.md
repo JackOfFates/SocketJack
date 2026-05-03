@@ -12,7 +12,7 @@ A .NET networking library that lets you send and receive any object over TCP or 
 
 ---
 
-## What's New in v1.7.0?
+## What's New in v1.7.1?
 
 - **LmVsProxy – AI Model Bridge** – Translate Visual Studio's GitHub-style tool calling into OpenAI-compatible API requests for locally-hosted LLMs (Qwen, Mistral, and other models via LM Studio). Run enterprise-grade AI tools on your own hardware with zero cloud costs — just your electrical company.
 - **WebSocket support in `MutableTcpServer`**

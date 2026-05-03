@@ -2493,6 +2493,11 @@
             Returns true when a tool is still advertised in the current request.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairConversationToolCallHistory(System.String)">
+            <summary>
+            Repairs malformed tool-call history before forwarding it back to LM Studio.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.LmVsProxy.AppendSystemMessage(System.String,System.String)">
             <summary>
             Appends a system message to a chat completion request.
