@@ -1,4 +1,4 @@
-﻿Imports System.IO
+Imports System.IO
 Imports System.Text
 Imports System.Windows.Threading
 Imports SocketJack.Extensions
@@ -9,8 +9,9 @@ Imports SocketJack.Net.P2P
 Public Class HttpServerTest
     Implements ITest
 
-    Private ServerPort As Integer = 21040
-    Public WithEvents Server As HttpServer
+    Private ServerPort As Integer = 11434
+    Public WithEvents Server As New LmVsProxy("localhost", 11435, 11434)
+    'Public WithEvents Server As HttpServer
     Private _broadcast As BroadcastServer
     Private _statsTimer As DispatcherTimer
 
@@ -21,62 +22,63 @@ Public Class HttpServerTest
         InitializeComponent()
 
         ' Add any initialization after the InitializeComponent() call.
-        Server = New HttpServer(ServerPort, "HttpServer")
+        Server = New LmVsProxy("localhost", 11435, 11434)
+        AddHandler Server.OutputLog, AddressOf OnServerLog
         NIC.ForwardPort(ServerPort).ConfigureAwait(True)
         UpdateStartStopUi()
 
-        With Server.Options
-            .Logging = True
-            .LogReceiveEvents = False
-            .LogSendEvents = False
-            .UseCompression = False
-            .CompressionAlgorithm.CompressionLevel = IO.Compression.CompressionLevel.SmallestSize
-        End With
+        'With Server.Options
+        '    .Logging = True
+        '    .LogReceiveEvents = False
+        '    .LogSendEvents = False
+        '    .UseCompression = False
+        '    .CompressionAlgorithm.CompressionLevel = IO.Compression.CompressionLevel.SmallestSize
+        'End With
 
         ' Register HelloObj as a handled callback type so the server whitelist accepts it
-        Server.RegisterCallback(Of HelloObj)(Sub(e)
-                                                 Log("Server received HelloObj: " & e.Object?.Text)
-                                             End Sub)
+        'Server.RegisterCallback(Of HelloObj)(Sub(e)
+        '                                         Log("Server received HelloObj: " & e.Object?.Text)
+        '                                     End Sub)
 
         ' Map a regular HTTP endpoint that returns a HelloObj
-        Server.Map("GET", "/HelloObj", Function(conn, req, ct)
-                                           Return New HelloObj()
-                                       End Function)
+        'Server.Map("GET", "/HelloObj", Function(conn, req, ct)
+        '                                   Return New HelloObj()
+        '                               End Function)
 
-        ' Set up BroadcastServer for streaming/upload/RTMP routes
-        _broadcast = New BroadcastServer(Server)
-        AddHandler _broadcast.LogOutput, AddressOf Log
-        _broadcast.Register()
+        '' Set up BroadcastServer for streaming/upload/RTMP routes
+        '_broadcast = New BroadcastServer(Server)
+        'AddHandler _broadcast.LogOutput, AddressOf Log
+        '_broadcast.Register()
 
         ' Index page links to the streaming endpoint and shows upload info
-        Server.IndexPageHtml = "<!DOCTYPE html>" &
-                               "<html><head>" &
-                               "<meta charset=""UTF-8"">" &
-                               "<title>SocketJack HttpServer</title>" &
-                               "<meta property=""og:title"" content=""SocketJack HttpServer"">" &
-                               "<meta property=""og:description"" content=""Live streaming server powered by SocketJack."">" &
-                               "<meta property=""og:type"" content=""website"">" &
-                               "</head><body>" &
-                               "<h1>SocketJack HttpServer</h1>" &
-                               "<p><a href=""/stream"">Watch live stream (browser)</a></p>" &
-                               "<p>Direct MPEG-TS: <code><a href=""/stream/data"">/stream/data</a></code> (for VLC)</p>" &
-                               "<p>OBS Upload endpoint: PUT or POST to <code>/Upload</code></p>" &
-                               "<p>OBS RTMP endpoint: <code>rtmp://localhost:" & ServerPort & "/live</code></p>" &
-                               "<p>Stream Key: <code>" & _broadcast.StreamKey & "</code></p>" &
-                               "</body></html>"
+        'Server.IndexPageHtml = "<!DOCTYPE html>" &
+        '                       "<html><head>" &
+        '                       "<meta charset=""UTF-8"">" &
+        '                       "<title>SocketJack HttpServer</title>" &
+        '                       "<meta property=""og:title"" content=""SocketJack HttpServer"">" &
+        '                       "<meta property=""og:description"" content=""Live streaming server powered by SocketJack."">" &
+        '                       "<meta property=""og:type"" content=""website"">" &
+        '                       "</head><body>" &
+        '                       "<h1>SocketJack HttpServer</h1>" &
+        '                       "<p><a href=""/stream"">Watch live stream (browser)</a></p>" &
+        '                       "<p>Direct MPEG-TS: <code><a href=""/stream/data"">/stream/data</a></code> (for VLC)</p>" &
+        '                       "<p>OBS Upload endpoint: PUT or POST to <code>/Upload</code></p>" &
+        '                       "<p>OBS RTMP endpoint: <code>rtmp://localhost:" & ServerPort & "/live</code></p>" &
+        '                       "<p>Stream Key: <code>" & _broadcast.StreamKey & "</code></p>" &
+        '                       "</body></html>"
 
-        ' Allow Facebook crawler to scrape the server for link previews
-        Server.Robots = "User-agent: *" & vbLf &
-                        "Allow: /" & vbLf &
-                        vbLf &
-                        "User-agent: facebookexternalhit" & vbLf &
-                        "Allow: /" & vbLf
+        '' Allow Facebook crawler to scrape the server for link previews
+        'Server.Robots = "User-agent: *" & vbLf &
+        '                "Allow: /" & vbLf &
+        '                vbLf &
+        '                "User-agent: facebookexternalhit" & vbLf &
+        '               "Allow: /" & vbLf
 
         ' Stats refresh timer
-        _statsTimer = New DispatcherTimer()
-        _statsTimer.Interval = TimeSpan.FromSeconds(1)
-        AddHandler _statsTimer.Tick, AddressOf StatsTimerTick
-        _statsTimer.Start()
+        '_statsTimer = New DispatcherTimer()
+        '_statsTimer.Interval = TimeSpan.FromSeconds(1)
+        'AddHandler _statsTimer.Tick, AddressOf StatsTimerTick
+        '_statsTimer.Start()
     End Sub
 
     Private Sub UpdateStartStopUi(Optional busyText As String = Nothing, Optional isBusy As Boolean = False)
@@ -101,33 +103,33 @@ Public Class HttpServerTest
                                End Sub)
     End Sub
 
-    Private Sub StatsTimerTick(sender As Object, e As EventArgs)
-        Dim stats = _broadcast.UpdateStats()
+    'Private Sub StatsTimerTick(sender As Object, e As EventArgs)
+    '    Dim stats = _broadcast.UpdateStats()
 
-        If Not stats.Active Then
-            If RtmpStatsPanel.Visibility = Visibility.Visible Then
-                LabelRtmpStatus.Text = "Idle"
-                RtmpStatusIndicator.Fill = New SolidColorBrush(Colors.Gray)
-                LabelBitrate.Text = "0 kbps"
-                LabelVideoFrames.Text = "0"
-                LabelAudioFrames.Text = "0"
-                LabelDroppedFrames.Text = "0"
-                LabelTotalBytes.Text = "0 B"
-            End If
-            Return
-        End If
+    '    If Not stats.Active Then
+    '        If RtmpStatsPanel.Visibility = Visibility.Visible Then
+    '            LabelRtmpStatus.Text = "Idle"
+    '            RtmpStatusIndicator.Fill = New SolidColorBrush(Colors.Gray)
+    '            LabelBitrate.Text = "0 kbps"
+    '            LabelVideoFrames.Text = "0"
+    '            LabelAudioFrames.Text = "0"
+    '            LabelDroppedFrames.Text = "0"
+    '            LabelTotalBytes.Text = "0 B"
+    '        End If
+    '        Return
+    '    End If
 
-        RtmpStatsPanel.Visibility = Visibility.Visible
+    '    RtmpStatsPanel.Visibility = Visibility.Visible
 
-        ' Update UI
-        LabelRtmpStatus.Text = "RTMP Live (" & stats.App & "/" & stats.StreamKey & ")"
-        RtmpStatusIndicator.Fill = New SolidColorBrush(Colors.LimeGreen)
-        LabelBitrate.Text = stats.BitrateKbps.ToString("N0") & " kbps"
-        LabelVideoFrames.Text = stats.VideoFrames.ToString("N0")
-        LabelAudioFrames.Text = stats.AudioFrames.ToString("N0")
-        LabelDroppedFrames.Text = stats.DroppedFrames.ToString("N0")
-        LabelTotalBytes.Text = BroadcastServer.FormatBytes(stats.TotalBytes)
-    End Sub
+    '    ' Update UI
+    '    LabelRtmpStatus.Text = "RTMP Live (" & stats.App & "/" & stats.StreamKey & ")"
+    '    RtmpStatusIndicator.Fill = New SolidColorBrush(Colors.LimeGreen)
+    '    LabelBitrate.Text = stats.BitrateKbps.ToString("N0") & " kbps"
+    '    LabelVideoFrames.Text = stats.VideoFrames.ToString("N0")
+    '    LabelAudioFrames.Text = stats.AudioFrames.ToString("N0")
+    '    LabelDroppedFrames.Text = stats.DroppedFrames.ToString("N0")
+    '    LabelTotalBytes.Text = BroadcastServer.FormatBytes(stats.TotalBytes)
+    'End Sub
 
 #Region "Test Classes"
 
@@ -174,7 +176,7 @@ Public Class HttpServerTest
         UpdateStartStopUi("Starting..", isBusy:=True)
 
         Try
-            If Not Server.Listen() Then
+            If Not Server.Start() Then
                 Return
             End If
 
@@ -182,8 +184,15 @@ Public Class HttpServerTest
             UpdateStartStopUi()
 
             Try
-                Process.Start("http://localhost:" & ServerPort)
-            Catch
+                If Not Server.ChatServer.IsListening Then
+                    Server.ChatServer.Listen()
+                End If
+
+                Log("VS proxy endpoint: http://localhost:" & ServerPort & "/v1/chat/completions")
+                Log("Chat UI available at: " & Server.ChatServerUrl)
+                Process.Start(Server.ChatServerUrl)
+            Catch ex As Exception
+                Log("Chat UI start error: " & ex.Message)
             End Try
 
         Catch ex As Exception
@@ -194,10 +203,9 @@ Public Class HttpServerTest
     End Sub
 
     Private Sub ITest_StopTest() Implements ITest.StopTest
-        If Running Then
-            TextLog.Text = String.Empty
+        If Server IsNot Nothing AndAlso (Server.IsListening OrElse (Server.IsChatServerCreated AndAlso Server.ChatServer.IsListening)) Then
             UpdateStartStopUi("Stopping..", isBusy:=True)
-            Server.StopListening()
+            Server.Stop()
             UpdateStartStopUi()
         End If
     End Sub
@@ -210,58 +218,58 @@ Public Class HttpServerTest
         End If
     End Sub
 
-    Private Sub ButtonRecord_Click(sender As Object, e As RoutedEventArgs) Handles ButtonRecord.Click
-        _broadcast.Recording = Not _broadcast.Recording
-        If _broadcast.Recording Then
-            ButtonRecord.Content = "Stop Recording"
-            Log("Recording started.")
-        Else
-            ButtonRecord.Content = "Record"
-            Dim count As Integer = _broadcast.GetRecordedBytes().Length
-            Log("Recording stopped. " & count & " chunk(s) captured.")
-        End If
-    End Sub
+    'Private Sub ButtonRecord_Click(sender As Object, e As RoutedEventArgs) Handles ButtonRecord.Click
+    '    _broadcast.Recording = Not _broadcast.Recording
+    '    If _broadcast.Recording Then
+    '        ButtonRecord.Content = "Stop Recording"
+    '        Log("Recording started.")
+    '    Else
+    '        ButtonRecord.Content = "Record"
+    '        Dim count As Integer = _broadcast.GetRecordedBytes().Length
+    '        Log("Recording stopped. " & count & " chunk(s) captured.")
+    '    End If
+    'End Sub
 
-    Private Sub ButtonSave_Click(sender As Object, e As RoutedEventArgs) Handles ButtonSave.Click
-        Dim chunks As Byte()() = _broadcast.GetRecordedBytes()
+    'Private Sub ButtonSave_Click(sender As Object, e As RoutedEventArgs) Handles ButtonSave.Click
+    '    Dim chunks As Byte()() = _broadcast.GetRecordedBytes()
 
-        If chunks.Length = 0 Then
-            Log("No recorded bytes to save.")
-            Return
-        End If
+    '    If chunks.Length = 0 Then
+    '        Log("No recorded bytes to save.")
+    '        Return
+    '    End If
 
-        Dim dlg As New Microsoft.Win32.SaveFileDialog()
-        dlg.Title = "Save Recorded Bytes"
-        dlg.Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*"
-        dlg.DefaultExt = ".txt"
-        dlg.FileName = "RecordedBytes.txt"
+    '    Dim dlg As New Microsoft.Win32.SaveFileDialog()
+    '    dlg.Title = "Save Recorded Bytes"
+    '    dlg.Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*"
+    '    dlg.DefaultExt = ".txt"
+    '    dlg.FileName = "RecordedBytes.txt"
 
-        If dlg.ShowDialog() = True Then
-            Using writer As New StreamWriter(dlg.FileName, False, Encoding.UTF8)
-                For i As Integer = 0 To chunks.Length - 1
-                    For offset As Integer = 0 To chunks(i).Length - 1 Step 16
-                        Dim remaining As Integer = Math.Min(16, chunks(i).Length - offset)
-                        Dim hex As New StringBuilder()
-                        Dim ascii As New StringBuilder()
-                        For j As Integer = 0 To remaining - 1
-                            Dim b As Byte = chunks(i)(offset + j)
-                            hex.Append(b.ToString("X2"))
-                            hex.Append(" ")
-                            If b >= 32 AndAlso b < 127 Then
-                                ascii.Append(Chr(b))
-                            Else
-                                ascii.Append(".")
-                            End If
-                        Next
-                        writer.WriteLine(offset.ToString("X8") & "  " & hex.ToString().PadRight(48) & " " & ascii.ToString())
-                    Next
-                Next
-            End Using
-            Log("Recorded bytes saved to: " & dlg.FileName)
-        End If
-    End Sub
+    '    If dlg.ShowDialog() = True Then
+    '        Using writer As New StreamWriter(dlg.FileName, False, Encoding.UTF8)
+    '            For i As Integer = 0 To chunks.Length - 1
+    '                For offset As Integer = 0 To chunks(i).Length - 1 Step 16
+    '                    Dim remaining As Integer = Math.Min(16, chunks(i).Length - offset)
+    '                    Dim hex As New StringBuilder()
+    '                    Dim ascii As New StringBuilder()
+    '                    For j As Integer = 0 To remaining - 1
+    '                        Dim b As Byte = chunks(i)(offset + j)
+    '                        hex.Append(b.ToString("X2"))
+    '                        hex.Append(" ")
+    '                        If b >= 32 AndAlso b < 127 Then
+    '                            ascii.Append(Chr(b))
+    '                        Else
+    '                            ascii.Append(".")
+    '                        End If
+    '                    Next
+    '                    writer.WriteLine(offset.ToString("X8") & "  " & hex.ToString().PadRight(48) & " " & ascii.ToString())
+    '                Next
+    '            Next
+    '        End Using
+    '        Log("Recorded bytes saved to: " & dlg.FileName)
+    '    End If
+    'End Sub
 
-    Public Sub Log(text As String) Handles Server.LogOutput
+    Public Sub Log(text As String) 'Handles Server.LogOutput
         If text Is Nothing OrElse text = String.Empty Then Return
         Try
             Dispatcher.Invoke(Sub()
@@ -274,7 +282,10 @@ Public Class HttpServerTest
                                               If AscW(chars(i)) >= 256 Then chars(i) = "?"c
                                           Next
                                           Dim safe = New String(chars)
-                                          Try : TextLog.AppendText(If(safe.IndexOf(Environment.NewLine) > 0, safe, safe & vbCrLf))
+                                          If Not safe.EndsWith(vbCrLf) AndAlso Not safe.EndsWith(vbLf) AndAlso Not safe.EndsWith(vbCr) Then
+                                              safe &= vbCrLf
+                                          End If
+                                          Try : TextLog.AppendText(safe)
                                           Catch : End Try
                                           Try : If isAtEnd Then TextLog.ScrollToEnd()
                                           Catch : End Try
@@ -285,13 +296,16 @@ Public Class HttpServerTest
         Catch : End Try
     End Sub
 
+    Private Sub OnServerLog(sender As Object, e As SocketJack.Net.OutputLogEventArgs)
+        Log(e.Message)
+    End Sub
+
     Private Async Sub HttpServerTest_Loaded(sender As Object, e As RoutedEventArgs) Handles Me.Loaded
         If NIC.InterfaceDiscovered Then
             Await Forward()
         Else
             AddHandler NIC.OnInterfaceDiscovered, Async Sub() Forward()
         End If
-
     End Sub
 
     Public Async Function Forward() As Task(Of Boolean)

@@ -291,11 +291,31 @@
     <Compile Include="..\SocketJack\Extensions\MethodExtensions.cs" Link="Extensions\MethodExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\ObjectExtensions.cs" Link="Extensions\ObjectExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\StreamExtensions.cs" Link="Extensions\StreamExtensions.cs" />
+    <Compile Include="..\SocketJack\Net\Database\Column.cs" Link="Net\Database\Column.cs" />
+    <Compile Include="..\SocketJack\Net\Database\ColumnSnapshot.cs" Link="Net\Database\ColumnSnapshot.cs" />
+    <Compile Include="..\SocketJack\Net\Database\ConcatenatedStream.cs" Link="Net\Database\ConcatenatedStream.cs" />
+    <Compile Include="..\SocketJack\Net\Database\Database.cs" Link="Net\Database\Database.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DatabaseSnapshot.cs" Link="Net\Database\DatabaseSnapshot.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DataClient.cs" Link="Net\Database\DataClient.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DataServer.cs" Link="Net\Database\DataServer.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DataServerExample.cs" Link="Net\Database\DataServerExample.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DataServerSnapshot.cs" Link="Net\Database\DataServerSnapshot.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DbContextGenerator.cs" Link="Net\Database\DbContextGenerator.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DbContextGeneratorTool.cs" Link="Net\Database\DbContextGeneratorTool.cs" />
+    <Compile Include="..\SocketJack\Net\Database\QueryResult.cs" Link="Net\Database\QueryResult.cs" />
+    <Compile Include="..\SocketJack\Net\Database\SqlAdminPanel.cs" Link="Net\Database\SqlAdminPanel.cs" />
+    <Compile Include="..\SocketJack\Net\Database\SqlSession.cs" Link="Net\Database\SqlSession.cs" />
+    <Compile Include="..\SocketJack\Net\Database\Table.cs" Link="Net\Database\Table.cs" />
+    <Compile Include="..\SocketJack\Net\Database\TableSnapshot.cs" Link="Net\Database\TableSnapshot.cs" />
+    <Compile Include="..\SocketJack\Net\Database\TdsProtocolHandler.cs" Link="Net\Database\TdsProtocolHandler.cs" />
+    <Compile Include="..\SocketJack\Net\Database\TdsWrapperStream.cs" Link="Net\Database\TdsWrapperStream.cs" />
     <Compile Include="..\SocketJack\Net\EventArguments.cs" Link="Net\EventArguments.cs" />
     <Compile Include="..\SocketJack\Net\HtAccessBuilder.cs" Link="Net\HtAccessBuilder.cs" />
+    <Compile Include="..\SocketJack\Net\HtmlBuilder.cs" Link="Net\HtmlBuilder.cs" />
     <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
     <Compile Include="..\SocketJack\Net\HttpServer.cs" Link="Net\HttpServer.cs" />
     <Compile Include="..\SocketJack\Net\ISocket.cs" Link="Net\ISocket.cs" />
+    <Compile Include="..\SocketJack\Net\LmVsProxy.cs" Link="Net\LmVsProxy.cs" />
     <Compile Include="..\SocketJack\Net\MutableTcpServer.cs" Link="Net\MutableTcpServer.cs" />
     <Compile Include="..\SocketJack\Net\NetworkBase.cs" Link="Net\NetworkBase.cs" />
     <Compile Include="..\SocketJack\Net\NetworkConnection.cs" Link="Net\NetworkConnection.cs" />
@@ -311,10 +331,20 @@
     <Compile Include="..\SocketJack\Net\P2P\Ping.cs" Link="Net\P2P\Ping.cs" />
     <Compile Include="..\SocketJack\Net\BroadcastServer.cs" Link="Net\BroadcastServer.cs" />
     <Compile Include="..\SocketJack\Net\RtmpSession.cs" Link="Net\RtmpSession.cs" />
+    <Compile Include="..\SocketJack\Net\Runescape\IsaacRandom.cs" Link="Net\Runescape\IsaacRandom.cs" />
+    <Compile Include="..\SocketJack\Net\Runescape\IsaacRandomPair.cs" Link="Net\Runescape\IsaacRandomPair.cs" />
+    <Compile Include="..\SocketJack\Net\Runescape\OldschoolRunescapeProtocol.cs" Link="Net\Runescape\OldschoolRunescapeProtocol.cs" />
+    <Compile Include="..\SocketJack\Net\Runescape\OldschoolServer.cs" Link="Net\Runescape\OldschoolServer.cs" />
+    <Compile Include="..\SocketJack\Net\Runescape\PlayerCredentials.cs" Link="Net\Runescape\PlayerCredentials.cs" />
     <Compile Include="..\SocketJack\Net\Segment.cs" Link="Net\Segment.cs" />
     <Compile Include="..\SocketJack\Net\SendQueueItem.cs" Link="Net\SendQueueItem.cs" />
     <Compile Include="..\SocketJack\Net\TcpClient.cs" Link="Net\TcpClient.cs" />
+    <Compile Include="..\SocketJack\Net\TcpDuplicator.cs" Link="Net\TcpDuplicator.cs" />
     <Compile Include="..\SocketJack\Net\TcpServer.cs" Link="Net\TcpServer.cs" />
+    <Compile Include="..\SocketJack\Net\Torrent\TorrentClient.cs" Link="Torrent\TorrentClient.cs" />
+    <Compile Include="..\SocketJack\Net\Torrent\TorrentMessages.cs" Link="Torrent\TorrentMessages.cs" />
+    <Compile Include="..\SocketJack\Net\Torrent\TorrentMetadata.cs" Link="Torrent\TorrentMetadata.cs" />
+    <Compile Include="..\SocketJack\Net\Torrent\TorrentTracker.cs" Link="Torrent\TorrentTracker.cs" />
     <Compile Include="..\SocketJack\Net\UdpClient.cs" Link="Net\UdpClient.cs" />
     <Compile Include="..\SocketJack\Net\UdpConnection.cs" Link="Net\UdpConnection.cs" />
     <Compile Include="..\SocketJack\Net\UdpServer.cs" Link="Net\UdpServer.cs" />
@@ -335,6 +365,12 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\SocketJack\License.txt" Link="License.txt" />
+    <Content Include="..\SocketJack\Resources\SqlLogin.html" Link="Resources\SqlLogin.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\SocketJack\Resources\SqlPanel.html" Link="Resources\SqlPanel.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="..\SocketJack\SocketJackIcon.png" Link="SocketJackIcon.png" />
   </ItemGroup>
   <ItemGroup>
@@ -376,6 +412,9 @@
     </ItemGroup>
     <ItemGroup>
       <Folder Include="Compression\" />
+      <Folder Include="Net\Runescape\" />
+      <Folder Include="Torrent\" />
+      <Folder Include="Resources\" />
       <Folder Include="Net\P2P\" />
       <Folder Include="Serialization\Json\Converters\" />
     </ItemGroup>

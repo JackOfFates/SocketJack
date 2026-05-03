@@ -63,6 +63,9 @@ namespace SocketJack.Net {
             }
         }
 
+        public bool RawTcpMode { get; set; }
+        public bool SuppressConnectionTest { get; set; }
+
         #endregion
 
         #region Events
@@ -391,9 +394,12 @@ private NetworkConnection NewConnection(ref Socket handler) {
                 newConnection.ID = Guid.NewGuid();
             }
             newConnection._Identity = Identifier.Create(newConnection);
+            if (RawTcpMode) { newConnection.RawTcpMode = true; }
+            if (SuppressConnectionTest) { newConnection.SuppressConnectionTest = true; }
             newConnection.StartReceiving();
             newConnection.StartSending();
             newConnection.StartConnectionTester();
+
             if (Options.UsePeerToPeer && !DeferPeerInitialization)
                 InitializePeer(newConnection);
             return newConnection;

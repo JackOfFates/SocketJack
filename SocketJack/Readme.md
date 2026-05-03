@@ -8,13 +8,14 @@
 
 A .NET networking library that lets you send and receive any object over TCP or UDP with a single method call. Powered by `System.Text.Json` serialization, SocketJack handles framing, segmentation, and deserialization automatically — just call `Send(myObject)` on one end and register a typed callback on the other. No manual byte wrangling, no protocol boilerplate. Built on `System.Net.Sockets` with optional `SslStream` TLS 1.2 encryption, peer-to-peer relay, and a unified API across TCP, UDP, HTTP, and WebSocket transports.
 
-**Target frameworks:** .NET 8 · .NET 9 · .NET 10
+**Target frameworks:** .NET 8 · .NET 10
 
 ---
 
-## What's New in v1.6.6?
+## What's New in v1.7.0?
 
-- **WebSocket support in `MutableTcpServer`** — HTTP, SocketJack, WebSocket, and RTMP now all auto-detect on a single port. Browser-based WebSocket clients connect alongside native SocketJack and HTTP clients with zero extra configuration.
+- **LmVsProxy – AI Model Bridge** – Translate Visual Studio's GitHub-style tool calling into OpenAI-compatible API requests for locally-hosted LLMs (Qwen, Mistral, and other models via LM Studio). Run enterprise-grade AI tools on your own hardware with zero cloud costs — just your electrical company.
+- **WebSocket support in `MutableTcpServer`**
 - **`WebSocketClientConnected` event** — fires after a successful WebSocket upgrade handshake, making it easy to initialize browser clients.
 - **`MapFile`** — map an individual file to a URL path (e.g., `MapFile("/js/app.js", @"C:\Pages\app.js")`).
 - **`CacheControl` property** — set a global `Cache-Control` header for all HTTP responses. Static files also emit `ETag` and `Last-Modified` headers with `304 Not Modified` support.
@@ -36,6 +37,7 @@ A .NET networking library that lets you send and receive any object over TCP or 
 | **Performance** | Large configurable buffers (default 100 MB), fully async I/O, automatic message segmentation, outbound chunking with configurable flush interval, and upload/download bandwidth throttling (Mbps). |
 | **Security** | `SslStream` with TLS 1.2, `X509Certificate` authentication, `.htaccess`-based access control with IP allow/deny, HTTP Basic auth, and file-pattern restrictions. |
 | **Extensibility** | Rich event system for connection, disconnection, peer updates, and data receipt. Attach arbitrary metadata to any peer or connection for dynamic routing and discovery. |
+| **AI Model Bridge** | `LmVsProxy` translates Visual Studio's GitHub-style tool calling into OpenAI-compatible API requests. Run enterprise-grade AI models (Qwen, Mistral, Phi, etc.) locally via LM Studio with zero cloud costs. |
 
 ---
 
@@ -86,7 +88,51 @@ The core transport. `TcpClient` and `TcpServer` provide reliable, ordered, strea
 
 > **Requires the [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) NuGet package.**
 
-The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `TcpClient` connection. The sharer captures JPEG frames at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in an `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
+The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `TcpClient` or `UdpClient` connection. The sharer captures JPEG frames at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in an `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
+
+### LmVsProxy – Local AI Model Bridge
+
+`LmVsProxy` bridges Visual Studio's GitHub Copilot tool-calling interface with locally-hosted language models via LM Studio. Instead of paying per API call to cloud providers, run open-source models (Qwen, Mistral, Phi, and others) on your own hardware and only pay for electricity.
+
+**How it works:**
+
+1. Visual Studio sends GitHub-format tool requests to the proxy
+2. LmVsProxy translates schemas and method calls to OpenAI-compatible format
+3. Requests forward to LM Studio's `/v1/chat/completions` endpoint
+4. Responses convert back to VS-compatible SSE format
+5. Multi-turn conversations seamlessly relay tool results back to the model
+
+**Features:**
+
+- Full protocol translation (GitHub format ? OpenAI format)
+- Built-in browser-based chat web UI via `ChatServer` property (automatically hosted)
+- Streaming and non-streaming request support
+- Single-port multiplexing with SocketJack's `MutableTcpServer`
+- Support for any LM Studio-compatible model
+
+**Getting Started:**
+
+1. Install LM Studio and download your preferred model (Qwen, Mistral, Phi, etc.)
+2. Start LM Studio on its default port (e.g., `localhost:1234`)
+3. In your application, create and start the proxy:
+
+```cs
+var proxy = new LmVsProxy("localhost", 1234, 11434);
+proxy.Start();
+
+// Enable the built-in web chat UI (optional)
+if (!proxy.ChatServer.IsListening)
+{
+    proxy.ChatServer.Listen();
+}
+
+Console.WriteLine("Proxy running at http://localhost:11434/v1/chat/completions");
+Console.WriteLine("Chat web UI available at http://localhost:" + proxy.ChatServerPort);
+```
+
+4. Configure Visual Studio to use the proxy as your Copilot endpoint at `http://localhost:11434/v1/chat/completions`
+5. Open the chat UI in your browser: `http://localhost:{chatServerPort}` to interact with your local model directly
+6. All tool calls from Visual Studio now execute against your local model — no cloud bills, just electricity
 
 ---
 
@@ -97,6 +143,7 @@ The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `T
 - **IoT device networks** — efficient, secure communication across flexible topologies.
 - **Remote control & automation** — event-driven command/control of remote systems.
 - **Custom protocols** — build domain-specific protocols on top of any transport with full control over serialization and peer management.
+- **Local AI model serving** — run enterprise-grade open-source LLMs (Qwen, Mistral, Phi) via LM Studio on your own hardware with zero cloud costs through LmVsProxy.
 
 ---
 

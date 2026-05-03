@@ -1,4 +1,4 @@
-﻿Imports System.IO
+Imports System.IO
 Imports System.Net
 Imports System.Net.Http
 Imports System.Net.Http.Headers
@@ -37,6 +37,11 @@ Class TestWindow
 
     Private Sub ButtonMutableTcpServer_Click(sender As Object, e As RoutedEventArgs) Handles ButtonMutableTcpServer.Click
         Dim t = New MutableTcpServerTest With {.Name = "MutableTcpServerTestControl"}
+        StartTest(t)
+    End Sub
+
+    Private Sub ButtonTorrentClient_Click(sender As Object, e As RoutedEventArgs) Handles ButtonTorrentClient.Click
+        Dim t = New TorrentClientTest With {.Name = "TorrentClientTestControl"}
         StartTest(t)
     End Sub
 

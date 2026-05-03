@@ -108,6 +108,24 @@ namespace SocketJack.Net {
         protected internal TcpProtocol _Protocol = TcpProtocol.Unknown;
 
         /// <summary>
+        /// When set to <see langword="true"/>, the connection-test poll loop
+        /// treats every poll as successful.  This prevents false disconnection
+        /// when an <see cref="System.Net.Security.SslStream"/> (or similar wrapper)
+        /// has consumed all bytes from the raw socket into its internal buffer,
+        /// causing <c>Socket.Available == 0</c> even though the connection is alive.
+        /// </summary>
+        public volatile bool SuppressConnectionTest;
+
+        /// <summary>
+        /// When set to <see langword="true"/>, all SocketJack send/receive/poll
+        /// processing is disabled for this connection.  The protocol handler
+        /// (e.g. TDS) takes full ownership of the <see cref="_Stream"/> and
+        /// performs its own I/O.  Byte-count metrics are still updated via
+        /// <see cref="TrackBytesSent"/> and <see cref="TrackBytesReceived"/>.
+        /// </summary>
+        public volatile bool RawTcpMode;
+
+        /// <summary>
         /// True if connection sending or receiving.
         /// </summary>
         public bool Active {
@@ -281,6 +299,24 @@ namespace SocketJack.Net {
         protected internal SemaphoreSlim _SendSignal = new(0);
         protected internal long _nextChunkFlushAt = 0;
 
+        /// <summary>
+        /// Updates sent-byte metrics without going through the SocketJack send pipeline.
+        /// Used by protocol handlers running in <see cref="RawTcpMode"/>.
+        /// </summary>
+        public void TrackBytesSent(int count) {
+            Interlocked.Add(ref _TotalBytesSent, count);
+            Parent?.InvokeInternalSentByteCounter(this, count);
+        }
+
+        /// <summary>
+        /// Updates received-byte metrics without going through the SocketJack receive pipeline.
+        /// Used by protocol handlers running in <see cref="RawTcpMode"/>.
+        /// </summary>
+        public void TrackBytesReceived(int count) {
+            Interlocked.Add(ref _TotalBytesReceived, count);
+            Parent?.InvokeInternalReceivedByteCounter(this, count);
+        }
+
         protected internal ConcurrentQueue<SendQueueItem> SendQueue = new();
         protected internal List<byte> SendQueueRaw = new();
 
@@ -354,6 +390,7 @@ namespace SocketJack.Net {
         }
 
         public void Close(ISocket sender, DisconnectionReason Reason = DisconnectionReason.LocalSocketClosed) {
+            DisconnectedEventArgs disconnectArgs = null;
             lock (_closeLock) {
                 if (!Closed && !Closing) {
                     _Closing = true;
@@ -361,12 +398,11 @@ namespace SocketJack.Net {
                         _connectionCounted = false;
                         AdjustThreadPool(-1);
                     }
-                    var e = new DisconnectedEventArgs(sender, this, Reason);
+                    disconnectArgs = new DisconnectedEventArgs(sender, this, Reason);
                     if (Socket != null && Socket.Connected) {
                         MethodExtensions.TryInvoke(() => Socket.Shutdown(SocketShutdown.Both));
                         MethodExtensions.TryInvoke(() => Socket.Close());
                     }
-                    InvokeDisconnected(sender, e);
                     SendQueue.Clear();
                     lock (SendQueueRaw) {
                         SendQueueRaw.Clear();
@@ -378,6 +414,10 @@ namespace SocketJack.Net {
                     try { _SendSignal.Release(); } catch (ObjectDisposedException) { }
                 }
             }
+            // Invoke outside the lock to avoid deadlock with UI dispatcher.
+            if (disconnectArgs != null) {
+                InvokeDisconnected(sender, disconnectArgs);
+            }
         }
 
         public void StartConnectionTester() {
@@ -388,21 +428,31 @@ namespace SocketJack.Net {
                 int failedPollCount = 0;
                 const int maxFailedPolls = 3;
 
-                while (!isDisposed && !Closed && !Closing && Socket.Connected) {
-                    if (!Poll()) {
+                while (!isDisposed && !Closed && !Closing) {
+                    // When a protocol handler owns the connection (RawTcpMode /
+                    // SuppressConnectionTest), skip Socket.Connected checks —
+                    // the handler manages the lifecycle and will detect
+                    // disconnects on its own read/write path.
+                    if (RawTcpMode || SuppressConnectionTest) {
+                        failedPollCount = 0;
+                        await Task.Delay(1000);
+                        continue;
+                    }
+                    if (!Socket.Connected) break;
+                    if (Poll()) {
+                        failedPollCount = 0;
+                    } else {
                         failedPollCount++;
-                        if (failedPollCount >= maxFailedPolls) {
+                        if (failedPollCount >= maxFailedPolls && !SuppressConnectionTest) {
                             if (!Closed) {
                                 Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
                             }
                             break;
                         }
-                    } else {
-                        failedPollCount = 0;
                     }
                     await Task.Delay(1000);
                 }
-                if (!Closed && !Closing) {
+                if (!Closed && !Closing && !SuppressConnectionTest) {
                     Parent.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
                 }
             }, TaskCreationOptions.LongRunning);
@@ -473,9 +523,9 @@ namespace SocketJack.Net {
 			});
 #endif
 #if WINDOWS
-			Application.Current.Dispatcher.Invoke(() => {
+			Application.Current.Dispatcher.BeginInvoke(new Action(() => {
 				OnDisconnected?.Invoke(this, e);
-			});
+			}));
 #endif
 #if !UNITY && !WINDOWS
 			OnDisconnected?.Invoke(this, e);
@@ -567,6 +617,12 @@ namespace SocketJack.Net {
                     }
                 } else {
                     while (!isDisposed && !Closed && Socket.Connected) {
+                        if (RawTcpMode) {
+                            // Protocol handler owns the stream — just idle until
+                            // the connection closes or RawTcpMode is cleared.
+                            await Task.Delay(250);
+                            continue;
+                        }
                         if (Interlocked.CompareExchange(ref _IsReceiving, 1, 0) == 0) {
                             try {
                                 await ReceiveData();
@@ -603,6 +659,10 @@ namespace SocketJack.Net {
         }
 
         private async Task ReceiveData() {
+                // If a protocol handler (e.g. TDS) has taken ownership of the
+                // stream, bail out immediately so we don't compete for reads.
+                if (RawTcpMode) return;
+
                 var options = Parent.Options;
                 var stream = Stream;
                 // If terminated streams are disabled (or this connection was switched
@@ -622,8 +682,15 @@ namespace SocketJack.Net {
                                 if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
                                 break;
                             }
+                            // A protocol handler took ownership while we were blocking.
+                            // Yield without closing — the handler owns the stream now.
+                            if (RawTcpMode) {
+                                ArrayPool<byte>.Shared.Return(buffer);
+                                IsReceiving = false;
+                                return;
+                            }
                             if (bytesRead <= 0) {
-                                // Stream ended â€” remote side closed the connection.
+                                // Stream ended — remote side closed the connection.
                                 // Close locally to prevent the outer loop from spinning.
                                 if (temp.Count > 0) {
                                     await ParseBuffer(temp, this, Parent);
@@ -666,8 +733,15 @@ namespace SocketJack.Net {
                     return;
                 }
 
+                // A protocol handler took ownership while we were blocking.
+                // Yield without closing — the handler owns the stream now.
+                if (RawTcpMode) {
+                    IsReceiving = false;
+                    return;
+                }
+
                 if (lengthRead <= 0) {
-                    // Stream ended â€” remote side closed the connection.
+                    // Stream ended — remote side closed the connection.
                     Parent.CloseConnection(this, DisconnectionReason.RemoteSocketClosed);
                     IsReceiving = false;
                     return;
@@ -765,7 +839,7 @@ namespace SocketJack.Net {
 
         /// <summary>
         /// Returns <see langword="true"/> when <paramref name="data"/> begins with
-        /// a known HTTP method keyword (GET, POST, PUT, â€¦).
+        /// a known HTTP method keyword (GET, POST, PUT, …).
         /// </summary>
         private static bool IsHttpPrefix(byte[] data, int length) {
             if (data == null || length < 3) return false;
@@ -979,7 +1053,7 @@ namespace SocketJack.Net {
         }
 
         protected async internal Task ProcessQueue() {
-            if (Socket == null || Stream == null || !Socket.Connected || Closed) {
+            if (RawTcpMode || Socket == null || Stream == null || !Socket.Connected || Closed) {
                 await Task.Delay(50);
                 return;
             }
@@ -1001,7 +1075,7 @@ namespace SocketJack.Net {
             if (chunk == null || chunk.Length == 0) {
                 IsSending = false;
                 if (!options.Chunking)
-                    await _SendSignal.WaitAsync(100);
+                    await _SendSignal.WaitAsync(500);
                 return;
             }
 

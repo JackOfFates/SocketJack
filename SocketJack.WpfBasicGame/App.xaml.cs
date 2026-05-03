@@ -1,6 +1,7 @@
-﻿using System.Configuration;
+using System.Configuration;
 using System.Data;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace SocketJack.WpfBasicGame;
 
@@ -19,6 +20,18 @@ public partial class App : Application {
     }
     public void OnExit(object sender, ExitEventArgs e) {
         ThreadManager.Shutdown();
+    }
+
+    private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e) {
+        // JackDebug.WPF's SyntaxBox uses an Aho-Corasick engine limited to the first
+        // 256 Unicode code points.  When the debug window renders text containing
+        // characters >= U+0100 the engine throws IndexOutOfRangeException during the
+        // WPF render pass.  Suppress it so the app stays alive.
+        if (e.Exception is IndexOutOfRangeException &&
+            e.Exception.StackTrace != null &&
+            e.Exception.StackTrace.Contains("AhoCorasickSearch")) {
+            e.Handled = true;
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -248,10 +248,10 @@ namespace SocketJack {
         private static TimeSpan OneSecond = TimeSpan.FromSeconds(1);
         protected internal static void CounterLoop() {
             while (Alive) {
-                for (int i = 0; i < TcpClients.Count; i++) {
+                var clientSnapshot = TcpClients.Values.ToArray();
+                for (int i = 0; i < clientSnapshot.Length; i++) {
                     MethodExtensions.TryInvoke(() => {
-                        if(TcpClients.Count - 1 < i) return;
-                        var Client = TcpClients.Values.ElementAt(i);
+                        var Client = clientSnapshot[i];
                         if (Client.Connected && Client.Connection != null) {
                             Client.Connection._SentBytesPerSecond = Client.Connection.SentBytesCounter;
                             Client.Connection._ReceivedBytesPerSecond = Client.Connection.ReceivedBytesCounter;
@@ -261,10 +261,10 @@ namespace SocketJack {
                         }
                     });
                 }
-                for (int i = 0; i < TcpServers.Count; i++) {
+                var serverSnapshot = TcpServers.Values.ToArray();
+                for (int i = 0; i < serverSnapshot.Length; i++) {
                     MethodExtensions.TryInvoke(() => {
-                        if (TcpServers.Count - 1 < i) return;
-                        var Server = TcpServers.Values.ElementAt(i);
+                        var Server = serverSnapshot[i];
                         if (Server.Connection != null) {
                             if (Server.GetType() == typeof(TcpServer)) {
                                 var clients = Server.AsTcpServer().Clients.Values;
@@ -282,9 +282,10 @@ namespace SocketJack {
                         }
                     });
                 }
-                do {
-                    Thread.Sleep(1);
-                } while(DateTime.UtcNow - LastCount < OneSecond);
+                var elapsed = DateTime.UtcNow - LastCount;
+                var remainingMs = (int)(OneSecond - elapsed).TotalMilliseconds;
+                if (remainingMs > 0)
+                    Thread.Sleep(remainingMs);
                 LastCount = DateTime.UtcNow;
             }
         }

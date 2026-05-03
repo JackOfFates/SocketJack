@@ -15,6 +15,90 @@ namespace SocketJack.Net {
 
     public class HttpServer : TcpServer {
 
+        // Internal cache for processed HTML/string with variable replacement
+        private readonly ConcurrentDictionary<string, (string html, DateTime lastWrite)> _routeFileCache = new();
+        private readonly ConcurrentDictionary<string, string> _routeStringCache = new();
+
+        /// <summary>
+        /// Maps a route to an HTML file with variable replacement (e.g., $Username) and caching.
+        /// </summary>
+        public void RouteFile(string method, string path, string filePath, string[][] vars = null, int cacheSeconds = 60) {
+            if (string.IsNullOrWhiteSpace(method)) throw new ArgumentException("Method is required.", nameof(method));
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Path is required.", nameof(path));
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("File path is required.", nameof(filePath));
+
+            Map(method, path, (conn, req, ct) =>
+            {
+                string cacheKey = filePath + "|" + (vars != null ? GetVarsCacheKey(vars) : "");
+                string html;
+                DateTime lastWrite = DateTime.MinValue;
+                if (cacheSeconds > 0) {
+                    if (_routeFileCache.TryGetValue(cacheKey, out var cached)) {
+                        try { lastWrite = File.GetLastWriteTimeUtc(filePath); } catch { }
+                        if (cached.lastWrite == lastWrite)
+                            return cached.html;
+                    }
+                }
+                try {
+                    html = File.ReadAllText(filePath);
+                    lastWrite = File.GetLastWriteTimeUtc(filePath);
+                } catch (Exception ex) {
+                    return $"<html><body><h2>File not found</h2><pre>{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre></body></html>";
+                }
+                html = ReplaceVars(html, vars);
+                if (cacheSeconds > 0)
+                    _routeFileCache[cacheKey] = (html, lastWrite);
+                return html;
+            });
+        }
+
+        /// <summary>
+        /// Maps a route to a string (e.g., HTML template) with variable replacement and caching.
+        /// </summary>
+        public void RouteString(string method, string path, string template, string[][] vars = null, string cacheKey = null, int cacheSeconds = 60) {
+            if (string.IsNullOrWhiteSpace(method)) throw new ArgumentException("Method is required.", nameof(method));
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Path is required.", nameof(path));
+            if (template == null) throw new ArgumentNullException(nameof(template));
+
+            Map(method, path, (conn, req, ct) =>
+            {
+                string key = cacheKey ?? (template.GetHashCode() + "|" + (vars != null ? GetVarsCacheKey(vars) : ""));
+                if (cacheSeconds > 0 && _routeStringCache.TryGetValue(key, out var cached))
+                    return cached;
+                var result = ReplaceVars(template, vars);
+                if (cacheSeconds > 0)
+                    _routeStringCache[key] = result;
+                return result;
+            });
+        }
+
+        /// <summary>
+        /// Replaces variables in the form $VarName in the input string with values from vars.
+        /// Accepts string[][] where each element is a [key, value] pair.
+        /// </summary>
+        private static string ReplaceVars(string input, string[][] vars) {
+            if (input == null || vars == null) return input;
+            foreach (var pair in vars) {
+                if (pair == null || pair.Length < 2) continue;
+                string key = "$" + pair[0];
+                string val = pair[1] ?? string.Empty;
+                input = input.Replace(key, val);
+            }
+            return input;
+        }
+
+        /// <summary>
+        /// Generates a cache key for a variable array (string[][]).
+        /// </summary>
+        private static string GetVarsCacheKey(string[][] vars) {
+            if (vars == null) return string.Empty;
+            // Sort by key for stable cache key
+            return string.Join("|", vars
+                .Where(pair => pair != null && pair.Length >= 2)
+                .OrderBy(pair => pair[0])
+                .Select(pair => pair[0] + "=" + (pair[1] ?? "")));
+        }
+
         //new private event PeerConnectionRequestEventHandler PeerConnectionRequest;
 
         public event RequestHandler OnHttpRequest;
@@ -545,7 +629,12 @@ namespace SocketJack.Net {
             var normalized = NormalizePath(path);
             if (_fileMappings.TryGetValue(normalized, out var filePath)) {
                 if (File.Exists(filePath)) {
-                    fileBytes = File.ReadAllBytes(filePath);
+                    using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan)) {
+                        using (var ms = new MemoryStream()) {
+                            fs.CopyTo(ms);
+                            fileBytes = ms.ToArray();
+                        }
+                    }
                     contentType = GetMimeType(Path.GetExtension(filePath));
                     try { lastModifiedUtc = File.GetLastWriteTimeUtc(filePath); } catch { }
                     return true;
@@ -592,22 +681,66 @@ namespace SocketJack.Net {
         }
 
         private object ResolveRouteObject(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
+
             if (request == null)
                 return null;
 
             string method = request.Method;
             string path = NormalizePath(request.Path);
 
+            // Wildcard route matching
             if (method != null && path != null) {
                 if (_routes.TryGetValue(method, out var byPath)) {
+                    // Exact match
                     if (byPath.TryGetValue(path, out var handler))
                         return handler(connection, request, cancellationToken);
+
+                    // Only check wildcards if no exact match exists
+                    bool exactExists = byPath.Keys.Any(k => k.Equals(path, StringComparison.OrdinalIgnoreCase));
+                    if (!exactExists) {
+                        foreach (var kv in byPath) {
+                            var routePath = kv.Key;
+                            if (routePath.EndsWith("/*")) {
+                                var basePath = routePath.Substring(0, routePath.Length - 2);
+                                if (path.StartsWith(basePath)) {
+                                    // Only match if path is longer than basePath and has a slash
+                                    if (path.Length > basePath.Length && path[basePath.Length] == '/') {
+                                        var variable = path.Substring(basePath.Length + 1);
+                                        // Restrict wildcard to only match one segment after basePath
+                                        if (!string.IsNullOrEmpty(variable) && variable.IndexOf('/') == -1) {
+                                            request.PathVariables = new List<string> { variable };
+                                            return kv.Value(connection, request, cancellationToken);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 // HEAD should fall back to GET-mapped routes
                 if (method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) {
                     if (_routes.TryGetValue("GET", out var getByPath)) {
                         if (getByPath.TryGetValue(path, out var getHandler))
                             return getHandler(connection, request, cancellationToken);
+                        bool exactExists = getByPath.Keys.Any(k => k.Equals(path, StringComparison.OrdinalIgnoreCase));
+                        if (!exactExists) {
+                            foreach (var kv in getByPath) {
+                                var routePath = kv.Key;
+                                if (routePath.EndsWith("/*")) {
+                                    var basePath = routePath.Substring(0, routePath.Length - 2);
+                                    if (path.StartsWith(basePath)) {
+                                        if (path.Length > basePath.Length && path[basePath.Length] == '/') {
+                                            var variable = path.Substring(basePath.Length + 1);
+                                            // Restrict wildcard to only match one segment after basePath
+                                            if (!string.IsNullOrEmpty(variable) && variable.IndexOf('/') == -1) {
+                                                request.PathVariables = new List<string> { variable };
+                                                return kv.Value(connection, request, cancellationToken);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1045,6 +1178,7 @@ namespace SocketJack.Net {
                     Connection = e.Connection,
                     cancellationToken = default
                 };
+                request.Context = context;
 
                 var ct = default(CancellationToken);
 
@@ -1609,6 +1743,10 @@ namespace SocketJack.Net {
         /// Both <c>%XX</c> and <c>+</c> (as space) encodings are handled.
         /// </summary>
         public Dictionary<string, string> QueryParameters { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>
+        /// List of path variables extracted from wildcard routes (e.g. /api/*).
+        /// </summary>
+        public List<string> PathVariables { get; set; } = new List<string>();
         public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public long ContentLength {
             get {

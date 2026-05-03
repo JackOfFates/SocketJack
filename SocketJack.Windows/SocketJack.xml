@@ -10,6 +10,45 @@
             from the specified peer and displays them on the specified <see cref="T:System.Windows.Controls.Image"/> control.
             </summary>
         </member>
+        <member name="M:SocketJack.WPF.Controller.Extensions.GetOpenWindows">
+            <summary>
+            Returns all currently open <see cref="T:System.Windows.Window"/> instances in the application.
+            Useful for populating a selector (e.g. <see cref="T:System.Windows.Controls.ComboBox"/>) so the user can
+            choose which window to pass to <see cref="M:SocketJack.WPF.Controller.Extensions.GetAllControls(System.Windows.Window)"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.WPF.Controller.Extensions.ToWindow(System.Windows.FrameworkElement)">
+            <summary>
+            Resolves a <see cref="T:System.Windows.FrameworkElement"/> to the <see cref="T:System.Windows.Window"/> that contains it.
+            Returns <c>null</c> if the element is not part of a window's visual tree.
+            </summary>
+        </member>
+        <member name="M:SocketJack.WPF.Controller.Extensions.ToWindow(System.String)">
+            <summary>
+            Finds an open <see cref="T:System.Windows.Window"/> whose <see cref="!:Window.Name"/> matches <paramref name="windowName"/>.
+            Returns <c>null</c> if no matching window is found.
+            </summary>
+        </member>
+        <member name="M:SocketJack.WPF.Controller.Extensions.FindWindowByTitle(System.String)">
+            <summary>
+            Finds an open <see cref="T:System.Windows.Window"/> whose <see cref="P:System.Windows.Window.Title"/> matches <paramref name="windowTitle"/>.
+            Returns <c>null</c> if no matching window is found.
+            </summary>
+        </member>
+        <member name="M:SocketJack.WPF.Controller.Extensions.PopulateWindowSelector(System.Windows.Controls.ComboBox)">
+            <summary>
+            Populates a <see cref="T:System.Windows.Controls.ComboBox"/> with all currently open windows,
+            displaying each window's title (or type name as fallback).
+            Subscribe to <see cref="!:ComboBox.SelectionChanged"/> to retrieve the selected <see cref="T:System.Windows.Window"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.WPF.Controller.Extensions.GetSelectedWindow(System.Windows.Controls.ComboBox)">
+            <summary>
+            Gets the <see cref="T:System.Windows.Window"/> selected in a <see cref="T:System.Windows.Controls.ComboBox"/> that was
+            populated by <see cref="M:SocketJack.WPF.Controller.Extensions.PopulateWindowSelector(System.Windows.Controls.ComboBox)"/>.
+            Returns <c>null</c> if nothing is selected.
+            </summary>
+        </member>
         <member name="P:SocketJack.WPF.Controller.RemoteAction.Duration">
             <summary>
             <para>Time in Milliseconds to perform the action.</para>
@@ -196,6 +235,913 @@
             <param name="Obj">Serializable Object to send to the client.</param>
             <remarks></remarks>
         </member>
+        <member name="T:SocketJack.Net.Database.ConcatenatedStream">
+            <summary>
+            A read-only stream that reads from <paramref name="first"/> until it is
+            exhausted, then seamlessly continues reading from <paramref name="second"/>.
+            Used to prepend buffered leftover bytes (already consumed from the socket
+            by ReceiveData) in front of the live NetworkStream so that the TDS read
+            loop processes them in order without missing any data.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.DataClient">
+            <summary>
+            Lightweight TDS client for connecting to SQL Server or DataServer instances.
+            Implements the TDS (Tabular Data Stream) protocol for SQL communication.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.Server">
+            <summary>Server hostname or IP address.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.Port">
+            <summary>Server port (default 1433).</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.Database">
+            <summary>Database name to connect to.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.Username">
+            <summary>SQL authentication username.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.Password">
+            <summary>SQL authentication password.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.ApplicationName">
+            <summary>Application name sent to server.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.ConnectionTimeout">
+            <summary>Connection timeout in seconds.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.CommandTimeout">
+            <summary>Command timeout in seconds.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.PacketSize">
+            <summary>Packet size for TDS communication.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.Encrypt">
+            <summary>Whether to encrypt the connection.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.TrustServerCertificate">
+            <summary>Whether to trust the server certificate without validation.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.State">
+            <summary>Current connection state.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.ServerVersion">
+            <summary>Server version string after successful login.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.ServerProcessId">
+            <summary>Server process ID (SPID) assigned to this connection.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataClient.LastError">
+            <summary>Last error message from the server.</summary>
+        </member>
+        <member name="E:SocketJack.Net.Database.DataClient.InfoMessage">
+            <summary>Event raised when an info message is received from the server.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.#ctor">
+            <summary>
+            Creates a new DataClient instance with default settings.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.#ctor(System.String)">
+            <summary>
+            Creates a new DataClient instance with a connection string.
+            </summary>
+            <param name="connectionString">SQL Server style connection string.</param>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.#ctor(System.String,System.String,System.String,System.String)">
+            <summary>
+            Creates a new DataClient instance with explicit parameters.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.Open">
+            <summary>
+            Opens a connection to the SQL Server.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.OpenAsync(System.Threading.CancellationToken)">
+            <summary>
+            Opens a connection to the SQL Server asynchronously.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.Close">
+            <summary>
+            Closes the connection and releases resources.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteQuery(System.String)">
+            <summary>
+            Executes a SQL query and returns the results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteQueryAsync(System.String,System.Threading.CancellationToken)">
+            <summary>
+            Executes a SQL query asynchronously and returns the results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteNonQuery(System.String)">
+            <summary>
+            Executes a SQL command that doesn't return results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteNonQueryAsync(System.String,System.Threading.CancellationToken)">
+            <summary>
+            Executes a SQL command asynchronously that doesn't return results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteScalar(System.String)">
+            <summary>
+            Executes a SQL query and returns the first column of the first row.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteScalarAsync(System.String,System.Threading.CancellationToken)">
+            <summary>
+            Executes a SQL query asynchronously and returns the first column of the first row.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteDataTable(System.String)">
+            <summary>
+            Creates a DataTable from query results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataClient.ExecuteStoredProcedure(System.String,SocketJack.Net.Database.SqlParameter[])">
+            <summary>
+            Executes a stored procedure.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.SqlInfoEventArgs">
+            <summary>
+            Event arguments for SQL info messages.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.SqlParameter">
+            <summary>
+            Represents a SQL parameter for stored procedure calls.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.DataServer">
+            <summary>
+            MSSQL Server Emulator implementing TDS (Tabular Data Stream) protocol.
+            <para>
+            Can run standalone (inherits <see cref="T:SocketJack.Net.TcpServer"/>) or be registered
+            as a protocol handler on <see cref="T:SocketJack.Net.MutableTcpServer"/> via
+            <see cref="T:SocketJack.Net.Database.TdsProtocolHandler"/>.
+            </para>
+            <para>
+            All databases, tables and rows live in memory and are persisted to
+            <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/> as JSON. Use <see cref="M:SocketJack.Net.Database.DataServer.ImportFromMssql(System.Data.Common.DbConnection,System.String,System.String[],System.Boolean,System.Int32)"/> to
+            import schema and data from an existing SQL Server instance.
+            </para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.InstanceName">
+            <summary>
+            Server instance name (e.g., "MSSQLSERVER")
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.ServerVersion">
+            <summary>
+            Server version to report to clients (e.g., "17.00.4025" for SQL Server 2025)
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.Username">
+            <summary>
+            Default username for SQL authentication
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.Password">
+            <summary>
+            Default password for SQL authentication
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.DefaultDatabase">
+            <summary>
+            Default database name
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.ServerName">
+            <summary>
+            Server name to report to clients
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.AllowWindowsAuth">
+            <summary>
+            Enable Windows authentication (currently defaults to SQL authentication)
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.AllowSqlAuth">
+            <summary>
+            Enable SQL Server authentication
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.EncryptionMode">
+            <summary>
+            TDS encryption mode negotiated during Pre-Login.
+            <list type="bullet">
+            <item><c>0x00</c> � <b>ENCRYPT_OFF</b>: Encrypt the login packet only, then revert to plaintext.</item>
+            <item><c>0x01</c> � <b>ENCRYPT_ON</b>: Encrypt all traffic after the TLS handshake.</item>
+            <item><c>0x02</c> � <b>ENCRYPT_NOT_SUP</b>: No encryption at all (clients requiring encryption will refuse).</item>
+            <item><c>0x03</c> � <b>ENCRYPT_REQ</b>: Server requires full encryption.</item>
+            </list>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.Certificate">
+            <summary>
+            X.509 certificate used for TDS encryption (TLS handshake).
+            When <see langword="null"/> and <see cref="P:SocketJack.Net.Database.DataServer.EncryptionMode"/> is not <c>0x02</c>,
+            a self-signed certificate is generated automatically on first use.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.GenerateSelfSignedCertificate(System.String)">
+            <summary>
+            Generates a self-signed X.509 certificate suitable for TDS encryption.
+            The certificate is valid for 10 years and uses a 2048-bit RSA key.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.Users">
+            <summary>
+            Collection of registered users with their passwords
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.Databases">
+            <summary>
+            Databases available on this server
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.Database.DataServer.Sessions">
+            <summary>
+            Active sessions mapped by connection ID
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.DataPath">
+            <summary>
+            File path used to persist database state.
+            When set, data is loaded from this file on startup and saved on every mutation.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.AutoSave">
+            <summary>
+            When <see langword="true"/>, every data mutation (table/row add/remove) is
+            automatically flushed to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.AutoSaveDebounceMs">
+            <summary>
+            Interval in milliseconds to debounce auto-save writes.
+            Only the last mutation within this window triggers a write.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.Database.DataServer.TdsClientConnected">
+            <summary>
+            Raised when a TDS client connects (standalone mode only).
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.Database.DataServer.TdsClientDisconnected">
+            <summary>
+            Raised when a TDS client disconnects (standalone mode only).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.#ctor(System.Int32,System.String)">
+            <summary>
+            Initialize a new MSSQL Server Emulator (standalone mode � owns the TCP listener).
+            </summary>
+            <param name="Port">Port to listen on (default MSSQL port is 1433)</param>
+            <param name="Name">Server name for logging</param>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.#ctor(System.String,System.Boolean)">
+            <summary>
+            Creates a <see cref="T:SocketJack.Net.Database.DataServer"/> in hosted mode (no TCP listener).
+            <para>
+            The <see cref="T:SocketJack.Net.MutableTcpServer"/> owns the listener; this instance
+            only provides the in-memory database engine, persistence, and import
+            capabilities. No port is bound, no standalone client event hooks are
+            installed.
+            </para>
+            </summary>
+            <param name="Name">Server name for logging.</param>
+            <param name="hosted">Must be <see langword="true"/>. Distinguishes this from the standalone constructor.</param>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.Save">
+            <summary>
+            Saves the current server state (users, databases, tables, rows) to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.Load">
+            <summary>
+            Loads server state from <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/> into memory.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.ScheduleSave">
+            <summary>
+            Schedules a debounced save. Multiple rapid calls within
+            <see cref="P:SocketJack.Net.Database.DataServer.AutoSaveDebounceMs"/> collapse into a single write.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.ImportFromMssql(System.Data.Common.DbConnection,System.String,System.String[],System.Boolean,System.Int32)">
+             <summary>
+             Imports schema and data from an existing MSSQL database into this
+             DataServer's in-memory store.
+             <para>
+             Pass any <see cref="T:System.Data.Common.DbConnection"/> (e.g. <c>Microsoft.Data.SqlClient.SqlConnection</c>).
+             The connection should already be opened or the method will open it.
+             </para>
+             <example>
+             <code>
+             // Install Microsoft.Data.SqlClient in your application project:
+             //   dotnet add package Microsoft.Data.SqlClient
+            
+             using Microsoft.Data.SqlClient;
+            
+             var conn = new SqlConnection("Server=.;Database=MyDb;Trusted_Connection=True;TrustServerCertificate=True;");
+             server.ImportFromMssql(conn);
+             // or import only specific tables:
+             server.ImportFromMssql(conn, tableFilter: new[] { "Users", "Orders" });
+             </code>
+             </example>
+             </summary>
+             <param name="connection">An open (or openable) <see cref="T:System.Data.Common.DbConnection"/> to the source MSSQL server.</param>
+             <param name="databaseName">
+             Override the target database name in the DataServer. When <see langword="null"/>,
+             the source connection's <see cref="P:System.Data.Common.DbConnection.Database"/> name is used.
+             </param>
+             <param name="tableFilter">
+             Optional list of table names to import. When <see langword="null"/> or empty,
+             all user tables are imported.
+             </param>
+             <param name="importData">
+             When <see langword="true"/> (default), all rows are imported.
+             Set to <see langword="false"/> to import only schema (columns).
+             </param>
+             <param name="maxRowsPerTable">
+             Maximum number of rows to import per table. 0 = unlimited.
+             </param>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.MapSqlType(System.String)">
+            <summary>
+            Maps a SQL Server data type name to a .NET <see cref="T:System.Type"/>.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.DataServerSnapshot">
+            <summary>
+            Serializable snapshot of the entire DataServer state.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.DbContextGenerator">
+            <summary>
+            Generates Entity Framework DbContext and entity classes from a SQL Server database schema.
+            Supports both C# and VB.NET code generation with automatic build integration.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.ConnectionString">
+            <summary>
+            The database connection string.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.Namespace">
+            <summary>
+            The namespace for generated classes.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.ContextName">
+            <summary>
+            The name of the DbContext class.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.OutputDirectory">
+            <summary>
+            Output directory for generated files.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.Language">
+            <summary>
+            Target language (CSharp or VisualBasic).
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.GeneratePartialClasses">
+            <summary>
+            Whether to generate partial classes.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.IncludeNavigationProperties">
+            <summary>
+            Whether to include navigation properties.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DbContextGenerator.ExcludedTables">
+            <summary>
+            Tables to exclude from generation.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.Database.DbContextGenerator.Progress">
+            <summary>
+            Event raised during code generation for progress reporting.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DbContextGenerator.DetectLanguage(System.String)">
+            <summary>
+            Detects the project language from the project file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DbContextGenerator.DetectLanguageFromDirectory(System.String)">
+            <summary>
+            Detects the project language from existing source files in a directory.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DbContextGenerator.Generate">
+            <summary>
+            Generates DbContext and entity classes from the database schema.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DbContextGenerator.GenerateAsync">
+            <summary>
+            Generates DbContext and entity classes asynchronously.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DbContextGenerator.GetDatabaseSchema">
+            <summary>
+            Gets the database schema using DataClient.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DbContextGenerator.GenerateMSBuildTargets">
+            <summary>
+            Generates an MSBuild targets file for automatic code generation during build.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DbContextGenerator.GeneratePreBuildEvent">
+            <summary>
+            Generates a pre-build event command for Visual Studio.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.DbContextGeneratorTool">
+            <summary>
+            Command-line tool for generating DbContext from database schema.
+            Can be used as a pre-build event or MSBuild target.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.QueryResult.ColumnTypes">
+            <summary>
+            Optional per-column TDS type tokens.  When set, must be the same
+            length as <see cref="P:SocketJack.Net.Database.QueryResult.Columns"/>.  Supported values:
+            <c>0xE7</c> = NVARCHAR (default), <c>0x38</c> = INT (4-byte LE).
+            If <see langword="null"/>, all columns default to NVARCHAR.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.SqlAdminPanel">
+            <summary>
+            An HTTP-based SQL administration panel (similar to SQL Server Management Studio)
+            that can be enabled on a <see cref="T:SocketJack.Net.MutableTcpServer"/>. When enabled, it registers
+            HTTP routes under <c>/sql</c> that provide:
+            <list type="bullet">
+            <item>A login page authenticated against <see cref="P:SocketJack.Net.Database.DataServer.Users"/>.</item>
+            <item>An Object Explorer tree showing databases, tables and columns.</item>
+            <item>A SQL query editor with syntax highlighting.</item>
+            <item>A results grid for query output.</item>
+            </list>
+            <para>
+            Enable via <see cref="P:SocketJack.Net.MutableTcpServer.SqlAdminPanelEnabled"/> or access the
+            panel instance through <see cref="P:SocketJack.Net.MutableTcpServer.SqlAdminPanel"/>.
+            </para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlAdminPanel.PagesFolder">
+            <summary>
+            Directory containing HTML page templates for the SQL Admin Panel.
+            Templates use <c>$VariableName</c> placeholders that are replaced at runtime.
+            Defaults to a <c>Resources</c> folder next to the running application.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlAdminPanel.BasePath">
+            <summary>
+            Base URL path for all admin panel routes.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.SqlAdminPanel.EventDef">
+            <summary>
+            Represents a saved event definition.
+            Each event has an array of action nodes serialized as JSON.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ExecuteInMemoryQuery(SocketJack.Net.Database.DataServer,SocketJack.Net.Database.SqlSession,System.String)">
+            <summary>
+            Basic in-memory SQL handler for SELECT, INSERT, UPDATE, DELETE,
+            CREATE TABLE, and DROP TABLE when no <see cref="E:SocketJack.Net.Database.DataServer.QueryExecuting"/>
+            handler is wired up.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ResolveTable(SocketJack.Net.Database.DataServer,System.String,System.String,System.String,SocketJack.Net.Database.Database@)">
+            <summary>
+            Resolves a potentially qualified table reference against the DataServer.
+            When <paramref name="dbQualifier"/> names an existing database, the table
+            is looked up there; otherwise the qualifier is treated as a schema (ignored)
+            and the table is looked up in <paramref name="defaultDbName"/>.
+            Automatically tries <c>dbo.</c>-prefixed and unprefixed variants so that
+            <c>SELECT * FROM Uploads</c> finds <c>dbo.Uploads</c> and vice-versa.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.FindTableFuzzy(SocketJack.Net.Database.Database,System.String)">
+            <summary>
+            Looks up a table by name, automatically trying <c>dbo.</c>-prefixed
+            and unprefixed variants to handle schema-qualified storage.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.SplitWhereOnLogical(System.String,System.Collections.Generic.List{System.Boolean}@)">
+            <summary>
+            Splits a WHERE clause on top-level AND / OR keywords (outside string literals).
+            Returns the condition parts and a parallel list of operators (true=AND, false=OR).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.EvalSingleCondition(SocketJack.Net.Database.Table,System.Object[],System.String)">
+            <summary>
+            Evaluates a single WHERE condition (no AND/OR) against a row.
+            Supports: =, !=, &lt;&gt;, &gt;, &lt;, &gt;=, &lt;=, LIKE, NOT LIKE, IS NULL, IS NOT NULL, IN.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.FindOperator(System.String,System.String,System.String@)">
+            <summary>
+            Finds the position of a comparison operator in a condition string,
+            skipping characters inside string literals.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.FindKeyword(System.String,System.String)">
+            <summary>
+            Finds a keyword (e.g. " LIKE ") in the uppercase condition, skipping string literals.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.UnquoteString(System.String)">
+            <summary>
+            Removes surrounding single quotes or N'' prefix from a SQL value string.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.MatchLikePattern(System.String,System.String)">
+            <summary>
+            SQL LIKE pattern matching. Supports % (any characters) and _ (single character).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ParseInList(System.String)">
+            <summary>
+            Parses an IN (...) value list, returning unquoted string values.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ApplyOrderBy(SocketJack.Net.Database.QueryResult,SocketJack.Net.Database.Table,System.String)">
+            <summary>
+            Sorts result rows by an ORDER BY clause. Supports multiple columns
+            and ASC/DESC direction per column. Uses the original table column names
+            for lookup and falls back to the result column list when needed.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ApiEventsExecute(SocketJack.Net.HttpRequest)">
+            <summary>
+            Executes a single action node: supports HTTP API calls, SQL queries, and
+            reflection-based method invocation on the server.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.SerializeReflectResult(System.Object,System.Int32)">
+            <summary>
+            Serializes an arbitrary return value from a reflected method call into JSON.
+            Handles null, primitives, strings, enums, collections, and objects with public properties.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.IsApplicationAssembly(System.Reflection.Assembly)">
+            <summary>
+            Returns true if the assembly is likely an application assembly rather than a
+            .NET runtime / framework / system library.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ApiEventsReflect(SocketJack.Net.HttpRequest)">
+            <summary>
+            Returns discoverable types and their public static methods from loaded assemblies
+            so the UI can offer reflection-based invocation targets.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.LoadPageTemplate(System.String)">
+            <summary>
+            Loads an HTML page template from <see cref="P:SocketJack.Net.Database.SqlAdminPanel.PagesFolder"/> with file-hash-based caching.
+            Returns the file content, or an empty string if the file does not exist.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.LoadHtmlFromBinary(System.String)">
+            <summary>
+            Extracts an embedded HTML resource to <see cref="P:SocketJack.Net.Database.SqlAdminPanel.PagesFolder"/> if the file does not
+            already exist on disk. The resource is written once; users may then customise the
+            on-disk copy and it will not be overwritten.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlSession.ClientTdsVersion">
+            <summary>
+            The TDS protocol version sent by the client in Login7 (bytes 4-7, big-endian).
+            Stored as raw big-endian bytes so the LOGINACK can echo them exactly.
+            Defaults to TDS 7.4 (0x74000004).
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlSession.NegotiatedEncryption">
+            <summary>
+            The negotiated TDS encryption mode for this connection.
+            <c>0x00</c> = login-only, <c>0x01</c>/<c>0x03</c> = full, <c>0x02</c> = none.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlSession.WrapperStream">
+            <summary>
+            The <see cref="T:SocketJack.Net.Database.TdsWrapperStream"/> that sits between the
+            <see cref="T:System.Net.Security.SslStream"/> and the raw TCP stream.
+            Used to feed raw TLS record bytes from <see cref="M:SocketJack.Net.Database.TdsProtocolHandler.ProcessReceive(SocketJack.Net.MutableTcpServer,SocketJack.Net.NetworkConnection,SocketJack.Net.IReceivedEventArgs@)"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlSession.TlsStream">
+            <summary>
+            The TLS stream wrapping the raw TCP stream for this connection.
+            <see langword="null"/> when encryption is not active.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlSession.IsTlsActive">
+            <summary>
+            When <see langword="true"/>, the TLS handshake has completed and
+            <see cref="P:SocketJack.Net.Database.SqlSession.TlsStream"/> is ready for I/O.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.SqlSession.PlaintextLeftover">
+            <summary>
+            Bytes read from the NetworkStream by the TLS record feeder that
+            turned out to be plaintext (after ENCRYPT_OFF teardown).  The
+            read loop prepends these before reading from the NetworkStream.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.TdsProtocolHandler">
+            <summary>
+            An <see cref="T:SocketJack.Net.IProtocolHandler"/> that detects TDS (Tabular Data Stream)
+            connections and routes them to a <see cref="T:SocketJack.Net.Database.DataServer"/>.
+            <para>
+            Register this handler on a <see cref="T:SocketJack.Net.MutableTcpServer"/> to serve MSSQL
+            clients on the same port as HTTP, WebSocket, and SocketJack clients.
+            </para>
+            <example>
+            <code>
+            var mutable = new MutableTcpServer(1433, "MultiServer");
+            mutable.RegisterProtocol(new TdsProtocolHandler());
+            mutable.Listen();
+            </code>
+            </example>
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.Database.TdsProtocolHandler._buffers">
+            <summary>
+            Per-connection byte buffer for accumulating partial TDS packets.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.TdsProtocolHandler.Server">
+            <summary>
+            Returns the <see cref="T:SocketJack.Net.Database.DataServer"/> that handles TDS query execution,
+            authentication, and in-memory storage for this handler.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.#ctor(SocketJack.Net.Database.DataServer)">
+            <summary>
+            Creates a new TDS protocol handler backed by the given <see cref="T:SocketJack.Net.Database.DataServer"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.#ctor">
+            <summary>
+            Creates a new TDS protocol handler with an automatically created
+            hosted-mode <see cref="T:SocketJack.Net.Database.DataServer"/> (no standalone TCP listener).
+            Use this when the handler is registered on a <see cref="T:SocketJack.Net.MutableTcpServer"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.CanHandle(System.Byte[])">
+            <summary>
+            Returns <see langword="true"/> when the first bytes look like a TDS
+            Pre-Login packet (type <c>0x12</c>) or a TDS Login7 packet (type <c>0x10</c>).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.ProcessTdsBuffer(System.Collections.Generic.List{System.Byte},SocketJack.Net.NetworkConnection)">
+            <summary>
+            Processes buffered bytes, extracting complete TDS packets and handling them.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.PerformTlsHandshake(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession,System.Byte[])">
+            <summary>
+            Performs a TLS handshake on the connection's underlying TCP stream.
+            <para>
+            Per [MS-TDS] 2.2.6.5 the TLS handshake is encapsulated inside TDS
+            Pre-Login (0x12) packets. A <see cref="T:SocketJack.Net.Database.TdsWrapperStream"/> sits
+            between the <see cref="T:System.Net.Security.SslStream"/> and the raw
+            <see cref="F:SocketJack.Net.NetworkConnection._Stream"/> to handle this framing.
+            </para>
+            After this method returns, <see cref="P:SocketJack.Net.Database.SqlSession.TlsStream"/> is set
+            and all subsequent TDS packets are sent/received over TLS.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.RunTdsReadLoop(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession,System.Byte[])">
+            <summary>
+            Runs a blocking TDS read loop that reads TDS packets from the
+            appropriate stream (encrypted <see cref="T:System.Net.Security.SslStream"/> or plaintext
+            <see cref="T:System.Net.Sockets.NetworkStream"/>) and dispatches them
+            through <see cref="M:SocketJack.Net.Database.TdsProtocolHandler.HandleTdsPacket(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession,System.Byte,System.Byte[])"/>.
+            <para>
+            This method blocks the caller (ultimately <c>ReceiveData</c>) so that
+            the TDS handler has exclusive access to the underlying
+            <see cref="F:SocketJack.Net.NetworkConnection._Stream"/> with no competing reader.
+            When the session ends (ENCRYPT_OFF after login, disconnect, or
+            ENCRYPT_NOT_SUP plaintext session) this method returns.
+            </para>
+            <para>
+            For ENCRYPT_OFF the wrapper's feed-buffer is used: a background thread
+            reads raw TLS records from <see cref="F:SocketJack.Net.NetworkConnection._Stream"/> and
+            pushes them into <see cref="M:SocketJack.Net.Database.TdsWrapperStream.Feed(System.Byte[])"/> so that
+            <see cref="T:System.Net.Security.SslStream"/> never touches the NetworkStream directly.
+            After teardown the feeder stops and this loop reads plaintext from
+            NetworkStream.
+            </para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.TlsRecordFeeder(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession)">
+            <summary>
+            Background thread that reads raw TLS records from the
+            <see cref="F:SocketJack.Net.NetworkConnection._Stream"/> and feeds them into the
+            <see cref="T:SocketJack.Net.Database.TdsWrapperStream"/> feed buffer.  This keeps SslStream
+            from ever touching NetworkStream directly, preventing read-ahead
+            that would steal post-teardown plaintext bytes.
+            <para>
+            A TLS 1.2 record has a 5-byte header:
+            <c>[ContentType(1) ProtocolVersion(2) Length(2)]</c>.
+            Valid content types are 0x14-0x17.  After ENCRYPT_OFF teardown
+            the client sends plaintext TDS; when the feeder reads a non-TLS
+            header it stores those bytes as <see cref="P:SocketJack.Net.Database.SqlSession.PlaintextLeftover"/>
+            and exits so <see cref="M:SocketJack.Net.Database.TdsProtocolHandler.RunTdsReadLoop(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession,System.Byte[])"/> can consume them.
+            </para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.ReadBytesSync(System.IO.Stream,System.Int32)">
+            <summary>
+            Reads exactly <paramref name="count"/> bytes from the stream synchronously.
+            Returns <see langword="null"/> if the stream ends prematurely.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.ContainsStatement(System.String,System.String)">
+            <summary>
+            Returns <see langword="true"/> if the SQL batch contains the given
+            statement keyword at a line/statement boundary (not inside a string).
+            This is a simple heuristic � it looks for the keyword at the start of
+            any line or after a semicolon.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.TryHandleServerInfoQuery(SocketJack.Net.Database.SqlSession,System.String)">
+            <summary>
+            Detects SSMS's GetServerInformation query (which references
+            SERVERPROPERTY) and returns populated result sets matching
+            the multi-result structure SSMS expects. Returns <see langword="null"/>
+            if the query is not a server-info query.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.ProcessRpc(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession,System.Byte[])">
+            <summary>
+            Handles TDS RPC requests (packet type 0x03).
+            SSMS uses RPC for sp_executesql, sp_prepexec, and similar calls.
+            The RPC payload format differs from SQL batch � it starts with
+            ALL_HEADERS, then a procedure name or ID, followed by parameters.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.TryExtractFirstNvarcharParam(System.Byte[],System.Int32)">
+            <summary>
+            Attempts to extract the first NVARCHAR/NTEXT parameter value from
+            the RPC parameter data starting at <paramref name="pos"/>.
+            Returns <see langword="null"/> if extraction fails.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.WriteCollationEnvChange(System.IO.BinaryWriter)">
+            <summary>
+            Writes an ENVCHANGE type 7 (SQL Collation) token.
+            Unlike other ENVCHANGE types, the collation payload uses raw bytes
+            (byte-count + octets) rather than Unicode B_VARCHAR.
+            Emits SQL_Latin1_General_CP1_CI_AS for both new and old values.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.SendMultiResultSet(SocketJack.Net.NetworkConnection,System.Collections.Generic.List{SocketJack.Net.Database.QueryResult})">
+            <summary>
+            Sends multiple result sets in a single TDS message (single EOM packet).
+            For each result set, writes COLMETADATA + ROW(s) followed by
+            DONE (0xFD) with DONE_MORE � except the last which gets DONE (0xFD) without DONE_MORE.
+            Per [MS-TDS], SQL batch results use DONE (0xFD); DONEINPROC (0xFF) is only for stored procedures.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.WriteResultSetTokens(System.IO.BinaryWriter,SocketJack.Net.Database.QueryResult)">
+            <summary>
+            Writes COLMETADATA + ROW tokens for a single result set to a BinaryWriter.
+            Does NOT write a DONE token � the caller is responsible for that.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.GetTdsStream(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession)">
+            <summary>
+            Returns the appropriate stream for TDS I/O on this connection.
+            When TLS is active, returns the encrypted <see cref="T:System.Net.Security.SslStream"/>;
+            otherwise returns the raw <see cref="F:SocketJack.Net.NetworkConnection._Stream"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.GetTdsStream(SocketJack.Net.NetworkConnection)">
+            <summary>
+            Returns the appropriate stream for TDS I/O, looking up the session
+            from the DataServer's session dictionary.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsProtocolHandler.RunTdsLoop(SocketJack.Net.Database.DataServer,SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession)">
+            <summary>
+            Runs the TDS read loop for a standalone <see cref="T:SocketJack.Net.Database.DataServer"/> connection.
+            Called from <see cref="M:SocketJack.Net.Database.DataServer.DataServer_ClientConnected(SocketJack.Net.ConnectedEventArgs)"/>.
+            After a TLS handshake (triggered by Pre-Login), the loop automatically
+            switches to reading from the encrypted <see cref="T:System.Net.Security.SslStream"/>.
+            For <c>ENCRYPT_OFF</c> (login-only), it reverts to plaintext after login.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.TdsWrapperStream">
+            <summary>
+            A stream adapter that wraps TLS handshake bytes inside TDS Pre-Login
+            (0x12) packets during the TDS encryption handshake phase.
+            <para>
+            TLS ClientHello/ServerHello exchange is encapsulated in TDS packets
+            of type 0x12 (Pre-Login). The <see cref="T:System.Net.Security.SslStream"/> sees a plain
+            TLS byte stream while this adapter handles the TDS framing on the wire.
+            </para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.TdsWrapperStream.Passthrough">
+            <summary>
+            When <see langword="true"/>, <see cref="M:SocketJack.Net.Database.TdsWrapperStream.Read(System.Byte[],System.Int32,System.Int32)"/> pulls from the
+            internal feed buffer (populated by <see cref="M:SocketJack.Net.Database.TdsWrapperStream.Feed(System.Byte[])"/>) and
+            <see cref="M:SocketJack.Net.Database.TdsWrapperStream.Write(System.Byte[],System.Int32,System.Int32)"/> delegates directly to the inner stream
+            without TDS 0x12 framing.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.TdsWrapperStream.UseFeedBuffer">
+            <summary>
+            When <see langword="true"/>, passthrough reads use the feed buffer
+            (for MutableTcpServer mode where ReceiveData owns the NetworkStream).
+            When <see langword="false"/>, passthrough reads go directly to the
+            inner stream (for standalone DataServer mode).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.Preseed(System.Byte[])">
+            <summary>
+            Pre-seeds the wrapper with bytes that were already read from the
+            network by the ReceiveData loop.  These bytes are consumed by
+            <see cref="M:SocketJack.Net.Database.TdsWrapperStream.Read(System.Byte[],System.Int32,System.Int32)"/> before falling back to the inner stream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.Feed(System.Byte[])">
+            <summary>
+            Pushes raw bytes (TLS records) into the feed buffer so that
+            <see cref="M:System.Net.Security.SslStream.Read(System.Byte[],System.Int32,System.Int32)"/> can decrypt them.  Called from
+            <see cref="M:SocketJack.Net.Database.TdsProtocolHandler.ProcessReceive(SocketJack.Net.MutableTcpServer,SocketJack.Net.NetworkConnection,SocketJack.Net.IReceivedEventArgs@)"/> when TLS is active.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.FeedClose">
+            <summary>
+            Signals the feed buffer that no more data will arrive,
+            unblocking any pending <see cref="M:SocketJack.Net.Database.TdsWrapperStream.Read(System.Byte[],System.Int32,System.Int32)"/> call.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.Read(System.Byte[],System.Int32,System.Int32)">
+            <summary>
+            Reads a TDS 0x12 packet from the inner stream, strips the 8-byte
+            TDS header, and returns the payload (raw TLS data) to the caller
+            (i.e. <see cref="T:System.Net.Security.SslStream"/>).
+            <para>
+            Per [MS-TDS] 2.2.6.5, TLS handshake bytes <i>SHOULD</i> be wrapped
+            in TDS 0x12 packets, but some clients (notably Microsoft.Data.SqlClient
+            with ENCRYPT_ON) send raw TLS records without TDS framing.  This
+            method auto-detects the framing by peeking at the first byte: if it
+            is <c>0x12</c> the data is TDS-wrapped; otherwise (TLS content types
+            <c>0x14</c>�<c>0x17</c>) it is raw TLS and the wrapper switches to
+            passthrough for the remainder of the handshake.
+            </para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.Write(System.Byte[],System.Int32,System.Int32)">
+            <summary>
+            Wraps raw TLS data in a TDS 0x12 packet and writes it to the inner stream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.ReadPassthrough(System.Byte[],System.Int32,System.Int32)">
+            <summary>
+            Passthrough read that forwards raw bytes from the underlying stream
+            (or preseed buffer) to <see cref="T:System.Net.Security.SslStream"/> without any framing.
+            <para>
+            <see cref="T:System.Net.Security.SslStream"/> handles TLS record parsing internally.
+            This method simply provides the raw wire bytes, draining the
+            preseed buffer first, then reading from the inner stream.
+            </para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.ReadFromFeed(System.Byte[],System.Int32,System.Int32)">
+            <summary>
+            Reads decrypted-ready bytes from the feed buffer.  Blocks until
+            data is available or the stream is closed via <see cref="M:SocketJack.Net.Database.TdsWrapperStream.FeedClose"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.TdsWrapperStream.ReadExact(System.IO.Stream,System.Int32)">
+            <summary>
+            Reads exactly <paramref name="count"/> bytes, draining the
+            pre-seed buffer first then falling back to <paramref name="stream"/>.
+            Returns <see langword="null"/> if the stream ends prematurely.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.IReceivedEventArgs.From">
             <summary>
             The Remote Client identity that sent this object.
@@ -255,6 +1201,9 @@
         </member>
         <member name="F:SocketJack.Net.TcpProtocol.WebSocket">
             <summary>WebSocket (RFC 6455) protocol.</summary>
+        </member>
+        <member name="F:SocketJack.Net.TcpProtocol.Tds">
+            <summary>TDS (Tabular Data Stream) protocol used by MSSQL.</summary>
         </member>
         <member name="T:SocketJack.Net.HtAccessResult">
             <summary>
@@ -394,6 +1343,12 @@
             <param name="authRealm">Set to the realm name when <see cref="F:SocketJack.Net.HtAccessResult.AuthRequired"/> is returned.</param>
             <param name="responseHeaders">Populated with any <c>Header set</c> directives.</param>
         </member>
+        <member name="T:SocketJack.Net.HtmlBuilder">
+            <summary>
+            HtmlBuilder is a specialized StringBuilder for constructing HTML, JavaScript, and CSS content.
+            Supports appending fragments, loading templates from files or strings, and variable replacement.
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.HttpClient">
             <summary>
             Minimal HTTP/HTTPS client supporting headers, content-length, chunked transfer, and redirects.
@@ -407,6 +1362,27 @@
         <member name="M:SocketJack.Net.HttpClient.RemoveProtocol(SocketJack.Net.IProtocolHandler)">
             <summary>
             Removes a previously registered protocol handler.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RouteFile(System.String,System.String,System.String,System.String[][],System.Int32)">
+            <summary>
+            Maps a route to an HTML file with variable replacement (e.g., $Username) and caching.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RouteString(System.String,System.String,System.String,System.String[][],System.String,System.Int32)">
+            <summary>
+            Maps a route to a string (e.g., HTML template) with variable replacement and caching.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.ReplaceVars(System.String,System.String[][])">
+            <summary>
+            Replaces variables in the form $VarName in the input string with values from vars.
+            Accepts string[][] where each element is a [key, value] pair.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.GetVarsCacheKey(System.String[][])">
+            <summary>
+            Generates a cache key for a variable array (string[][]).
             </summary>
         </member>
         <member name="T:SocketJack.Net.HttpServer.RouteHandler`1">
@@ -660,6 +1636,11 @@
             Both <c>%XX</c> and <c>+</c> (as space) encodings are handled.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.HttpRequest.PathVariables">
+            <summary>
+            List of path variables extracted from wildcard routes (e.g. /api/*).
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.HttpResponse.StatusLine">
             <summary>
             Builds the full HTTP status line (e.g. <c>HTTP/1.1 200 OK</c>),
@@ -765,6 +1746,690 @@
             or the stream is complete.
             </summary>
         </member>
+        <member name="T:SocketJack.Net.LmVsProxy">
+            <summary>
+            LmVsProxy - A protocol bridge between Visual Studio's GitHub-style tool calling
+            and LM Studio's OpenAI-style API.
+            
+            The proxy:
+            1. Accepts VS requests at /v1/responses
+            2. Translates tool schemas from GitHub format to OpenAI format
+            3. Forwards requests to LM Studio's /v1/chat/completions
+            4. Handles multi-turn conversations by re-sending tool results
+            5. Converts LM Studio responses back to VS SSE format
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.LmVsProxy.ChatServerPort">
+            <summary>
+            Port used by the lightweight browser chat UI hosted through SocketJack.HttpServer.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.LmVsProxy.ChatServerUrl">
+            <summary>
+            Local URL for the lightweight browser chat UI.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.LmVsProxy.ChatModel">
+            <summary>
+            Model id sent by the chat UI to LM Studio's OpenAI-compatible endpoint.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.LmVsProxy.IsChatServerCreated">
+            <summary>
+            Returns true after the lazy chat server has been created.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.LmVsProxy.ChatServer">
+            <summary>
+            Lazily creates a small HttpServer that serves a browser chat UI backed by LM Studio.
+            Call <see cref="M:SocketJack.Net.TcpServer.Listen"/> on the returned server to start it.
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.LmVsProxy.OutputLog">
+            <summary>
+            Event fired whenever LmVsProxy logs a message.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.#ctor(System.String,System.Int32,System.Int32,System.Int32)">
+            <summary>
+            Creates a new LmVsProxy that listens for VS requests and forwards to LM Studio.
+            </summary>
+            <param name="lmStudioHost">The LM Studio host (e.g., "localhost").</param>
+            <param name="lmStudioPort">The LM Studio port (e.g., 1234).</param>
+            <param name="proxyPort">The local port to listen on for VS requests.</param>
+            <param name="chatServerPort">Optional local port for the browser chat UI. When 0, a non-conflicting port is chosen.</param>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.Start">
+            <summary>
+            Starts the proxy server listening for VS requests.
+            </summary>
+            <returns>True if successfully started; false otherwise.</returns>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.Stop">
+            <summary>
+            Stops the proxy server.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LogMessage(System.String)">
+            <summary>
+            Logs a message through the OutputLog event with formatted brackets.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ListenerLoop(System.Threading.CancellationToken)">
+            <summary>
+            Main listener loop that accepts incoming HTTP requests.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ProcessRequest(System.Net.HttpListenerContext)">
+            <summary>
+            Processes a single HTTP request.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.SendErrorResponse(System.Net.HttpListenerResponse,System.String)">
+            <summary>
+            Sends an error response.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ParseVsRequest(System.String)">
+            <summary>
+            Parses a JSON request string into a VsRequest object using regex.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TranslateToolsToOpenAi(System.Collections.Generic.List{System.Collections.Generic.Dictionary{System.String,System.Object}})">
+            <summary>
+            Converts Visual Studio tool schema to OpenAI function schema (as JSON strings).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.SerializeToJson(System.Object)">
+            <summary>
+            Simple JSON serialization helper.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildLmStudioRequest(SocketJack.Net.LmVsProxy.VsRequest,System.String[])">
+            <summary>
+            Builds a request JSON for LM Studio.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.SendToLmStudioAsync(System.String)">
+            <summary>
+            Sends a request to LM Studio's /v1/chat/completions endpoint.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ForwardRawRequestToLmStudioAsync(System.Net.HttpListenerRequest,System.String)">
+            <summary>
+            Forwards a raw /v1/* request to LM Studio, preserving body and relevant headers.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LogRequestDiagnostics(System.Net.HttpListenerRequest,System.String)">
+            <summary>
+            Emits concise request diagnostics without dumping the full prompt.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LogConversationToolDiagnostics(System.String)">
+            <summary>
+            Logs tool calls and tool-result errors that Visual Studio sends back in conversation history.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeToolError(System.String)">
+            <summary>
+            Detects common Visual Studio tool-result failure text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractToolChoiceForLog(System.String)">
+            <summary>
+            Extracts the tool_choice setting for logs.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsStreamingChatCompletion(System.Net.HttpListenerRequest,System.String)">
+            <summary>
+            Returns true when a request is a streaming OpenAI chat completion.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsResponsesEndpoint(System.Net.HttpListenerRequest)">
+            <summary>
+            Returns true for Visual Studio/OpenAI Responses API calls.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ForwardResponsesAsChatCompletionsAsync(System.Net.HttpListenerRequest,System.String,System.Net.HttpListenerResponse)">
+            <summary>
+            Bridges OpenAI Responses requests from VS to LM Studio chat-completions.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ForwardChatCompletionBodyToLmStudioAsync(System.String)">
+            <summary>
+            Sends a chat-completions request body directly to LM Studio.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ConvertResponsesRequestToChatCompletions(System.String)">
+            <summary>
+            Converts a Responses API request body to a Chat Completions request body.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteResponsesInputAsChatMessages(System.Text.Json.Utf8JsonWriter,System.Text.Json.JsonElement)">
+            <summary>
+            Writes Responses input items as chat-completions messages.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteResponsesToolAsChatTool(System.Text.Json.Utf8JsonWriter,System.Text.Json.JsonElement)">
+            <summary>
+            Writes a Responses function tool in Chat Completions tool schema.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractResponsesContentText(System.Text.Json.JsonElement)">
+            <summary>
+            Extracts text from Responses content arrays.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractStringProperty(System.Text.Json.JsonElement,System.String)">
+            <summary>
+            Extracts a string property from a JSON object.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WritePropertyIfSimple(System.Text.Json.Utf8JsonWriter,System.String,System.Text.Json.JsonElement)">
+            <summary>
+            Writes a primitive JSON property when supported.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WritePropertyIfAny(System.Text.Json.Utf8JsonWriter,System.String,System.Text.Json.JsonElement)">
+            <summary>
+            Writes any JSON property value.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ForwardStreamingChatCompletionWithKeepAliveAsync(System.Net.HttpListenerRequest,System.String,System.Net.HttpListenerResponse)">
+            <summary>
+            Streams chat completions with early SSE keepalives so slow prompt processing does not look idle to VS.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteSseCommentAsync(System.IO.Stream,System.String)">
+            <summary>
+            Writes an SSE comment frame.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteSseErrorAsync(System.IO.Stream,System.String)">
+            <summary>
+            Writes an OpenAI-shaped SSE error and terminates the stream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsClientDisconnectedException(System.Exception)">
+            <summary>
+            Returns true when the exception means the Visual Studio client closed the stream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteResponsesSseErrorAsync(System.IO.Stream,System.String)">
+            <summary>
+            Writes a Responses-shaped SSE error and terminates the stream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ScrubDeadEndProjectContextMessage(System.String)">
+            <summary>
+            Removes an old guard fallback phrase that can get stuck in VS conversation history.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.EscapeInvalidJsonStringControlCharacters(System.String,System.Int32@)">
+            <summary>
+            Escapes raw control characters that occasionally appear inside model/VS JSON strings.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ReadUpstreamBodyWithKeepAliveAsync(System.Net.Http.HttpContent,System.IO.Stream)">
+            <summary>
+            Reads the upstream response body while continuing to emit SSE keepalives to the client.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AdaptNativeOpenAiToolCallStream(System.String,System.String)">
+            <summary>
+            Repairs native OpenAI streaming tool-call deltas from LM Studio before Visual Studio executes them.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AdaptQwenToolCallStream(System.String,System.String)">
+            <summary>
+            Converts Qwen raw &lt;tool_call&gt; content into OpenAI streaming tool_call deltas.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AdaptTextOnlyRepairContinuation(System.String,System.String)">
+            <summary>
+            Prevents a text-only ending immediately after build/get_errors failures by requesting the failing file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildToolCallSseResponse(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Builds a compact OpenAI-compatible SSE response containing repaired tool calls.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ConvertChatSseToResponsesSse(System.String,System.String)">
+            <summary>
+            Converts Chat Completions SSE frames to Responses API SSE frames.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesTextSse(System.String,System.Int64,System.String,System.String)">
+            <summary>
+            Builds Responses API SSE frames for text output.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesToolCallSse(System.String,System.Int64,System.String,System.Collections.Generic.Dictionary{System.Int32,SocketJack.Net.LmVsProxy.ToolCallBuilder})">
+            <summary>
+            Builds Responses API SSE frames for function-call output.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractStreamedAssistantContent(System.String)">
+            <summary>
+            Extracts text content from OpenAI-compatible streaming chunks.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractQwenToolCalls(System.String)">
+            <summary>
+            Extracts Qwen-style tool calls from assistant text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LogToolCalls(System.String,System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData})">
+            <summary>
+            Logs concise tool-call diagnostics without dumping the full prompt.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsToolChoiceNone(System.String)">
+            <summary>
+            Returns true when the request explicitly forbids tool calls.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GetAvailableToolNames(System.String)">
+            <summary>
+            Gets tool names still advertised to LM Studio in the current request.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RemapSuppressedToolCalls(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.Collections.Generic.HashSet{System.String},System.String)">
+            <summary>
+            Redirects repeated low-value tool calls to a more specific next tool when possible.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RedirectSearchLoopToCreateFile(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Redirects repeated search/navigation loops for a missing creation target into create_file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.InferMissingCreationTargetPath(System.String)">
+            <summary>
+            Infers the file the model is failing to find during a create-file task.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractCreationTargetFileName(System.String)">
+            <summary>
+            Gets the most recent explicit missing/new file target used in search/create calls.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractCreationTargetFromToolArguments(System.String,System.String)">
+            <summary>
+            Extracts a filename/path only from tool calls that represent missing/new target intent.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CountRepeatedSearchOrNavigationAttempts(System.String,System.String)">
+            <summary>
+            Counts repeated search/navigation calls related to a target path.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsSearchOrNavigationTool(System.String)">
+            <summary>
+            Returns true when a tool is a search/navigation/read probe rather than an edit.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeFileName(System.String)">
+            <summary>
+            Returns true for likely filenames.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeNewTargetFileName(System.String)">
+            <summary>
+            Returns true for likely new target files, excluding common existing app/context files.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsSafeCreateFileTarget(System.String)">
+            <summary>
+            Returns true only for files the proxy may synthesize during a create-file recovery.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GuardUnsafeCreateFileTargets(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Rewrites unsafe create_file calls into harmless reads so project files are never clobbered.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasSuccessfulFileRead(System.String,System.String)">
+            <summary>
+            Returns true when the target file has already been read successfully in conversation history.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasRepeatedCreateFileAttempts(System.String,System.String,System.Int32)">
+            <summary>
+            Counts create_file attempts for a target path.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractFilenameFromGetFileArguments(System.String)">
+            <summary>
+            Extracts filename from get_file arguments.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractFilePathFromCreateFileArguments(System.String)">
+            <summary>
+            Extracts filePath from create_file arguments.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.NormalizePathForCompare(System.String)">
+            <summary>
+            Normalizes paths for loose conversation-history comparisons.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractProjectFolderFromConversation(System.String)">
+            <summary>
+            Infers the primary project folder from file paths already used in the conversation.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractFirstToolResultForTool(System.String,System.String)">
+            <summary>
+            Gets the first successful tool result for a named tool.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CountHistoricalToolCalls(System.String,System.String)">
+            <summary>
+            Counts assistant tool calls already present in the conversation history.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractProjectPathFromToolResult(System.String)">
+            <summary>
+            Extracts the first project file path from a get_projects_in_solution result.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.StripQwenToolCalls(System.String,System.String)">
+            <summary>
+            Removes Qwen tool-call blocks from generated text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.SanitizeAssistantText(System.String)">
+            <summary>
+            Removes visible reasoning tags and collapses repeated generated text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RemoveTaggedBlocks(System.String,System.String)">
+            <summary>
+            Removes simple XML-like tagged blocks from assistant text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CollapseRepeatedText(System.String)">
+            <summary>
+            Collapses repeated paragraphs and repeated sentence-like lines.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.NormalizeRepeatKey(System.String)">
+            <summary>
+            Normalizes text used for repeated-output detection.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractLastUserMessage(System.String)">
+            <summary>
+            Extracts the last user message from the request body.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildTextOnlySseResponse(System.String,System.String)">
+            <summary>
+            Builds a simple OpenAI-compatible streaming text response.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ParseQwenToolCall(System.String)">
+            <summary>
+            Parses one Qwen tool-call JSON object.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairKnownToolArguments(System.String,System.String)">
+            <summary>
+            Repairs common malformed Qwen tool arguments before Visual Studio receives them.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairUpdatePlanProgressArguments(System.Text.Json.JsonElement)">
+            <summary>
+            Ensures update_plan_progress has all required fields so VS does not bounce the model into an argument repair loop.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairCreateFileArguments(System.Text.Json.JsonElement,System.String)">
+            <summary>
+            Ensures create_file has both required fields: filePath and content.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildCreateFileArguments(System.String,System.String)">
+            <summary>
+            Builds safe create_file arguments, supplying a minimal file body if the model omitted one.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairReplaceStringArguments(System.Text.Json.JsonElement)">
+            <summary>
+            Normalizes replace_string_in_file text fields so escaped newlines become real newlines.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.NormalizeGeneratedFileText(System.String)">
+            <summary>
+            Converts literal escape text such as \n into real line breaks and collapses doubled output.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.NormalizeLineEndings(System.String)">
+            <summary>
+            Normalizes all line endings to the platform line ending.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CollapseDuplicatedGeneratedContent(System.String)">
+            <summary>
+            Removes accidental exact duplicate generated content blocks.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TrimDanglingSlashAfterFileExtension(System.String)">
+            <summary>
+            Removes a trailing slash caused by malformed quoted paths such as "file.vb\", ".
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildMinimalFileContent(System.String)">
+            <summary>
+            Generates a conservative file body for create_file when the model provides only a path.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryExtractLikelyFilePath(System.String)">
+            <summary>
+            Pulls a likely file path out of malformed JSON-ish tool arguments.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairMultiReplaceArguments(System.Text.Json.JsonElement)">
+            <summary>
+            Ensures multi_replace_string_in_file has the required explanation field.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildNormalizedReplacementsJson(System.Text.Json.JsonElement)">
+            <summary>
+            Normalizes text fields inside multi_replace_string_in_file replacements.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairFileSearchArguments(System.Text.Json.JsonElement)">
+            <summary>
+            Normalizes file_search arguments to Visual Studio's required schema.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AddStringArrayOrStringProperty(System.Text.Json.JsonElement,System.String,System.Collections.Generic.List{System.String})">
+            <summary>
+            Adds a string or array of strings from a JSON property to a query list.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AddDistinctNonEmpty(System.Collections.Generic.List{System.String},System.String)">
+            <summary>
+            Adds a unique non-empty value to a list.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairPathControlCharacters(System.String)">
+            <summary>
+            Converts JSON escape characters that were accidentally decoded inside path-like strings back to path separators.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryGetIntProperty(System.Text.Json.JsonElement,System.String,System.Int32@)">
+            <summary>
+            Reads an integer JSON property that may be encoded as a number or string.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairRunCommandInTerminalArguments(System.Text.Json.JsonElement)">
+            <summary>
+            Repairs common malformed PowerShell command arguments generated by small tool-use models.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairPowerShellHereStrings(System.String)">
+            <summary>
+            Ensures PowerShell here-string headers and terminators are on their own lines.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractJsonStringProperty(System.String,System.String)">
+            <summary>
+            Extracts a top-level string property from JSON.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.PrepareRequestBodyForLmStudio(System.Net.HttpListenerRequest,System.String)">
+            <summary>
+            Applies LM Studio compatibility fixes before forwarding chat completions.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AddBuildErrorRepairHint(System.String)">
+            <summary>
+            Adds persistence guidance after build/get_errors failures so the model edits instead of stopping.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AddToolSchemaRecoveryHints(System.String)">
+            <summary>
+            Adds schema reminders when VS reports repeated missing required tool parameters.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildToolSchemaRecoveryHint(System.String)">
+            <summary>
+            Builds a concise schema reminder from tool-result errors in conversation history.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AddCreateFileHintAfterRepeatedFileSearchMisses(System.String)">
+            <summary>
+            Adds a non-suppressing instruction when repeated file_search misses conflict with a create-file goal.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasCreateFileGoal(System.String)">
+            <summary>
+            Returns true when the last user request is asking to create/add/make something.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasUnfixedBuildOrErrorFailure(System.String,System.String@)">
+            <summary>
+            Returns true when the latest build/get_errors failure has not been followed by a successful edit.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CountToolCallsAfterLatestBuildFailure(System.String,System.String,System.String)">
+            <summary>
+            Counts matching tool calls after the latest build/get_errors failure.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CountFileSearchMisses(System.String)">
+            <summary>
+            Counts file_search results that indicate no useful file was found.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeFileSearchMiss(System.String)">
+            <summary>
+            Detects file_search results that mean the target was not found.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsToolAdvertised(System.String,System.String)">
+            <summary>
+            Returns true when a tool is still advertised in the current request.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AppendSystemMessage(System.String,System.String)">
+            <summary>
+            Appends a system message to a chat completion request.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasTooManyToolRounds(System.String,System.Int32@)">
+            <summary>
+            Detects when a conversation has spent too many turns asking VS tools instead of producing an answer.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GetPreviouslyCalledToolNames(System.String)">
+            <summary>
+            Gets every tool name already called by the assistant in this conversation.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsSuppressibleVsTool(System.String)">
+            <summary>
+            Only suppress broad discovery tools that have proven loop-prone. Actionable tools must stay available.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.KeepOnlySuppressibleVsTools(System.Collections.Generic.HashSet{System.String})">
+            <summary>
+            Removes actionable tools from a suppression set so reads, edits, terminal, and build can still run.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryGetToolsToSuppress(System.String,System.Collections.Generic.HashSet{System.String}@,System.String@)">
+            <summary>
+            Finds Visual Studio tools that are stuck returning empty or repeated results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RewriteChatCompletionWithSuppressedTools(System.String,System.Collections.Generic.HashSet{System.String},System.String)">
+            <summary>
+            Removes known-stuck tools while keeping the rest of Visual Studio's tool surface available.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasRepeatedToolCallLoop(System.String,System.String@,System.Int32@)">
+            <summary>
+            Detects when Visual Studio has already executed the same tool call repeatedly.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RewriteChatCompletionWithoutTools(System.String,System.String,System.Int32)">
+            <summary>
+            Removes tools for one turn and asks the model to answer using the gathered context.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CopyResponseHeaders(System.Net.Http.HttpResponseMessage,System.Net.HttpListenerResponse)">
+            <summary>
+            Copies supported headers from an upstream HttpResponseMessage to HttpListenerResponse.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.IsRestrictedResponseHeader(System.String)">
+            <summary>
+            Determines whether a response header is restricted by HttpListenerResponse.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ConvertLmResponseToVsFormat(System.String)">
+            <summary>
+            Converts an LM Studio response to VS format.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.EscapeJson(System.String)">
+            <summary>
+            Escapes a string for JSON.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TruncateForLog(System.String,System.Int32)">
+            <summary>
+            Truncates diagnostic text so OutputLog stays useful and responsive.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.EscapeControlCharsForLog(System.String)">
+            <summary>
+            Makes control characters visible in logs so hidden bytes are diagnosable.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.LmVsProxy.VsRequest">
+            <summary>
+            Represents a request from Visual Studio.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.LmVsProxy.ToolCallData">
+            <summary>
+            Represents a parsed Qwen raw tool call.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.LmVsProxy.ToolCallBuilder">
+            <summary>
+            Accumulates fragmented native OpenAI streaming tool-call deltas.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.OutputLogEventArgs">
+            <summary>
+            Event arguments for OutputLog events from LmVsProxy.
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.IProtocolHandler">
             <summary>
             Defines a protocol handler that can detect and process incoming data
@@ -860,13 +2525,34 @@
             Use this to perform initialization for browser-based WebSocket clients.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.MutableTcpServer.SqlAdminPanelEnabled">
+            <summary>
+            Gets or sets whether the SQL Admin Panel is enabled.
+            When <see langword="true"/>, an HTTP-based administration interface
+            (similar to SQL Server Management Studio) is served at <c>/sql</c>.
+            The panel authenticates against the <see cref="P:SocketJack.Net.Database.DataServer.Users"/>
+            collection of the registered <see cref="T:SocketJack.Net.Database.TdsProtocolHandler"/>,
+            automatically creating one if needed.
+            <para>
+            Features include an Object Explorer tree, a SQL query editor,
+            and a results grid.
+            </para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.MutableTcpServer.SqlAdminPanel">
+            <summary>
+            Returns the <see cref="T:SocketJack.Net.Database.SqlAdminPanel"/> instance, or
+            <see langword="null"/> when <see cref="P:SocketJack.Net.MutableTcpServer.SqlAdminPanelEnabled"/> is
+            <see langword="false"/>.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.MutableTcpServer.SyncPeer(SocketJack.Net.NetworkConnection)">
             <summary>
             Overrides peer synchronization so that only connections confirmed as
             SocketJack receive broadcast peer updates.  Without this filter,
             <see cref="M:SocketJack.Extensions.ConnectedClientExtensions.SendBroadcast(System.Collections.Concurrent.ConcurrentDictionary{System.Guid,SocketJack.Net.NetworkConnection},System.Object,SocketJack.Net.NetworkConnection)"/> pushes
-            SocketJack-framed bytes into every connection's send queue —
-            including HTTP connections — corrupting their response stream.
+            SocketJack-framed bytes into every connection's send queue �
+            including HTTP connections � corrupting their response stream.
             </summary>
         </member>
         <member name="M:SocketJack.Net.MutableTcpServer.SendBroadcast(System.Object)">
@@ -890,6 +2576,60 @@
             <summary>
             Invoked by <see cref="T:SocketJack.Net.WebSocketProtocolHandler"/> after a successful
             WebSocket handshake to raise the <see cref="E:SocketJack.Net.MutableTcpServer.WebSocketClientConnected"/> event.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.FindDataServer">
+            <summary>
+            Finds the first registered <see cref="T:SocketJack.Net.Database.TdsProtocolHandler"/> and returns
+            its backing <see cref="T:SocketJack.Net.Database.DataServer"/>, or <see langword="null"/> if no
+            TDS handler has been registered.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.GetOrCreateDataServer">
+            <summary>
+            Returns the <see cref="T:SocketJack.Net.Database.DataServer"/> backing the registered
+            <see cref="T:SocketJack.Net.Database.TdsProtocolHandler"/>, automatically registering a
+            hosted-mode handler if one has not yet been added.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.ImportFromMssql(System.Data.Common.DbConnection,System.String,System.String[],System.Boolean,System.Int32)">
+             <summary>
+             Imports schema and data from an existing MSSQL database into the
+             <see cref="T:SocketJack.Net.Database.DataServer"/>'s in-memory store. A <see cref="T:SocketJack.Net.Database.TdsProtocolHandler"/>
+             is automatically registered if one has not already been added.
+             <example>
+             <code>
+             var mutable = new MutableTcpServer(1433, "MultiServer");
+             mutable.Listen();
+            
+             var conn = new SqlConnection("Server=.;Database=MyDb;Trusted_Connection=True;TrustServerCertificate=True;");
+             mutable.ImportFromMssql(conn);
+             </code>
+             </example>
+             </summary>
+             <param name="connection">An open (or openable) <see cref="T:System.Data.Common.DbConnection"/> to the source MSSQL server.</param>
+             <param name="databaseName">
+             Override the target database name in the DataServer. When <see langword="null"/>,
+             the source connection's <see cref="P:System.Data.Common.DbConnection.Database"/> name is used.
+             </param>
+             <param name="tableFilter">
+             Optional list of table names to import. When <see langword="null"/> or empty,
+             all user tables are imported.
+             </param>
+             <param name="importData">
+             When <see langword="true"/> (default), all rows are imported.
+             Set to <see langword="false"/> to import only schema (columns).
+             </param>
+             <param name="maxRowsPerTable">
+             Maximum number of rows to import per table. 0 = unlimited.
+             </param>
+        </member>
+        <member name="M:SocketJack.Net.MutableTcpServer.Save">
+            <summary>
+            Saves the <see cref="T:SocketJack.Net.Database.DataServer"/>'s current state (users, databases,
+            tables, rows) to its <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            A <see cref="T:SocketJack.Net.Database.TdsProtocolHandler"/> is automatically registered if one
+            has not already been added.
             </summary>
         </member>
         <member name="T:SocketJack.Net.MutableTcpServer.RtmpDelegateHandler">
@@ -1250,6 +2990,24 @@
             and the protocol is identified.
             </summary>
         </member>
+        <member name="F:SocketJack.Net.NetworkConnection.SuppressConnectionTest">
+            <summary>
+            When set to <see langword="true"/>, the connection-test poll loop
+            treats every poll as successful.  This prevents false disconnection
+            when an <see cref="T:System.Net.Security.SslStream"/> (or similar wrapper)
+            has consumed all bytes from the raw socket into its internal buffer,
+            causing <c>Socket.Available == 0</c> even though the connection is alive.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.NetworkConnection.RawTcpMode">
+            <summary>
+            When set to <see langword="true"/>, all SocketJack send/receive/poll
+            processing is disabled for this connection.  The protocol handler
+            (e.g. TDS) takes full ownership of the <see cref="F:SocketJack.Net.NetworkConnection._Stream"/> and
+            performs its own I/O.  Byte-count metrics are still updated via
+            <see cref="M:SocketJack.Net.NetworkConnection.TrackBytesSent(System.Int32)"/> and <see cref="M:SocketJack.Net.NetworkConnection.TrackBytesReceived(System.Int32)"/>.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.NetworkConnection.Active">
             <summary>
             True if connection sending or receiving.
@@ -1302,6 +3060,18 @@
             True if the connection is closing.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.NetworkConnection.TrackBytesSent(System.Int32)">
+            <summary>
+            Updates sent-byte metrics without going through the SocketJack send pipeline.
+            Used by protocol handlers running in <see cref="F:SocketJack.Net.NetworkConnection.RawTcpMode"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.NetworkConnection.TrackBytesReceived(System.Int32)">
+            <summary>
+            Updates received-byte metrics without going through the SocketJack receive pipeline.
+            Used by protocol handlers running in <see cref="F:SocketJack.Net.NetworkConnection.RawTcpMode"/>.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.NetworkConnection.AdjustThreadPool(System.Int32)">
             <summary>
             Adjusts <see cref="T:System.Threading.ThreadPool"/> minimum threads so worker/IO capacity
@@ -1351,7 +3121,7 @@
         <member name="M:SocketJack.Net.NetworkConnection.IsHttpPrefix(System.Byte[],System.Int32)">
             <summary>
             Returns <see langword="true"/> when <paramref name="data"/> begins with
-            a known HTTP method keyword (GET, POST, PUT, …).
+            a known HTTP method keyword (GET, POST, PUT, �).
             </summary>
         </member>
         <member name="M:SocketJack.Net.NetworkConnection.Send(SocketJack.Net.P2P.Identifier,System.Object)">
@@ -2123,6 +3893,147 @@
             Enqueue format: [typeId:1][timestamp_ms big-endian:4][payload]
             </summary>
         </member>
+        <member name="T:SocketJack.Net.Runescape.IsaacRandom">
+            <summary>
+            The Isaac Random
+            See www.rosettacode.org/wiki/The_ISAAC_Cipher
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Runescape.IsaacRandomPair">
+            <summary>
+            Holds a pair of <see cref="T:SocketJack.Net.Runescape.IsaacRandom"/> ciphers used for encoding
+            and decoding game packets.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Runescape.OsrsLoginState">
+            <summary>
+            Login state machine states for an Old School RuneScape connection.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Runescape.OsrsSession">
+            <summary>
+            Per-connection session state for the OSRS protocol.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Runescape.OldschoolRunescapeProtocol">
+            <summary>
+            An <see cref="T:SocketJack.Net.IProtocolHandler"/> that detects and processes Old School
+            RuneScape (revision 317) client connections on a <see cref="T:SocketJack.Net.MutableTcpServer"/>.
+            <para>
+            Register this handler so a single port can serve OSRS game clients alongside
+            HTTP, WebSocket, and other SocketJack protocols.
+            </para>
+            <example>
+            <code>
+            var server = new MutableTcpServer(43594, "GameServer");
+            server.RegisterProtocol(new OldschoolRunescape());
+            server.Listen();
+            </code>
+            </example>
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.PlayerAuthenticated">
+            <summary>
+            Raised when a player has been fully authenticated and ISAAC ciphers are ready.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.CanHandle(System.Byte[])">
+            <summary>
+            Returns <see langword="true"/> when the first byte is the OSRS game
+            login handshake opcode (14).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.DecodeHandshake(SocketJack.Net.NetworkConnection,SocketJack.Net.Runescape.OsrsSession)">
+            <summary>
+            Reads the handshake opcode and username hash, then sends back
+            the server session key (exchange data response).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.DecodeLoginHeader(SocketJack.Net.NetworkConnection,SocketJack.Net.Runescape.OsrsSession)">
+            <summary>
+            Reads the login type byte and payload length.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.DecodeLoginPayload(SocketJack.Net.NetworkConnection,SocketJack.Net.Runescape.OsrsSession)">
+            <summary>
+            Reads the full login payload: client version, archive CRCs, ISAAC seeds,
+            username, and password.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Runescape.OldschoolServer">
+            <summary>
+            A convenience wrapper that creates a <see cref="T:SocketJack.Net.MutableTcpServer"/> pre-configured
+            with the <see cref="T:SocketJack.Net.Runescape.OldschoolRunescapeProtocol"/> protocol handler.
+            <example>
+            <code>
+            var server = new OldschoolServer(43594);
+            server.Protocol.PlayerAuthenticated += (conn, session) => {
+                Console.WriteLine($"{session.Credentials.Username} logged in.");
+            };
+            server.Listen();
+            </code>
+            </example>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.OldschoolServer.Protocol">
+            <summary>
+            The underlying OSRS protocol handler.
+            Subscribe to <see cref="E:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.PlayerAuthenticated"/>
+            to receive login events.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.OldschoolServer.Server">
+            <summary>
+            The underlying <see cref="T:SocketJack.Net.MutableTcpServer"/> instance.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Runescape.OldschoolServer.#ctor(System.Int32,System.String)">
+            <summary>
+            Creates a new OSRS server on the specified port.
+            </summary>
+            <param name="port">The TCP port to listen on (default 43594).</param>
+            <param name="name">Display name for logging.</param>
+        </member>
+        <member name="M:SocketJack.Net.Runescape.OldschoolServer.Listen">
+            <summary>
+            Starts listening for incoming connections.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Runescape.PlayerCredentials">
+            <summary>
+            Holds the player credentials for a player.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.EncodedUsername">
+            <summary>
+            Gets or sets the encoded username.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.Password">
+            <summary>
+            Gets or sets the password.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.Uid">
+            <summary>
+            Gets or sets the uid.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.Username">
+            <summary>
+            Gets or sets the username.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.UsernameHash">
+            <summary>
+            Gets or sets the username hash.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.HostAddress">
+            <summary>
+            Gets or sets the host address.
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.TcpClient">
             <summary>
             Multithreaded TCP Client.
@@ -2272,6 +4183,30 @@
             </summary>
             <param name="Obj"></param>
         </member>
+        <member name="M:SocketJack.Net.TcpDuplicator.#ctor(System.String,System.Int32,System.Int32)">
+            <summary>
+            Creates a new TcpDuplicator that listens locally and forwards to a remote server.
+            </summary>
+            <param name="remoteHost">The remote host to forward connections to.</param>
+            <param name="remotePort">The remote port to forward connections to.</param>
+            <param name="localPort">The local port to listen on.</param>
+        </member>
+        <member name="M:SocketJack.Net.TcpDuplicator.Start">
+            <summary>
+            Starts listening on the local port and forwarding connections to the remote server.
+            </summary>
+            <returns>True if successfully started; false otherwise.</returns>
+        </member>
+        <member name="M:SocketJack.Net.TcpDuplicator.Stop">
+            <summary>
+            Stops listening and closes all forwarding sessions.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.TcpDuplicator.ForwardingSession">
+            <summary>
+            Manages bidirectional forwarding between a local client and remote server.
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.TcpServer">
             <summary>
             Multithreaded TCP Server.
@@ -2403,6 +4338,552 @@
             <param name="Obj">Serializable Object to send to the client.</param>
             <param name="Except">The socket to exclude.</param>
             <remarks></remarks>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentClient">
+             <summary>
+             A BitTorrent-style client built on SocketJack's <see cref="T:SocketJack.Net.TcpClient"/> and <see cref="T:SocketJack.Net.TcpServer"/>.
+             <para>
+             Connects to a <see cref="T:SocketJack.Net.Torrent.TorrentTracker"/> to discover peers, then downloads/uploads
+             file pieces using a simplified peer wire protocol. Includes support for searching
+             torrents on the tracker.
+             </para>
+             <para>
+             Can operate in <b>standalone mode</b> (own <see cref="T:SocketJack.Net.TcpServer"/> for peer connections)
+             or be <b>registered</b> on a <see cref="T:SocketJack.Net.MutableTcpServer"/> to share a port with
+             HTTP, WebSocket, and other SocketJack services.
+             </para>
+             </summary>
+             <remarks>
+             <b>Example � standalone seeding:</b>
+             <code>
+             var metadata = TorrentMetadata.FromFile("myfile.zip", new List&lt;string&gt; { "localhost:6969" });
+             var client = new TorrentClient(metadata, listenPort: 6881, downloadPath: "./downloads");
+             client.Seed("myfile.zip");
+             await client.StartAsync();
+             </code>
+            
+             <b>Example � registered on MutableTcpServer:</b>
+             <code>
+             var server = new MutableTcpServer(8080, "MultiServer");
+             var client = new TorrentClient(metadata, downloadPath: "./downloads");
+             client.Register(server);
+             client.Seed("myfile.zip");
+             server.Listen();
+             await client.StartAsync();
+             </code>
+            
+             <b>Example � searching for torrents:</b>
+             <code>
+             var client = new TorrentClient(metadata, listenPort: 6883, downloadPath: "./downloads");
+             var results = await client.SearchAsync("linux iso", category: "software");
+             </code>
+             </remarks>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.Torrents">
+            <summary>
+            Shared in-memory database that persists the state of all torrent transfers.
+            <para>
+            Uses <see cref="T:SocketJack.Net.Database.DataServer"/> with <see cref="P:SocketJack.Net.Database.DataServer.AutoSave"/> enabled
+            so every mutation is flushed to <c>torrents.json</c> on disk.
+            </para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.EnsureTorrentsSchema">
+            <summary>
+            Ensures the Torrents database has the required schema.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.SaveState(System.String,System.String)">
+            <summary>
+            Persists the current state of this torrent client to the Torrents database.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.RemoveState">
+            <summary>
+            Removes this torrent's state from the Torrents database.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.Metadata">
+            <summary>
+            Torrent metadata (piece hashes, tracker list, etc.).
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.PeerId">
+            <summary>
+            Unique identifier for this client instance.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.ListenPort">
+            <summary>
+            Port this client listens on for incoming peer connections.
+            In registered mode this is the <see cref="T:SocketJack.Net.MutableTcpServer"/>'s port.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.DownloadPath">
+            <summary>
+            Directory where downloaded files are saved.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.BytesDownloaded">
+            <summary>
+            Total bytes downloaded so far.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.BytesRemaining">
+            <summary>
+            Total bytes remaining.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.IsComplete">
+            <summary>
+            True when all pieces have been downloaded and verified.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.Progress">
+            <summary>
+            Download progress as a percentage (0�100).
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.IsRegistered">
+            <summary>
+            True when this client is registered on a <see cref="T:SocketJack.Net.MutableTcpServer"/>
+            rather than running its own standalone <see cref="T:SocketJack.Net.TcpServer"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentClient.Tracker">
+            <summary>
+            The <see cref="T:SocketJack.Net.Torrent.TorrentTracker"/> instance created when this client is
+            registered on a <see cref="T:SocketJack.Net.MutableTcpServer"/>. <see langword="null"/>
+            in standalone mode (use a separate <see cref="T:SocketJack.Net.Torrent.TorrentTracker"/> instead).
+            </summary>
+        </member>
+        <member name="E:SocketJack.Net.Torrent.TorrentClient.PieceCompleted">
+            <summary>Fired when a piece is successfully downloaded and verified.</summary>
+        </member>
+        <member name="E:SocketJack.Net.Torrent.TorrentClient.DownloadCompleted">
+            <summary>Fired when the entire torrent download is complete.</summary>
+        </member>
+        <member name="E:SocketJack.Net.Torrent.TorrentClient.PeerConnectedEvent">
+            <summary>Fired when a new peer connects.</summary>
+        </member>
+        <member name="E:SocketJack.Net.Torrent.TorrentClient.PeerDisconnectedEvent">
+            <summary>Fired when a peer disconnects.</summary>
+        </member>
+        <member name="E:SocketJack.Net.Torrent.TorrentClient.ErrorOccurred">
+            <summary>Fired on errors.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.#ctor(SocketJack.Net.Torrent.TorrentMetadata,System.Int32,System.String)">
+            <summary>
+            Initializes a new TorrentClient.
+            </summary>
+            <param name="metadata">Torrent metadata describing the file and tracker(s).</param>
+            <param name="listenPort">TCP port to listen on for peer connections (standalone mode).</param>
+            <param name="downloadPath">Directory to save downloaded files.</param>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.Register(SocketJack.Net.MutableTcpServer)">
+            <summary>
+            Registers this torrent client on a <see cref="T:SocketJack.Net.MutableTcpServer"/>, allowing
+            it to share a single port with HTTP, WebSocket, and other SocketJack services.
+            <para>
+            Torrent peers connect using the SocketJack protocol and their messages are
+            routed through the server's existing callback pipeline. This also creates
+            an embedded <see cref="T:SocketJack.Net.Torrent.TorrentTracker"/> on the same server, so the
+            MutableTcpServer acts as tracker + peer server simultaneously.
+            </para>
+            </summary>
+            <param name="server">The <see cref="T:SocketJack.Net.MutableTcpServer"/> to register on.</param>
+            <example>
+            <code>
+            var server = new MutableTcpServer(8080, "MultiServer");
+            var metadata = TorrentMetadata.FromFile("patch.zip", new List&lt;string&gt; { "localhost:8080" });
+            var client = new TorrentClient(metadata, downloadPath: "./downloads");
+            client.Register(server);
+            client.Seed("patch.zip");
+            server.Listen();
+            await client.StartAsync();
+            </code>
+            </example>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.RegisterPeerCallbacks(SocketJack.Net.ISocket)">
+            <summary>
+            Registers the peer-serving message callbacks on the given server.
+            Works for both <see cref="T:SocketJack.Net.TcpServer"/> (standalone) and
+            <see cref="T:SocketJack.Net.MutableTcpServer"/> (registered) since both implement
+            <see cref="M:SocketJack.Net.ISocket.RegisterCallback``1(System.Action{SocketJack.Net.ReceivedEventArgs{``0}})"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.SendToConnection(SocketJack.Net.NetworkConnection,System.Object)">
+            <summary>
+            Sends an object to the specified connection, routing through whichever
+            server is active (standalone <see cref="T:SocketJack.Net.TcpServer"/> or registered
+            <see cref="T:SocketJack.Net.MutableTcpServer"/>).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.Seed(System.String)">
+            <summary>
+            Load an existing file to seed (marks all pieces as complete).
+            </summary>
+            <param name="filePath">Path to the complete file on disk.</param>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.StartAsync">
+            <summary>
+            Start the torrent client: listen for peers, announce to tracker, connect to swarm.
+            <para>In standalone mode, starts the built-in peer server.
+            In registered mode, the <see cref="T:SocketJack.Net.MutableTcpServer"/> must already be listening.</para>
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.SearchAsync(System.String,System.String,System.Int32)">
+            <summary>
+            Search for torrents on the connected tracker.
+            </summary>
+            <param name="query">Search keywords.</param>
+            <param name="category">Optional category filter.</param>
+            <param name="maxResults">Maximum results to return.</param>
+            <returns>Search results from the tracker.</returns>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.Stop">
+            <summary>
+            Stop the client, disconnect from all peers, and release resources.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.AnnounceToTracker(System.String,System.String)">
+            <summary>
+            Connect to a tracker and send an announce request.
+            The tracker responds with a peer list which we use to connect to the swarm.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.OnAnnounceResponse(SocketJack.Net.ReceivedEventArgs{SocketJack.Net.Torrent.AnnounceResponse})">
+            <summary>
+            Process the tracker's announce response � connect to discovered peers.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.ConnectToPeerAsync(SocketJack.Net.Torrent.PeerEndpoint)">
+            <summary>
+            Initiate an outgoing connection to a peer.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.PieceRequestLoop(System.Threading.CancellationToken)">
+            <summary>
+            Continuously requests missing pieces from connected peers.
+            Uses a rarest-first selection strategy.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.SelectNextPiece">
+            <summary>
+            Select the next piece to download using rarest-first strategy.
+            Rarest-first helps distribute rare pieces across the swarm faster.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentClient.AssembleFile">
+            <summary>
+            Assemble all downloaded pieces into the final file on disk.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentClient.PeerSession">
+            <summary>
+            Tracks state for a single connected peer.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.AnnounceRequest">
+            <summary>
+            Sent by a peer to the tracker to announce its presence and
+            request a list of other peers sharing the same torrent.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceRequest.InfoHash">
+            <summary>InfoHash of the torrent.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceRequest.PeerId">
+            <summary>Unique peer identifier.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceRequest.ListenPort">
+            <summary>Port the peer is listening on for incoming connections.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceRequest.Downloaded">
+            <summary>Total bytes downloaded so far.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceRequest.Left">
+            <summary>Total bytes remaining.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceRequest.Event">
+            <summary>Event type: started, stopped, completed, or empty for periodic.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.AnnounceResponse">
+            <summary>
+            Returned by the tracker in response to an <see cref="T:SocketJack.Net.Torrent.AnnounceRequest"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceResponse.Interval">
+            <summary>Seconds between re-announce intervals.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.AnnounceResponse.Peers">
+            <summary>List of peer endpoints sharing this torrent.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.PeerEndpoint">
+            <summary>
+            Lightweight peer address returned by the tracker.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.PeerHandshake">
+            <summary>
+            Handshake � first message exchanged between two peers.
+            Both sides must agree on the InfoHash to continue.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.BitfieldMessage">
+            <summary>
+            Bitfield � sent immediately after handshake.
+            Each entry indicates whether the peer has that piece (true) or not.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.PieceRequest">
+            <summary>
+            Request a specific piece from a peer.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.PieceRequest.PieceIndex">
+            <summary>Zero-based piece index.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.PieceData">
+            <summary>
+            Delivers a requested piece's data.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.PieceData.PieceIndex">
+            <summary>Zero-based piece index.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.PieceData.Data">
+            <summary>Raw piece bytes, Base64-encoded for JSON transport.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.HaveMessage">
+            <summary>
+            Notify peers that a new piece has been downloaded and verified.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.HaveMessage.PieceIndex">
+            <summary>Zero-based piece index that is now available.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.ChokeMessage">
+            <summary>
+            Indicates the sender is choking (will not serve requests) or unchoking the receiver.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.InterestedMessage">
+            <summary>
+            Expresses interest (or disinterest) in a peer's pieces.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentSearchRequest">
+            <summary>
+            Search request sent to a tracker or DHT node.
+            Supports keyword search and category filtering.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentSearchRequest.Query">
+            <summary>Keywords to match against torrent names.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentSearchRequest.Category">
+            <summary>Optional category filter (e.g. "software", "video").</summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentSearchRequest.MaxResults">
+            <summary>Maximum results to return.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentSearchResponse">
+            <summary>
+            Search results returned by a tracker or index node.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentSearchResult">
+            <summary>
+            A single search result pointing to a torrent.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentMetadata">
+            <summary>
+            Represents the metadata for a torrent � the "info" dictionary equivalent.
+            Contains file info, piece hashes, and the unique InfoHash identifying this torrent.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.Name">
+            <summary>
+            Human-readable name for this torrent (e.g. "MyApp-v2.0.zip").
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.TotalSize">
+            <summary>
+            Total size of the file(s) in bytes.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.PieceSize">
+            <summary>
+            Size in bytes of each piece (last piece may be smaller).
+            Default is 256 KB.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.PieceCount">
+            <summary>
+            Total number of pieces.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.PieceHashes">
+            <summary>
+            SHA-256 hash of each piece, indexed by piece number.
+            Used to verify downloaded data integrity.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.InfoHash">
+            <summary>
+            Unique identifier for this torrent, derived from hashing the metadata.
+            Peers use this to find each other on the tracker.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.Trackers">
+            <summary>
+            Tracker endpoint(s) where peers can announce and discover other peers.
+            Format: "host:port"
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.Files">
+            <summary>
+            List of individual files in a multi-file torrent.
+            For single-file torrents this contains one entry.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentMetadata.CreatedUtc">
+            <summary>
+            UTC timestamp when this torrent was created.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentMetadata.FromFile(System.String,System.Collections.Generic.List{System.String},System.Int32)">
+            <summary>
+            Build metadata from an existing file on disk.
+            Splits the file into pieces, hashes each one, and computes the InfoHash.
+            </summary>
+            <param name="filePath">Path to the source file.</param>
+            <param name="trackerEndpoints">Tracker addresses in "host:port" format.</param>
+            <param name="pieceSize">Piece size in bytes (default 256 KB).</param>
+            <returns>Populated <see cref="T:SocketJack.Net.Torrent.TorrentMetadata"/>.</returns>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentFileEntry">
+            <summary>
+            Represents a single file entry within a (possibly multi-file) torrent.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentFileEntry.Path">
+            <summary>
+            Relative file path within the torrent.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentFileEntry.Length">
+            <summary>
+            File size in bytes.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Torrent.TorrentTracker">
+            <summary>
+            A torrent tracker built on SocketJack's <see cref="T:SocketJack.Net.TcpServer"/>.
+            <para>
+            Peers connect and send an <see cref="T:SocketJack.Net.Torrent.AnnounceRequest"/>; the tracker replies
+            with an <see cref="T:SocketJack.Net.Torrent.AnnounceResponse"/> containing the current peer swarm.
+            Also supports keyword-based <see cref="T:SocketJack.Net.Torrent.TorrentSearchRequest"/> lookups
+            against registered torrent metadata.
+            </para>
+            </summary>
+            <remarks>
+            <b>Standalone mode:</b>
+            <code>
+            var tracker = new TorrentTracker(port: 6969);
+            tracker.Start();
+            tracker.RegisterTorrent(metadata, category: "software");
+            </code>
+            <b>MutableTcpServer mode:</b>
+            <code>
+            var server = new MutableTcpServer(8080, "MultiServer");
+            var tracker = new TorrentTracker(server);
+            tracker.RegisterTorrent(metadata, category: "software");
+            server.Listen();
+            </code>
+            </remarks>
+        </member>
+        <member name="F:SocketJack.Net.Torrent.TorrentTracker.Swarms">
+            <summary>
+            Swarm state keyed by InfoHash.
+            Each entry maps PeerId ? endpoint + stats.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.Torrent.TorrentTracker.Index">
+            <summary>
+            Searchable index of registered torrents keyed by InfoHash.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentTracker.AnnounceInterval">
+            <summary>
+            Default re-announce interval in seconds sent to clients.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Torrent.TorrentTracker.IsRegistered">
+            <summary>
+            True when this tracker is registered on a <see cref="T:SocketJack.Net.MutableTcpServer"/>
+            rather than running its own standalone <see cref="T:SocketJack.Net.TcpServer"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.#ctor(System.Int32,System.String)">
+            <summary>
+            Initializes a standalone tracker on the given port.
+            </summary>
+            <param name="port">TCP port to listen on (default 6969).</param>
+            <param name="name">Server name for logging.</param>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.#ctor(SocketJack.Net.MutableTcpServer)">
+            <summary>
+            Initializes a tracker that is hosted on a <see cref="T:SocketJack.Net.MutableTcpServer"/>.
+            Torrent clients connect using SocketJack protocol and their messages are
+            routed through the server's existing SocketJack pipeline.
+            </summary>
+            <param name="server">The MutableTcpServer to register on.</param>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.Start">
+            <summary>
+            Start listening for incoming peer connections (standalone mode only).
+            When hosted on a <see cref="T:SocketJack.Net.MutableTcpServer"/>, call <c>Listen()</c>
+            on the server instead.
+            </summary>
+            <returns>True if listening started successfully.</returns>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.RegisterTorrent(SocketJack.Net.Torrent.TorrentMetadata,System.String)">
+            <summary>
+            Register torrent metadata so it appears in search results.
+            </summary>
+            <param name="metadata">Torrent metadata.</param>
+            <param name="category">Optional category tag for filtering.</param>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.RegisterCallbacks(SocketJack.Net.ISocket)">
+            <summary>
+            Registers announce and search callbacks on the given server.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.SendToConnection(SocketJack.Net.NetworkConnection,System.Object)">
+            <summary>
+            Sends an object to the specified connection, routing through whichever
+            server is active (standalone or mutable).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.OnAnnounce(SocketJack.Net.ReceivedEventArgs{SocketJack.Net.Torrent.AnnounceRequest})">
+            <summary>
+            Handle an announce request from a peer.
+            Updates the swarm and replies with the current peer list.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.OnSearch(SocketJack.Net.ReceivedEventArgs{SocketJack.Net.Torrent.TorrentSearchRequest})">
+            <summary>
+            Handle a keyword search request.
+            Matches against torrent names using case-insensitive contains.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Torrent.TorrentTracker.OnClientDisconnected(SocketJack.Net.DisconnectedEventArgs)">
+            <summary>
+            Remove disconnected peers from all swarms.
+            </summary>
         </member>
         <member name="T:SocketJack.Net.UdpClient">
             <summary>
@@ -2787,6 +5268,28 @@
             <summary>
             Stop the client from updating metadata keys that are restricted, such as `Username`.
             <para>Not case sensitive.</para>
+            </summary>
+        </member>
+        <member name="T:SocketJack.Examples.DataServerExample">
+            <summary>
+            Example usage of DataServer � standalone, MutableTcpServer integration, and MSSQL import.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Examples.DataServerExample.StandaloneExample">
+            <summary>
+            Standalone mode � DataServer owns the TCP listener on port 1433.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Examples.DataServerExample.MutableTcpServerExample">
+            <summary>
+            MutableTcpServer mode � TDS/MSSQL shares a port with HTTP, WebSocket, and SocketJack.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Examples.DataServerExample.ImportExample">
+            <summary>
+            Import from an existing MSSQL database.
+            Requires Microsoft.Data.SqlClient in your application project:
+              dotnet add package Microsoft.Data.SqlClient
             </summary>
         </member>
         <member name="T:SocketJack.Segment">

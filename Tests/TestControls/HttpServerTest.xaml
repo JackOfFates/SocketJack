@@ -1,4 +1,4 @@
-﻿<UserControl
+<UserControl
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
@@ -36,10 +36,6 @@
             </Border>
         </Grid>
         <Grid Margin="10,10,10,66">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="1*"/>
-                <RowDefinition Height="1*"/>
-            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition/>
                 <ColumnDefinition/>
@@ -50,7 +46,7 @@
             Padding="0,0,0,0" 
             TextWrapping="NoWrap" 
             AcceptsReturn="true" 
-            IsReadOnly="True" Foreground="#FFEAEAEA" BorderThickness="0,0,0,0" Background="#540C0C0C"
+            IsReadOnly="True" Foreground="#FFEAEAEA" BorderThickness="0,0,0,0" Background="#FF0B1018"
             SyntaxBox:SyntaxBox.Enable="True"
             SyntaxBox:SyntaxBox.ExpandTabs="True"
             SyntaxBox:SyntaxBox.AutoIndent="True"
@@ -93,6 +89,16 @@
 
                         <!-- Operators -->
                         <SyntaxBox:KeywordRule Foreground="Gray" Keywords="*,C#" WholeWordsOnly="False" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFB9F6FF" Pattern="^\[LmVsProxy\].*" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFFF9A9A" Pattern="^\[LmVsProxy\].*(Error|ERROR|failed|Failed|exception|Exception|Invalid|Build failed).*" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF9CFF82" Pattern="^\[LmVsProxy\].*(OK|success|successful|passed|Created|Forwarding).*" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFFFD866" Pattern="\[(Request|HTTP|Streaming|Responses Bridge|Tool Calls|Conversation Tool Call|Conversation Tool Result Error|Native Tool Args Repair|Tool Args Repair|Create File Redirect|Create File Guard|Build Error Hint|Build Error Continuation|JSON Repair|Path Repair|Chat UI)\]" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF7DC1FF" Pattern="\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b|/v1/(chat/completions|responses)|/api/chat|/health|tool_choice=auto|streaming=(True|False)" />
+                        <SyntaxBox:KeywordRule Foreground="#FF40C9A2" Keywords="get_projects_in_solution,get_files_in_project,file_search,code_search,get_file,create_file,replace_string_in_file,multi_replace_string_in_file,run_build,get_errors,find_symbol,run_command_in_terminal" WholeWordsOnly="True" />
+                        <SyntaxBox:KeywordRule Foreground="#FFFFD866" Keywords="bodyLength,Upstream,Adapted,response,length,qwenToolTags,native,repaired,arguments,maxResults,content,explanation" WholeWordsOnly="True" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFCAA6F7" Pattern="call_[A-Za-z0-9_]+" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF89DDFF" Pattern="&quot;[^&quot;]*&quot;\s*:" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF7DC1FF" Pattern="[\{\(]?[a-fA-F0-9]{8}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{4}\-[a-fA-F0-9]{12}[\}\)]?"/>
                         <SyntaxBox:KeywordRule Foreground="#FF9CFF82" Keywords="Connected" WholeWordsOnly="True" />
                         <SyntaxBox:KeywordRule Foreground="#FFF5FF9D" Keywords="Connecting" WholeWordsOnly="True" />
                         <SyntaxBox:KeywordRule Foreground="#FF848484" Keywords="Connection" WholeWordsOnly="True" />
@@ -107,7 +113,6 @@
                     </SyntaxBox:SyntaxConfig>
                 </SyntaxBox:SyntaxBox.SyntaxDrivers>
             </TextBox>
-            <WebBrowser x:Name="wb1" Grid.Row="1" Grid.ColumnSpan="2"/>
         </Grid>
 
     </Grid>

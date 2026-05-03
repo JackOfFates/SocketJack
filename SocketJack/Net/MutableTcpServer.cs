@@ -1,9 +1,11 @@
-ï»¿using SocketJack.Extensions;
+using SocketJack.Extensions;
+using SocketJack.Net.Database;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
@@ -66,6 +68,7 @@ namespace SocketJack.Net {
         private readonly SocketJackProtocolHandler _socketJackHandler;
         private readonly WebSocketProtocolHandler _webSocketHandler;
         private readonly RtmpDelegateHandler _rtmpDelegateHandler = new RtmpDelegateHandler();
+        private SocketJack.Net.Database.SqlAdminPanel _sqlAdminPanel;
 
         #endregion
 
@@ -82,7 +85,7 @@ namespace SocketJack.Net {
             // connection (including HTTP clients), corrupting their response stream.
             DeferPeerInitialization = true;
 
-            // Remove the base HttpServer's receive handler â€” MutableTcpServer routes
+            // Remove the base HttpServer's receive handler — MutableTcpServer routes
             // HTTP through HttpProtocolHandler via RouteReceive instead.
             this.OnReceive -= GetRequestAsync;
 
@@ -103,7 +106,7 @@ namespace SocketJack.Net {
             // Defer peer initialization until a connection is identified as SocketJack.
             DeferPeerInitialization = true;
 
-            // Remove the base HttpServer's receive handler â€” MutableTcpServer routes
+            // Remove the base HttpServer's receive handler — MutableTcpServer routes
             // HTTP through HttpProtocolHandler via RouteReceive instead.
             this.OnReceive -= GetRequestAsync;
 
@@ -168,6 +171,39 @@ namespace SocketJack.Net {
         /// </summary>
         public event Action<NetworkConnection> WebSocketClientConnected;
 
+        /// <summary>
+        /// Gets or sets whether the SQL Admin Panel is enabled.
+        /// When <see langword="true"/>, an HTTP-based administration interface
+        /// (similar to SQL Server Management Studio) is served at <c>/sql</c>.
+        /// The panel authenticates against the <see cref="Database.DataServer.Users"/>
+        /// collection of the registered <see cref="Database.TdsProtocolHandler"/>,
+        /// automatically creating one if needed.
+        /// <para>
+        /// Features include an Object Explorer tree, a SQL query editor,
+        /// and a results grid.
+        /// </para>
+        /// </summary>
+        public bool SqlAdminPanelEnabled {
+            get => _sqlAdminPanel != null;
+            set {
+                if (value && _sqlAdminPanel == null) {
+                    GetOrCreateDataServer(); // Ensure a TdsProtocolHandler is registered
+                    _sqlAdminPanel = new SocketJack.Net.Database.SqlAdminPanel(this);
+                    _sqlAdminPanel.Register();
+                } else if (!value && _sqlAdminPanel != null) {
+                    _sqlAdminPanel.Unregister();
+                    _sqlAdminPanel = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns the <see cref="Database.SqlAdminPanel"/> instance, or
+        /// <see langword="null"/> when <see cref="SqlAdminPanelEnabled"/> is
+        /// <see langword="false"/>.
+        /// </summary>
+        internal SocketJack.Net.Database.SqlAdminPanel SqlAdminPanel => _sqlAdminPanel;
+
         #endregion
 
         #region Core Routing
@@ -190,7 +226,7 @@ namespace SocketJack.Net {
                 return;
             }
 
-            // First data on this connection â€” detect the protocol.
+            // First data on this connection — detect the protocol.
             byte[] probe = TryGetRawBytes(e.Obj);
             if (probe == null || probe.Length == 0)
                 return;
@@ -204,7 +240,7 @@ namespace SocketJack.Net {
                 }
             }
 
-            // Check built-in WebSocket handler before HTTP â€” a WebSocket upgrade
+            // Check built-in WebSocket handler before HTTP — a WebSocket upgrade
             // starts as an HTTP GET request, so the HTTP handler would also match.
             if (_webSocketHandler.CanHandle(probe)) {
                 _connectionHandlers.TryAdd(connId, _webSocketHandler);
@@ -213,7 +249,7 @@ namespace SocketJack.Net {
                 return;
             }
 
-            // Check built-in HTTP handler â€” HTTP requests are short-lived
+            // Check built-in HTTP handler — HTTP requests are short-lived
             // and must be answered promptly.  SocketJack is checked after so that
             // an HTTP client connecting to the same port is never misrouted.
             if (_httpHandler.CanHandle(probe)) {
@@ -243,7 +279,7 @@ namespace SocketJack.Net {
                 return;
             }
 
-            // No handler matched â€” data flows through to other OnReceive subscribers.
+            // No handler matched — data flows through to other OnReceive subscribers.
         }
 
         private void OnClientDisconnected_Cleanup(DisconnectedEventArgs args) {
@@ -261,8 +297,8 @@ namespace SocketJack.Net {
         /// Overrides peer synchronization so that only connections confirmed as
         /// SocketJack receive broadcast peer updates.  Without this filter,
         /// <see cref="ConnectedClientExtensions.SendBroadcast"/> pushes
-        /// SocketJack-framed bytes into every connection's send queue â€”
-        /// including HTTP connections â€” corrupting their response stream.
+        /// SocketJack-framed bytes into every connection's send queue —
+        /// including HTTP connections — corrupting their response stream.
         /// </summary>
         protected internal override void SyncPeer(NetworkConnection Client) {
             Task.Run(() => {
@@ -433,7 +469,7 @@ namespace SocketJack.Net {
             try { WebSocketClientConnected?.Invoke(connection); } catch { }
         }
 
-        internal static byte[] TryGetRawBytes(object obj) {
+        public static byte[] TryGetRawBytes(object obj) {
             if (obj == null)
                 return null;
 
@@ -464,11 +500,95 @@ namespace SocketJack.Net {
 
         #endregion
 
+        #region DataServer Support
+
+        /// <summary>
+        /// Finds the first registered <see cref="TdsProtocolHandler"/> and returns
+        /// its backing <see cref="DataServer"/>, or <see langword="null"/> if no
+        /// TDS handler has been registered.
+        /// </summary>
+        private DataServer FindDataServer() {
+            for (int i = 0; i < _handlers.Count; i++) {
+                if (_handlers[i] is TdsProtocolHandler tds)
+                    return tds.Server;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the <see cref="DataServer"/> backing the registered
+        /// <see cref="TdsProtocolHandler"/>, automatically registering a
+        /// hosted-mode handler if one has not yet been added.
+        /// </summary>
+        private DataServer GetOrCreateDataServer() {
+            var ds = FindDataServer();
+            if (ds == null) {
+                var tds = new TdsProtocolHandler();
+                RegisterProtocol(tds);
+                ds = tds.Server;
+            }
+            return ds;
+        }
+
+        /// <summary>
+        /// Imports schema and data from an existing MSSQL database into the
+        /// <see cref="DataServer"/>'s in-memory store. A <see cref="TdsProtocolHandler"/>
+        /// is automatically registered if one has not already been added.
+        /// <example>
+        /// <code>
+        /// var mutable = new MutableTcpServer(1433, "MultiServer");
+        /// mutable.Listen();
+        ///
+        /// var conn = new SqlConnection("Server=.;Database=MyDb;Trusted_Connection=True;TrustServerCertificate=True;");
+        /// mutable.ImportFromMssql(conn);
+        /// </code>
+        /// </example>
+        /// </summary>
+        /// <param name="connection">An open (or openable) <see cref="DbConnection"/> to the source MSSQL server.</param>
+        /// <param name="databaseName">
+        /// Override the target database name in the DataServer. When <see langword="null"/>,
+        /// the source connection's <see cref="DbConnection.Database"/> name is used.
+        /// </param>
+        /// <param name="tableFilter">
+        /// Optional list of table names to import. When <see langword="null"/> or empty,
+        /// all user tables are imported.
+        /// </param>
+        /// <param name="importData">
+        /// When <see langword="true"/> (default), all rows are imported.
+        /// Set to <see langword="false"/> to import only schema (columns).
+        /// </param>
+        /// <param name="maxRowsPerTable">
+        /// Maximum number of rows to import per table. 0 = unlimited.
+        /// </param>
+        public void ImportFromMssql(
+            DbConnection connection,
+            string databaseName = null,
+            string[] tableFilter = null,
+            bool importData = true,
+            int maxRowsPerTable = 0) {
+
+            GetOrCreateDataServer().ImportFromMssql(connection, databaseName, tableFilter, importData, maxRowsPerTable);
+        }
+
+        /// <summary>
+        /// Saves the <see cref="DataServer"/>'s current state (users, databases,
+        /// tables, rows) to its <see cref="DataServer.DataPath"/>.
+        /// A <see cref="TdsProtocolHandler"/> is automatically registered if one
+        /// has not already been added.
+        /// </summary>
+        public void Save() {
+            GetOrCreateDataServer().Save();
+        }
+
+        #endregion
+
         #region Dispose
 
         protected override void Dispose(bool disposing) {
             this.OnReceive -= RouteReceive;
             this.ClientDisconnected -= OnClientDisconnected_Cleanup;
+            _sqlAdminPanel?.Unregister();
+            _sqlAdminPanel = null;
             _connectionHandlers.Clear();
             base.Dispose(disposing);
         }
@@ -547,7 +667,7 @@ namespace SocketJack.Net {
             if (incoming == null || incoming.Length == 0)
                 return;
 
-            // Detect first data on a SocketJack connection â€” initialize peer if enabled.
+            // Detect first data on a SocketJack connection — initialize peer if enabled.
             // This runs before ProcessBuffer so the peer is registered in Peers before
             // any deserialized message handlers (e.g. MetadataKeyValue) execute.
             bool isNewConnection = !_buffers.ContainsKey(connection.ID);
@@ -783,7 +903,7 @@ namespace SocketJack.Net {
 
                 if (masked) {
                     if (state.Buffer.Count < offset + 4) return;
-                    offset += 4; // mask key is 4 bytes â€” read below
+                    offset += 4; // mask key is 4 bytes — read below
                 }
 
                 if (state.Buffer.Count < offset + payloadLen)
@@ -1011,7 +1131,7 @@ namespace SocketJack.Net {
         /// Delegates to the underlying <see cref="HttpServer.IndexPageHtml"/>.
         /// </summary>
         public string IndexPageHtml {
-            get => _server?.IndexPageHtml ?? "<html><body><h1>SocketJack MutableTcpServer</h1></body></html>";
+            get => _server?.IndexPageHtml ?? "<html><body><h1>SocketJack HttpServer</h1></body></html>";
             set { if (_server != null) _server.IndexPageHtml = value; }
         }
 

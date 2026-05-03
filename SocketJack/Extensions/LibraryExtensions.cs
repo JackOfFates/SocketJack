@@ -1,4 +1,4 @@
-﻿using SocketJack.Net;
+using SocketJack.Net;
 using System;
 using System.IO;
 using System.Net.Sockets;
@@ -32,6 +32,8 @@ namespace SocketJack.Extensions
             } else if (msg.Contains("an established connection was aborted by the software in your host machine")) {
                 Reason = DisconnectionReason.LocalSocketClosed;
             } else if (msg.Contains("an existing connection was forcibly closed by the remote host")) {
+                Reason = DisconnectionReason.RemoteSocketClosed;
+            } else if (msg.Contains("unexpected eof") || msg.Contains("0 bytes from the transport stream")) {
                 Reason = DisconnectionReason.RemoteSocketClosed;
             } else if (ex.GetType() == typeof(ObjectDisposedException)) {
                 Reason = DisconnectionReason.ObjectDisposed;

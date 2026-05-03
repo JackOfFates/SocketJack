@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SocketJack DbContext Generator - MSBuild Integration
+
+  Add this to your project file to automatically generate DbContext during build:
+
+  <Import Project="path\to\DbContextGenerator.targets" />
+
+  Configure using these properties:
+    <DbContextGeneratorConnectionString>Your connection string</DbContextGeneratorConnectionString>
+    <DbContextGeneratorNamespace>Your.Namespace</DbContextGeneratorNamespace>
+    <DbContextGeneratorContextName>YourDbContext</DbContextGeneratorContextName>
+    <DbContextGeneratorEnabled>true</DbContextGeneratorEnabled>
+-->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- Default Properties -->
+  <PropertyGroup>
+    <DbContextGeneratorEnabled Condition="'$(DbContextGeneratorEnabled)' == ''">false</DbContextGeneratorEnabled>
+    <DbContextGeneratorNamespace Condition="'$(DbContextGeneratorNamespace)' == ''">$(RootNamespace)</DbContextGeneratorNamespace>
+    <DbContextGeneratorContextName Condition="'$(DbContextGeneratorContextName)' == ''">AppDbContext</DbContextGeneratorContextName>
+    <DbContextGeneratorOutputDir Condition="'$(DbContextGeneratorOutputDir)' == ''">$(MSBuildProjectDirectory)</DbContextGeneratorOutputDir>
+    <DbContextGeneratorPartial Condition="'$(DbContextGeneratorPartial)' == ''">true</DbContextGeneratorPartial>
+    <DbContextGeneratorNavigation Condition="'$(DbContextGeneratorNavigation)' == ''">true</DbContextGeneratorNavigation>
+    <DbContextGeneratorExclude Condition="'$(DbContextGeneratorExclude)' == ''">__EFMigrationsHistory,sysdiagrams</DbContextGeneratorExclude>
+    <DbContextGeneratorScriptPath Condition="'$(DbContextGeneratorScriptPath)' == ''">$(MSBuildThisFileDirectory)DbContextGenerator.ps1</DbContextGeneratorScriptPath>
+
+    <!-- Detect language from project extension -->
+    <DbContextGeneratorLanguage Condition="'$(DbContextGeneratorLanguage)' == '' And '$(MSBuildProjectExtension)' == '.vbproj'">vb</DbContextGeneratorLanguage>
+    <DbContextGeneratorLanguage Condition="'$(DbContextGeneratorLanguage)' == '' And '$(MSBuildProjectExtension)' == '.csproj'">cs</DbContextGeneratorLanguage>
+    <DbContextGeneratorLanguage Condition="'$(DbContextGeneratorLanguage)' == ''">cs</DbContextGeneratorLanguage>
+  </PropertyGroup>
+
+  <!-- Clean Target -->
+  <Target Name="CleanGeneratedDbContext" BeforeTargets="Clean" Condition="'$(DbContextGeneratorEnabled)' == 'true'">
+    <Message Importance="high" Text="Cleaning generated DbContext files..." />
+  </Target>
+
+  <!-- Generation Target - Before Compile -->
+  <Target Name="GenerateDbContext" 
+          BeforeTargets="CoreCompile" 
+          Condition="'$(DbContextGeneratorEnabled)' == 'true' And '$(DesignTimeBuild)' != 'true' And '$(DbContextGeneratorConnectionString)' != ''">
+
+    <Message Importance="high" Text="Generating DbContext from database schema..." />
+    <Message Importance="high" Text="  Context: $(DbContextGeneratorContextName)" />
+    <Message Importance="high" Text="  Output: $(DbContextGeneratorOutputDir)" />
+    <Message Importance="high" Text="  Language: $(DbContextGeneratorLanguage)" />
+
+    <!-- Create output directory -->
+    <MakeDir Directories="$(DbContextGeneratorOutputDir)" Condition="!Exists('$(DbContextGeneratorOutputDir)')" />
+
+    <!-- Run PowerShell generator script -->
+    <Exec Command="powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(DbContextGeneratorScriptPath)&quot; -ConnectionString &quot;$(DbContextGeneratorConnectionString)&quot; -Namespace &quot;$(DbContextGeneratorNamespace)&quot; -ContextName &quot;$(DbContextGeneratorContextName)&quot; -OutputDirectory &quot;$(DbContextGeneratorOutputDir)&quot; -Language &quot;$(DbContextGeneratorLanguage)&quot; -Partial &quot;$(DbContextGeneratorPartial)&quot; -Exclude &quot;$(DbContextGeneratorExclude)&quot;" 
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="high" />
+
+  </Target>
+
+</Project>
