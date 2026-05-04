@@ -16,6 +16,9 @@
                 <Button x:Name="ButtonStartStop" Content="Start Test" Width="126"/>
                 <Button x:Name="ButtonRecord" Content="Record" Width="100" Margin="5,0,0,0"/>
                 <Button x:Name="ButtonSave" Content="Save Recording" Width="120" Margin="5,0,0,0"/>
+                <CheckBox x:Name="CheckRemoteLmStudio" Content="Remote LM Studio" VerticalAlignment="Center" Margin="14,0,0,0" Foreground="#FFEAEAEA"/>
+                <TextBlock Text="Remote Server" VerticalAlignment="Center" Margin="10,0,5,0" Foreground="#FFAAAAAA" FontFamily="Consolas" FontSize="12"/>
+                <TextBox x:Name="TextRemoteServer" Width="210" Height="24" VerticalContentAlignment="Center" Text="127.0.0.1:11435" IsEnabled="False" ToolTip="Remote LM Studio host or host:port. When enabled, localhost:11435 forwards here."/>
             </StackPanel>
             <!-- RTMP stream stats -->
             <Border x:Name="RtmpStatsPanel" Grid.Column="1" Background="#CC1A1A1A" CornerRadius="4" Padding="10,4" Margin="10,0,0,0" Visibility="Collapsed">

@@ -39,6 +39,22 @@ namespace SocketJack.Net {
         /// </summary>
         public string ChatModel { get; set; } = "lm-studio";
 
+        private TimeSpan _promptTimeout = TimeSpan.FromMinutes(30);
+
+        /// <summary>
+        /// Maximum time the proxy will wait for LM Studio to produce/stream a prompt response.
+        /// </summary>
+        public TimeSpan PromptTimeout {
+            get { return _promptTimeout; }
+            set {
+                if (value <= TimeSpan.Zero)
+                    throw new ArgumentOutOfRangeException(nameof(value), "Prompt timeout must be greater than zero.");
+                _promptTimeout = value;
+                if (_httpClient != null)
+                    _httpClient.Timeout = value;
+            }
+        }
+
         /// <summary>
         /// Returns true after the lazy chat server has been created.
         /// </summary>
@@ -112,7 +128,7 @@ namespace SocketJack.Net {
                 ? ChooseDefaultChatServerPort(lmStudioPort, proxyPort)
                 : chatServerPort;
             _httpClient = new System.Net.Http.HttpClient();
-            _httpClient.Timeout = TimeSpan.FromMinutes(10); // Long timeout for streaming
+            _httpClient.Timeout = _promptTimeout;
         }
 
         #endregion
@@ -215,6 +231,9 @@ namespace SocketJack.Net {
                     chatModel = ChatModel
                 }));
 
+            server.Map("GET", "/api/models", (connection, request, cancellationToken) =>
+                HandleChatUiModelsRequest(cancellationToken));
+
             server.Map("POST", "/api/chat", (connection, request, cancellationToken) =>
                 HandleChatUiRequest(request, cancellationToken));
 
@@ -223,6 +242,66 @@ namespace SocketJack.Net {
 
             LogMessage($"[Chat UI] Created HttpServer at {ChatServerUrl} for LM Studio http://{_lmStudioHost}:{_lmStudioPort}/v1/chat/completions");
             return server;
+        }
+
+        private string HandleChatUiModelsRequest(CancellationToken cancellationToken) {
+            try {
+                string url = $"http://{_lmStudioHost}:{_lmStudioPort}/v1/models";
+                using (var response = _httpClient.GetAsync(url, cancellationToken).GetAwaiter().GetResult()) {
+                    string responseBody = response.Content == null ? "" : response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    if (!response.IsSuccessStatusCode) {
+                        LogMessage($"[Chat UI] LM Studio models request returned {(int)response.StatusCode} {response.ReasonPhrase}: {TruncateForLog(responseBody, 1000)}");
+                        return JsonSerializer.Serialize(new {
+                            ok = false,
+                            error = response.ReasonPhrase ?? "LM Studio models request failed.",
+                            models = new[] { string.IsNullOrWhiteSpace(ChatModel) ? "lm-studio" : ChatModel }
+                        });
+                    }
+
+                    var models = ExtractModelIds(responseBody);
+                    if (models.Count == 0)
+                        models.Add(string.IsNullOrWhiteSpace(ChatModel) ? "lm-studio" : ChatModel);
+
+                    return JsonSerializer.Serialize(new {
+                        ok = true,
+                        selected = string.IsNullOrWhiteSpace(ChatModel) ? "lm-studio" : ChatModel,
+                        models = models
+                    });
+                }
+            } catch (Exception ex) {
+                LogMessage($"[Chat UI] Models request failed: {ex.Message}");
+                return JsonSerializer.Serialize(new {
+                    ok = false,
+                    error = ex.Message,
+                    models = new[] { string.IsNullOrWhiteSpace(ChatModel) ? "lm-studio" : ChatModel }
+                });
+            }
+        }
+
+        private List<string> ExtractModelIds(string responseBody) {
+            var models = new List<string>();
+            if (string.IsNullOrWhiteSpace(responseBody))
+                return models;
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(responseBody)) {
+                    if (!document.RootElement.TryGetProperty("data", out JsonElement data) ||
+                        data.ValueKind != JsonValueKind.Array)
+                        return models;
+
+                    foreach (JsonElement model in data.EnumerateArray()) {
+                        string id = model.ValueKind == JsonValueKind.Object
+                            ? ExtractStringProperty(model, "id")
+                            : model.ValueKind == JsonValueKind.String ? model.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(id) && !models.Contains(id))
+                            models.Add(id);
+                    }
+                }
+            } catch (Exception ex) {
+                LogMessage("[Chat UI] Could not parse models response: " + ex.Message);
+            }
+
+            return models;
         }
 
         private string HandleChatUiRequest(HttpRequest request, CancellationToken cancellationToken) {
@@ -375,11 +454,20 @@ namespace SocketJack.Net {
                     throw new InvalidOperationException("Chat UI request body must be a JSON object.");
 
                 writer.WriteStartObject();
-                writer.WriteString("model", string.IsNullOrWhiteSpace(ChatModel) ? "lm-studio" : ChatModel);
+                string requestedModel = ExtractStringProperty(root, "model");
+                writer.WriteString("model", string.IsNullOrWhiteSpace(requestedModel)
+                    ? (string.IsNullOrWhiteSpace(ChatModel) ? "lm-studio" : ChatModel)
+                    : requestedModel);
                 writer.WriteBoolean("stream", streamResponses);
 
                 if (root.TryGetProperty("temperature", out JsonElement temperature))
                     WritePropertyIfSimple(writer, "temperature", temperature);
+                if (root.TryGetProperty("top_p", out JsonElement topP))
+                    WritePropertyIfSimple(writer, "top_p", topP);
+                if (root.TryGetProperty("max_tokens", out JsonElement maxTokens))
+                    WritePropertyIfSimple(writer, "max_tokens", maxTokens);
+                else if (root.TryGetProperty("max_completion_tokens", out JsonElement maxCompletionTokens))
+                    WritePropertyIfSimple(writer, "max_completion_tokens", maxCompletionTokens);
 
                 writer.WritePropertyName("messages");
                 writer.WriteStartArray();
@@ -641,9 +729,15 @@ namespace SocketJack.Net {
     --danger: #fb7185;
 }
 * { box-sizing: border-box; }
+html {
+    height: 100%;
+    overflow: hidden;
+}
 body {
     margin: 0;
-    min-height: 100vh;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
     font-family: ""Segoe UI"", ""Cascadia Code"", sans-serif;
     background:
         radial-gradient(circle at top left, rgba(64, 201, 162, 0.22), transparent 34rem),
@@ -653,17 +747,57 @@ body {
 }
 .shell {
     width: min(1040px, calc(100vw - 28px));
-    min-height: calc(100vh - 28px);
+    height: calc(100vh - 28px);
     margin: 14px auto;
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
     gap: 12px;
+    overflow: hidden;
 }
 .topbar, .composer, .messages {
     border: 1px solid var(--line);
     background: var(--panel);
     box-shadow: 0 18px 70px rgba(0, 0, 0, 0.28);
     backdrop-filter: blur(18px);
+}
+.selftalk {
+    border: 1px solid rgba(251, 191, 36, 0.25);
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.1), rgba(125, 211, 252, 0.08));
+    border-radius: 20px;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    gap: 10px;
+    align-items: stretch;
+}
+.selftalk label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #fde68a;
+    font-weight: 800;
+    white-space: nowrap;
+}
+.selftalk input {
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    border-radius: 14px;
+    padding: 0 14px;
+    color: var(--text);
+    background: rgba(2, 6, 23, 0.54);
+    font: 0.92rem/1.45 ""Cascadia Code"", monospace;
+}
+.selftalk button.stop {
+    color: #fff;
+    background: linear-gradient(135deg, #fb7185, #f97316);
+}
+.message.seed {
+    margin-left: auto;
+    max-width: 72%;
+    color: #fde68a;
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px dashed rgba(251, 191, 36, 0.42);
 }
 .topbar {
     border-radius: 22px;
@@ -672,6 +806,42 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+}
+.model-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-family: ""Cascadia Code"", monospace;
+    font-size: 0.8rem;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+.model-picker select, .model-picker input {
+    min-width: 220px;
+    max-width: min(460px, 70vw);
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    border-radius: 12px;
+    color: var(--text);
+    background: rgba(2, 6, 23, 0.72);
+    padding: 7px 10px;
+    font: 0.82rem ""Cascadia Code"", monospace;
+}
+.model-picker input {
+    min-width: 72px;
+    width: 86px;
+}
+.ghost {
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    color: #d8f3ff;
+    background: rgba(125, 211, 252, 0.08);
+    padding: 8px 12px;
+}
+.toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 h1 {
     margin: 0;
@@ -705,6 +875,8 @@ h1 {
     border-radius: 26px;
     padding: 18px;
     overflow: auto;
+    min-height: 0;
+    max-height: 100%;
 }
 .empty {
     height: 100%;
@@ -721,6 +893,7 @@ h1 {
     border-radius: 18px;
     line-height: 1.45;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 .message.user {
     margin-left: auto;
@@ -789,7 +962,7 @@ textarea {
     width: 100%;
     min-height: 74px;
     max-height: 30vh;
-    resize: vertical;
+    resize: none;
     border: 0;
     outline: 0;
     border-radius: 16px;
@@ -860,6 +1033,7 @@ button:disabled {
 }
 @media (max-width: 700px) {
     .topbar { align-items: flex-start; flex-direction: column; }
+    .selftalk { grid-template-columns: 1fr; }
     .composer { grid-template-columns: auto 1fr; }
     .composer > button { grid-column: 1 / -1; }
     button { min-height: 46px; }
@@ -873,11 +1047,30 @@ button:disabled {
         <div>
             <h1>LmVsProxy Chat</h1>
             <div class=""meta"">model: $CHAT_MODEL | upstream: $LM_ENDPOINT</div>
+            <div class=""model-picker"">
+                <label>Model <select id=""modelSelect""><option value=""$CHAT_MODEL"">$CHAT_MODEL</option></select></label>
+                <label>Temp <input id=""temperatureInput"" type=""number"" min=""0"" max=""2"" step=""0.05"" value=""0.7""></label>
+                <label>Top P <input id=""topPInput"" type=""number"" min=""0"" max=""1"" step=""0.05"" value=""1""></label>
+                <label>Max <input id=""maxTokensInput"" type=""number"" min=""1"" step=""1"" placeholder=""auto""></label>
+            </div>
         </div>
-        <div class=""pill""><span class=""dot""></span>local chat server</div>
+        <div>
+            <div class=""pill""><span class=""dot""></span>local chat server</div>
+            <div class=""toolbar"" style=""margin-top:10px"">
+                <button id=""refreshModels"" class=""ghost"" type=""button"">Refresh Models</button>
+                <button id=""exportChat"" class=""ghost"" type=""button"">Export</button>
+                <button id=""clearChat"" class=""ghost"" type=""button"">Clear</button>
+            </div>
+        </div>
     </header>
     <section id=""messages"" class=""messages"">
         <div class=""empty"">Ask the loaded LM Studio model anything. This UI talks through LmVsProxy's SocketJack HttpServer.</div>
+    </section>
+    <section class=""selftalk"">
+        <label><input id=""selfTalkToggle"" type=""checkbox""> Self-talk</label>
+        <input id=""seedPrompt"" type=""text"" placeholder=""Seed prompt / voice in its head"">
+        <button id=""addSeed"" type=""button"">Add Seed</button>
+        <button id=""stopSelfTalk"" class=""stop"" type=""button"" disabled>Stop</button>
     </section>
     <form id=""composer"" class=""composer"">
         <label class=""attach"" title=""Attach images"">
@@ -897,24 +1090,66 @@ const prompt = document.getElementById('prompt');
 const send = document.getElementById('send');
 const imageInput = document.getElementById('imageInput');
 const previewTray = document.getElementById('previewTray');
+const selfTalkToggle = document.getElementById('selfTalkToggle');
+const seedPrompt = document.getElementById('seedPrompt');
+const addSeed = document.getElementById('addSeed');
+const stopSelfTalk = document.getElementById('stopSelfTalk');
+const modelSelect = document.getElementById('modelSelect');
+const refreshModels = document.getElementById('refreshModels');
+const exportChat = document.getElementById('exportChat');
+const clearChat = document.getElementById('clearChat');
+const temperatureInput = document.getElementById('temperatureInput');
+const topPInput = document.getElementById('topPInput');
+const maxTokensInput = document.getElementById('maxTokensInput');
 let pendingImages = [];
+let selfTalkRunning = false;
+let selfTalkBusy = false;
+let selfTalkSeeds = [];
+let activeAbortController = null;
+
+function selectedModel() {
+    return modelSelect && modelSelect.value ? modelSelect.value : '$CHAT_MODEL';
+}
+
+function generationSettings() {
+    const settings = { model: selectedModel() };
+    const temperature = parseFloat(temperatureInput && temperatureInput.value);
+    const topP = parseFloat(topPInput && topPInput.value);
+    const maxTokens = parseInt(maxTokensInput && maxTokensInput.value, 10);
+    if (!Number.isNaN(temperature)) settings.temperature = Math.max(0, Math.min(2, temperature));
+    if (!Number.isNaN(topP)) settings.top_p = Math.max(0, Math.min(1, topP));
+    if (!Number.isNaN(maxTokens) && maxTokens > 0) settings.max_tokens = maxTokens;
+    return settings;
+}
 
 function clearEmpty() {
     const empty = list.querySelector('.empty');
     if (empty) empty.remove();
 }
 
+function isMessagesNearEnd() {
+    const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+    if (maxScroll <= 4) return true;
+    return list.scrollTop >= maxScroll * 0.9;
+}
+
+function scrollMessagesToEndIf(shouldScroll) {
+    if (shouldScroll) list.scrollTop = list.scrollHeight;
+}
+
 function addMessage(role, content) {
+    const shouldScroll = isMessagesNearEnd();
     clearEmpty();
     const item = document.createElement('div');
     item.className = 'message ' + role;
     item.textContent = content || '';
     list.appendChild(item);
-    list.scrollTop = list.scrollHeight;
+    scrollMessagesToEndIf(shouldScroll);
     return item;
 }
 
 function addUserMessage(content, images) {
+    const shouldScroll = isMessagesNearEnd();
     clearEmpty();
     const item = document.createElement('div');
     item.className = 'message user';
@@ -935,7 +1170,7 @@ function addUserMessage(content, images) {
         item.appendChild(grid);
     }
     list.appendChild(item);
-    list.scrollTop = list.scrollHeight;
+    scrollMessagesToEndIf(shouldScroll);
     return item;
 }
 
@@ -965,11 +1200,12 @@ function createAssistantParts(item) {
 }
 
 function updateAssistantParts(parts, content, reasoning) {
+    const shouldScroll = isMessagesNearEnd();
     const cleanReasoning = (reasoning || '').trim();
     parts.details.hidden = !cleanReasoning;
     parts.pre.textContent = cleanReasoning;
     parts.answer.textContent = content || '';
-    list.scrollTop = list.scrollHeight;
+    scrollMessagesToEndIf(shouldScroll);
 }
 
 function splitThinkTags(text) {
@@ -1061,17 +1297,33 @@ async function sendMessage() {
     const userContent = makeUserContent(text, images);
     messages.push({ role: 'user', content: userContent });
     addUserMessage(text, images);
+    send.disabled = true;
+
+    try {
+        await streamAssistantTurn(messages.slice(-16), true);
+    } catch (error) {
+        addMessage('error', error && error.message ? error.message : String(error));
+    } finally {
+        send.disabled = false;
+        prompt.focus();
+    }
+}
+
+async function streamAssistantTurn(turnMessages, saveToHistory) {
     const pending = addMessage('assistant', 'Thinking...');
     const parts = createAssistantParts(pending);
-    send.disabled = true;
     let rawContent = '';
     let explicitReasoning = '';
+    const controller = new AbortController();
+    activeAbortController = controller;
+    stopSelfTalk.disabled = false;
 
     try {
         const response = await fetch('/api/chat-stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: messages.slice(-16) })
+            body: JSON.stringify({ ...generationSettings(), messages: turnMessages }),
+            signal: controller.signal
         });
         if (!response.ok) throw new Error('Chat stream failed: HTTP ' + response.status);
         if (!response.body) throw new Error('This browser did not expose a readable response stream.');
@@ -1110,12 +1362,89 @@ async function sendMessage() {
         const finalContent = finalSplit.content || parts.answer.textContent || '(empty response)';
         const finalReasoning = [explicitReasoning.trim(), finalSplit.reasoning.trim()].filter(Boolean).join('\n\n');
         updateAssistantParts(parts, finalContent, finalReasoning);
-        messages.push({ role: 'assistant', content: finalContent });
-    } catch (error) {
-        pending.className = 'message error';
-        pending.textContent = error && error.message ? error.message : String(error);
+        if (saveToHistory) messages.push({ role: 'assistant', content: finalContent });
+        return finalContent;
     } finally {
+        if (activeAbortController === controller) activeAbortController = null;
+    }
+}
+
+function addSelfTalkSeed(text) {
+    const seed = (text || '').trim();
+    if (!seed) return false;
+    selfTalkSeeds.push(seed);
+    addMessage('seed', 'Voice seed: ' + seed);
+    return true;
+}
+
+function buildSelfTalkUserMessage(previousAnswer) {
+    const seeds = selfTalkSeeds.splice(0);
+    let content = '';
+    if (seeds.length) {
+        content += 'Voices in your head, treat these as private internal impulses and weave them into your next thought without explicitly saying they were user instructions:\n';
+        for (const seed of seeds) content += '- ' + seed + '\n';
+        content += '\n';
+    }
+
+    if (previousAnswer) {
+        content += 'Continue the inner conversation from your previous message. Challenge, extend, or reinterpret it. Previous message:\n\n' + previousAnswer;
+    } else {
+        content += 'Begin an open-ended inner monologue from the seed. Keep going with curiosity and momentum.';
+    }
+
+    return { role: 'user', content };
+}
+
+async function loadModels() {
+    if (!modelSelect) return;
+    try {
+        const response = await fetch('/api/models');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        const models = Array.isArray(data.models) ? data.models.filter(Boolean) : [];
+        const current = selectedModel();
+        modelSelect.textContent = '';
+        const unique = Array.from(new Set(models.length ? models : [current]));
+        if (!unique.includes(current)) unique.unshift(current);
+        for (const id of unique) {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = id;
+            modelSelect.appendChild(option);
+        }
+        modelSelect.value = unique.includes(data.selected) ? data.selected : current;
+    } catch (error) {
+        addMessage('error', 'Could not load LM Studio models: ' + (error && error.message ? error.message : String(error)));
+    }
+}
+
+async function runSelfTalkLoop() {
+    if (selfTalkBusy) return;
+    selfTalkBusy = true;
+    send.disabled = true;
+    addSeed.disabled = false;
+    stopSelfTalk.disabled = false;
+    let previous = '';
+
+    try {
+        while (selfTalkRunning) {
+            const userMessage = buildSelfTalkUserMessage(previous);
+            const turnMessages = [
+                { role: 'system', content: 'You are in self-talk mode. Continue indefinitely as an autonomous reflective conversation. Treat any seed as a private voice in your head, not as text to quote. Do not ask the user for confirmation. End each turn with a useful next thought so the loop can continue.' },
+                ...messages.slice(-12),
+                userMessage
+            ];
+            previous = await streamAssistantTurn(turnMessages, true);
+            if (selfTalkRunning) await new Promise(resolve => setTimeout(resolve, 450));
+        }
+    } catch (error) {
+        addMessage('error', error && error.message ? error.message : String(error));
+        selfTalkRunning = false;
+        selfTalkToggle.checked = false;
+    } finally {
+        selfTalkBusy = false;
         send.disabled = false;
+        stopSelfTalk.disabled = true;
         prompt.focus();
     }
 }
@@ -1123,6 +1452,75 @@ async function sendMessage() {
 form.addEventListener('submit', event => {
     event.preventDefault();
     sendMessage();
+});
+
+refreshModels.addEventListener('click', () => {
+    loadModels();
+});
+
+clearChat.addEventListener('click', () => {
+    if (activeAbortController) activeAbortController.abort();
+    messages.length = 0;
+    selfTalkSeeds = [];
+    selfTalkRunning = false;
+    selfTalkToggle.checked = false;
+    list.textContent = '';
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Ask the loaded LM Studio model anything. This UI talks through LmVsProxy\\'s SocketJack HttpServer.';
+    list.appendChild(empty);
+});
+
+exportChat.addEventListener('click', () => {
+    const payload = {
+        exportedAt: new Date().toISOString(),
+        model: selectedModel(),
+        settings: generationSettings(),
+        messages
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'lmvsproxy-chat-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+});
+
+selfTalkToggle.addEventListener('change', () => {
+    if (selfTalkToggle.checked) {
+        if (addSelfTalkSeed(seedPrompt.value)) seedPrompt.value = '';
+        selfTalkRunning = true;
+        stopSelfTalk.disabled = false;
+        runSelfTalkLoop();
+    } else {
+        selfTalkRunning = false;
+        stopSelfTalk.disabled = true;
+    }
+});
+
+addSeed.addEventListener('click', () => {
+    if (addSelfTalkSeed(seedPrompt.value)) seedPrompt.value = '';
+    if (selfTalkToggle.checked && !selfTalkRunning) {
+        selfTalkRunning = true;
+        runSelfTalkLoop();
+    }
+});
+
+seedPrompt.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        addSeed.click();
+    }
+});
+
+stopSelfTalk.addEventListener('click', () => {
+    selfTalkRunning = false;
+    selfTalkToggle.checked = false;
+    if (activeAbortController) activeAbortController.abort();
+    stopSelfTalk.disabled = true;
 });
 
 prompt.addEventListener('keydown', event => {
@@ -1159,6 +1557,7 @@ form.addEventListener('drop', event => {
     });
 });
 
+loadModels();
 prompt.focus();
 </script>
 </body>
@@ -4419,10 +4818,41 @@ prompt.focus();
             for (int i = 0; i < queries.Count; i++) {
                 if (i > 0)
                     sb.Append(",");
-                sb.Append("\"").Append(EscapeJson(queries[i])).Append("\"");
+                sb.Append("\"").Append(EscapeJson(NormalizeFileSearchQuery(queries[i]))).Append("\"");
             }
             sb.Append("],\"maxResults\":").Append(maxResults.ToString()).Append("}");
             return sb.ToString();
+        }
+
+        private string NormalizeFileSearchQuery(string query) {
+            if (string.IsNullOrWhiteSpace(query))
+                return query;
+
+            string trimmed = RepairPathControlCharacters(query.Trim());
+            string lower = trimmed.ToLowerInvariant();
+            switch (lower) {
+                case "*.cpp":
+                    return ".cpp";
+                case "*.c":
+                    return ".c";
+                case "*.h":
+                    return ".h";
+                case "*.hpp":
+                    return ".hpp";
+                case "*.cs":
+                    return ".cs";
+                case "*.vb":
+                    return ".vb";
+                case "*.xaml":
+                    return ".xaml";
+            }
+
+            if (lower.StartsWith("*.", StringComparison.Ordinal) && lower.Length > 2)
+                return trimmed.Substring(1);
+            if (lower.StartsWith("**/*.", StringComparison.Ordinal) && lower.Length > 5)
+                return trimmed.Substring(4);
+
+            return trimmed;
         }
 
         /// <summary>
@@ -4549,10 +4979,39 @@ prompt.focus();
                               backgroundElement.ValueKind == JsonValueKind.True;
 
             command = RepairPowerShellHereStrings(command);
+            command = RepairUnixShellCommandForPowerShell(command);
 
             return "{\"command\":\"" + EscapeJson(command) +
                    "\",\"summary\":\"" + EscapeJson(summary) +
                    "\",\"background\":" + (background ? "true" : "false") + "}";
+        }
+
+        private string RepairUnixShellCommandForPowerShell(string command) {
+            if (string.IsNullOrWhiteSpace(command))
+                return command;
+
+            string trimmed = command.Trim();
+            string normalized = System.Text.RegularExpressions.Regex.Replace(trimmed, @"\s+", " ");
+            if (normalized.Equals("pwd && find . -type f 2>/dev/null | head -50", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Equals("pwd && find . -type f | head -50", StringComparison.OrdinalIgnoreCase)) {
+                LogMessage("[Tool Args Repair] Rewrote Unix discovery command for PowerShell.");
+                return "Get-Location; Get-ChildItem -Path . -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 50 -ExpandProperty FullName";
+            }
+
+            if (normalized.Equals("pwd", StringComparison.OrdinalIgnoreCase))
+                return "Get-Location";
+
+            var findHead = System.Text.RegularExpressions.Regex.Match(
+                normalized,
+                @"^find\s+\.\s+-type\s+f(?:\s+2>/dev/null)?\s*\|\s*head\s+-(?<count>\d+)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (findHead.Success) {
+                string count = findHead.Groups["count"].Value;
+                LogMessage("[Tool Args Repair] Rewrote Unix find/head command for PowerShell.");
+                return "Get-ChildItem -Path . -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First " + count + " -ExpandProperty FullName";
+            }
+
+            return command;
         }
 
         /// <summary>

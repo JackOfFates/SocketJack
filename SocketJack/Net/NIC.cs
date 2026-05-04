@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -238,10 +238,15 @@ namespace SocketJack.Net {
         /// <param name="port"></param>
         /// <param name="ForwardPortIfAvailable"></param>
         /// <returns></returns>
-        public static void ForwardPorts(int[] ports) {
+        public static async Task<bool> ForwardPorts(int[] ports) {
+            bool allForwarded = true;
             for (int i = 0; i < ports.Length; i++) {
-                ForwardPort(ports[i]).ConfigureAwait(false);
+                bool forwarded = await ForwardPort(ports[i]);
+                if (!forwarded) {
+                    allForwarded = false;
+                }
             }
+            return allForwarded;
         }
 
         private static int RandomNumber(int LowerBound, int UpperBound) {

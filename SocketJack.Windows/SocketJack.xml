@@ -1774,6 +1774,11 @@
             Model id sent by the chat UI to LM Studio's OpenAI-compatible endpoint.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.LmVsProxy.PromptTimeout">
+            <summary>
+            Maximum time the proxy will wait for LM Studio to produce/stream a prompt response.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.LmVsProxy.IsChatServerCreated">
             <summary>
             Returns true after the lazy chat server has been created.

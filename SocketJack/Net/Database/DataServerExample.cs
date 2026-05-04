@@ -42,7 +42,7 @@ namespace SocketJack.Examples {
             server.Save();
 
             // Query handler
-            server.QueryExecuting += (session, query, ref result) => {
+            server.QueryExecuting += delegate (SqlSession session, string query, ref QueryResult result) {
                 Console.WriteLine($"Query from {session.Username}: {query}");
                 HandleQuery(server, session, query, ref result);
             };
@@ -79,7 +79,7 @@ namespace SocketJack.Examples {
             mutable.RegisterProtocol(tds);
 
             // Query handler
-            dataServer.QueryExecuting += (session, query, ref result) => {
+            dataServer.QueryExecuting += delegate (SqlSession session, string query, ref QueryResult result) {
                 Console.WriteLine($"[TDS] Query from {session.Username}: {query}");
                 HandleQuery(dataServer, session, query, ref result);
             };

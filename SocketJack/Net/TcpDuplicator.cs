@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace SocketJack.Net {
-    internal class TcpDuplicator : IDisposable {
+    public class TcpDuplicator : IDisposable {
 
         // This class is basically a reverse VPN.
         // I created it to serve as a way to connect Visual Studio Copilot to the SocketJack server, which is running on a different machine. It works by creating a TCP listener on the local machine, and then forwarding all incoming connections to a remote server.
@@ -42,6 +42,10 @@ namespace SocketJack.Net {
         #endregion
 
         #region Public Methods
+
+        public bool IsRunning {
+            get { return _isRunning; }
+        }
 
         /// <summary>
         /// Starts listening on the local port and forwarding connections to the remote server.

@@ -1,4 +1,5 @@
 Imports System.IO
+Imports System.Net
 Imports System.Text
 Imports System.Windows.Threading
 Imports SocketJack.Extensions
@@ -14,6 +15,8 @@ Public Class HttpServerTest
     'Public WithEvents Server As HttpServer
     Private _broadcast As BroadcastServer
     Private _statsTimer As DispatcherTimer
+    Private _remoteLmStudioProxy As TcpDuplicator
+    Private Const LocalLmStudioProxyPort As Integer = 11435
 
 
     Public Sub New()
@@ -23,6 +26,7 @@ Public Class HttpServerTest
 
         ' Add any initialization after the InitializeComponent() call.
         Server = New LmVsProxy("localhost", 11435, 11434)
+        Server.PromptTimeout = TimeSpan.FromMinutes(30)
         AddHandler Server.OutputLog, AddressOf OnServerLog
         NIC.ForwardPort(ServerPort).ConfigureAwait(True)
         UpdateStartStopUi()
@@ -176,7 +180,10 @@ Public Class HttpServerTest
         UpdateStartStopUi("Starting..", isBusy:=True)
 
         Try
+            StartRemoteLmStudioProxyIfEnabled()
+
             If Not Server.Start() Then
+                StopRemoteLmStudioProxy()
                 Return
             End If
 
@@ -190,12 +197,14 @@ Public Class HttpServerTest
 
                 Log("VS proxy endpoint: http://localhost:" & ServerPort & "/v1/chat/completions")
                 Log("Chat UI available at: " & Server.ChatServerUrl)
+                Log("LM Studio prompt timeout: " & Server.PromptTimeout.TotalMinutes.ToString("0") & " minutes")
                 Process.Start(Server.ChatServerUrl)
             Catch ex As Exception
                 Log("Chat UI start error: " & ex.Message)
             End Try
 
         Catch ex As Exception
+            StopRemoteLmStudioProxy()
             Log("StartTest error: " & ex.Message)
         Finally
             UpdateStartStopUi()
@@ -206,6 +215,7 @@ Public Class HttpServerTest
         If Server IsNot Nothing AndAlso (Server.IsListening OrElse (Server.IsChatServerCreated AndAlso Server.ChatServer.IsListening)) Then
             UpdateStartStopUi("Stopping..", isBusy:=True)
             Server.Stop()
+            StopRemoteLmStudioProxy()
             UpdateStartStopUi()
         End If
     End Sub
@@ -217,6 +227,83 @@ Public Class HttpServerTest
             ITest_StartTest()
         End If
     End Sub
+
+    Private Sub CheckRemoteLmStudio_CheckedChanged(sender As Object, e As RoutedEventArgs) Handles CheckRemoteLmStudio.Checked, CheckRemoteLmStudio.Unchecked
+        If TextRemoteServer IsNot Nothing Then
+            TextRemoteServer.IsEnabled = CheckRemoteLmStudio.IsChecked.GetValueOrDefault(False) AndAlso Not Running
+        End If
+    End Sub
+
+    Private Sub StartRemoteLmStudioProxyIfEnabled()
+        If CheckRemoteLmStudio Is Nothing OrElse Not CheckRemoteLmStudio.IsChecked.GetValueOrDefault(False) Then Return
+
+        Dim remoteHost As String = Nothing
+        Dim remotePort As Integer = LocalLmStudioProxyPort
+        If Not TryParseRemoteServer(TextRemoteServer.Text, remoteHost, remotePort) Then
+            Throw New InvalidOperationException("Remote Server must be a host, host:port, or http(s) URL.")
+        End If
+
+        StopRemoteLmStudioProxy()
+        _remoteLmStudioProxy = New TcpDuplicator(remoteHost, remotePort, LocalLmStudioProxyPort)
+        _remoteLmStudioProxy.Start()
+        TextRemoteServer.IsEnabled = False
+        Log("Remote LM Studio localhost proxy enabled: 127.0.0.1:" & LocalLmStudioProxyPort & " -> " & remoteHost & ":" & remotePort)
+    End Sub
+
+    Private Sub StopRemoteLmStudioProxy()
+        If _remoteLmStudioProxy IsNot Nothing Then
+            Try
+                If _remoteLmStudioProxy.IsRunning Then
+                    Log("Stopping remote LM Studio localhost proxy on 127.0.0.1:" & LocalLmStudioProxyPort)
+                End If
+                _remoteLmStudioProxy.Dispose()
+            Catch ex As Exception
+                Log("Remote LM Studio proxy stop error: " & ex.Message)
+            Finally
+                _remoteLmStudioProxy = Nothing
+            End Try
+        End If
+
+        If TextRemoteServer IsNot Nothing AndAlso CheckRemoteLmStudio IsNot Nothing Then
+            TextRemoteServer.IsEnabled = CheckRemoteLmStudio.IsChecked.GetValueOrDefault(False) AndAlso Not Running
+        End If
+    End Sub
+
+    Private Function TryParseRemoteServer(input As String, ByRef host As String, ByRef port As Integer) As Boolean
+        host = Nothing
+        port = LocalLmStudioProxyPort
+
+        Dim value = If(input, String.Empty).Trim()
+        If String.IsNullOrWhiteSpace(value) Then Return False
+
+        Dim uri As Uri = Nothing
+        If Uri.TryCreate(value, UriKind.Absolute, uri) AndAlso Not String.IsNullOrWhiteSpace(uri.Host) Then
+            host = uri.Host
+            If uri.Port > 0 Then port = uri.Port
+            Return True
+        End If
+
+        If value.StartsWith("[") Then
+            Dim close = value.IndexOf("]"c)
+            If close > 1 Then
+                host = value.Substring(1, close - 1)
+                If value.Length > close + 2 AndAlso value(close + 1) = ":"c Then
+                    If Not Integer.TryParse(value.Substring(close + 2), port) Then Return False
+                End If
+                Return Not String.IsNullOrWhiteSpace(host)
+            End If
+        End If
+
+        Dim lastColon = value.LastIndexOf(":"c)
+        If lastColon > 0 AndAlso value.IndexOf(":"c) = lastColon Then
+            host = value.Substring(0, lastColon).Trim()
+            If Not Integer.TryParse(value.Substring(lastColon + 1).Trim(), port) Then Return False
+        Else
+            host = value
+        End If
+
+        Return Not String.IsNullOrWhiteSpace(host) AndAlso port > 0 AndAlso port <= 65535
+    End Function
 
     'Private Sub ButtonRecord_Click(sender As Object, e As RoutedEventArgs) Handles ButtonRecord.Click
     '    _broadcast.Recording = Not _broadcast.Recording
@@ -309,9 +396,9 @@ Public Class HttpServerTest
     End Sub
 
     Public Async Function Forward() As Task(Of Boolean)
-        Dim forwarded As Boolean = Await NIC.ForwardPort(80)
+        Dim forwarded As Boolean = Await NIC.ForwardPorts(New Integer() {80, 11434, 11435, 11436})
         If forwarded Then
-            Log("Port 80 forwarded successfully via UPnP." & Environment.NewLine)
+            Log("Ports 80, 11434, 11435, & 11436 forwarded successfully via UPnP." & Environment.NewLine)
         Else
             Log("Port forwarding via UPnP failed or not available." & Environment.NewLine)
         End If

@@ -1,11 +1,15 @@
-Imports System.Collections.ObjectModel
+﻿Imports System.Collections.ObjectModel
 Imports System.ComponentModel
+Imports System.Diagnostics
 Imports System.IO
+Imports System.Linq
 Imports System.Text
 Imports System.Text.RegularExpressions
 Imports System.Threading
 Imports System.Windows.Threading
 Imports Microsoft.Win32
+Imports MonoTorrent
+Imports MonoTorrent.Client
 Imports SocketJack.Net
 Imports SocketJack.Net.Torrent
 
@@ -77,6 +81,8 @@ Public Class TorrentClientTest
     Private _speedTimer As System.Windows.Threading.DispatcherTimer
     Private _lastBytesDownloaded As Long = 0
     Private _lastSpeedCheck As DateTime = DateTime.Now
+    Private _ruTrackerSearchCts As CancellationTokenSource
+    Private _standardBtEngine As ClientEngine
 
 #End Region
 
@@ -181,6 +187,7 @@ Public Class TorrentClientTest
         Public Property Client As TorrentClient
         Public Property Metadata As TorrentMetadata
         Public Property LastBytes As Long
+        Public Property StandardManager As TorrentManager
     End Class
 
 #End Region
@@ -291,7 +298,7 @@ Public Class TorrentClientTest
         End If
     End Sub
 
-    Private Sub ButtonRuTrackerSearch_Click(sender As Object, e As RoutedEventArgs) Handles ButtonRuTrackerSearch.Click
+    Private Sub ButtonRuTrackerSearch_Click(sender As Object, e As RoutedEventArgs)
         Dim query As String = RuTrackerSearchQuery.Text
         If String.IsNullOrWhiteSpace(query) Then Return
         _ruTrackerCurrentPage = 0
@@ -328,7 +335,7 @@ Public Class TorrentClientTest
             Return
         End If
 
-        AddMagnetLink(result.MagnetLink)
+        AddMagnetLink(result.MagnetLink, result.Title)
         MainTabs.SelectedItem = TransfersTab
     End Sub
 
@@ -336,7 +343,7 @@ Public Class TorrentClientTest
 
 #Region "Transfer Context Menu"
 
-    Private Sub CtxCopyMagnet_Click(sender As Object, e As RoutedEventArgs) Handles CtxCopyMagnet.Click
+    Private Sub CtxCopyMagnet_Click(sender As Object, e As RoutedEventArgs)
         Dim item = TryCast(TransferListView.SelectedItem, TransferItem)
         If item Is Nothing Then Return
         If Not String.IsNullOrEmpty(item.MagnetUri) Then
@@ -347,7 +354,7 @@ Public Class TorrentClientTest
         End If
     End Sub
 
-    Private Sub CtxCopyHash_Click(sender As Object, e As RoutedEventArgs) Handles CtxCopyHash.Click
+    Private Sub CtxCopyHash_Click(sender As Object, e As RoutedEventArgs)
         Dim item = TryCast(TransferListView.SelectedItem, TransferItem)
         If item Is Nothing Then Return
         If Not String.IsNullOrEmpty(item.InfoHash) Then
@@ -358,7 +365,7 @@ Public Class TorrentClientTest
         End If
     End Sub
 
-    Private Sub CtxStopTransfer_Click(sender As Object, e As RoutedEventArgs) Handles CtxStopTransfer.Click
+    Private Sub CtxStopTransfer_Click(sender As Object, e As RoutedEventArgs)
         Dim item = TryCast(TransferListView.SelectedItem, TransferItem)
         If item Is Nothing Then Return
         If item.Client IsNot Nothing Then
@@ -371,7 +378,7 @@ Public Class TorrentClientTest
         Log(String.Format("[UI] Stopped transfer: '{0}'", item.Name))
     End Sub
 
-    Private Sub CtxRemoveTransfer_Click(sender As Object, e As RoutedEventArgs) Handles CtxRemoveTransfer.Click
+    Private Sub CtxRemoveTransfer_Click(sender As Object, e As RoutedEventArgs)
         Dim item = TryCast(TransferListView.SelectedItem, TransferItem)
         If item Is Nothing Then Return
         If item.Client IsNot Nothing Then
@@ -387,11 +394,11 @@ Public Class TorrentClientTest
 
 #Region "Magnet Link Support"
 
-    Private Sub AddMagnetLink(magnetUri As String)
+    Private Sub AddMagnetLink(magnetUri As String, Optional preferredName As String = "")
         Log(String.Format("[Magnet] Adding magnet link: {0}", If(magnetUri.Length > 80, magnetUri.Substring(0, 80) & "...", magnetUri)))
 
         Dim infoHash As String = ExtractInfoHash(magnetUri)
-        Dim displayName As String = ExtractDisplayName(magnetUri)
+        Dim displayName As String = If(String.IsNullOrWhiteSpace(preferredName), ExtractDisplayName(magnetUri), preferredName)
         If String.IsNullOrEmpty(displayName) Then displayName = "Unknown"
 
         Dim transfer As New TransferItem()
@@ -407,7 +414,57 @@ Public Class TorrentClientTest
                                    UpdateStatusBar()
                                End Sub)
 
+        Dim metadata As TorrentMetadata = Nothing
+        If TryCreateSocketJackMetadataFromMagnet(magnetUri, metadata) Then
+            transfer.Metadata = metadata
+            transfer.InfoHash = metadata.InfoHash
+            transfer.Name = If(String.IsNullOrWhiteSpace(displayName), metadata.Name, displayName)
+            transfer.Size = FormatBytes(metadata.TotalSize)
+            transfer.Status = "Starting"
+            transfer.MagnetUri = BuildSocketJackMagnet(metadata)
+            StartDownloadFromMetadataAsync(transfer, metadata)
+        Else
+            transfer.Status = "Starting standard magnet download"
+            Log("[Magnet] Standard metadata exchange started (DHT/trackers).")
+            StartStandardMagnetDownloadAsync(transfer, magnetUri)
+        End If
+
         Log(String.Format("[Magnet] Added: {0} (hash: {1})", displayName, If(String.IsNullOrEmpty(infoHash), "unknown", infoHash)))
+    End Sub
+
+    Private Async Sub StartStandardMagnetDownloadAsync(transfer As TransferItem, magnetUri As String)
+        Try
+            Dim tempDir = Path.Combine(Path.GetTempPath(), "SocketJack_Torrent")
+            If Not Directory.Exists(tempDir) Then Directory.CreateDirectory(tempDir)
+            Dim btDir = Path.Combine(tempDir, "bt_downloads")
+            If Not Directory.Exists(btDir) Then Directory.CreateDirectory(btDir)
+
+            If _standardBtEngine Is Nothing Then
+                Dim settingsBuilder As New EngineSettingsBuilder()
+                _standardBtEngine = New ClientEngine(settingsBuilder.ToSettings())
+            End If
+
+            Dim magnet = MagnetLink.Parse(magnetUri)
+            Dim manager = Await _standardBtEngine.AddAsync(magnet, btDir)
+            transfer.StandardManager = manager
+            transfer.Status = "Fetching metadata"
+            Log("[Magnet] Waiting for metadata from peers...")
+
+            Await manager.StartAsync()
+            Await manager.WaitForMetadataAsync()
+
+            If manager.Torrent IsNot Nothing Then
+                transfer.Name = manager.Torrent.Name
+                transfer.Size = FormatBytes(manager.Torrent.Size)
+                transfer.Status = "Downloading"
+                Log(String.Format("[Magnet] Metadata loaded: {0} ({1})", transfer.Name, transfer.Size))
+            Else
+                transfer.Status = "Downloading"
+            End If
+        Catch ex As Exception
+            transfer.Status = "Failed"
+            Log("[Magnet] Standard magnet start failed: " & ex.Message)
+        End Try
     End Sub
 
     Private Shared Function ExtractInfoHash(magnetUri As String) As String
@@ -420,6 +477,120 @@ Public Class TorrentClientTest
         Dim match = Regex.Match(magnetUri, "dn=([^&]+)", RegexOptions.IgnoreCase)
         If match.Success Then Return Uri.UnescapeDataString(match.Groups(1).Value)
         Return ""
+    End Function
+
+    Private Shared Function ExtractMagnetValues(magnetUri As String, key As String) As List(Of String)
+        Dim values As New List(Of String)()
+        Dim pattern = String.Format("(?i)(?:\?|&){0}=([^&]+)", Regex.Escape(key))
+        For Each m As Match In Regex.Matches(magnetUri, pattern)
+            values.Add(Uri.UnescapeDataString(m.Groups(1).Value.Replace("+", "%20")))
+        Next
+        Return values
+    End Function
+
+    Private Shared Function BuildSocketJackMagnet(metadata As TorrentMetadata) As String
+        Dim parts As New List(Of String) From {
+            "xt=urn:btih:" & Uri.EscapeDataString(metadata.InfoHash),
+            "dn=" & Uri.EscapeDataString(metadata.Name),
+            "xl=" & metadata.TotalSize.ToString(),
+            "x.sjps=" & metadata.PieceSize.ToString(),
+            "x.sjpc=" & metadata.PieceCount.ToString(),
+            "x.sjph=" & Uri.EscapeDataString(String.Join(",", metadata.PieceHashes))
+        }
+
+        For Each tracker In metadata.Trackers
+            parts.Add("tr=" & Uri.EscapeDataString(tracker))
+        Next
+
+        Return "magnet:?" & String.Join("&", parts)
+    End Function
+
+    Private Shared Function TryCreateSocketJackMetadataFromMagnet(magnetUri As String, ByRef metadata As TorrentMetadata) As Boolean
+        metadata = Nothing
+
+        Dim pieceHashesValue = ExtractMagnetValues(magnetUri, "x.sjph").FirstOrDefault()
+        If String.IsNullOrWhiteSpace(pieceHashesValue) Then Return False
+
+        Dim name = ExtractDisplayName(magnetUri)
+        If String.IsNullOrWhiteSpace(name) Then name = "Unknown"
+
+        Dim infoHash = ExtractInfoHash(magnetUri)
+        Dim pieceSizeValue = ExtractMagnetValues(magnetUri, "x.sjps").FirstOrDefault()
+        Dim totalSizeValue = ExtractMagnetValues(magnetUri, "xl").FirstOrDefault()
+        Dim pieceCountValue = ExtractMagnetValues(magnetUri, "x.sjpc").FirstOrDefault()
+        Dim trackers = ExtractMagnetValues(magnetUri, "tr")
+
+        Dim pieceSize As Integer = 0
+        Dim totalSize As Long = 0
+        Dim pieceCount As Integer = 0
+
+        If Not Integer.TryParse(pieceSizeValue, pieceSize) OrElse pieceSize <= 0 Then Return False
+        If Not Long.TryParse(totalSizeValue, totalSize) OrElse totalSize <= 0 Then Return False
+
+        Dim pieceHashes = pieceHashesValue.Split(","c).Where(Function(h) Not String.IsNullOrWhiteSpace(h)).ToList()
+        If pieceHashes.Count = 0 Then Return False
+
+        If Not Integer.TryParse(pieceCountValue, pieceCount) OrElse pieceCount <= 0 Then
+            pieceCount = pieceHashes.Count
+        End If
+
+        If String.IsNullOrWhiteSpace(infoHash) Then Return False
+        If trackers.Count = 0 Then trackers.Add("127.0.0.1:7700")
+
+        metadata = New TorrentMetadata With {
+            .Name = name,
+            .InfoHash = infoHash,
+            .PieceSize = pieceSize,
+            .TotalSize = totalSize,
+            .PieceCount = pieceCount,
+            .PieceHashes = pieceHashes,
+            .Trackers = trackers
+        }
+        Return True
+    End Function
+
+    Private Async Function StartDownloadFromMetadataAsync(transfer As TransferItem, metadata As TorrentMetadata) As Task
+        Try
+            Dim tempDir = Path.Combine(Path.GetTempPath(), "SocketJack_Torrent")
+            If Not Directory.Exists(tempDir) Then Directory.CreateDirectory(tempDir)
+            _downloadDir = Path.Combine(tempDir, "downloads")
+            If Not Directory.Exists(_downloadDir) Then Directory.CreateDirectory(_downloadDir)
+
+            Dim listenPort = NIC.FindOpenPort(7900, 8100).Result
+            Dim client As New TorrentClient(metadata, listenPort, _downloadDir)
+            transfer.Client = client
+            transfer.Metadata = metadata
+
+            AddHandler client.PieceCompleted, Sub(pieceIndex)
+                                                  Dispatcher.InvokeAsync(Sub()
+                                                                             transfer.ProgressValue = client.Progress
+                                                                             transfer.Status = "Downloading"
+                                                                         End Sub)
+                                              End Sub
+            AddHandler client.DownloadCompleted, Sub()
+                                                     Dispatcher.InvokeAsync(Sub()
+                                                                                transfer.ProgressValue = 100
+                                                                                transfer.Status = "Complete"
+                                                                                transfer.Speed = "--"
+                                                                                transfer.ETA = "--"
+                                                                            End Sub)
+                                                 End Sub
+            AddHandler client.PeerConnectedEvent, Sub(peerId)
+                                                      Dim shortId = If(peerId.Length > 8, peerId.Substring(0, 8), peerId)
+                                                      Log("[Downloader] Peer connected: " & shortId)
+                                                  End Sub
+            AddHandler client.ErrorOccurred, Sub(ex)
+                                                 Log("[Downloader] Error: " & ex.Message)
+                                                 Dispatcher.InvokeAsync(Sub() transfer.Status = "Error")
+                                             End Sub
+
+            Dispatcher.InvokeAsync(Sub() transfer.Status = "Connecting")
+            Await client.StartAsync()
+            Dispatcher.InvokeAsync(Sub() transfer.Status = "Downloading")
+        Catch ex As Exception
+            Log("[Downloader] Failed to start: " & ex.Message)
+            Dispatcher.InvokeAsync(Sub() transfer.Status = "Failed")
+        End Try
     End Function
 
 #End Region
@@ -456,6 +627,8 @@ Public Class TorrentClientTest
             transfer.Status = "Seeding"
             transfer.IsSeeding = True
             transfer.Metadata = _metadata
+            transfer.InfoHash = _metadata.InfoHash
+            transfer.MagnetUri = BuildSocketJackMagnet(_metadata)
 
             Dispatcher.InvokeAsync(Sub()
                                        _transfers.Add(transfer)
@@ -511,6 +684,8 @@ Public Class TorrentClientTest
 
             Await _seeder.StartAsync()
             Log(String.Format("[Seeder] Seeding {0} ({1} pieces)", _metadata.Name, _metadata.PieceCount))
+            Log("[Seeder] Magnet link:")
+            Log(transfer.MagnetUri)
 
         Catch ex As OperationCanceledException
             Log("// Cancelled.")
@@ -524,7 +699,7 @@ Public Class TorrentClientTest
 
 #Region "RuTracker Login"
 
-    Private Sub ButtonRuTrackerLogin_Click(sender As Object, e As RoutedEventArgs) Handles ButtonRuTrackerLogin.Click
+    Private Sub ButtonRuTrackerLogin_Click(sender As Object, e As RoutedEventArgs)
         Dim loginWindow As New RuTrackerLoginWindow()
         loginWindow.Owner = Window.GetWindow(Me)
 
@@ -566,6 +741,13 @@ Public Class TorrentClientTest
 
     Private Async Sub SearchRuTracker(query As String, Optional page As Integer = 0)
         Try
+            If _ruTrackerSearchCts IsNot Nothing Then
+                _ruTrackerSearchCts.Cancel()
+                _ruTrackerSearchCts.Dispose()
+            End If
+            _ruTrackerSearchCts = New CancellationTokenSource()
+            Dim ct = _ruTrackerSearchCts.Token
+
             Dim pageStart As Integer = page * RuTrackerResultsPerPage
             Dispatcher.InvokeAsync(Sub()
                                        StatusSearch.Text = String.Format("Search: Searching (page {0})...", page + 1)
@@ -589,12 +771,10 @@ Public Class TorrentClientTest
 
             Dim html As String
             Try
-                ' Read as bytes and decode manually to handle servers returning invalid charset headers
-                Dim response = Await _httpClient.GetAsync(New Uri(url))
+                Dim response = Await _httpClient.GetAsync(New Uri(url), ct)
                 response.EnsureSuccessStatusCode()
                 Dim bytes = Await response.Content.ReadAsByteArrayAsync()
 
-                ' Try to use the charset from the Content-Type header, fall back to windows-1251
                 Dim enc As Encoding = Encoding.UTF8
                 Dim contentType = response.Content.Headers.ContentType
                 If contentType IsNot Nothing AndAlso Not String.IsNullOrEmpty(contentType.CharSet) Then
@@ -604,7 +784,6 @@ Public Class TorrentClientTest
                         enc = Encoding.GetEncoding("windows-1251")
                     End Try
                 Else
-                    ' RuTracker typically uses windows-1251
                     enc = Encoding.GetEncoding("windows-1251")
                 End If
                 html = enc.GetString(bytes)
@@ -614,7 +793,8 @@ Public Class TorrentClientTest
                 Return
             End Try
 
-            ' Check if we got redirected to login page
+            ct.ThrowIfCancellationRequested()
+
             If html.Contains("login-form-full") OrElse html.Contains("login_username") Then
                 _ruTrackerLoggedIn = False
                 Log("[RuTracker] Session expired. Please log in again.")
@@ -626,115 +806,99 @@ Public Class TorrentClientTest
                 Return
             End If
 
-            Dim results As New List(Of RuTrackerResult)()
-
-            ' Parse topic rows from the tracker search results table
+            Dim addedCount As Integer = 0
             Dim topicPattern As String = "(?s)<tr[^>]*class=""tCenter[^""]*hl-tr""[^>]*>.*?</tr>"
             Dim topicMatches = Regex.Matches(html, topicPattern, RegexOptions.IgnoreCase)
 
-            For Each topicMatch As Match In topicMatches
-                Dim row As String = topicMatch.Value
-                Dim result As New RuTrackerResult()
-
-                ' Title: look for <a ... class="...tLink..." ...>title</a>
-                Dim titleMatch = Regex.Match(row, "class=""[^""]*tLink[^""]*""[^>]*>([^<]+)<", RegexOptions.IgnoreCase)
-                If titleMatch.Success Then
-                    result.Title = System.Net.WebUtility.HtmlDecode(titleMatch.Groups(1).Value.Trim())
-                Else
-                    Continue For
-                End If
-
-                ' Topic ID: extract from the tLink href for later magnet link retrieval
-                Dim topicIdMatch = Regex.Match(row, "viewtopic\.php\?t=(\d+)", RegexOptions.IgnoreCase)
-                If topicIdMatch.Success Then
-                    result.TopicId = topicIdMatch.Groups(1).Value
-                End If
-
-                ' Size: look for <a ... class="...dl-stub..."...>size text</a> or <td class="...tor-size...">
-                Dim sizeMatch = Regex.Match(row, "class=""[^""]*dl-stub[^""]*""[^>]*>([^<]+)<", RegexOptions.IgnoreCase)
-                If sizeMatch.Success Then
-                    result.Size = System.Net.WebUtility.HtmlDecode(sizeMatch.Groups(1).Value.Trim())
-                Else
-                    Dim sizeMatch2 = Regex.Match(row, "tor-size[^>]*>.*?<u>(\d+)</u>", RegexOptions.IgnoreCase)
-                    If sizeMatch2.Success Then
-                        Dim sizeBytes As Long = 0
-                        If Long.TryParse(sizeMatch2.Groups(1).Value, sizeBytes) Then
-                            result.Size = FormatBytes(sizeBytes)
-                        End If
-                    End If
-                End If
-
-                ' Seeds
-                Dim seedMatch = Regex.Match(row, "class=""[^""]*seedmed[^""]*""[^>]*>.*?<b>(\d+)</b>", RegexOptions.IgnoreCase)
-                If seedMatch.Success Then
-                    result.Seeds = seedMatch.Groups(1).Value
-                End If
-
-                ' Leechers
-                Dim leechMatch = Regex.Match(row, "class=""[^""]*leechmed[^""]*""[^>]*>.*?<b>(\d+)</b>", RegexOptions.IgnoreCase)
-                If leechMatch.Success Then
-                    result.Leechers = leechMatch.Groups(1).Value
-                End If
-
-                ' Magnet link: look for <a href="magnet:?..."
-                Dim magnetMatch = Regex.Match(row, "href=""(magnet:\?[^""]+)""", RegexOptions.IgnoreCase)
-                If magnetMatch.Success Then
-                    result.MagnetLink = System.Net.WebUtility.HtmlDecode(magnetMatch.Groups(1).Value)
-                End If
-
-                results.Add(result)
-            Next
-
-            ' If no table rows found, try a simpler pattern for magnet links in the page
-            If results.Count = 0 Then
+            If topicMatches.Count = 0 Then
                 Dim simpleMagnets = Regex.Matches(html, "href=""(magnet:\?[^""]+)""", RegexOptions.IgnoreCase)
                 For Each m As Match In simpleMagnets
+                    ct.ThrowIfCancellationRequested()
                     Dim result As New RuTrackerResult()
                     result.MagnetLink = System.Net.WebUtility.HtmlDecode(m.Groups(1).Value)
                     result.Title = ExtractDisplayName(result.MagnetLink)
                     If String.IsNullOrEmpty(result.Title) Then result.Title = "Unknown torrent"
-                    results.Add(result)
+                    addedCount += 1
+                    Dim resultCopy = result
+                    Dispatcher.InvokeAsync(Sub()
+                                               _ruTrackerResults.Add(resultCopy)
+                                               StatusSearch.Text = String.Format("Search: {0} loaded (page {1})", addedCount, page + 1)
+                                           End Sub)
+                Next
+            Else
+                For Each topicMatch As Match In topicMatches
+                    ct.ThrowIfCancellationRequested()
+                    Dim row As String = topicMatch.Value
+                    Dim result As New RuTrackerResult()
+
+                    Dim titleMatch = Regex.Match(row, "class=""[^""]*tLink[^""]*""[^>]*>([^<]+)<", RegexOptions.IgnoreCase)
+                    If Not titleMatch.Success Then Continue For
+                    result.Title = System.Net.WebUtility.HtmlDecode(titleMatch.Groups(1).Value.Trim())
+
+                    Dim topicIdMatch = Regex.Match(row, "viewtopic\.php\?t=(\d+)", RegexOptions.IgnoreCase)
+                    If topicIdMatch.Success Then result.TopicId = topicIdMatch.Groups(1).Value
+
+                    Dim sizeMatch = Regex.Match(row, "class=""[^""]*dl-stub[^""]*""[^>]*>([^<]+)<", RegexOptions.IgnoreCase)
+                    If sizeMatch.Success Then
+                        result.Size = System.Net.WebUtility.HtmlDecode(sizeMatch.Groups(1).Value.Trim())
+                    Else
+                        Dim sizeMatch2 = Regex.Match(row, "tor-size[^>]*>.*?<u>(\d+)</u>", RegexOptions.IgnoreCase)
+                        If sizeMatch2.Success Then
+                            Dim sizeBytes As Long = 0
+                            If Long.TryParse(sizeMatch2.Groups(1).Value, sizeBytes) Then
+                                result.Size = FormatBytes(sizeBytes)
+                            End If
+                        End If
+                    End If
+
+                    Dim seedMatch = Regex.Match(row, "class=""[^""]*seedmed[^""]*""[^>]*>.*?<b>(\d+)</b>", RegexOptions.IgnoreCase)
+                    If seedMatch.Success Then result.Seeds = seedMatch.Groups(1).Value
+
+                    Dim leechMatch = Regex.Match(row, "class=""[^""]*leechmed[^""]*""[^>]*>.*?<b>(\d+)</b>", RegexOptions.IgnoreCase)
+                    If leechMatch.Success Then result.Leechers = leechMatch.Groups(1).Value
+
+                    Dim magnetMatch = Regex.Match(row, "href=""(magnet:\?[^""]+)""", RegexOptions.IgnoreCase)
+                    If magnetMatch.Success Then
+                        result.MagnetLink = System.Net.WebUtility.HtmlDecode(magnetMatch.Groups(1).Value)
+                    End If
+
+                    If String.IsNullOrWhiteSpace(result.MagnetLink) AndAlso Not String.IsNullOrWhiteSpace(result.TopicId) Then
+                        Try
+                            Dim topicUrl As String = String.Format("https://rutracker.org/forum/viewtopic.php?t={0}", result.TopicId)
+                            Dim topicResp = Await _httpClient.GetAsync(New Uri(topicUrl), ct)
+                            If topicResp.IsSuccessStatusCode Then
+                                Dim topicBytes = Await topicResp.Content.ReadAsByteArrayAsync()
+                                Dim topicHtml = Encoding.GetEncoding("windows-1251").GetString(topicBytes)
+                                Dim topicMagnet = Regex.Match(topicHtml, "href=""(magnet:\?[^""]+)""", RegexOptions.IgnoreCase)
+                                If topicMagnet.Success Then
+                                    result.MagnetLink = System.Net.WebUtility.HtmlDecode(topicMagnet.Groups(1).Value)
+                                End If
+                            End If
+                        Catch ex As OperationCanceledException
+                            Throw
+                        Catch
+                        End Try
+                    End If
+
+                    addedCount += 1
+                    Dim resultCopy = result
+                    Dispatcher.InvokeAsync(Sub()
+                                               _ruTrackerResults.Add(resultCopy)
+                                               StatusSearch.Text = String.Format("Search: {0} loaded (page {1})", addedCount, page + 1)
+                                           End Sub)
                 Next
             End If
 
-            Log(String.Format("[RuTracker] Found {0} result(s) on page {1}.", results.Count, page + 1))
-            For i = 0 To Math.Min(results.Count - 1, 4)
-                Log(String.Format("[RuTracker]   [{0}] {1} ({2}, S:{3} L:{4})",
-                    i + 1, results(i).Title, results(i).Size, results(i).Seeds, results(i).Leechers))
-            Next
-
-            ' For results without magnet links, try to fetch from topic pages
-            For Each result In results
-                If String.IsNullOrEmpty(result.MagnetLink) AndAlso Not String.IsNullOrEmpty(result.TopicId) Then
-                    Try
-                        Dim topicUrl As String = String.Format("https://rutracker.org/forum/viewtopic.php?t={0}", result.TopicId)
-                        Dim topicResp = Await _httpClient.GetAsync(New Uri(topicUrl))
-                        If topicResp.IsSuccessStatusCode Then
-                            Dim topicBytes = Await topicResp.Content.ReadAsByteArrayAsync()
-                            Dim topicHtml = Encoding.GetEncoding("windows-1251").GetString(topicBytes)
-                            Dim topicMagnet = Regex.Match(topicHtml, "href=""(magnet:\?[^""]+)""", RegexOptions.IgnoreCase)
-                            If topicMagnet.Success Then
-                                result.MagnetLink = System.Net.WebUtility.HtmlDecode(topicMagnet.Groups(1).Value)
-                            End If
-                        End If
-                    Catch
-                        ' Skip magnet retrieval errors for individual topics
-                    End Try
-                End If
-            Next
-
-            Dim hasResults As Boolean = results.Count > 0
             Dispatcher.InvokeAsync(Sub()
-                                       For Each r In results
-                                           _ruTrackerResults.Add(r)
-                                       Next
-                                       StatusSearch.Text = String.Format("Search: {0} found (page {1})", results.Count, page + 1)
+                                       Log(String.Format("[RuTracker] Loaded {0} result(s) on page {1}.", addedCount, page + 1))
                                        Dim prevBtn = CType(FindName("ButtonRuTrackerPrev"), Button)
                                        Dim nextBtn = CType(FindName("ButtonRuTrackerNext"), Button)
                                        If prevBtn IsNot Nothing Then prevBtn.IsEnabled = (page > 0)
-                                       If nextBtn IsNot Nothing Then nextBtn.IsEnabled = (results.Count >= RuTrackerResultsPerPage)
+                                       If nextBtn IsNot Nothing Then nextBtn.IsEnabled = (addedCount >= RuTrackerResultsPerPage)
+                                       StatusSearch.Text = String.Format("Search: {0} found (page {1})", addedCount, page + 1)
                                    End Sub)
-
+        Catch ex As OperationCanceledException
+            Dispatcher.InvokeAsync(Sub() StatusSearch.Text = "Search: Cancelled")
         Catch ex As Exception
             Log(String.Format("[RuTracker] Error: {0}", ex.Message))
             Dispatcher.InvokeAsync(Sub() StatusSearch.Text = "Search: Error")
@@ -771,6 +935,17 @@ Public Class TorrentClientTest
                 ElseIf Not t.IsSeeding Then
                     t.Speed = "--"
                 End If
+            ElseIf t.StandardManager IsNot Nothing Then
+                Dim mgr = t.StandardManager
+                t.ProgressValue = mgr.Progress
+                Dim rate As Long = mgr.Monitor.DownloadRate
+                totalDownloaded += mgr.Monitor.DataBytesReceived
+                If rate > 0 Then
+                    t.Speed = FormatBytes(rate) & "/s"
+                Else
+                    t.Speed = "--"
+                End If
+                t.Status = mgr.State.ToString()
             End If
         Next
 
@@ -841,6 +1016,15 @@ Public Class TorrentClientTest
     End Sub
 
     Private Sub Cleanup()
+        If _standardBtEngine IsNot Nothing Then
+            Try
+                _standardBtEngine.StopAllAsync().Wait(TimeSpan.FromSeconds(5))
+                _standardBtEngine.Dispose()
+            Catch
+            End Try
+            _standardBtEngine = Nothing
+        End If
+
         If _seeder IsNot Nothing Then
             _seeder.Dispose()
             _seeder = Nothing
@@ -878,3 +1062,4 @@ Public Class TorrentClientTest
 #End Region
 
 End Class
+
