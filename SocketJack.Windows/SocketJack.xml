@@ -1860,7 +1860,7 @@
             Sends a request to LM Studio's /v1/chat/completions endpoint.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.ForwardRawRequestToLmStudioAsync(System.Net.HttpListenerRequest,System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.ForwardRawRequestToLmStudioAsync(System.Net.HttpListenerRequest,System.String,System.Threading.CancellationToken)">
             <summary>
             Forwards a raw /v1/* request to LM Studio, preserving body and relevant headers.
             </summary>
@@ -1900,7 +1900,7 @@
             Bridges OpenAI Responses requests from VS to LM Studio chat-completions.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.ForwardChatCompletionBodyToLmStudioAsync(System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.ForwardChatCompletionBodyToLmStudioAsync(System.String,System.Threading.CancellationToken)">
             <summary>
             Sends a chat-completions request body directly to LM Studio.
             </summary>
@@ -1950,9 +1950,44 @@
             Writes an SSE comment frame.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteChatCompletionHeartbeatAsync(System.IO.Stream,System.String,System.Int64,System.String,System.Int32,System.String)">
+            <summary>
+            Writes a valid no-op chat completion chunk so strict clients observe real SSE progress.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteResponsesCreatedAsync(System.IO.Stream,System.String,System.Int64,System.String,System.Int32,System.String)">
+            <summary>
+            Opens a valid Responses stream immediately so Visual Studio does not time out during prompt processing.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.WriteResponsesInProgressAsync(System.IO.Stream,System.String,System.Int64,System.String,System.Int32,System.String)">
+            <summary>
+            Sends a valid Responses lifecycle heartbeat while LM Studio is still processing.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesLifecycleFrame(System.String,System.String,System.String,System.Int64,System.String,System.String,System.Int32,System.String)">
+            <summary>
+            Builds a Responses API lifecycle event. Progress is sent in SSE comments to keep JSON strict.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CalculateEstimatedPromptProgressPercent(System.DateTimeOffset)">
+            <summary>
+            Estimates prompt-processing progress from elapsed time; LM Studio does not expose real prompt percent.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.LmVsProxy.WriteSseErrorAsync(System.IO.Stream,System.String)">
             <summary>
             Writes an OpenAI-shaped SSE error and terminates the stream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeLargeEditArguments(System.Text.Json.JsonElement)">
+            <summary>
+            Detects edit arguments whose text fields would make the visible tool summary huge.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.SummarizeLargeEditArguments(System.Text.Json.JsonElement)">
+            <summary>
+            Redacts large text fields in the human-visible tool-call preview while preserving executable arguments separately.
             </summary>
         </member>
         <member name="M:SocketJack.Net.LmVsProxy.IsClientDisconnectedException(System.Exception)">
@@ -2000,17 +2035,17 @@
             Builds a compact OpenAI-compatible SSE response containing repaired tool calls.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.ConvertChatSseToResponsesSse(System.String,System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.ConvertChatSseToResponsesSse(System.String,System.String,System.String,System.Nullable{System.Int64},System.Boolean)">
             <summary>
             Converts Chat Completions SSE frames to Responses API SSE frames.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesTextSse(System.String,System.Int64,System.String,System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesTextSse(System.String,System.Int64,System.String,System.String,System.Boolean)">
             <summary>
             Builds Responses API SSE frames for text output.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesToolCallSse(System.String,System.Int64,System.String,System.Collections.Generic.Dictionary{System.Int32,SocketJack.Net.LmVsProxy.ToolCallBuilder})">
+        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesToolCallSse(System.String,System.Int64,System.String,System.Collections.Generic.Dictionary{System.Int32,SocketJack.Net.LmVsProxy.ToolCallBuilder},System.Boolean)">
             <summary>
             Builds Responses API SSE frames for function-call output.
             </summary>
@@ -2048,6 +2083,36 @@
         <member name="M:SocketJack.Net.LmVsProxy.RedirectSearchLoopToCreateFile(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
             <summary>
             Redirects repeated search/navigation loops for a missing creation target into create_file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RedirectMissingCodebehindLoopToCreateFile(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Converts repeated probes for a missing XAML code-behind file into the creation step.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryInferMissingCodebehindLoopTarget(System.String,System.String@,System.Int32@)">
+            <summary>
+            Detects the common loop: the model keeps checking for a missing *.xaml.vb code-behind.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractLikelyCodebehindPathFromConversation(System.String)">
+            <summary>
+            Pulls a likely *.xaml.vb path from structured tool arguments, or derives one from a mentioned *.xaml file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractPathLikeToolArgumentValues(System.String)">
+            <summary>
+            Gets only path-bearing values from a tool-call arguments object.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractCodebehindCandidateFromPathValue(System.String)">
+            <summary>
+            Turns one structured path/query value into a code-behind candidate when possible.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.NormalizeInferredCodebehindPath(System.String,System.String)">
+            <summary>
+            Normalizes inferred XAML code-behind paths and restores the project folder when only a filename is present.
             </summary>
         </member>
         <member name="M:SocketJack.Net.LmVsProxy.InferMissingCreationTargetPath(System.String)">
@@ -2088,6 +2153,131 @@
         <member name="M:SocketJack.Net.LmVsProxy.IsSafeCreateFileTarget(System.String)">
             <summary>
             Returns true only for files the proxy may synthesize during a create-file recovery.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasUsableFileNameStem(System.String)">
+            <summary>
+            Rejects extension-only or directory-only paths such as ".xaml" and "Maf Scale\.xaml".
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GuardCreateFileForExistingTarget(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Rewrites create_file to get_file when history already shows that target exists.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GuardBlankReplaceStringCalls(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Prevents malformed replace_string_in_file calls from becoming blank destructive edits.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RemoveRedundantGetFileCalls(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String,SocketJack.Net.LmVsProxy.ToolCallData)">
+            <summary>
+            Removes same-file get_file calls once an edit tool is already going to execute.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractCreateFileContent(System.String)">
+            <summary>
+            Extracts content from create_file arguments.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractFilePathFromReplaceStringArguments(System.String)">
+            <summary>
+            Extracts the target path from replace_string_in_file arguments.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryExtractLatestSuccessfulFileReadContent(System.String,System.String,System.String@)">
+            <summary>
+            Gets the most recent successful get_file result content for a target.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.HasEmptyOrSummaryOnlyGetFileResult(System.String,System.String)">
+            <summary>
+            Returns true when get_file appears to have succeeded but only returned a status/summary, not file text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractPlainFileContentFromToolResult(System.String)">
+            <summary>
+            Removes markdown fences and Visual Studio line-number prefixes from get_file results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeSubstantiveFileContent(System.String,System.String)">
+            <summary>
+            Distinguishes actual source/XAML text from VS success summaries like "Read file, lines 1-50".
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ConversationShowsFileAlreadyExists(System.String,System.String)">
+            <summary>
+            Detects prior tool evidence that a file exists, such as file_search hits or successful reads.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractFileNameForCompare(System.String)">
+            <summary>
+            Gets a normalized filename token for loose result matching.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GuardVagueGetFileTargets(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Rewrites vague get_file targets into an exact known path or a safer file_search.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GuardRepeatedGetFileLoop(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+            <summary>
+            Breaks repeated successful reads of the same file/range by expanding once or switching to edit intent.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CountSuccessfulGetFileReads(System.String,System.String,System.Int32,System.Int32)">
+            <summary>
+            Counts successful get_file results for an exact filename/range.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractIntFromToolArguments(System.String,System.String,System.Int32)">
+            <summary>
+            Reads an integer from tool-call arguments.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeEditRequest(System.String)">
+            <summary>
+            Returns true when the user's current ask requires modifying files.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.SynthesizeEditPlaceholderContent(System.String,System.String,System.String)">
+            <summary>
+            Produces a no-op placeholder replacement rather than rereading forever when no exact edit is available.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeVagueGetFileTarget(System.String)">
+            <summary>
+            Returns true for get_file targets that are not actionable paths.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.LooksLikeDefaultGetFileFallbackForActiveTopic(System.String,System.String)">
+            <summary>
+            Detects when malformed get_file arguments were repaired to a generic fallback unrelated to the active task.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractLikelyActiveFileTopic(System.String)">
+            <summary>
+            Infers the current file/control topic from recent conversation text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractRecentAssistantText(System.String,System.Int32)">
+            <summary>
+            Returns recent assistant text content for topic inference.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractBestFileSearchToken(System.String)">
+            <summary>
+            Extracts the most useful identifier from a vague get_file target.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryResolveFilePathFromHistory(System.String,System.String,System.String@)">
+            <summary>
+            Finds an exact-ish file path for a token from previous file search/project results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ExtractBestMatchingPathFromText(System.String,System.String)">
+            <summary>
+            Pulls the most relevant path from a tool result body.
             </summary>
         </member>
         <member name="M:SocketJack.Net.LmVsProxy.GuardUnsafeCreateFileTargets(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
@@ -2235,6 +2425,21 @@
             Pulls a likely file path out of malformed JSON-ish tool arguments.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.LmVsProxy.NormalizeLoosePathEscapes(System.String)">
+            <summary>
+            Decodes common loose JSON path escapes such as \u0022 and repairs accidental control-character separators.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.NormalizeToolPathForVsArgument(System.String)">
+            <summary>
+            Uses slash-separated paths in VS tool-call JSON so single Windows backslashes cannot become invalid JSON escapes.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.CanonicalizeDuplicateFileExtensions(System.String)">
+            <summary>
+            Collapses malformed duplicate compound extensions such as ToolSelection.xaml.xaml.vb.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.LmVsProxy.RepairMultiReplaceArguments(System.Text.Json.JsonElement)">
             <summary>
             Ensures multi_replace_string_in_file has the required explanation field.
@@ -2310,6 +2515,11 @@
             Adds a non-suppressing instruction when repeated file_search misses conflict with a create-file goal.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AddMissingCodebehindCreationHint(System.String)">
+            <summary>
+            Adds explicit guidance when the transcript shows a repeated missing XAML code-behind loop.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.LmVsProxy.HasCreateFileGoal(System.String)">
             <summary>
             Returns true when the last user request is asking to create/add/make something.
@@ -2343,6 +2553,26 @@
         <member name="M:SocketJack.Net.LmVsProxy.RepairConversationToolCallHistory(System.String)">
             <summary>
             Repairs malformed tool-call history before forwarding it back to LM Studio.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.ShouldHydrateGetFileResult(System.String,System.String)">
+            <summary>
+            Returns true when Visual Studio reported a get_file success without forwarding source text.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryReadLocalFileForGetFile(System.String,System.String@)">
+            <summary>
+            Reads a get_file target locally and formats it like VS get_file output.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryReadLocalProjectFilesForGetFilesInProject(System.String,System.String@)">
+            <summary>
+            Hydrates get_files_in_project from disk when VS reports a tool failure or summary-only result.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryResolveLocalFilePath(System.String,System.String@)">
+            <summary>
+            Resolves VS-relative file paths against common local solution roots.
             </summary>
         </member>
         <member name="M:SocketJack.Net.LmVsProxy.AppendSystemMessage(System.String,System.String)">

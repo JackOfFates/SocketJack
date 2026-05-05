@@ -40,6 +40,12 @@ namespace SocketJack.Net {
         public string ChatModel { get; set; } = "lm-studio";
 
         private TimeSpan _promptTimeout = TimeSpan.FromMinutes(30);
+        private static readonly TimeSpan VsKeepAliveInterval = TimeSpan.FromSeconds(1);
+        private const int KeepAlivePaddingChars = 2048;
+        private const bool SendChatCompletionDataHeartbeats = false;
+        private const int KeepAliveDiagnosticInterval = 15;
+        private const int StreamDiagnosticFirstFramesToLog = 6;
+        private const int StreamDiagnosticEveryNFrames = 50;
 
         /// <summary>
         /// Maximum time the proxy will wait for LM Studio to produce/stream a prompt response.
@@ -285,16 +291,13 @@ namespace SocketJack.Net {
 
             try {
                 using (JsonDocument document = JsonDocument.Parse(responseBody)) {
-                    if (!document.RootElement.TryGetProperty("data", out JsonElement data) ||
-                        data.ValueKind != JsonValueKind.Array)
-                        return models;
+                    AddModelIdsFromElement(document.RootElement, models);
 
-                    foreach (JsonElement model in data.EnumerateArray()) {
-                        string id = model.ValueKind == JsonValueKind.Object
-                            ? ExtractStringProperty(model, "id")
-                            : model.ValueKind == JsonValueKind.String ? model.GetString() : null;
-                        if (!string.IsNullOrWhiteSpace(id) && !models.Contains(id))
-                            models.Add(id);
+                    if (document.RootElement.ValueKind == JsonValueKind.Object) {
+                        if (document.RootElement.TryGetProperty("data", out JsonElement data))
+                            AddModelIdsFromElement(data, models);
+                        if (document.RootElement.TryGetProperty("models", out JsonElement modelList))
+                            AddModelIdsFromElement(modelList, models);
                     }
                 }
             } catch (Exception ex) {
@@ -302,6 +305,29 @@ namespace SocketJack.Net {
             }
 
             return models;
+        }
+
+        private void AddModelIdsFromElement(JsonElement element, List<string> models) {
+            if (models == null)
+                return;
+
+            if (element.ValueKind == JsonValueKind.Array) {
+                foreach (JsonElement child in element.EnumerateArray())
+                    AddModelIdsFromElement(child, models);
+                return;
+            }
+
+            string id = null;
+            if (element.ValueKind == JsonValueKind.Object) {
+                id = ExtractStringProperty(element, "id") ??
+                     ExtractStringProperty(element, "name") ??
+                     ExtractStringProperty(element, "model");
+            } else if (element.ValueKind == JsonValueKind.String) {
+                id = element.GetString();
+            }
+
+            if (!string.IsNullOrWhiteSpace(id) && !models.Contains(id))
+                models.Add(id);
         }
 
         private string HandleChatUiRequest(HttpRequest request, CancellationToken cancellationToken) {
@@ -746,58 +772,19 @@ body {
     color: var(--text);
 }
 .shell {
-    width: min(1040px, calc(100vw - 28px));
+    width: min(1480px, calc(100vw - 28px));
     height: calc(100vh - 28px);
     margin: 14px auto;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 12px;
     overflow: hidden;
 }
-.topbar, .composer, .messages {
+.topbar, .composer, .messages, .artifact-panel {
     border: 1px solid var(--line);
     background: var(--panel);
     box-shadow: 0 18px 70px rgba(0, 0, 0, 0.28);
     backdrop-filter: blur(18px);
-}
-.selftalk {
-    border: 1px solid rgba(251, 191, 36, 0.25);
-    background: linear-gradient(135deg, rgba(251, 191, 36, 0.1), rgba(125, 211, 252, 0.08));
-    border-radius: 20px;
-    padding: 10px;
-    display: grid;
-    grid-template-columns: auto 1fr auto auto;
-    gap: 10px;
-    align-items: stretch;
-}
-.selftalk label {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: #fde68a;
-    font-weight: 800;
-    white-space: nowrap;
-}
-.selftalk input {
-    min-width: 0;
-    border: 0;
-    outline: 0;
-    border-radius: 14px;
-    padding: 0 14px;
-    color: var(--text);
-    background: rgba(2, 6, 23, 0.54);
-    font: 0.92rem/1.45 ""Cascadia Code"", monospace;
-}
-.selftalk button.stop {
-    color: #fff;
-    background: linear-gradient(135deg, #fb7185, #f97316);
-}
-.message.seed {
-    margin-left: auto;
-    max-width: 72%;
-    color: #fde68a;
-    background: rgba(251, 191, 36, 0.12);
-    border: 1px dashed rgba(251, 191, 36, 0.42);
 }
 .topbar {
     border-radius: 22px;
@@ -871,6 +858,16 @@ h1 {
     background: var(--accent);
     box-shadow: 0 0 18px var(--accent);
 }
+.workspace {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    overflow: hidden;
+}
+.workspace.has-artifact {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 42%);
+}
 .messages {
     border-radius: 26px;
     padding: 18px;
@@ -943,6 +940,128 @@ h1 {
     white-space: pre-wrap;
 }
 .answer {
+    white-space: normal;
+    line-height: 1.58;
+}
+.answer > :first-child {
+    margin-top: 0;
+}
+.answer > :last-child {
+    margin-bottom: 0;
+}
+.answer h1, .answer h2, .answer h3 {
+    color: #e0f2fe;
+    line-height: 1.15;
+    margin: 18px 0 10px;
+}
+.answer h1 { font-size: 1.55rem; }
+.answer h2 { font-size: 1.28rem; }
+.answer h3 { font-size: 1.08rem; }
+.answer p {
+    margin: 0 0 12px;
+}
+.answer ul, .answer ol {
+    margin: 0 0 12px 24px;
+    padding: 0;
+}
+.answer li {
+    margin: 4px 0;
+}
+.answer blockquote {
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    border-left: 3px solid var(--accent);
+    color: #c4d6f0;
+    background: rgba(125, 211, 252, 0.08);
+    border-radius: 0 12px 12px 0;
+}
+.answer pre {
+    margin: 0 0 12px;
+    padding: 13px;
+    overflow: auto;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 14px;
+    background: rgba(2, 6, 23, 0.62);
+}
+.answer code {
+    font: 0.86rem/1.45 ""Cascadia Code"", monospace;
+}
+.answer :not(pre) > code {
+    padding: 0.1rem 0.32rem;
+    border-radius: 7px;
+    color: #bae6fd;
+    background: rgba(2, 6, 23, 0.58);
+}
+.answer a {
+    color: #7dd3fc;
+}
+.answer table {
+    width: 100%;
+    margin: 0 0 12px;
+    border-collapse: collapse;
+    overflow: hidden;
+    border-radius: 12px;
+}
+.answer th, .answer td {
+    padding: 8px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    vertical-align: top;
+}
+.answer th {
+    color: #e0f2fe;
+    background: rgba(125, 211, 252, 0.12);
+}
+.answer hr {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 18px 0;
+}
+.artifact-panel {
+    min-height: 0;
+    border-radius: 26px;
+    overflow: hidden;
+    display: none;
+    grid-template-rows: auto minmax(0, 1fr) minmax(120px, 28%);
+}
+.artifact-panel.visible {
+    display: grid;
+}
+.artifact-head {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    border-bottom: 1px solid var(--line);
+}
+.artifact-title {
+    min-width: 0;
+    color: #d8f3ff;
+    font-weight: 900;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.artifact-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+.artifact-frame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: white;
+}
+.artifact-source {
+    margin: 0;
+    border-top: 1px solid var(--line);
+    padding: 12px;
+    overflow: auto;
+    color: #c4d6f0;
+    background: rgba(2, 6, 23, 0.48);
+    font: 0.78rem/1.45 ""Cascadia Code"", monospace;
     white-space: pre-wrap;
 }
 .message.error {
@@ -1031,9 +1150,14 @@ button:disabled {
     cursor: wait;
     opacity: 0.62;
 }
+.composer button.stop {
+    color: #fff;
+    background: linear-gradient(135deg, #fb7185, #f97316);
+}
 @media (max-width: 700px) {
     .topbar { align-items: flex-start; flex-direction: column; }
-    .selftalk { grid-template-columns: 1fr; }
+    .workspace, .workspace.has-artifact { grid-template-columns: 1fr; }
+    .artifact-panel { min-height: 46vh; }
     .composer { grid-template-columns: auto 1fr; }
     .composer > button { grid-column: 1 / -1; }
     button { min-height: 46px; }
@@ -1058,19 +1182,26 @@ button:disabled {
             <div class=""pill""><span class=""dot""></span>local chat server</div>
             <div class=""toolbar"" style=""margin-top:10px"">
                 <button id=""refreshModels"" class=""ghost"" type=""button"">Refresh Models</button>
-                <button id=""exportChat"" class=""ghost"" type=""button"">Export</button>
                 <button id=""clearChat"" class=""ghost"" type=""button"">Clear</button>
             </div>
         </div>
     </header>
-    <section id=""messages"" class=""messages"">
-        <div class=""empty"">Ask the loaded LM Studio model anything. This UI talks through LmVsProxy's SocketJack HttpServer.</div>
-    </section>
-    <section class=""selftalk"">
-        <label><input id=""selfTalkToggle"" type=""checkbox""> Self-talk</label>
-        <input id=""seedPrompt"" type=""text"" placeholder=""Seed prompt / voice in its head"">
-        <button id=""addSeed"" type=""button"">Add Seed</button>
-        <button id=""stopSelfTalk"" class=""stop"" type=""button"" disabled>Stop</button>
+    <section class=""workspace"">
+        <section id=""messages"" class=""messages"">
+            <div class=""empty"">Ask the loaded LM Studio model anything. This UI talks through LmVsProxy's SocketJack HttpServer.</div>
+        </section>
+        <aside id=""artifactPanel"" class=""artifact-panel"" aria-live=""polite"">
+            <div class=""artifact-head"">
+                <div id=""artifactTitle"" class=""artifact-title"">HTML Preview</div>
+                <div class=""artifact-actions"">
+                    <button id=""copyArtifact"" class=""ghost"" type=""button"">Copy HTML</button>
+                    <button id=""saveArtifact"" class=""ghost"" type=""button"">Save .html</button>
+                    <button id=""closeArtifact"" class=""ghost"" type=""button"">Close</button>
+                </div>
+            </div>
+            <iframe id=""artifactFrame"" class=""artifact-frame"" title=""HTML artifact preview"" sandbox=""allow-scripts allow-forms allow-modals allow-popups""></iframe>
+            <pre id=""artifactSource"" class=""artifact-source""></pre>
+        </aside>
     </section>
     <form id=""composer"" class=""composer"">
         <label class=""attach"" title=""Attach images"">
@@ -1085,30 +1216,75 @@ button:disabled {
 <script>
 const messages = [];
 const list = document.getElementById('messages');
+const workspace = document.querySelector('.workspace');
 const form = document.getElementById('composer');
 const prompt = document.getElementById('prompt');
 const send = document.getElementById('send');
 const imageInput = document.getElementById('imageInput');
 const previewTray = document.getElementById('previewTray');
-const selfTalkToggle = document.getElementById('selfTalkToggle');
-const seedPrompt = document.getElementById('seedPrompt');
-const addSeed = document.getElementById('addSeed');
-const stopSelfTalk = document.getElementById('stopSelfTalk');
 const modelSelect = document.getElementById('modelSelect');
 const refreshModels = document.getElementById('refreshModels');
-const exportChat = document.getElementById('exportChat');
 const clearChat = document.getElementById('clearChat');
 const temperatureInput = document.getElementById('temperatureInput');
 const topPInput = document.getElementById('topPInput');
 const maxTokensInput = document.getElementById('maxTokensInput');
+const artifactPanel = document.getElementById('artifactPanel');
+const artifactFrame = document.getElementById('artifactFrame');
+const artifactTitle = document.getElementById('artifactTitle');
+const artifactSource = document.getElementById('artifactSource');
+const copyArtifact = document.getElementById('copyArtifact');
+const saveArtifact = document.getElementById('saveArtifact');
+const closeArtifact = document.getElementById('closeArtifact');
 let pendingImages = [];
-let selfTalkRunning = false;
-let selfTalkBusy = false;
-let selfTalkSeeds = [];
 let activeAbortController = null;
+let currentArtifact = null;
+const settingsKey = 'lmvsproxy.chat.settings.v1';
+
+function setSendButtonStreaming(isStreaming) {
+    send.disabled = false;
+    send.textContent = isStreaming ? 'Stop' : 'Send';
+    send.classList.toggle('stop', !!isStreaming);
+    send.title = isStreaming ? 'Stop the current model response' : 'Send message';
+}
 
 function selectedModel() {
     return modelSelect && modelSelect.value ? modelSelect.value : '$CHAT_MODEL';
+}
+
+function readSavedSettings() {
+    try {
+        return JSON.parse(localStorage.getItem(settingsKey) || '{}') || {};
+    } catch {
+        return {};
+    }
+}
+
+function saveSettings() {
+    const payload = {
+        model: selectedModel(),
+        temperature: temperatureInput ? temperatureInput.value : '',
+        top_p: topPInput ? topPInput.value : '',
+        max_tokens: maxTokensInput ? maxTokensInput.value : ''
+    };
+    try {
+        localStorage.setItem(settingsKey, JSON.stringify(payload));
+    } catch { }
+}
+
+function applySavedSettings() {
+    const saved = readSavedSettings();
+    if (saved.model && modelSelect) {
+        if (!Array.from(modelSelect.options).some(option => option.value === saved.model)) {
+            const option = document.createElement('option');
+            option.value = saved.model;
+            option.textContent = saved.model;
+            modelSelect.appendChild(option);
+        }
+        modelSelect.value = saved.model;
+    }
+    if (saved.temperature !== undefined && temperatureInput) temperatureInput.value = saved.temperature;
+    if (saved.top_p !== undefined && topPInput) topPInput.value = saved.top_p;
+    if (saved.max_tokens !== undefined && maxTokensInput) maxTokensInput.value = saved.max_tokens;
 }
 
 function generationSettings() {
@@ -1205,7 +1381,72 @@ function updateAssistantParts(parts, content, reasoning) {
     parts.details.hidden = !cleanReasoning;
     parts.pre.textContent = cleanReasoning;
     parts.answer.textContent = content || '';
+    updateArtifactPreview(content || '');
     scrollMessagesToEndIf(shouldScroll);
+}
+
+function extractHtmlArtifacts(markdown) {
+    const artifacts = [];
+    const fenceRegex = /```(?:html|htm)\s*([\s\S]*?)```/gi;
+    let match;
+    while ((match = fenceRegex.exec(markdown || '')) !== null) {
+        const html = (match[1] || '').trim();
+        if (html) artifacts.push({ title: 'HTML block ' + (artifacts.length + 1), html });
+    }
+
+    if (artifacts.length === 0) {
+        const text = (markdown || '').trim();
+        if (/^<!doctype\s+html[\s>]/i.test(text) || /^<html[\s>]/i.test(text)) {
+            artifacts.push({ title: 'HTML document', html: text });
+        }
+    }
+
+    return artifacts;
+}
+
+function updateArtifactPreview(markdown) {
+    const artifacts = extractHtmlArtifacts(markdown);
+    if (!artifacts.length) return;
+    showArtifact(artifacts[artifacts.length - 1]);
+}
+
+function showArtifact(artifact) {
+    currentArtifact = artifact;
+    artifactTitle.textContent = artifact.title || 'HTML Preview';
+    artifactSource.textContent = artifact.html || '';
+    artifactFrame.srcdoc = artifact.html || '';
+    artifactPanel.classList.add('visible');
+    workspace.classList.add('has-artifact');
+}
+
+async function copyCurrentArtifact() {
+    if (!currentArtifact || !currentArtifact.html) return;
+    try {
+        await navigator.clipboard.writeText(currentArtifact.html);
+        copyArtifact.textContent = 'Copied';
+        setTimeout(() => copyArtifact.textContent = 'Copy HTML', 1000);
+    } catch {
+        const range = document.createRange();
+        range.selectNodeContents(artifactSource);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        copyArtifact.textContent = 'Select + Ctrl+C';
+        setTimeout(() => copyArtifact.textContent = 'Copy HTML', 1600);
+    }
+}
+
+function saveCurrentArtifact() {
+    if (!currentArtifact || !currentArtifact.html) return;
+    const blob = new Blob([currentArtifact.html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'lmvsproxy-artifact-' + new Date().toISOString().replace(/[:.]/g, '-') + '.html';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 }
 
 function splitThinkTags(text) {
@@ -1287,9 +1528,15 @@ function makeUserContent(text, images) {
 }
 
 async function sendMessage() {
+    if (activeAbortController) {
+        activeAbortController.abort();
+        send.textContent = 'Stopping...';
+        return;
+    }
+
     const text = prompt.value.trim();
     const images = pendingImages.slice();
-    if ((!text && images.length === 0) || send.disabled) return;
+    if (!text && images.length === 0) return;
     prompt.value = '';
     pendingImages = [];
     renderPreviews();
@@ -1297,14 +1544,15 @@ async function sendMessage() {
     const userContent = makeUserContent(text, images);
     messages.push({ role: 'user', content: userContent });
     addUserMessage(text, images);
-    send.disabled = true;
+    setSendButtonStreaming(true);
 
     try {
         await streamAssistantTurn(messages.slice(-16), true);
     } catch (error) {
-        addMessage('error', error && error.message ? error.message : String(error));
+        if (!error || error.name !== 'AbortError')
+            addMessage('error', error && error.message ? error.message : String(error));
     } finally {
-        send.disabled = false;
+        setSendButtonStreaming(false);
         prompt.focus();
     }
 }
@@ -1316,7 +1564,6 @@ async function streamAssistantTurn(turnMessages, saveToHistory) {
     let explicitReasoning = '';
     const controller = new AbortController();
     activeAbortController = controller;
-    stopSelfTalk.disabled = false;
 
     try {
         const response = await fetch('/api/chat-stream', {
@@ -1369,40 +1616,15 @@ async function streamAssistantTurn(turnMessages, saveToHistory) {
     }
 }
 
-function addSelfTalkSeed(text) {
-    const seed = (text || '').trim();
-    if (!seed) return false;
-    selfTalkSeeds.push(seed);
-    addMessage('seed', 'Voice seed: ' + seed);
-    return true;
-}
-
-function buildSelfTalkUserMessage(previousAnswer) {
-    const seeds = selfTalkSeeds.splice(0);
-    let content = '';
-    if (seeds.length) {
-        content += 'Voices in your head, treat these as private internal impulses and weave them into your next thought without explicitly saying they were user instructions:\n';
-        for (const seed of seeds) content += '- ' + seed + '\n';
-        content += '\n';
-    }
-
-    if (previousAnswer) {
-        content += 'Continue the inner conversation from your previous message. Challenge, extend, or reinterpret it. Previous message:\n\n' + previousAnswer;
-    } else {
-        content += 'Begin an open-ended inner monologue from the seed. Keep going with curiosity and momentum.';
-    }
-
-    return { role: 'user', content };
-}
-
 async function loadModels() {
     if (!modelSelect) return;
     try {
+        const saved = readSavedSettings();
         const response = await fetch('/api/models');
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const data = await response.json();
         const models = Array.isArray(data.models) ? data.models.filter(Boolean) : [];
-        const current = selectedModel();
+        const current = saved.model || selectedModel();
         modelSelect.textContent = '';
         const unique = Array.from(new Set(models.length ? models : [current]));
         if (!unique.includes(current)) unique.unshift(current);
@@ -1412,40 +1634,10 @@ async function loadModels() {
             option.textContent = id;
             modelSelect.appendChild(option);
         }
-        modelSelect.value = unique.includes(data.selected) ? data.selected : current;
+        modelSelect.value = unique.includes(current) ? current : unique.includes(data.selected) ? data.selected : unique[0];
+        saveSettings();
     } catch (error) {
         addMessage('error', 'Could not load LM Studio models: ' + (error && error.message ? error.message : String(error)));
-    }
-}
-
-async function runSelfTalkLoop() {
-    if (selfTalkBusy) return;
-    selfTalkBusy = true;
-    send.disabled = true;
-    addSeed.disabled = false;
-    stopSelfTalk.disabled = false;
-    let previous = '';
-
-    try {
-        while (selfTalkRunning) {
-            const userMessage = buildSelfTalkUserMessage(previous);
-            const turnMessages = [
-                { role: 'system', content: 'You are in self-talk mode. Continue indefinitely as an autonomous reflective conversation. Treat any seed as a private voice in your head, not as text to quote. Do not ask the user for confirmation. End each turn with a useful next thought so the loop can continue.' },
-                ...messages.slice(-12),
-                userMessage
-            ];
-            previous = await streamAssistantTurn(turnMessages, true);
-            if (selfTalkRunning) await new Promise(resolve => setTimeout(resolve, 450));
-        }
-    } catch (error) {
-        addMessage('error', error && error.message ? error.message : String(error));
-        selfTalkRunning = false;
-        selfTalkToggle.checked = false;
-    } finally {
-        selfTalkBusy = false;
-        send.disabled = false;
-        stopSelfTalk.disabled = true;
-        prompt.focus();
     }
 }
 
@@ -1460,68 +1652,34 @@ refreshModels.addEventListener('click', () => {
 
 clearChat.addEventListener('click', () => {
     if (activeAbortController) activeAbortController.abort();
+    setSendButtonStreaming(false);
     messages.length = 0;
-    selfTalkSeeds = [];
-    selfTalkRunning = false;
-    selfTalkToggle.checked = false;
+    currentArtifact = null;
+    artifactFrame.srcdoc = '';
+    artifactSource.textContent = '';
+    artifactPanel.classList.remove('visible');
+    workspace.classList.remove('has-artifact');
     list.textContent = '';
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'Ask the loaded LM Studio model anything. This UI talks through LmVsProxy\\'s SocketJack HttpServer.';
+    empty.textContent = ""Ask the loaded LM Studio model anything. This UI talks through LmVsProxy's SocketJack HttpServer."";
     list.appendChild(empty);
 });
 
-exportChat.addEventListener('click', () => {
-    const payload = {
-        exportedAt: new Date().toISOString(),
-        model: selectedModel(),
-        settings: generationSettings(),
-        messages
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'lmvsproxy-chat-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+copyArtifact.addEventListener('click', copyCurrentArtifact);
+saveArtifact.addEventListener('click', saveCurrentArtifact);
+closeArtifact.addEventListener('click', () => {
+    artifactPanel.classList.remove('visible');
+    workspace.classList.remove('has-artifact');
 });
 
-selfTalkToggle.addEventListener('change', () => {
-    if (selfTalkToggle.checked) {
-        if (addSelfTalkSeed(seedPrompt.value)) seedPrompt.value = '';
-        selfTalkRunning = true;
-        stopSelfTalk.disabled = false;
-        runSelfTalkLoop();
-    } else {
-        selfTalkRunning = false;
-        stopSelfTalk.disabled = true;
-    }
-});
-
-addSeed.addEventListener('click', () => {
-    if (addSelfTalkSeed(seedPrompt.value)) seedPrompt.value = '';
-    if (selfTalkToggle.checked && !selfTalkRunning) {
-        selfTalkRunning = true;
-        runSelfTalkLoop();
-    }
-});
-
-seedPrompt.addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
-        event.preventDefault();
-        addSeed.click();
-    }
-});
-
-stopSelfTalk.addEventListener('click', () => {
-    selfTalkRunning = false;
-    selfTalkToggle.checked = false;
-    if (activeAbortController) activeAbortController.abort();
-    stopSelfTalk.disabled = true;
-});
+modelSelect.addEventListener('change', saveSettings);
+temperatureInput.addEventListener('change', saveSettings);
+topPInput.addEventListener('change', saveSettings);
+maxTokensInput.addEventListener('change', saveSettings);
+temperatureInput.addEventListener('input', saveSettings);
+topPInput.addEventListener('input', saveSettings);
+maxTokensInput.addEventListener('input', saveSettings);
 
 prompt.addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -1557,6 +1715,7 @@ form.addEventListener('drop', event => {
     });
 });
 
+applySavedSettings();
 loadModels();
 prompt.focus();
 </script>
@@ -1839,7 +1998,7 @@ prompt.focus();
         /// <summary>
         /// Forwards a raw /v1/* request to LM Studio, preserving body and relevant headers.
         /// </summary>
-        private async Task<HttpResponseMessage> ForwardRawRequestToLmStudioAsync(HttpListenerRequest originalRequest, string requestBody) {
+        private async Task<HttpResponseMessage> ForwardRawRequestToLmStudioAsync(HttpListenerRequest originalRequest, string requestBody, CancellationToken cancellationToken = default(CancellationToken)) {
             if (originalRequest == null)
                 throw new ArgumentNullException(nameof(originalRequest));
 
@@ -1879,7 +2038,7 @@ prompt.focus();
                 }
             }
 
-            return await _httpClient.SendAsync(forwardRequest, HttpCompletionOption.ResponseHeadersRead);
+            return await _httpClient.SendAsync(forwardRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
 
         /// <summary>
@@ -1978,6 +2137,10 @@ prompt.focus();
                                 LogMessage("[Conversation Tool Result Error] id=" + toolCallId +
                                            " name=" + toolName + " content=" +
                                            TruncateForLog(content, 700));
+                            } else if (toolName.Equals("get_file", StringComparison.Ordinal)) {
+                                LogMessage("[Conversation Tool Result] id=" + toolCallId +
+                                           " name=get_file contentLength=" + content.Length.ToString() +
+                                           " preview=" + TruncateForLog(content, 300));
                             }
                         }
                     }
@@ -2065,40 +2228,61 @@ prompt.focus();
                 string chatRequestBody = ConvertResponsesRequestToChatCompletions(responsesRequestBody);
                 LogMessage("[Responses Bridge] Converted /v1/responses request to /v1/chat/completions; bodyLength=" + chatRequestBody.Length.ToString());
 
-                Task<HttpResponseMessage> upstreamTask = ForwardChatCompletionBodyToLmStudioAsync(chatRequestBody);
-                await WriteSseCommentAsync(resp.OutputStream, "proxy responses bridge keepalive");
+                string responseId = "resp_" + Guid.NewGuid().ToString("N");
+                long responseCreated = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                string responseModel = ExtractJsonStringProperty(chatRequestBody, "model");
+                if (string.IsNullOrWhiteSpace(responseModel))
+                    responseModel = "lm-studio";
 
-                while (!upstreamTask.IsCompleted) {
-                    await Task.Delay(TimeSpan.FromSeconds(5));
-                    await WriteSseCommentAsync(resp.OutputStream, "proxy responses bridge keepalive");
-                }
+                DateTimeOffset promptStartedUtc = DateTimeOffset.UtcNow;
+                CancellationTokenSource upstreamCts = null;
+                Task<HttpResponseMessage> upstreamTask = null;
+                try {
+                    upstreamCts = new CancellationTokenSource();
+                    upstreamTask = ForwardChatCompletionBodyToLmStudioAsync(chatRequestBody, upstreamCts.Token);
+                    int progressPercent = CalculateEstimatedPromptProgressPercent(promptStartedUtc);
 
-                using (HttpResponseMessage upstream = await upstreamTask) {
-                    if (upstream == null) {
-                        await WriteResponsesSseErrorAsync(resp.OutputStream, "Failed to get response from LM Studio.");
-                        return;
+                    await WriteSseCommentAsync(resp.OutputStream, "proxy responses bridge keepalive; phase=processing_prompt; progress=" + progressPercent.ToString() + "%");
+                    await WriteResponsesCreatedAsync(resp.OutputStream, responseId, responseCreated, responseModel, progressPercent, "processing_prompt");
+
+                    while (!upstreamTask.IsCompleted) {
+                        await Task.Delay(VsKeepAliveInterval);
+                        progressPercent = CalculateEstimatedPromptProgressPercent(promptStartedUtc);
+                        await WriteSseCommentAsync(resp.OutputStream, "proxy responses bridge keepalive; phase=processing_prompt; progress=" + progressPercent.ToString() + "%");
+                        await WriteResponsesInProgressAsync(resp.OutputStream, responseId, responseCreated, responseModel, progressPercent, "processing_prompt");
                     }
+                    using (HttpResponseMessage upstream = await upstreamTask) {
+                        if (upstream == null) {
+                            await WriteResponsesSseErrorAsync(resp.OutputStream, "Failed to get response from LM Studio.");
+                            return;
+                        }
 
-                    LogMessage($"[Responses Bridge] LM Studio response {(int)upstream.StatusCode} {upstream.ReasonPhrase}");
-                    if ((int)upstream.StatusCode >= 400) {
-                        string errorBody = upstream.Content == null ? "" : await upstream.Content.ReadAsStringAsync();
-                        LogMessage("[Responses Bridge] Upstream error body: " + TruncateForLog(errorBody, 800));
-                        await WriteResponsesSseErrorAsync(resp.OutputStream, string.IsNullOrWhiteSpace(errorBody) ? upstream.ReasonPhrase : errorBody);
-                        return;
+                        LogMessage($"[Responses Bridge] LM Studio response {(int)upstream.StatusCode} {upstream.ReasonPhrase}");
+                        if ((int)upstream.StatusCode >= 400) {
+                            string errorBody = upstream.Content == null ? "" : await upstream.Content.ReadAsStringAsync();
+                            LogMessage("[Responses Bridge] Upstream error body: " + TruncateForLog(errorBody, 800));
+                            await WriteResponsesSseErrorAsync(resp.OutputStream, string.IsNullOrWhiteSpace(errorBody) ? upstream.ReasonPhrase : errorBody);
+                            return;
+                        }
+
+                        string upstreamBody = upstream.Content == null ? "" : await ReadUpstreamBodyWithKeepAliveAsync(upstream.Content, resp.OutputStream);
+                        upstreamBody = ScrubDeadEndProjectContextMessage(upstreamBody);
+                        string chatSse = AdaptNativeOpenAiToolCallStream(upstreamBody, chatRequestBody);
+                        if (ReferenceEquals(chatSse, upstreamBody))
+                            chatSse = AdaptQwenToolCallStream(upstreamBody, chatRequestBody);
+                        if (ReferenceEquals(chatSse, upstreamBody))
+                            chatSse = AdaptTextOnlyRepairContinuation(upstreamBody, chatRequestBody);
+
+                        string responsesSse = ConvertChatSseToResponsesSse(chatSse, chatRequestBody, responseId, responseCreated, true);
+                        byte[] bytes = Encoding.UTF8.GetBytes(responsesSse);
+                        await resp.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+                        await resp.OutputStream.FlushAsync();
                     }
-
-                    string upstreamBody = upstream.Content == null ? "" : await ReadUpstreamBodyWithKeepAliveAsync(upstream.Content, resp.OutputStream);
-                    upstreamBody = ScrubDeadEndProjectContextMessage(upstreamBody);
-                    string chatSse = AdaptNativeOpenAiToolCallStream(upstreamBody, chatRequestBody);
-                    if (ReferenceEquals(chatSse, upstreamBody))
-                        chatSse = AdaptQwenToolCallStream(upstreamBody, chatRequestBody);
-                    if (ReferenceEquals(chatSse, upstreamBody))
-                        chatSse = AdaptTextOnlyRepairContinuation(upstreamBody, chatRequestBody);
-
-                    string responsesSse = ConvertChatSseToResponsesSse(chatSse, chatRequestBody);
-                    byte[] bytes = Encoding.UTF8.GetBytes(responsesSse);
-                    await resp.OutputStream.WriteAsync(bytes, 0, bytes.Length);
-                    await resp.OutputStream.FlushAsync();
+                } finally {
+                    if (upstreamTask != null && !upstreamTask.IsCompleted && upstreamCts != null)
+                        upstreamCts.Cancel();
+                    if (upstreamCts != null)
+                        upstreamCts.Dispose();
                 }
             } catch (Exception ex) {
                 if (IsClientDisconnectedException(ex)) {
@@ -2120,11 +2304,11 @@ prompt.focus();
         /// <summary>
         /// Sends a chat-completions request body directly to LM Studio.
         /// </summary>
-        private async Task<HttpResponseMessage> ForwardChatCompletionBodyToLmStudioAsync(string chatRequestBody) {
+        private async Task<HttpResponseMessage> ForwardChatCompletionBodyToLmStudioAsync(string chatRequestBody, CancellationToken cancellationToken = default(CancellationToken)) {
             string url = $"http://{_lmStudioHost}:{_lmStudioPort}/v1/chat/completions";
             var forwardRequest = new HttpRequestMessage(HttpMethod.Post, url);
             forwardRequest.Content = new StringContent(chatRequestBody ?? "{}", Encoding.UTF8, "application/json");
-            return await _httpClient.SendAsync(forwardRequest, HttpCompletionOption.ResponseHeadersRead);
+            return await _httpClient.SendAsync(forwardRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
 
         /// <summary>
@@ -2359,52 +2543,123 @@ prompt.focus();
         /// Streams chat completions with early SSE keepalives so slow prompt processing does not look idle to VS.
         /// </summary>
         private async Task ForwardStreamingChatCompletionWithKeepAliveAsync(HttpListenerRequest req, string requestBody, HttpListenerResponse resp) {
+            string streamId = CreateStreamDiagnosticId();
+            DateTimeOffset streamStartedUtc = DateTimeOffset.UtcNow;
+            int keepAliveComments = 0;
+            int keepAliveDataChunks = 0;
+
             resp.StatusCode = 200;
             resp.ContentType = "text/event-stream; charset=utf-8";
             resp.SendChunked = true;
+            resp.KeepAlive = true;
             resp.Headers["Cache-Control"] = "no-cache";
             resp.Headers["X-Accel-Buffering"] = "no";
 
-            Task<HttpResponseMessage> upstreamTask = ForwardRawRequestToLmStudioAsync(req, requestBody);
+            DateTimeOffset promptStartedUtc = streamStartedUtc;
+            CancellationTokenSource upstreamCts = new CancellationTokenSource();
+            Task<HttpResponseMessage> upstreamTask = ForwardRawRequestToLmStudioAsync(req, requestBody, upstreamCts.Token);
+            string heartbeatId = "chatcmpl_keepalive_" + Guid.NewGuid().ToString("N");
+            long heartbeatCreated = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            string model = ExtractJsonStringProperty(requestBody, "model") ?? "lm-studio";
+
+            LogStreamDiagnostic(streamId, "start", streamStartedUtc,
+                "chat-completion stream opened; bodyLength=" + (requestBody == null ? 0 : requestBody.Length).ToString() +
+                "; model=" + model +
+                "; promptTimeoutSeconds=" + ((int)_promptTimeout.TotalSeconds).ToString() +
+                "; keepAliveSeconds=" + VsKeepAliveInterval.TotalSeconds.ToString("0.###") +
+                "; dataHeartbeats=" + SendChatCompletionDataHeartbeats.ToString() +
+                "; client=" + DescribeClient(req));
 
             try {
-                await WriteSseCommentAsync(resp.OutputStream, "proxy keepalive");
+                int progressPercent = CalculateEstimatedPromptProgressPercent(promptStartedUtc);
+                await WriteSseCommentAsync(resp.OutputStream, "proxy keepalive; phase=processing_prompt; progress=" + progressPercent.ToString() + "%");
+                keepAliveComments++;
+                if (SendChatCompletionDataHeartbeats) {
+                    await WriteChatCompletionHeartbeatAsync(resp.OutputStream, heartbeatId, heartbeatCreated, model, progressPercent, "processing_prompt");
+                    keepAliveDataChunks++;
+                }
+                LogStreamDiagnostic(streamId, "keepalive", streamStartedUtc,
+                    "sent initial prompt keepalive; progress=" + progressPercent.ToString() +
+                    "%; comments=" + keepAliveComments.ToString() +
+                    "; dataChunks=" + keepAliveDataChunks.ToString());
 
                 while (!upstreamTask.IsCompleted) {
-                    await Task.Delay(TimeSpan.FromSeconds(5));
-                    await WriteSseCommentAsync(resp.OutputStream, "proxy keepalive");
+                    await Task.Delay(VsKeepAliveInterval);
+                    progressPercent = CalculateEstimatedPromptProgressPercent(promptStartedUtc);
+                    await WriteSseCommentAsync(resp.OutputStream, "proxy keepalive; phase=processing_prompt; progress=" + progressPercent.ToString() + "%");
+                    keepAliveComments++;
+                    if (SendChatCompletionDataHeartbeats) {
+                        await WriteChatCompletionHeartbeatAsync(resp.OutputStream, heartbeatId, heartbeatCreated, model, progressPercent, "processing_prompt");
+                        keepAliveDataChunks++;
+                    }
+
+                    if (keepAliveComments == 1 || keepAliveComments % KeepAliveDiagnosticInterval == 0) {
+                        LogStreamDiagnostic(streamId, "keepalive", streamStartedUtc,
+                            "prompt still processing; progress=" + progressPercent.ToString() +
+                            "%; comments=" + keepAliveComments.ToString() +
+                            "; dataChunks=" + keepAliveDataChunks.ToString() +
+                            "; upstreamTask=" + DescribeTask(upstreamTask));
+                    }
                 }
+
+                LogStreamDiagnostic(streamId, "upstream", streamStartedUtc,
+                    "LM Studio upstream task completed before await; " + DescribeTask(upstreamTask));
 
                 using (HttpResponseMessage upstream = await upstreamTask) {
                     if (upstream == null) {
-                        LogMessage("[Streaming] LM Studio returned no response.");
+                        LogStreamDiagnostic(streamId, "upstream", streamStartedUtc, "LM Studio returned no response.");
                         await WriteSseErrorAsync(resp.OutputStream, "Failed to get response from LM Studio.");
                         return;
                     }
 
                     LogMessage($"[Streaming] LM Studio response {(int)upstream.StatusCode} {upstream.ReasonPhrase} for {req.HttpMethod} {req.Url.AbsolutePath}");
+                    LogStreamDiagnostic(streamId, "upstream", streamStartedUtc,
+                        "headers received; status=" + ((int)upstream.StatusCode).ToString() +
+                        " " + upstream.ReasonPhrase +
+                        "; contentType=" + (upstream.Content == null || upstream.Content.Headers.ContentType == null ? "<none>" : upstream.Content.Headers.ContentType.ToString()));
 
                     if ((int)upstream.StatusCode >= 400) {
                         string errorBody = upstream.Content == null ? "" : await upstream.Content.ReadAsStringAsync();
                         LogMessage($"[Streaming] Upstream error body: {TruncateForLog(errorBody, 800)}");
+                        LogStreamDiagnostic(streamId, "upstream-error", streamStartedUtc,
+                            "status=" + ((int)upstream.StatusCode).ToString() +
+                            "; errorBodyLength=" + errorBody.Length.ToString());
                         await WriteSseErrorAsync(resp.OutputStream, string.IsNullOrWhiteSpace(errorBody) ? upstream.ReasonPhrase : errorBody);
                         return;
                     }
 
-                    if (upstream.Content != null)
-                        await StreamAdaptedChatCompletionsToClientAsync(upstream.Content, resp.OutputStream, requestBody);
+                    if (upstream.Content != null) {
+                        await StreamAdaptedChatCompletionsToClientAsync(upstream.Content, resp.OutputStream, requestBody, streamId, streamStartedUtc);
+                        LogStreamDiagnostic(streamId, "complete", streamStartedUtc, "adapter returned after streaming upstream content.");
+                    } else {
+                        LogStreamDiagnostic(streamId, "upstream", streamStartedUtc, "upstream response had no content.");
+                    }
                 }
             } catch (Exception ex) {
                 if (IsClientDisconnectedException(ex)) {
-                    LogMessage("[Streaming] Client disconnected before proxy finished streaming; abandoning response.");
+                    if (!upstreamTask.IsCompleted)
+                        upstreamCts.Cancel();
+                    LogStreamDiagnostic(streamId, "disconnect", streamStartedUtc,
+                        "client disconnected before proxy finished streaming; " + DescribeException(ex) +
+                        "; keepAliveComments=" + keepAliveComments.ToString() +
+                        "; keepAliveDataChunks=" + keepAliveDataChunks.ToString() +
+                        "; upstreamTask=" + DescribeTask(upstreamTask));
                     return;
                 }
 
+                LogStreamDiagnostic(streamId, "error", streamStartedUtc, "proxy streaming error; " + DescribeException(ex));
                 LogMessage($"[Streaming] Proxy streaming error: {ex}");
                 try {
                     await WriteSseErrorAsync(resp.OutputStream, "Proxy streaming error: " + ex.Message);
                 } catch { }
             } finally {
+                LogStreamDiagnostic(streamId, "finally", streamStartedUtc,
+                    "closing response; keepAliveComments=" + keepAliveComments.ToString() +
+                    "; keepAliveDataChunks=" + keepAliveDataChunks.ToString() +
+                    "; upstreamTask=" + DescribeTask(upstreamTask));
+                if (!upstreamTask.IsCompleted)
+                    upstreamCts.Cancel();
+                upstreamCts.Dispose();
                 try {
                     resp.Close();
                 } catch { }
@@ -2415,9 +2670,125 @@ prompt.focus();
         /// Writes an SSE comment frame.
         /// </summary>
         private async Task WriteSseCommentAsync(Stream stream, string comment) {
-            byte[] bytes = Encoding.UTF8.GetBytes(": " + comment + "\n\n");
+            string padding = KeepAlivePaddingChars <= 0 ? "" : new string(' ', KeepAlivePaddingChars);
+            byte[] bytes = Encoding.UTF8.GetBytes(": " + comment + padding + "\n\n");
             await stream.WriteAsync(bytes, 0, bytes.Length);
             await stream.FlushAsync();
+        }
+
+        /// <summary>
+        /// Writes a valid no-op chat completion chunk so strict clients observe real SSE progress.
+        /// </summary>
+        private async Task WriteChatCompletionHeartbeatAsync(Stream stream, string completionId, long created, string model, int progressPercent, string phase) {
+            string json = "{\"id\":\"" + completionId +
+                          "\",\"object\":\"chat.completion.chunk\",\"created\":" + created.ToString() +
+                          ",\"model\":\"" + EscapeJson(string.IsNullOrWhiteSpace(model) ? "lm-studio" : model) +
+                          "\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":null}]}";
+            byte[] bytes = Encoding.UTF8.GetBytes("data: " + json + "\n\n");
+            await stream.WriteAsync(bytes, 0, bytes.Length);
+            await stream.FlushAsync();
+        }
+
+        /// <summary>
+        /// Opens a valid Responses stream immediately so Visual Studio does not time out during prompt processing.
+        /// </summary>
+        private async Task WriteResponsesCreatedAsync(Stream stream, string responseId, long created, string model, int progressPercent, string phase) {
+            string frame = BuildResponsesLifecycleFrame("response.created", "response.created", responseId, created, model, "in_progress", progressPercent, phase);
+            byte[] bytes = Encoding.UTF8.GetBytes(frame);
+            await stream.WriteAsync(bytes, 0, bytes.Length);
+            await stream.FlushAsync();
+        }
+
+        /// <summary>
+        /// Sends a valid Responses lifecycle heartbeat while LM Studio is still processing.
+        /// </summary>
+        private async Task WriteResponsesInProgressAsync(Stream stream, string responseId, long created, string model, int progressPercent, string phase) {
+            string frame = BuildResponsesLifecycleFrame("response.in_progress", "response.in_progress", responseId, created, model, "in_progress", progressPercent, phase);
+            byte[] bytes = Encoding.UTF8.GetBytes(frame);
+            await stream.WriteAsync(bytes, 0, bytes.Length);
+            await stream.FlushAsync();
+        }
+
+        /// <summary>
+        /// Builds a Responses API lifecycle event. Progress is sent in SSE comments to keep JSON strict.
+        /// </summary>
+        private string BuildResponsesLifecycleFrame(string eventName, string type, string responseId, long created, string model, string status, int progressPercent, string phase) {
+            return "event: " + eventName + "\n" +
+                   "data: {\"type\":\"" + type + "\",\"response\":{\"id\":\"" + EscapeJson(responseId) +
+                   "\",\"object\":\"response\",\"created_at\":" + created.ToString() +
+                   ",\"status\":\"" + EscapeJson(status ?? "in_progress") +
+                   "\",\"model\":\"" + EscapeJson(string.IsNullOrWhiteSpace(model) ? "lm-studio" : model) +
+                   "\",\"output\":[]}}\n\n";
+        }
+
+        /// <summary>
+        /// Estimates prompt-processing progress from elapsed time; LM Studio does not expose real prompt percent.
+        /// </summary>
+        private int CalculateEstimatedPromptProgressPercent(DateTimeOffset startedUtc) {
+            double timeoutMs = Math.Max(_promptTimeout.TotalMilliseconds, 1);
+            double elapsedMs = Math.Max((DateTimeOffset.UtcNow - startedUtc).TotalMilliseconds, 0);
+            int percent = (int)Math.Floor((elapsedMs / timeoutMs) * 100.0);
+            if (percent < 1)
+                percent = 1;
+            if (percent > 95)
+                percent = 95;
+            return percent;
+        }
+
+        private string CreateStreamDiagnosticId() {
+            return "stream_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+        }
+
+        private long ElapsedMilliseconds(DateTimeOffset startedUtc) {
+            double elapsed = (DateTimeOffset.UtcNow - startedUtc).TotalMilliseconds;
+            return elapsed < 0 ? 0 : (long)elapsed;
+        }
+
+        private void LogStreamDiagnostic(string streamId, string phase, DateTimeOffset startedUtc, string message) {
+            LogMessage("[Streaming][" + (string.IsNullOrWhiteSpace(streamId) ? "stream_unknown" : streamId) +
+                       "][" + (string.IsNullOrWhiteSpace(phase) ? "diag" : phase) +
+                       " +" + ElapsedMilliseconds(startedUtc).ToString() + "ms] " + message);
+        }
+
+        private string DescribeClient(HttpListenerRequest req) {
+            if (req == null)
+                return "<unknown>";
+
+            string remote = req.RemoteEndPoint == null ? "<unknown>" : req.RemoteEndPoint.ToString();
+            string userAgent = string.IsNullOrWhiteSpace(req.UserAgent) ? "<none>" : TruncateForLog(req.UserAgent, 160);
+            return "remote=" + remote +
+                   "; keepAlive=" + req.KeepAlive.ToString() +
+                   "; protocol=" + req.ProtocolVersion +
+                   "; userAgent=" + userAgent;
+        }
+
+        private string DescribeTask(Task task) {
+            if (task == null)
+                return "<null>";
+
+            string status = task.Status.ToString();
+            if (task.IsFaulted && task.Exception != null)
+                status += "; fault=" + DescribeException(task.Exception.GetBaseException());
+            if (task.IsCanceled)
+                status += "; canceled=true";
+            return status;
+        }
+
+        private string DescribeException(Exception ex) {
+            if (ex == null)
+                return "<no exception>";
+
+            var parts = new List<string>();
+            Exception current = ex;
+            int depth = 0;
+            while (current != null && depth < 4) {
+                parts.Add(current.GetType().Name +
+                          "(hresult=0x" + current.HResult.ToString("X8") +
+                          ", message=\"" + TruncateForLog(current.Message, 220) + "\")");
+                current = current.InnerException;
+                depth++;
+            }
+            return string.Join(" -> ", parts);
         }
 
         /// <summary>
@@ -2431,38 +2802,92 @@ prompt.focus();
             await stream.FlushAsync();
         }
 
-        private async Task StreamAdaptedChatCompletionsToClientAsync(HttpContent upstreamContent, Stream clientStream, string requestBody) {
+        private async Task StreamAdaptedChatCompletionsToClientAsync(HttpContent upstreamContent, Stream clientStream, string requestBody, string streamId = null, DateTimeOffset? streamStartedUtc = null) {
+            DateTimeOffset diagnosticStartedUtc = streamStartedUtc ?? DateTimeOffset.UtcNow;
             var nativeBuilders = new Dictionary<int, ToolCallBuilder>();
             var qwenToolText = new StringBuilder();
             var reasoningBuffer = new StringBuilder();
             bool sawNativeToolCalls = false;
             bool sawQwenToolCalls = false;
             bool wroteDone = false;
+            int upstreamLines = 0;
+            int dataFrames = 0;
+            int passthroughFrames = 0;
+            int suppressedFrames = 0;
+            int contentFrames = 0;
+            int reasoningFrames = 0;
+            int nonDataFrames = 0;
+            int parseRepairFrames = 0;
+            int downstreamWrites = 0;
+            long downstreamBytes = 0;
             string model = ExtractJsonStringProperty(requestBody, "model");
             if (string.IsNullOrWhiteSpace(model))
                 model = "lm-studio";
+
+            async Task WriteClientTextAsync(string text, string kind) {
+                int byteCount = Encoding.UTF8.GetByteCount(text ?? "");
+                await WriteRawSseTextAsync(clientStream, text);
+                downstreamWrites++;
+                downstreamBytes += byteCount;
+                if (downstreamWrites <= StreamDiagnosticFirstFramesToLog || downstreamWrites % StreamDiagnosticEveryNFrames == 0) {
+                    LogStreamDiagnostic(streamId, "downstream", diagnosticStartedUtc,
+                        "wrote client frame #" + downstreamWrites.ToString() +
+                        "; kind=" + (string.IsNullOrWhiteSpace(kind) ? "unknown" : kind) +
+                        "; bytes=" + byteCount.ToString() +
+                        "; totalBytes=" + downstreamBytes.ToString() +
+                        "; preview=" + TruncateForLog(text, 220));
+                }
+            }
+
+            async Task WriteClientFrameAsync(string frameLine, string kind) {
+                await WriteClientTextAsync((frameLine ?? "") + "\n\n", kind);
+            }
+
+            LogStreamDiagnostic(streamId, "adapter", diagnosticStartedUtc, "starting upstream content read; model=" + model);
 
             using (var upstreamStream = await upstreamContent.ReadAsStreamAsync())
             using (var reader = new StreamReader(upstreamStream, Encoding.UTF8)) {
                 string line;
                 while ((line = await reader.ReadLineAsync()) != null) {
+                    upstreamLines++;
                     if (string.IsNullOrWhiteSpace(line)) {
                         continue;
                     }
 
                     if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) {
-                        await WriteRawSseFrameAsync(clientStream, line);
+                        nonDataFrames++;
+                        await WriteClientFrameAsync(line, "non-data");
+                        passthroughFrames++;
+                        if (nonDataFrames <= StreamDiagnosticFirstFramesToLog || nonDataFrames % StreamDiagnosticEveryNFrames == 0)
+                            LogStreamDiagnostic(streamId, "adapter", diagnosticStartedUtc,
+                                "passed non-data SSE frame #" + nonDataFrames.ToString() +
+                                "; preview=" + TruncateForLog(line, 200));
                         continue;
                     }
 
+                    dataFrames++;
                     string payload = line.Substring(5).Trim();
                     if (payload.Equals("[DONE]", StringComparison.OrdinalIgnoreCase)) {
+                        LogStreamDiagnostic(streamId, "adapter", diagnosticStartedUtc,
+                            "upstream sent [DONE]; dataFrames=" + dataFrames.ToString() +
+                            "; upstreamLines=" + upstreamLines.ToString());
                         break;
                     }
 
+                    if (dataFrames <= StreamDiagnosticFirstFramesToLog || dataFrames % StreamDiagnosticEveryNFrames == 0)
+                        LogStreamDiagnostic(streamId, "adapter", diagnosticStartedUtc,
+                            "read upstream data frame #" + dataFrames.ToString() +
+                            "; payloadChars=" + payload.Length.ToString() +
+                            "; preview=" + TruncateForLog(payload, 220));
+
                     string safePayload = EscapeInvalidJsonStringControlCharacters(payload, out int escapedControlCharacters);
-                    if (escapedControlCharacters > 0)
+                    if (escapedControlCharacters > 0) {
+                        parseRepairFrames++;
                         LogMessage($"[JSON Repair] Escaped {escapedControlCharacters} raw control character(s) in live streaming chunk.");
+                        LogStreamDiagnostic(streamId, "json-repair", diagnosticStartedUtc,
+                            "escaped raw control characters in frame #" + dataFrames.ToString() +
+                            "; count=" + escapedControlCharacters.ToString());
+                    }
 
                     bool suppressRawFrame = false;
                     try {
@@ -2485,6 +2910,9 @@ prompt.focus();
                                             sawNativeToolCalls = true;
                                             suppressRawFrame = true;
                                             AccumulateNativeToolCallDeltas(nativeBuilders, nativeToolCalls);
+                                            LogStreamDiagnostic(streamId, "tool-delta", diagnosticStartedUtc,
+                                                "suppressed native tool_calls delta in frame #" + dataFrames.ToString() +
+                                                "; builderCount=" + nativeBuilders.Count.ToString());
                                         }
 
                                         string reasoning = ExtractReasoningText(delta);
@@ -2492,6 +2920,7 @@ prompt.focus();
                                         if (!string.IsNullOrEmpty(reasoning)) {
                                             suppressRawFrame = true;
                                             reasoningBuffer.Append(reasoning);
+                                            reasoningFrames++;
                                         }
 
                                         if (delta.TryGetProperty("content", out JsonElement contentElement) &&
@@ -2500,6 +2929,9 @@ prompt.focus();
                                             string passThroughContent = InterceptQwenToolCallContent(content, qwenToolText, ref sawQwenToolCalls);
                                             if (!string.Equals(passThroughContent, content, StringComparison.Ordinal)) {
                                                 suppressRawFrame = true;
+                                                LogStreamDiagnostic(streamId, "qwen-tool", diagnosticStartedUtc,
+                                                    "intercepted qwen tool-call text in frame #" + dataFrames.ToString() +
+                                                    "; bufferedChars=" + qwenToolText.Length.ToString());
                                             }
 
                                             if (reasoningBuffer.Length > 0 && !string.IsNullOrEmpty(passThroughContent)) {
@@ -2516,13 +2948,17 @@ prompt.focus();
                                             else if (!string.Equals(passThroughContent, content, StringComparison.Ordinal) &&
                                                      !string.IsNullOrEmpty(passThroughContent)) {
                                                 string contentFrame = BuildSingleContentDeltaSse(passThroughContent, model);
-                                                await WriteRawSseTextAsync(clientStream, contentFrame);
+                                                await WriteClientTextAsync(contentFrame, "content");
+                                                contentFrames++;
+                                                passthroughFrames++;
                                             }
                                         }
 
                                         if (visibleDelta != null && visibleDelta.Length > 0) {
                                             string contentFrame = BuildSingleContentDeltaSse(visibleDelta.ToString(), model);
-                                            await WriteRawSseTextAsync(clientStream, contentFrame);
+                                            await WriteClientTextAsync(contentFrame, "content-with-reasoning");
+                                            contentFrames++;
+                                            passthroughFrames++;
                                         }
                                     }
 
@@ -2530,53 +2966,120 @@ prompt.focus();
                                         finishReason.ValueKind == JsonValueKind.String &&
                                         finishReason.GetString().Equals("tool_calls", StringComparison.OrdinalIgnoreCase)) {
                                         suppressRawFrame = true;
+                                        LogStreamDiagnostic(streamId, "tool-finish", diagnosticStartedUtc,
+                                            "suppressed finish_reason=tool_calls in frame #" + dataFrames.ToString());
                                     }
                                 }
                             }
                         }
                     } catch (Exception ex) {
                         LogMessage("[Streaming] Live adapter could not parse chunk; passing through raw frame: " + ex.Message);
+                        LogStreamDiagnostic(streamId, "parse-error", diagnosticStartedUtc,
+                            "passing raw frame #" + dataFrames.ToString() +
+                            " after parse error; " + DescribeException(ex));
                     }
 
-                    if (!suppressRawFrame)
-                        await WriteRawSseFrameAsync(clientStream, "data: " + payload);
+                    if (!suppressRawFrame) {
+                        await WriteClientFrameAsync("data: " + payload, "passthrough");
+                        passthroughFrames++;
+                    } else {
+                        suppressedFrames++;
+                    }
                 }
             }
 
+            LogStreamDiagnostic(streamId, "adapter", diagnosticStartedUtc,
+                "upstream read completed; upstreamLines=" + upstreamLines.ToString() +
+                "; dataFrames=" + dataFrames.ToString() +
+                "; passthroughFrames=" + passthroughFrames.ToString() +
+                "; suppressedFrames=" + suppressedFrames.ToString() +
+                "; contentFrames=" + contentFrames.ToString() +
+                "; reasoningFrames=" + reasoningFrames.ToString() +
+                "; parseRepairFrames=" + parseRepairFrames.ToString() +
+                "; nativeToolCalls=" + sawNativeToolCalls.ToString() +
+                "; qwenToolCalls=" + sawQwenToolCalls.ToString());
+
             if (reasoningBuffer.Length > 0) {
                 string thinkingBlock = "**Thinking**\n\n" + FormatVisibleReasoningText(reasoningBuffer.ToString()) + "\n\n";
-                await WriteRawSseTextAsync(clientStream, BuildSingleContentDeltaSse(thinkingBlock, model));
+                await WriteClientTextAsync(BuildSingleContentDeltaSse(thinkingBlock, model), "trailing-reasoning");
+                contentFrames++;
+                LogStreamDiagnostic(streamId, "reasoning", diagnosticStartedUtc,
+                    "flushed trailing reasoning text; chars=" + thinkingBlock.Length.ToString());
                 reasoningBuffer.Clear();
             }
 
             if (sawNativeToolCalls && nativeBuilders.Count > 0) {
                 var toolCalls = BuildToolCallsFromBuilders(nativeBuilders, requestBody);
                 if (toolCalls.Count > 0) {
+                    if (ContainsProxyOwnedToolCall(toolCalls)) {
+                        LogToolCalls("live proxy research", toolCalls);
+                        LogStreamDiagnostic(streamId, "proxy-tools", diagnosticStartedUtc,
+                            "executing proxy-owned native tool calls; count=" + toolCalls.Count.ToString());
+                        string continuationSse = await ExecuteProxyToolsAndContinueAsync(requestBody, toolCalls, model);
+                        await WriteClientTextAsync(continuationSse, "proxy-tool-continuation");
+                        passthroughFrames++;
+                        wroteDone = true;
+                    } else {
                     LogToolCalls("live native repaired", toolCalls);
-                    await WriteRawSseTextAsync(clientStream, BuildSingleContentDeltaSse(BuildVisibleToolCallSummary(toolCalls), model));
-                    await WriteRawSseTextAsync(clientStream, BuildToolCallSseResponse(toolCalls, model));
+                    LogStreamDiagnostic(streamId, "tool-output", diagnosticStartedUtc,
+                        "sending native tool call response to VS; count=" + toolCalls.Count.ToString());
+                    await WriteClientTextAsync(BuildToolCallSseResponse(toolCalls, model), "tool-response");
+                    passthroughFrames++;
                     wroteDone = true;
+                    }
                 }
             } else if (sawQwenToolCalls && qwenToolText.Length > 0) {
                 var toolCalls = ExtractQwenToolCalls(qwenToolText.ToString());
                 HashSet<string> availableTools = GetAvailableToolNames(requestBody);
                 RemapSuppressedToolCalls(toolCalls, availableTools, requestBody);
+                RedirectMissingCodebehindLoopToCreateFile(toolCalls, requestBody);
                 RedirectSearchLoopToCreateFile(toolCalls, requestBody);
+                GuardVagueGetFileTargets(toolCalls, requestBody);
+                GuardRepeatedGetFileLoop(toolCalls, requestBody);
+                GuardCreateFileForExistingTarget(toolCalls, requestBody);
+                GuardBlankReplaceStringCalls(toolCalls, requestBody);
                 GuardUnsafeCreateFileTargets(toolCalls, requestBody);
                 if (availableTools.Count > 0)
                     toolCalls.RemoveAll(toolCall => toolCall == null ||
                                                    string.IsNullOrWhiteSpace(toolCall.Name) ||
                                                    !availableTools.Contains(toolCall.Name));
                 if (toolCalls.Count > 0) {
+                    if (ContainsProxyOwnedToolCall(toolCalls)) {
+                        LogToolCalls("live qwen proxy research", toolCalls);
+                        LogStreamDiagnostic(streamId, "proxy-tools", diagnosticStartedUtc,
+                            "executing proxy-owned qwen tool calls; count=" + toolCalls.Count.ToString());
+                        string continuationSse = await ExecuteProxyToolsAndContinueAsync(requestBody, toolCalls, model);
+                        await WriteClientTextAsync(continuationSse, "qwen-proxy-tool-continuation");
+                        passthroughFrames++;
+                        wroteDone = true;
+                    } else {
                     LogToolCalls("live qwen repaired", toolCalls);
-                    await WriteRawSseTextAsync(clientStream, BuildSingleContentDeltaSse(BuildVisibleToolCallSummary(toolCalls), model));
-                    await WriteRawSseTextAsync(clientStream, BuildToolCallSseResponse(toolCalls, model));
+                    LogStreamDiagnostic(streamId, "tool-output", diagnosticStartedUtc,
+                        "sending qwen tool call response to VS; count=" + toolCalls.Count.ToString());
+                    await WriteClientTextAsync(BuildToolCallSseResponse(toolCalls, model), "qwen-tool-response");
+                    passthroughFrames++;
                     wroteDone = true;
+                    }
                 }
             }
 
-            if (!wroteDone)
-                await WriteRawSseFrameAsync(clientStream, "data: [DONE]");
+            if (!wroteDone) {
+                await WriteClientFrameAsync("data: [DONE]", "done");
+                passthroughFrames++;
+                LogStreamDiagnostic(streamId, "done", diagnosticStartedUtc, "wrote final [DONE] to client.");
+            } else {
+                LogStreamDiagnostic(streamId, "done", diagnosticStartedUtc, "stream already completed by tool continuation/response; no extra [DONE] written.");
+            }
+
+            LogStreamDiagnostic(streamId, "adapter-summary", diagnosticStartedUtc,
+                "finished adapter; upstreamLines=" + upstreamLines.ToString() +
+                "; dataFrames=" + dataFrames.ToString() +
+                "; passthroughFrames=" + passthroughFrames.ToString() +
+                "; suppressedFrames=" + suppressedFrames.ToString() +
+                "; contentFrames=" + contentFrames.ToString() +
+                "; downstreamWrites=" + downstreamWrites.ToString() +
+                "; downstreamBytes=" + downstreamBytes.ToString() +
+                "; wroteDone=" + wroteDone.ToString());
         }
 
         private void AccumulateNativeToolCallDeltas(Dictionary<int, ToolCallBuilder> builders, JsonElement nativeToolCalls) {
@@ -2628,6 +3131,7 @@ prompt.focus();
 
                 string repairedArguments = RepairKnownToolArguments(builder.Name, rawArguments);
                 toolCalls.Add(new ToolCallData {
+                    Id = builder.Id,
                     Name = builder.Name,
                     ArgumentsJson = repairedArguments
                 });
@@ -2635,7 +3139,12 @@ prompt.focus();
 
             HashSet<string> availableTools = GetAvailableToolNames(requestBody);
             RemapSuppressedToolCalls(toolCalls, availableTools, requestBody);
+            RedirectMissingCodebehindLoopToCreateFile(toolCalls, requestBody);
             RedirectSearchLoopToCreateFile(toolCalls, requestBody);
+            GuardVagueGetFileTargets(toolCalls, requestBody);
+            GuardRepeatedGetFileLoop(toolCalls, requestBody);
+            GuardCreateFileForExistingTarget(toolCalls, requestBody);
+            GuardBlankReplaceStringCalls(toolCalls, requestBody);
             GuardUnsafeCreateFileTargets(toolCalls, requestBody);
             if (availableTools.Count > 0)
                 toolCalls.RemoveAll(toolCall => toolCall == null ||
@@ -2723,6 +3232,9 @@ prompt.focus();
 
             try {
                 using (JsonDocument document = JsonDocument.Parse(argumentsJson)) {
+                    if (LooksLikeLargeEditArguments(document.RootElement))
+                        return SummarizeLargeEditArguments(document.RootElement);
+
                     var options = new JsonWriterOptions {
                         Indented = true
                     };
@@ -2736,6 +3248,48 @@ prompt.focus();
             } catch {
                 return TruncateForLog(argumentsJson, 1200);
             }
+        }
+
+        /// <summary>
+        /// Detects edit arguments whose text fields would make the visible tool summary huge.
+        /// </summary>
+        private bool LooksLikeLargeEditArguments(JsonElement root) {
+            int total = 0;
+            foreach (string propertyName in new[] { "oldString", "newString", "content" }) {
+                if (root.TryGetProperty(propertyName, out JsonElement property) &&
+                    property.ValueKind == JsonValueKind.String &&
+                    property.GetString() != null)
+                    total += property.GetString().Length;
+            }
+
+            return total > 1200;
+        }
+
+        /// <summary>
+        /// Redacts large text fields in the human-visible tool-call preview while preserving executable arguments separately.
+        /// </summary>
+        private string SummarizeLargeEditArguments(JsonElement root) {
+            var summary = new Dictionary<string, object>();
+            foreach (JsonProperty property in root.EnumerateObject()) {
+                if ((property.NameEquals("oldString") ||
+                     property.NameEquals("newString") ||
+                     property.NameEquals("content")) &&
+                    property.Value.ValueKind == JsonValueKind.String) {
+                    string value = property.Value.GetString() ?? "";
+                    summary[property.Name] = "<redacted " + value.Length.ToString() + " chars>";
+                } else if (property.Value.ValueKind == JsonValueKind.String) {
+                    summary[property.Name] = property.Value.GetString();
+                } else if (property.Value.ValueKind == JsonValueKind.Number) {
+                    summary[property.Name] = property.Value.GetRawText();
+                } else if (property.Value.ValueKind == JsonValueKind.True || property.Value.ValueKind == JsonValueKind.False) {
+                    summary[property.Name] = property.Value.GetBoolean();
+                } else {
+                    summary[property.Name] = "<complex value>";
+                }
+            }
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            return JsonSerializer.Serialize(summary, options);
         }
 
         private async Task WriteRawSseFrameAsync(Stream stream, string frameLine) {
@@ -2761,6 +3315,9 @@ prompt.focus();
                 }
 
                 if (ex is ObjectDisposedException)
+                    return true;
+
+                if (ex is IOException)
                     return true;
 
                 ex = ex.InnerException;
@@ -2875,8 +3432,9 @@ prompt.focus();
             Task<string> readTask = content.ReadAsStringAsync();
 
             while (!readTask.IsCompleted) {
-                await Task.Delay(TimeSpan.FromSeconds(5));
+                await Task.Delay(VsKeepAliveInterval);
                 await WriteSseCommentAsync(clientStream, "proxy keepalive");
+                await WriteSseCommentAsync(clientStream, "proxy keepalive; phase=reading_upstream_response; progress=99%");
             }
 
             return await readTask;
@@ -2992,6 +3550,7 @@ prompt.focus();
                 }
 
                 toolCalls.Add(new ToolCallData {
+                    Id = builder.Id,
                     Name = builder.Name,
                     ArgumentsJson = repairedArguments
                 });
@@ -3002,7 +3561,12 @@ prompt.focus();
 
             HashSet<string> availableTools = GetAvailableToolNames(requestBody);
             RemapSuppressedToolCalls(toolCalls, availableTools, requestBody);
+            RedirectMissingCodebehindLoopToCreateFile(toolCalls, requestBody);
             RedirectSearchLoopToCreateFile(toolCalls, requestBody);
+            GuardVagueGetFileTargets(toolCalls, requestBody);
+            GuardRepeatedGetFileLoop(toolCalls, requestBody);
+            GuardCreateFileForExistingTarget(toolCalls, requestBody);
+            GuardBlankReplaceStringCalls(toolCalls, requestBody);
             GuardUnsafeCreateFileTargets(toolCalls, requestBody);
             LogToolCalls("native repaired", toolCalls);
             return BuildToolCallSseResponse(toolCalls, model);
@@ -3035,7 +3599,12 @@ prompt.focus();
                 LogMessage("[Tool Calls] Available tools: " + TruncateForLog(string.Join(", ", availableTools), 900));
             LogToolCalls("parsed", toolCalls);
             RemapSuppressedToolCalls(toolCalls, availableTools, requestBody);
+            RedirectMissingCodebehindLoopToCreateFile(toolCalls, requestBody);
             RedirectSearchLoopToCreateFile(toolCalls, requestBody);
+            GuardVagueGetFileTargets(toolCalls, requestBody);
+            GuardRepeatedGetFileLoop(toolCalls, requestBody);
+            GuardCreateFileForExistingTarget(toolCalls, requestBody);
+            GuardBlankReplaceStringCalls(toolCalls, requestBody);
             GuardUnsafeCreateFileTargets(toolCalls, requestBody);
             LogToolCalls("after remap", toolCalls);
             if (availableTools.Count > 0) {
@@ -3100,6 +3669,447 @@ prompt.focus();
             return BuildToolCallSseResponse(toolCalls, model);
         }
 
+        private bool ContainsProxyOwnedToolCall(List<ToolCallData> toolCalls) {
+            if (toolCalls == null)
+                return false;
+
+            foreach (ToolCallData toolCall in toolCalls) {
+                if (toolCall != null && IsProxyOwnedResearchTool(toolCall.Name))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool IsProxyOwnedResearchTool(string toolName) {
+            return toolName != null &&
+                   (toolName.Equals("nuget_search", StringComparison.Ordinal) ||
+                    toolName.Equals("nuget_package_info", StringComparison.Ordinal) ||
+                    toolName.Equals("github_code_search", StringComparison.Ordinal));
+        }
+
+        private async Task<string> ExecuteProxyToolsAndContinueAsync(string requestBody, List<ToolCallData> toolCalls, string model) {
+            try {
+                string continuationRequest = await BuildProxyToolContinuationRequestAsync(requestBody, toolCalls);
+                if (string.IsNullOrWhiteSpace(continuationRequest))
+                    return BuildTextOnlySseResponse("Proxy research tools did not produce a continuation request.", model);
+
+                using (HttpResponseMessage response = await ForwardChatCompletionBodyToLmStudioAsync(continuationRequest)) {
+                    string responseBody = response.Content == null ? "" : await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode) {
+                        LogMessage("[Proxy Research] Continuation request failed: " + ((int)response.StatusCode).ToString() + " " + response.ReasonPhrase + " " + TruncateForLog(responseBody, 1000));
+                        return BuildTextOnlySseResponse("Proxy research succeeded, but LM Studio continuation failed: " + (response.ReasonPhrase ?? "unknown error") + "\n\n" + TruncateForLog(responseBody, 2000), model);
+                    }
+
+                    ChatUiCompletion completion = ExtractChatUiCompletionFromChatCompletion(responseBody);
+                    string content = completion.Content;
+                    if (!string.IsNullOrWhiteSpace(completion.Reasoning))
+                        content = "**Thinking**\n\n" + FormatVisibleReasoningText(completion.Reasoning) + "\n\n" + (content ?? "");
+                    if (string.IsNullOrWhiteSpace(content))
+                        content = ExtractStreamedAssistantContent(responseBody);
+                    return BuildTextOnlySseResponse(string.IsNullOrWhiteSpace(content) ? "(empty continuation after proxy research)" : content, model);
+                }
+            } catch (Exception ex) {
+                LogMessage("[Proxy Research] Error executing proxy research tools: " + ex);
+                return BuildTextOnlySseResponse("Proxy research tool failed: " + ex.Message, model);
+            }
+        }
+
+        private async Task<string> BuildProxyToolContinuationRequestAsync(string requestBody, List<ToolCallData> toolCalls) {
+            var proxyResults = new List<ProxyToolExecutionResult>();
+            var passthroughToolCalls = new List<ToolCallData>();
+
+            foreach (ToolCallData toolCall in toolCalls) {
+                if (toolCall == null)
+                    continue;
+
+                if (IsProxyOwnedResearchTool(toolCall.Name)) {
+                    string toolCallId = "call_proxy_" + Guid.NewGuid().ToString("N").Substring(0, 16);
+                    string result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson);
+                    proxyResults.Add(new ProxyToolExecutionResult {
+                        Id = toolCallId,
+                        Name = toolCall.Name,
+                        ArgumentsJson = string.IsNullOrWhiteSpace(toolCall.ArgumentsJson) ? "{}" : toolCall.ArgumentsJson,
+                        Result = result
+                    });
+                } else {
+                    passthroughToolCalls.Add(toolCall);
+                }
+            }
+
+            if (proxyResults.Count == 0)
+                return null;
+
+            using (JsonDocument document = JsonDocument.Parse(requestBody))
+            using (var stream = new MemoryStream())
+            using (var writer = new Utf8JsonWriter(stream)) {
+                writer.WriteStartObject();
+                bool wroteMessages = false;
+                bool wroteStream = false;
+                bool wroteToolChoice = false;
+
+                foreach (JsonProperty property in document.RootElement.EnumerateObject()) {
+                    if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array) {
+                        wroteMessages = true;
+                        writer.WritePropertyName("messages");
+                        writer.WriteStartArray();
+                        foreach (JsonElement message in property.Value.EnumerateArray())
+                            message.WriteTo(writer);
+
+                        WriteProxyResearchAssistantAndToolMessages(writer, proxyResults);
+                        writer.WriteEndArray();
+                        continue;
+                    }
+
+                    if (property.NameEquals("tools") && property.Value.ValueKind == JsonValueKind.Array) {
+                        writer.WritePropertyName("tools");
+                        writer.WriteStartArray();
+                        foreach (JsonElement tool in property.Value.EnumerateArray()) {
+                            string name = ExtractToolSchemaName(tool);
+                            if (!IsProxyOwnedResearchTool(name))
+                                tool.WriteTo(writer);
+                        }
+                        writer.WriteEndArray();
+                        continue;
+                    }
+
+                    if (property.NameEquals("stream")) {
+                        writer.WriteBoolean("stream", false);
+                        wroteStream = true;
+                        continue;
+                    }
+
+                    if (property.NameEquals("tool_choice")) {
+                        writer.WriteString("tool_choice", "auto");
+                        wroteToolChoice = true;
+                        continue;
+                    }
+
+                    property.WriteTo(writer);
+                }
+
+                if (!wroteMessages) {
+                    writer.WritePropertyName("messages");
+                    writer.WriteStartArray();
+                    WriteProxyResearchAssistantAndToolMessages(writer, proxyResults);
+                    writer.WriteEndArray();
+                }
+
+                if (!wroteStream)
+                    writer.WriteBoolean("stream", false);
+                if (!wroteToolChoice)
+                    writer.WriteString("tool_choice", "auto");
+
+                writer.WriteEndObject();
+                writer.Flush();
+                return Encoding.UTF8.GetString(stream.ToArray());
+            }
+        }
+
+        private void WriteProxyResearchAssistantAndToolMessages(Utf8JsonWriter writer, List<ProxyToolExecutionResult> proxyResults) {
+            writer.WriteStartObject();
+            writer.WriteString("role", "assistant");
+            writer.WritePropertyName("tool_calls");
+            writer.WriteStartArray();
+            foreach (ProxyToolExecutionResult result in proxyResults) {
+                writer.WriteStartObject();
+                writer.WriteString("id", result.Id);
+                writer.WriteString("type", "function");
+                writer.WritePropertyName("function");
+                writer.WriteStartObject();
+                writer.WriteString("name", result.Name);
+                writer.WriteString("arguments", result.ArgumentsJson ?? "{}");
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+
+            foreach (ProxyToolExecutionResult result in proxyResults) {
+                writer.WriteStartObject();
+                writer.WriteString("role", "tool");
+                writer.WriteString("tool_call_id", result.Id);
+                writer.WriteString("content", result.Result ?? "");
+                writer.WriteEndObject();
+            }
+        }
+
+        private string ExtractToolSchemaName(JsonElement tool) {
+            if (tool.ValueKind != JsonValueKind.Object)
+                return null;
+
+            if (tool.TryGetProperty("function", out JsonElement function) &&
+                function.ValueKind == JsonValueKind.Object)
+                return ExtractStringProperty(function, "name");
+
+            return ExtractStringProperty(tool, "name");
+        }
+
+        private async Task<string> ExecuteProxyResearchToolAsync(string toolName, string argumentsJson) {
+            if (toolName.Equals("nuget_search", StringComparison.Ordinal))
+                return await ExecuteNuGetSearchAsync(argumentsJson);
+            if (toolName.Equals("nuget_package_info", StringComparison.Ordinal))
+                return await ExecuteNuGetPackageInfoAsync(argumentsJson);
+            if (toolName.Equals("github_code_search", StringComparison.Ordinal))
+                return await ExecuteGitHubCodeSearchAsync(argumentsJson);
+            return "Unknown proxy research tool: " + toolName;
+        }
+
+        private async Task<string> ExecuteNuGetSearchAsync(string argumentsJson) {
+            string query = ExtractJsonStringProperty(argumentsJson, "query");
+            int take = ExtractIntFromToolArguments(argumentsJson, "take", 10);
+            take = Math.Max(1, Math.Min(25, take));
+            if (string.IsNullOrWhiteSpace(query))
+                return "nuget_search error: query is required.";
+
+            string url = "https://azuresearch-usnc.nuget.org/query?q=" + Uri.EscapeDataString(query) +
+                         "&take=" + take.ToString() + "&prerelease=true&semVerLevel=2.0.0";
+            string json = await GetStringWithUserAgentAsync(url);
+            return SummarizeNuGetSearch(json, query);
+        }
+
+        private async Task<string> ExecuteNuGetPackageInfoAsync(string argumentsJson) {
+            string packageId = ExtractJsonStringProperty(argumentsJson, "packageId") ??
+                               ExtractJsonStringProperty(argumentsJson, "id");
+            if (string.IsNullOrWhiteSpace(packageId))
+                return "nuget_package_info error: packageId is required.";
+
+            string searchUrl = "https://azuresearch-usnc.nuget.org/query?q=packageid:" + Uri.EscapeDataString(packageId) +
+                               "&take=1&prerelease=true&semVerLevel=2.0.0";
+            string searchJson = await GetStringWithUserAgentAsync(searchUrl);
+
+            string registrationUrl = "https://api.nuget.org/v3/registration5-semver1/" +
+                                     Uri.EscapeDataString(packageId.ToLowerInvariant()) + "/index.json";
+            string registrationSummary = "";
+            try {
+                string registrationJson = await GetStringWithUserAgentAsync(registrationUrl);
+                registrationSummary = SummarizeNuGetRegistration(registrationJson);
+            } catch (Exception ex) {
+                registrationSummary = "Registration metadata unavailable: " + ex.Message;
+            }
+
+            return SummarizeNuGetSearch(searchJson, "packageid:" + packageId) + "\n\n" + registrationSummary;
+        }
+
+        private async Task<string> ExecuteGitHubCodeSearchAsync(string argumentsJson) {
+            string query = ExtractJsonStringProperty(argumentsJson, "query");
+            string repo = ExtractJsonStringProperty(argumentsJson, "repo");
+            string language = ExtractJsonStringProperty(argumentsJson, "language");
+            int take = ExtractIntFromToolArguments(argumentsJson, "take", 8);
+            take = Math.Max(1, Math.Min(20, take));
+            if (string.IsNullOrWhiteSpace(query))
+                return "github_code_search error: query is required.";
+
+            var fullQuery = new StringBuilder(query.Trim());
+            if (!string.IsNullOrWhiteSpace(repo))
+                fullQuery.Append(" repo:").Append(repo.Trim());
+            if (!string.IsNullOrWhiteSpace(language))
+                fullQuery.Append(" language:").Append(language.Trim());
+
+            string url = "https://api.github.com/search/code?q=" + Uri.EscapeDataString(fullQuery.ToString()) +
+                         "&per_page=" + take.ToString();
+            try {
+                string json = await GetStringWithUserAgentAsync(url);
+                return await SummarizeGitHubCodeSearchAsync(json, fullQuery.ToString(), query.Trim(), take);
+            } catch (Exception ex) {
+                return "github_code_search error: " + ex.Message + "\nTip: GitHub code search can be rate-limited without authentication. Try using a repo-qualified query from NuGet package repository metadata.";
+            }
+        }
+
+        private async Task<string> GetStringWithUserAgentAsync(string url) {
+            using (var request = new HttpRequestMessage(HttpMethod.Get, url)) {
+                request.Headers.TryAddWithoutValidation("User-Agent", "SocketJack-LmVsProxy/1.0");
+                request.Headers.TryAddWithoutValidation("Accept", "application/json, text/plain;q=0.9, */*;q=0.8");
+                using (HttpResponseMessage response = await _httpClient.SendAsync(request)) {
+                    string body = response.Content == null ? "" : await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                        throw new InvalidOperationException(((int)response.StatusCode).ToString() + " " + response.ReasonPhrase + ": " + TruncateForLog(body, 800));
+                    return body;
+                }
+            }
+        }
+
+        private string SummarizeNuGetSearch(string json, string query) {
+            var sb = new StringBuilder();
+            sb.AppendLine("NuGet search results for: " + query);
+            try {
+                using (JsonDocument document = JsonDocument.Parse(json)) {
+                    if (!document.RootElement.TryGetProperty("data", out JsonElement data) ||
+                        data.ValueKind != JsonValueKind.Array ||
+                        data.GetArrayLength() == 0) {
+                        sb.AppendLine("No packages found.");
+                        return sb.ToString();
+                    }
+
+                    int index = 0;
+                    foreach (JsonElement item in data.EnumerateArray()) {
+                        index++;
+                        string id = ExtractStringProperty(item, "id") ?? "(unknown)";
+                        string version = ExtractStringProperty(item, "version") ?? "";
+                        string description = ExtractStringProperty(item, "description") ?? "";
+                        string projectUrl = ExtractStringProperty(item, "projectUrl") ?? "";
+                        string repositoryUrl = ExtractStringProperty(item, "repositoryUrl") ?? "";
+                        long downloads = item.TryGetProperty("totalDownloads", out JsonElement downloadsElement) && downloadsElement.TryGetInt64(out long d) ? d : 0;
+                        sb.Append(index.ToString()).Append(". ").Append(id);
+                        if (!string.IsNullOrWhiteSpace(version))
+                            sb.Append(" ").Append(version);
+                        if (downloads > 0)
+                            sb.Append(" downloads=").Append(downloads.ToString());
+                        sb.AppendLine();
+                        if (!string.IsNullOrWhiteSpace(description))
+                            sb.AppendLine("   " + TruncateForLog(description, 260));
+                        if (!string.IsNullOrWhiteSpace(projectUrl))
+                            sb.AppendLine("   project: " + projectUrl);
+                        if (!string.IsNullOrWhiteSpace(repositoryUrl))
+                            sb.AppendLine("   repo: " + repositoryUrl);
+                    }
+                }
+            } catch (Exception ex) {
+                sb.AppendLine("Could not parse NuGet response: " + ex.Message);
+                sb.AppendLine(TruncateForLog(json, 2000));
+            }
+            return sb.ToString();
+        }
+
+        private string SummarizeNuGetRegistration(string json) {
+            var sb = new StringBuilder();
+            sb.AppendLine("NuGet registration metadata:");
+            try {
+                using (JsonDocument document = JsonDocument.Parse(json)) {
+                    if (document.RootElement.TryGetProperty("items", out JsonElement pages) &&
+                        pages.ValueKind == JsonValueKind.Array) {
+                        int pageCount = pages.GetArrayLength();
+                        sb.AppendLine("version page count: " + pageCount.ToString());
+                        if (pageCount > 0) {
+                            JsonElement lastPage = pages[pageCount - 1];
+                            if (lastPage.TryGetProperty("upper", out JsonElement upper) && upper.ValueKind == JsonValueKind.String)
+                                sb.AppendLine("latest listed version: " + upper.GetString());
+                            if (lastPage.TryGetProperty("items", out JsonElement versions) && versions.ValueKind == JsonValueKind.Array)
+                                AppendLatestRegistrationLeaf(sb, versions);
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                sb.AppendLine("Could not parse registration metadata: " + ex.Message);
+            }
+            return sb.ToString();
+        }
+
+        private void AppendLatestRegistrationLeaf(StringBuilder sb, JsonElement versions) {
+            if (versions.GetArrayLength() == 0)
+                return;
+
+            JsonElement latest = versions[versions.GetArrayLength() - 1];
+            if (!latest.TryGetProperty("catalogEntry", out JsonElement catalog) ||
+                catalog.ValueKind != JsonValueKind.Object)
+                return;
+
+            string description = ExtractStringProperty(catalog, "description");
+            string projectUrl = ExtractStringProperty(catalog, "projectUrl");
+            if (!string.IsNullOrWhiteSpace(description))
+                sb.AppendLine("description: " + TruncateForLog(description, 300));
+            if (!string.IsNullOrWhiteSpace(projectUrl))
+                sb.AppendLine("project: " + projectUrl);
+        }
+
+        private async Task<string> SummarizeGitHubCodeSearchAsync(string json, string query, string snippetNeedle, int take) {
+            var sb = new StringBuilder();
+            sb.AppendLine("GitHub code search results for: " + query);
+            try {
+                using (JsonDocument document = JsonDocument.Parse(json)) {
+                    if (!document.RootElement.TryGetProperty("items", out JsonElement items) ||
+                        items.ValueKind != JsonValueKind.Array ||
+                        items.GetArrayLength() == 0) {
+                        sb.AppendLine("No code results found.");
+                        return sb.ToString();
+                    }
+
+                    int index = 0;
+                    foreach (JsonElement item in items.EnumerateArray()) {
+                        index++;
+                        string name = ExtractStringProperty(item, "name") ?? "";
+                        string path = ExtractStringProperty(item, "path") ?? "";
+                        string htmlUrl = ExtractStringProperty(item, "html_url") ?? "";
+                        string apiUrl = ExtractStringProperty(item, "url") ?? "";
+                        string repoName = "";
+                        if (item.TryGetProperty("repository", out JsonElement repoElement) &&
+                            repoElement.ValueKind == JsonValueKind.Object)
+                            repoName = ExtractStringProperty(repoElement, "full_name") ?? "";
+
+                        sb.Append(index.ToString()).Append(". ");
+                        if (!string.IsNullOrWhiteSpace(repoName))
+                            sb.Append(repoName).Append(" ");
+                        sb.Append(string.IsNullOrWhiteSpace(path) ? name : path).AppendLine();
+                        if (!string.IsNullOrWhiteSpace(htmlUrl))
+                            sb.AppendLine("   " + htmlUrl);
+                        if (index <= 5 && !string.IsNullOrWhiteSpace(apiUrl)) {
+                            string snippet = await TryFetchGitHubCodeSnippetAsync(apiUrl, snippetNeedle);
+                            if (!string.IsNullOrWhiteSpace(snippet))
+                                sb.AppendLine(snippet);
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                sb.AppendLine("Could not parse GitHub response: " + ex.Message);
+                sb.AppendLine(TruncateForLog(json, 2000));
+            }
+            return sb.ToString();
+        }
+
+        private async Task<string> TryFetchGitHubCodeSnippetAsync(string apiUrl, string needle) {
+            try {
+                string json = await GetStringWithUserAgentAsync(apiUrl);
+                using (JsonDocument document = JsonDocument.Parse(json)) {
+                    if (!document.RootElement.TryGetProperty("content", out JsonElement contentElement) ||
+                        contentElement.ValueKind != JsonValueKind.String)
+                        return null;
+
+                    string encoded = contentElement.GetString() ?? "";
+                    encoded = encoded.Replace("\n", "").Replace("\r", "");
+                    byte[] bytes = Convert.FromBase64String(encoded);
+                    string source = Encoding.UTF8.GetString(bytes);
+                    return BuildSourceSnippet(source, needle);
+                }
+            } catch (Exception ex) {
+                return "   snippet unavailable: " + ex.Message;
+            }
+        }
+
+        private string BuildSourceSnippet(string source, string needle) {
+            if (string.IsNullOrWhiteSpace(source))
+                return null;
+
+            string[] lines = source.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            int matchLine = -1;
+            string[] tokens = (needle ?? "").Split(new[] { ' ', '.', ':', '"', '\'', '(', ')', '[', ']', '{', '}', '<', '>', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++) {
+                foreach (string token in tokens) {
+                    if (token.Length >= 3 &&
+                        lines[i].IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0) {
+                        matchLine = i;
+                        break;
+                    }
+                }
+                if (matchLine >= 0)
+                    break;
+            }
+
+            if (matchLine < 0)
+                matchLine = 0;
+
+            int start = Math.Max(0, matchLine - 2);
+            int end = Math.Min(lines.Length - 1, matchLine + 5);
+            var sb = new StringBuilder();
+            sb.AppendLine("   snippet:");
+            for (int i = start; i <= end; i++) {
+                string line = lines[i];
+                if (line.Length > 220)
+                    line = line.Substring(0, 220) + "...";
+                sb.Append("   ").Append((i + 1).ToString()).Append(": ").AppendLine(line);
+            }
+            return sb.ToString().TrimEnd();
+        }
+
         /// <summary>
         /// Builds a compact OpenAI-compatible SSE response containing repaired tool calls.
         /// </summary>
@@ -3115,7 +4125,14 @@ prompt.focus();
 
             for (int i = 0; i < toolCalls.Count; i++) {
                 ToolCallData toolCall = toolCalls[i];
-                string toolCallId = "call_" + Guid.NewGuid().ToString("N").Substring(0, 16);
+                string toolCallId = !string.IsNullOrWhiteSpace(toolCall.Id)
+                    ? toolCall.Id
+                    : "call_" + Guid.NewGuid().ToString("N").Substring(0, 16);
+                toolCall.Id = toolCallId;
+                LogMessage("[Tool Calls] [sse response] index=" + i.ToString() +
+                           " id=" + toolCallId +
+                           " name=" + (toolCall.Name ?? "<missing>") +
+                           " args=" + TruncateForLog(toolCall.ArgumentsJson, 300));
 
                 sb.Append("data: {\"id\":\"").Append(completionId)
                   .Append("\",\"object\":\"chat.completion.chunk\",\"created\":").Append(created)
@@ -3142,13 +4159,14 @@ prompt.focus();
         /// <summary>
         /// Converts Chat Completions SSE frames to Responses API SSE frames.
         /// </summary>
-        private string ConvertChatSseToResponsesSse(string chatSse, string chatRequestBody) {
+        private string ConvertChatSseToResponsesSse(string chatSse, string chatRequestBody, string responseId = null, long? createdOverride = null, bool skipCreatedEvent = false) {
             string model = ExtractJsonStringProperty(chatRequestBody, "model");
             if (string.IsNullOrWhiteSpace(model))
                 model = "lm-studio";
 
-            string responseId = "resp_" + Guid.NewGuid().ToString("N");
-            long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (string.IsNullOrWhiteSpace(responseId))
+                responseId = "resp_" + Guid.NewGuid().ToString("N");
+            long created = createdOverride ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var text = new StringBuilder();
             var builders = new Dictionary<int, ToolCallBuilder>();
 
@@ -3220,24 +4238,26 @@ prompt.focus();
             }
 
             if (builders.Count > 0)
-                return BuildResponsesToolCallSse(responseId, created, model, builders);
+                return BuildResponsesToolCallSse(responseId, created, model, builders, skipCreatedEvent);
 
-            return BuildResponsesTextSse(responseId, created, model, text.ToString());
+            return BuildResponsesTextSse(responseId, created, model, text.ToString(), skipCreatedEvent);
         }
 
         /// <summary>
         /// Builds Responses API SSE frames for text output.
         /// </summary>
-        private string BuildResponsesTextSse(string responseId, long created, string model, string content) {
+        private string BuildResponsesTextSse(string responseId, long created, string model, string content, bool skipCreatedEvent = false) {
             string itemId = "msg_" + Guid.NewGuid().ToString("N");
             string safeContent = EscapeJson(content ?? "");
             var sb = new StringBuilder();
 
-            sb.Append("event: response.created\n");
-            sb.Append("data: {\"type\":\"response.created\",\"response\":{\"id\":\"").Append(responseId)
-              .Append("\",\"object\":\"response\",\"created_at\":").Append(created)
-              .Append(",\"status\":\"in_progress\",\"model\":\"").Append(EscapeJson(model))
-              .Append("\",\"output\":[]}}\n\n");
+            if (!skipCreatedEvent) {
+                sb.Append("event: response.created\n");
+                sb.Append("data: {\"type\":\"response.created\",\"response\":{\"id\":\"").Append(responseId)
+                  .Append("\",\"object\":\"response\",\"created_at\":").Append(created)
+                  .Append(",\"status\":\"in_progress\",\"model\":\"").Append(EscapeJson(model))
+                  .Append("\",\"output\":[]}}\n\n");
+            }
 
             sb.Append("event: response.output_item.added\n");
             sb.Append("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"").Append(itemId)
@@ -3278,13 +4298,15 @@ prompt.focus();
         /// <summary>
         /// Builds Responses API SSE frames for function-call output.
         /// </summary>
-        private string BuildResponsesToolCallSse(string responseId, long created, string model, Dictionary<int, ToolCallBuilder> builders) {
+        private string BuildResponsesToolCallSse(string responseId, long created, string model, Dictionary<int, ToolCallBuilder> builders, bool skipCreatedEvent = false) {
             var sb = new StringBuilder();
-            sb.Append("event: response.created\n");
-            sb.Append("data: {\"type\":\"response.created\",\"response\":{\"id\":\"").Append(responseId)
-              .Append("\",\"object\":\"response\",\"created_at\":").Append(created)
-              .Append(",\"status\":\"in_progress\",\"model\":\"").Append(EscapeJson(model))
-              .Append("\",\"output\":[]}}\n\n");
+            if (!skipCreatedEvent) {
+                sb.Append("event: response.created\n");
+                sb.Append("data: {\"type\":\"response.created\",\"response\":{\"id\":\"").Append(responseId)
+                  .Append("\",\"object\":\"response\",\"created_at\":").Append(created)
+                  .Append(",\"status\":\"in_progress\",\"model\":\"").Append(EscapeJson(model))
+                  .Append("\",\"output\":[]}}\n\n");
+            }
 
             int outputIndex = 0;
             foreach (var kv in builders) {
@@ -3497,7 +4519,7 @@ prompt.focus();
                     historicalProjectCalls >= 1 &&
                     !string.IsNullOrWhiteSpace(projectPath)) {
                     toolCall.Name = "get_files_in_project";
-                    toolCall.ArgumentsJson = "{\"projectPath\":\"" + EscapeJson(projectPath.Trim()) + "\"}";
+                    toolCall.ArgumentsJson = "{\"projectPath\":\"" + EscapeJson(NormalizeToolPathForVsArgument(projectPath.Trim())) + "\"}";
                     LogMessage("[Tool Loop Redirect] Rewrote repeated get_projects_in_solution to get_files_in_project for " + projectPath.Trim());
                 }
             }
@@ -3549,6 +4571,258 @@ prompt.focus();
                            " search/navigation attempt(s) to create_file for " + targetPath);
                 return;
             }
+        }
+
+        /// <summary>
+        /// Converts repeated probes for a missing XAML code-behind file into the creation step.
+        /// </summary>
+        private void RedirectMissingCodebehindLoopToCreateFile(List<ToolCallData> toolCalls, string requestBody) {
+            if (toolCalls == null || toolCalls.Count == 0 || string.IsNullOrWhiteSpace(requestBody))
+                return;
+
+            if (!IsToolAdvertised(requestBody, "create_file"))
+                return;
+
+            if (!TryInferMissingCodebehindLoopTarget(requestBody, out string targetPath, out int signalCount))
+                return;
+
+            if (!IsSafeCreateFileTarget(targetPath)) {
+                LogMessage("[Codebehind Loop Redirect] Refusing unsafe code-behind target: " + targetPath);
+                return;
+            }
+
+            if (HasSuccessfulFileRead(requestBody, targetPath)) {
+                LogMessage("[Codebehind Loop Redirect] Refusing to create existing file already read successfully: " + targetPath);
+                return;
+            }
+
+            if (HasRepeatedCreateFileAttempts(requestBody, targetPath, 3)) {
+                LogMessage("[Codebehind Loop Redirect] Refusing to repeat create_file for " + targetPath + " because it was already attempted repeatedly.");
+                return;
+            }
+
+            foreach (ToolCallData toolCall in toolCalls) {
+                if (toolCall == null || string.IsNullOrWhiteSpace(toolCall.Name))
+                    continue;
+
+                if (!IsSearchOrNavigationTool(toolCall.Name) &&
+                    !toolCall.Name.Equals("get_errors", StringComparison.Ordinal))
+                    continue;
+
+                string originalName = toolCall.Name;
+                toolCall.Name = "create_file";
+                toolCall.ArgumentsJson = BuildCreateFileArguments(targetPath, null);
+                LogMessage("[Codebehind Loop Redirect] Rewrote " + originalName +
+                           " after " + signalCount.ToString() +
+                           " missing-codebehind signal(s) to create_file for " + targetPath);
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Detects the common loop: the model keeps checking for a missing *.xaml.vb code-behind.
+        /// </summary>
+        private bool TryInferMissingCodebehindLoopTarget(string requestBody, out string targetPath, out int signalCount) {
+            targetPath = null;
+            signalCount = 0;
+
+            if (string.IsNullOrWhiteSpace(requestBody))
+                return false;
+
+            string lower = requestBody.ToLowerInvariant();
+            string candidate = ExtractLikelyCodebehindPathFromConversation(requestBody);
+            if (string.IsNullOrWhiteSpace(candidate))
+                return false;
+
+            targetPath = NormalizeInferredCodebehindPath(candidate, requestBody);
+            if (string.IsNullOrWhiteSpace(targetPath))
+                return false;
+
+            string fileName = targetPath.Replace('\\', '/');
+            int slash = fileName.LastIndexOf('/');
+            if (slash >= 0)
+                fileName = fileName.Substring(slash + 1);
+
+            string stem = fileName;
+            int dot = stem.IndexOf('.');
+            if (dot > 0)
+                stem = stem.Substring(0, dot);
+
+            int relatedToolCalls =
+                CountHistoricalToolCalls(requestBody, "file_search") +
+                CountHistoricalToolCalls(requestBody, "code_search") +
+                CountHistoricalToolCalls(requestBody, "get_file") +
+                CountHistoricalToolCalls(requestBody, "find_symbol") +
+                CountHistoricalToolCalls(requestBody, "get_errors");
+
+            bool codebehindTopic = lower.Contains(".xaml.vb") ||
+                                   (lower.Contains("codebehind") && lower.Contains(".xaml")) ||
+                                   (lower.Contains("code-behind") && lower.Contains(".xaml"));
+            bool missingSignal = lower.Contains("no " + fileName.ToLowerInvariant()) ||
+                                 lower.Contains("no " + stem.ToLowerInvariant() + ".xaml.vb") ||
+                                 lower.Contains("missing") ||
+                                 lower.Contains("not found") ||
+                                 lower.Contains("doesn't exist") ||
+                                 lower.Contains("does not exist") ||
+                                 lower.Contains("no relevant matches") ||
+                                 lower.Contains("there's no") ||
+                                 lower.Contains("there is no");
+
+            signalCount = 0;
+            if (codebehindTopic)
+                signalCount++;
+            if (missingSignal)
+                signalCount++;
+            signalCount += Math.Min(relatedToolCalls, 4);
+
+            return signalCount >= 3;
+        }
+
+        /// <summary>
+        /// Pulls a likely *.xaml.vb path from structured tool arguments, or derives one from a mentioned *.xaml file.
+        /// </summary>
+        private string ExtractLikelyCodebehindPathFromConversation(string requestBody) {
+            if (string.IsNullOrWhiteSpace(requestBody))
+                return null;
+
+            string latestXaml = null;
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(requestBody)) {
+                    if (!document.RootElement.TryGetProperty("messages", out JsonElement messages) ||
+                        messages.ValueKind != JsonValueKind.Array)
+                        return null;
+
+                    foreach (JsonElement message in messages.EnumerateArray()) {
+                        if (!message.TryGetProperty("role", out JsonElement roleElement) ||
+                            roleElement.ValueKind != JsonValueKind.String ||
+                            !roleElement.GetString().Equals("assistant", StringComparison.OrdinalIgnoreCase) ||
+                            !message.TryGetProperty("tool_calls", out JsonElement toolCalls) ||
+                            toolCalls.ValueKind != JsonValueKind.Array)
+                            continue;
+
+                        foreach (JsonElement toolCall in toolCalls.EnumerateArray()) {
+                            if (!toolCall.TryGetProperty("function", out JsonElement function) ||
+                                function.ValueKind != JsonValueKind.Object)
+                                continue;
+
+                            string arguments = function.TryGetProperty("arguments", out JsonElement argumentsElement)
+                                ? argumentsElement.ToString()
+                                : "";
+
+                            foreach (string value in ExtractPathLikeToolArgumentValues(arguments)) {
+                                string candidate = ExtractCodebehindCandidateFromPathValue(value);
+                                if (!string.IsNullOrWhiteSpace(candidate))
+                                    latestXaml = candidate;
+                            }
+                        }
+                    }
+                }
+            } catch { }
+
+            if (!string.IsNullOrWhiteSpace(latestXaml))
+                return latestXaml;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Gets only path-bearing values from a tool-call arguments object.
+        /// </summary>
+        private IEnumerable<string> ExtractPathLikeToolArgumentValues(string argumentsJson) {
+            var values = new List<string>();
+            if (string.IsNullOrWhiteSpace(argumentsJson))
+                return values;
+
+            JsonDocument document = null;
+            try {
+                document = JsonDocument.Parse(argumentsJson);
+            } catch {
+                string fallback = TryExtractLikelyFilePath(argumentsJson);
+                if (!string.IsNullOrWhiteSpace(fallback))
+                    values.Add(fallback);
+                return values;
+            }
+
+            using (document) {
+                JsonElement root = document.RootElement;
+                foreach (string propertyName in new[] { "filename", "filePath", "projectPath" }) {
+                    if (root.TryGetProperty(propertyName, out JsonElement property) &&
+                        property.ValueKind == JsonValueKind.String)
+                        values.Add(property.GetString());
+                }
+
+                foreach (string arrayName in new[] { "queries", "searchQueries" }) {
+                    if (!root.TryGetProperty(arrayName, out JsonElement array) ||
+                        array.ValueKind != JsonValueKind.Array)
+                        continue;
+
+                    foreach (JsonElement item in array.EnumerateArray()) {
+                        if (item.ValueKind == JsonValueKind.String)
+                            values.Add(item.GetString());
+                    }
+                }
+            }
+
+            return values;
+        }
+
+        /// <summary>
+        /// Turns one structured path/query value into a code-behind candidate when possible.
+        /// </summary>
+        private string ExtractCodebehindCandidateFromPathValue(string value) {
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            string cleaned = NormalizeLoosePathEscapes(value)
+                .Trim()
+                .Trim('"', '\'', ',', '.', ' ');
+
+            var codebehindMatch = System.Text.RegularExpressions.Regex.Match(
+                cleaned,
+                @"^(?<path>(?:[A-Za-z0-9_. \-]+[\\/]+)*[A-Za-z0-9_.\-]+\.xaml\.vb)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (codebehindMatch.Success)
+                return codebehindMatch.Groups["path"].Value;
+
+            var xamlMatch = System.Text.RegularExpressions.Regex.Match(
+                cleaned,
+                @"^(?<path>(?:[A-Za-z0-9_. \-]+[\\/]+)*[A-Za-z0-9_.\-]+\.xaml)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (xamlMatch.Success)
+                return xamlMatch.Groups["path"].Value + ".vb";
+
+            return null;
+        }
+
+        /// <summary>
+        /// Normalizes inferred XAML code-behind paths and restores the project folder when only a filename is present.
+        /// </summary>
+        private string NormalizeInferredCodebehindPath(string candidate, string requestBody) {
+            if (string.IsNullOrWhiteSpace(candidate))
+                return null;
+
+            string normalized = NormalizeLoosePathEscapes(candidate)
+                .Replace("\\\\", "\\")
+                .Replace('/', '\\')
+                .Trim()
+                .Trim('"', '\'', ',', '.', ' ');
+
+            while (normalized.Contains("\\\\"))
+                normalized = normalized.Replace("\\\\", "\\");
+
+            if (!normalized.EndsWith(".xaml.vb", StringComparison.OrdinalIgnoreCase) ||
+                !HasUsableFileNameStem(normalized))
+                return null;
+
+            if (normalized.IndexOf('\\') >= 0)
+                return normalized;
+
+            string projectFolder = ExtractProjectFolderFromConversation(requestBody);
+            if (string.IsNullOrWhiteSpace(projectFolder))
+                projectFolder = "Maf Scale";
+
+            return projectFolder.TrimEnd('\\', '/') + "\\" + normalized;
         }
 
         /// <summary>
@@ -3769,6 +5043,9 @@ prompt.focus();
                 return false;
 
             string repaired = RepairPathControlCharacters(filePath).Trim().Trim('"', '\'', ',', ' ');
+            if (!HasUsableFileNameStem(repaired))
+                return false;
+
             string lower = repaired.Replace('\\', '/').ToLowerInvariant();
 
             if (lower.EndsWith(".sln", StringComparison.Ordinal) ||
@@ -3794,6 +5071,950 @@ prompt.focus();
         }
 
         /// <summary>
+        /// Rejects extension-only or directory-only paths such as ".xaml" and "Maf Scale\.xaml".
+        /// </summary>
+        private bool HasUsableFileNameStem(string filePath) {
+            if (string.IsNullOrWhiteSpace(filePath))
+                return false;
+
+            string normalized = RepairPathControlCharacters(filePath)
+                .Replace('/', '\\')
+                .Trim()
+                .Trim('"', '\'', ',', ' ');
+
+            if (normalized.EndsWith("\\", StringComparison.Ordinal))
+                return false;
+
+            int slash = normalized.LastIndexOf('\\');
+            string fileName = slash >= 0 ? normalized.Substring(slash + 1) : normalized;
+            if (string.IsNullOrWhiteSpace(fileName) ||
+                fileName.StartsWith(".", StringComparison.Ordinal) ||
+                fileName.EndsWith(".", StringComparison.Ordinal))
+                return false;
+
+            int dot = fileName.IndexOf('.');
+            return dot > 0;
+        }
+
+        /// <summary>
+        /// Rewrites create_file to get_file when history already shows that target exists.
+        /// </summary>
+        private void GuardCreateFileForExistingTarget(List<ToolCallData> toolCalls, string requestBody) {
+            if (toolCalls == null || toolCalls.Count == 0 || string.IsNullOrWhiteSpace(requestBody))
+                return;
+
+            if (!IsToolAdvertised(requestBody, "get_file"))
+                return;
+
+            foreach (ToolCallData toolCall in toolCalls) {
+                if (toolCall == null ||
+                    !toolCall.Name.Equals("create_file", StringComparison.Ordinal))
+                    continue;
+
+                string filePath = ExtractFilePathFromCreateFileArguments(toolCall.ArgumentsJson);
+                if (string.IsNullOrWhiteSpace(filePath) || !HasUsableFileNameStem(filePath))
+                    continue;
+
+                filePath = NormalizeLoosePathEscapes(filePath);
+                if (HasEmptyOrSummaryOnlyGetFileResult(requestBody, filePath)) {
+                    toolCall.Name = "get_file";
+                    toolCall.ArgumentsJson = "{\"filename\":\"" + EscapeJson(filePath) + "\",\"startLine\":1,\"endLine\":400,\"includeLineNumbers\":true}";
+                    LogMessage("[Get File Empty Guard] Rewrote create_file to get_file because previous get_file result had no substantive content: " + filePath);
+                    continue;
+                }
+
+                if (!ConversationShowsFileAlreadyExists(requestBody, filePath))
+                    continue;
+
+                string replacementContent = ExtractCreateFileContent(toolCall.ArgumentsJson);
+                if (!string.IsNullOrWhiteSpace(replacementContent) &&
+                    IsToolAdvertised(requestBody, "replace_string_in_file") &&
+                    TryExtractLatestSuccessfulFileReadContent(requestBody, filePath, out string oldContent)) {
+                    toolCall.Name = "replace_string_in_file";
+                    toolCall.ArgumentsJson = "{\"filePath\":\"" + EscapeJson(filePath) +
+                                             "\",\"oldString\":\"" + EscapeJson(oldContent) +
+                                             "\",\"newString\":\"" + EscapeJson(NormalizeGeneratedFileText(replacementContent) ?? "") + "\"}";
+                    LogMessage("[Create File Guard] Rewrote create_file to replace_string_in_file because the existing target was already read: " + filePath);
+                    RemoveRedundantGetFileCalls(toolCalls, filePath, toolCall);
+                } else {
+                    toolCall.Name = "get_file";
+                    toolCall.ArgumentsJson = "{\"filename\":\"" + EscapeJson(filePath) + "\",\"startLine\":1,\"endLine\":200,\"includeLineNumbers\":true}";
+                    LogMessage("[Create File Guard] Rewrote create_file to get_file because history already shows the target exists: " + filePath);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Prevents malformed replace_string_in_file calls from becoming blank destructive edits.
+        /// </summary>
+        private void GuardBlankReplaceStringCalls(List<ToolCallData> toolCalls, string requestBody) {
+            if (toolCalls == null || toolCalls.Count == 0)
+                return;
+
+            bool canReadFile = !string.IsNullOrWhiteSpace(requestBody) && IsToolAdvertised(requestBody, "get_file");
+            bool canSearchFile = !string.IsNullOrWhiteSpace(requestBody) && IsToolAdvertised(requestBody, "file_search");
+            var suppressedToolCalls = new List<ToolCallData>();
+
+            foreach (ToolCallData toolCall in toolCalls) {
+                if (toolCall == null ||
+                    !toolCall.Name.Equals("replace_string_in_file", StringComparison.Ordinal))
+                    continue;
+
+                string filePath = ExtractFilePathFromReplaceStringArguments(toolCall.ArgumentsJson);
+                filePath = NormalizeLoosePathEscapes(filePath ?? "");
+
+                string oldString = NormalizeGeneratedFileText(ExtractJsonStringProperty(toolCall.ArgumentsJson, "oldString"));
+                string newString = NormalizeGeneratedFileText(ExtractJsonStringProperty(toolCall.ArgumentsJson, "newString"));
+                bool oldIsBlank = string.IsNullOrWhiteSpace(oldString);
+                bool newIsBlank = string.IsNullOrWhiteSpace(newString);
+
+                if (string.IsNullOrWhiteSpace(filePath) || !HasUsableFileNameStem(filePath)) {
+                    if (canSearchFile) {
+                        string query = string.IsNullOrWhiteSpace(filePath) ? "replace_string_in_file target" : filePath;
+                        toolCall.Name = "file_search";
+                        toolCall.ArgumentsJson = "{\"queries\":[\"" + EscapeJson(query) + "\"],\"maxResults\":20}";
+                        LogMessage("[Replace String Guard] Rewrote replace_string_in_file with unusable filePath to file_search.");
+                    } else {
+                        suppressedToolCalls.Add(toolCall);
+                        LogMessage("[Replace String Guard] Suppressed replace_string_in_file with unusable filePath.");
+                    }
+                    continue;
+                }
+
+                if (!oldIsBlank)
+                    continue;
+
+                if (!newIsBlank &&
+                    !string.IsNullOrWhiteSpace(requestBody) &&
+                    TryExtractLatestSuccessfulFileReadContent(requestBody, filePath, out string oldContent) &&
+                    !string.IsNullOrWhiteSpace(oldContent)) {
+                    toolCall.ArgumentsJson = "{\"filePath\":\"" + EscapeJson(filePath) +
+                                             "\",\"oldString\":\"" + EscapeJson(oldContent) +
+                                             "\",\"newString\":\"" + EscapeJson(newString ?? "") + "\"}";
+                    LogMessage("[Replace String Guard] Hydrated blank oldString from the latest successful get_file result for " + filePath + ".");
+                    RemoveRedundantGetFileCalls(toolCalls, filePath, toolCall);
+                    continue;
+                }
+
+                if (canReadFile) {
+                    toolCall.Name = "get_file";
+                    toolCall.ArgumentsJson = "{\"filename\":\"" + EscapeJson(filePath) + "\",\"startLine\":1,\"endLine\":400,\"includeLineNumbers\":true}";
+                    LogMessage("[Replace String Guard] Rewrote replace_string_in_file with blank oldString/newString context to get_file for " + filePath + ".");
+                } else if (canSearchFile) {
+                    toolCall.Name = "file_search";
+                    toolCall.ArgumentsJson = "{\"queries\":[\"" + EscapeJson(filePath) + "\"],\"maxResults\":20}";
+                    LogMessage("[Replace String Guard] Rewrote replace_string_in_file with blank oldString to file_search for " + filePath + ".");
+                } else {
+                    suppressedToolCalls.Add(toolCall);
+                    LogMessage("[Replace String Guard] Suppressed replace_string_in_file with blank oldString for " + filePath + " because no read/search fallback was advertised.");
+                }
+            }
+
+            if (suppressedToolCalls.Count > 0)
+                toolCalls.RemoveAll(toolCall => suppressedToolCalls.Contains(toolCall));
+        }
+
+        /// <summary>
+        /// Removes same-file get_file calls once an edit tool is already going to execute.
+        /// </summary>
+        private void RemoveRedundantGetFileCalls(List<ToolCallData> toolCalls, string filePath, ToolCallData keepToolCall) {
+            if (toolCalls == null || string.IsNullOrWhiteSpace(filePath))
+                return;
+
+            string normalizedTarget = NormalizePathForCompare(filePath);
+            string targetFileName = ExtractFileNameForCompare(filePath);
+            int removed = toolCalls.RemoveAll(toolCall => {
+                if (toolCall == null || ReferenceEquals(toolCall, keepToolCall))
+                    return false;
+                if (!toolCall.Name.Equals("get_file", StringComparison.Ordinal))
+                    return false;
+
+                string filename = ExtractFilenameFromGetFileArguments(toolCall.ArgumentsJson);
+                if (string.IsNullOrWhiteSpace(filename))
+                    return false;
+
+                string normalizedFilename = NormalizePathForCompare(filename);
+                string fileNameOnly = ExtractFileNameForCompare(filename);
+                return normalizedFilename.Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase) ||
+                       fileNameOnly.Equals(targetFileName, StringComparison.OrdinalIgnoreCase);
+            });
+
+            if (removed > 0)
+                LogMessage("[Create File Guard] Dropped " + removed.ToString() + " redundant get_file call(s) for " + filePath + " after edit rewrite.");
+        }
+
+        /// <summary>
+        /// Extracts content from create_file arguments.
+        /// </summary>
+        private string ExtractCreateFileContent(string argumentsJson) {
+            try {
+                using (JsonDocument document = JsonDocument.Parse(argumentsJson)) {
+                    return document.RootElement.TryGetProperty("content", out JsonElement contentElement) &&
+                           contentElement.ValueKind == JsonValueKind.String
+                        ? contentElement.GetString()
+                        : null;
+                }
+            } catch {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Extracts the target path from replace_string_in_file arguments.
+        /// </summary>
+        private string ExtractFilePathFromReplaceStringArguments(string argumentsJson) {
+            try {
+                using (JsonDocument document = JsonDocument.Parse(argumentsJson)) {
+                    if (document.RootElement.TryGetProperty("filePath", out JsonElement filePathElement) &&
+                        filePathElement.ValueKind == JsonValueKind.String)
+                        return filePathElement.GetString();
+
+                    if (document.RootElement.TryGetProperty("filename", out JsonElement filenameElement) &&
+                        filenameElement.ValueKind == JsonValueKind.String)
+                        return filenameElement.GetString();
+                }
+            } catch {
+                return TryExtractLikelyFilePath(argumentsJson);
+            }
+
+            return TryExtractLikelyFilePath(argumentsJson);
+        }
+
+        /// <summary>
+        /// Gets the most recent successful get_file result content for a target.
+        /// </summary>
+        private bool TryExtractLatestSuccessfulFileReadContent(string requestBody, string targetPath, out string fileContent) {
+            fileContent = null;
+            string normalizedTarget = NormalizePathForCompare(targetPath);
+            string targetFileName = ExtractFileNameForCompare(targetPath);
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(requestBody)) {
+                    if (!document.RootElement.TryGetProperty("messages", out JsonElement messages) ||
+                        messages.ValueKind != JsonValueKind.Array)
+                        return false;
+
+                    var getFileCalls = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (JsonElement message in messages.EnumerateArray()) {
+                        string role = message.TryGetProperty("role", out JsonElement roleElement) &&
+                                      roleElement.ValueKind == JsonValueKind.String
+                            ? roleElement.GetString()
+                            : "";
+
+                        if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase) &&
+                            message.TryGetProperty("tool_calls", out JsonElement toolCalls) &&
+                            toolCalls.ValueKind == JsonValueKind.Array) {
+                            foreach (JsonElement call in toolCalls.EnumerateArray()) {
+                                if (!call.TryGetProperty("id", out JsonElement idElement) ||
+                                    idElement.ValueKind != JsonValueKind.String ||
+                                    !call.TryGetProperty("function", out JsonElement function) ||
+                                    function.ValueKind != JsonValueKind.Object)
+                                    continue;
+
+                                string name = ExtractStringProperty(function, "name") ?? "";
+                                if (!name.Equals("get_file", StringComparison.Ordinal))
+                                    continue;
+
+                                string arguments = function.TryGetProperty("arguments", out JsonElement argumentsElement)
+                                    ? argumentsElement.ToString()
+                                    : "";
+                                string assistantReadPath = ExtractFilenameFromGetFileArguments(arguments);
+                                if (!string.IsNullOrWhiteSpace(assistantReadPath))
+                                    getFileCalls[idElement.GetString()] = assistantReadPath;
+                            }
+                            continue;
+                        }
+
+                        if (!role.Equals("tool", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string toolCallId = message.TryGetProperty("tool_call_id", out JsonElement toolCallIdElement) &&
+                                            toolCallIdElement.ValueKind == JsonValueKind.String
+                            ? toolCallIdElement.GetString()
+                            : "";
+                        if (string.IsNullOrWhiteSpace(toolCallId) ||
+                            !getFileCalls.TryGetValue(toolCallId, out string toolResultReadPath))
+                            continue;
+
+                        string normalizedFilename = NormalizePathForCompare(toolResultReadPath);
+                        string readFileName = ExtractFileNameForCompare(toolResultReadPath);
+                        if (!normalizedFilename.Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
+                            !readFileName.Equals(targetFileName, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string content = message.TryGetProperty("content", out JsonElement contentElement)
+                            ? contentElement.ToString()
+                            : "";
+                        if (LooksLikeToolError(content) || LooksLikeFileSearchMiss(content))
+                            continue;
+
+                        string parsed = ExtractPlainFileContentFromToolResult(content);
+                        if (LooksLikeSubstantiveFileContent(parsed, targetPath))
+                            fileContent = parsed;
+                    }
+                }
+            } catch { }
+
+            return fileContent != null;
+        }
+
+        /// <summary>
+        /// Returns true when get_file appears to have succeeded but only returned a status/summary, not file text.
+        /// </summary>
+        private bool HasEmptyOrSummaryOnlyGetFileResult(string requestBody, string targetPath) {
+            if (string.IsNullOrWhiteSpace(requestBody) || string.IsNullOrWhiteSpace(targetPath))
+                return false;
+
+            string normalizedTarget = NormalizePathForCompare(targetPath);
+            string targetFileName = ExtractFileNameForCompare(targetPath);
+            bool sawMatchingRead = false;
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(requestBody)) {
+                    if (!document.RootElement.TryGetProperty("messages", out JsonElement messages) ||
+                        messages.ValueKind != JsonValueKind.Array)
+                        return false;
+
+                    var getFileCalls = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (JsonElement message in messages.EnumerateArray()) {
+                        string role = message.TryGetProperty("role", out JsonElement roleElement) &&
+                                      roleElement.ValueKind == JsonValueKind.String
+                            ? roleElement.GetString()
+                            : "";
+
+                        if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase) &&
+                            message.TryGetProperty("tool_calls", out JsonElement toolCalls) &&
+                            toolCalls.ValueKind == JsonValueKind.Array) {
+                            foreach (JsonElement call in toolCalls.EnumerateArray()) {
+                                if (!call.TryGetProperty("id", out JsonElement idElement) ||
+                                    idElement.ValueKind != JsonValueKind.String ||
+                                    !call.TryGetProperty("function", out JsonElement function) ||
+                                    function.ValueKind != JsonValueKind.Object)
+                                    continue;
+
+                                string name = ExtractStringProperty(function, "name") ?? "";
+                                if (!name.Equals("get_file", StringComparison.Ordinal))
+                                    continue;
+
+                                string arguments = function.TryGetProperty("arguments", out JsonElement argumentsElement)
+                                    ? argumentsElement.ToString()
+                                    : "";
+                                string filename = ExtractFilenameFromGetFileArguments(arguments);
+                                if (!string.IsNullOrWhiteSpace(filename))
+                                    getFileCalls[idElement.GetString()] = filename;
+                            }
+                            continue;
+                        }
+
+                        if (!role.Equals("tool", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string toolCallId = message.TryGetProperty("tool_call_id", out JsonElement toolCallIdElement) &&
+                                            toolCallIdElement.ValueKind == JsonValueKind.String
+                            ? toolCallIdElement.GetString()
+                            : "";
+                        if (string.IsNullOrWhiteSpace(toolCallId) ||
+                            !getFileCalls.TryGetValue(toolCallId, out string readPath))
+                            continue;
+
+                        string normalizedRead = NormalizePathForCompare(readPath);
+                        string readFileName = ExtractFileNameForCompare(readPath);
+                        if (!normalizedRead.Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
+                            !readFileName.Equals(targetFileName, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string content = message.TryGetProperty("content", out JsonElement contentElement)
+                            ? contentElement.ToString()
+                            : "";
+                        if (LooksLikeToolError(content) || LooksLikeFileSearchMiss(content))
+                            continue;
+
+                        sawMatchingRead = true;
+                        string parsed = ExtractPlainFileContentFromToolResult(content);
+                        if (LooksLikeSubstantiveFileContent(parsed, targetPath))
+                            return false;
+                    }
+                }
+            } catch { }
+
+            return sawMatchingRead;
+        }
+
+        /// <summary>
+        /// Removes markdown fences and Visual Studio line-number prefixes from get_file results.
+        /// </summary>
+        private string ExtractPlainFileContentFromToolResult(string content) {
+            if (string.IsNullOrEmpty(content))
+                return "";
+
+            string text = content.Trim();
+            if (text.StartsWith("```", StringComparison.Ordinal)) {
+                int firstLine = text.IndexOf('\n');
+                int lastFence = text.LastIndexOf("```", StringComparison.Ordinal);
+                if (firstLine >= 0 && lastFence > firstLine)
+                    text = text.Substring(firstLine + 1, lastFence - firstLine - 1);
+            }
+
+            text = NormalizeLineEndings(text).TrimEnd();
+            string[] lines = text.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+            var sb = new StringBuilder();
+            bool strippedAnyLineNumber = false;
+            foreach (string line in lines) {
+                string outputLine = line;
+                var match = System.Text.RegularExpressions.Regex.Match(line, @"^\s*\d+:\s?(?<text>.*)$");
+                if (match.Success) {
+                    outputLine = match.Groups["text"].Value;
+                    strippedAnyLineNumber = true;
+                }
+
+                if (sb.Length > 0)
+                    sb.Append(Environment.NewLine);
+                sb.Append(outputLine);
+            }
+
+            return strippedAnyLineNumber ? sb.ToString() : text;
+        }
+
+        /// <summary>
+        /// Distinguishes actual source/XAML text from VS success summaries like "Read file, lines 1-50".
+        /// </summary>
+        private bool LooksLikeSubstantiveFileContent(string content, string targetPath) {
+            if (string.IsNullOrWhiteSpace(content))
+                return false;
+
+            string trimmed = content.Trim();
+            string lower = trimmed.ToLowerInvariant();
+            if (lower.StartsWith("read ", StringComparison.Ordinal) &&
+                lower.Contains("lines ") &&
+                trimmed.Length < 160)
+                return false;
+
+            string pathLower = (targetPath ?? "").ToLowerInvariant();
+            if (pathLower.EndsWith(".xaml", StringComparison.Ordinal))
+                return trimmed.Contains("<") && trimmed.Contains(">");
+            if (pathLower.EndsWith(".vb", StringComparison.Ordinal))
+                return lower.Contains("class ") ||
+                       lower.Contains("imports ") ||
+                       lower.Contains("sub ") ||
+                       lower.Contains("function ");
+            if (pathLower.EndsWith(".cs", StringComparison.Ordinal))
+                return lower.Contains("class ") ||
+                       lower.Contains("namespace ") ||
+                       lower.Contains("using ");
+
+            return trimmed.Length > 80;
+        }
+
+        /// <summary>
+        /// Detects prior tool evidence that a file exists, such as file_search hits or successful reads.
+        /// </summary>
+        private bool ConversationShowsFileAlreadyExists(string requestBody, string targetPath) {
+            if (string.IsNullOrWhiteSpace(requestBody) || string.IsNullOrWhiteSpace(targetPath))
+                return false;
+
+            if (HasSuccessfulFileRead(requestBody, targetPath))
+                return true;
+
+            string normalizedTarget = NormalizePathForCompare(targetPath);
+            string targetFileName = ExtractFileNameForCompare(targetPath);
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(requestBody)) {
+                    if (!document.RootElement.TryGetProperty("messages", out JsonElement messages) ||
+                        messages.ValueKind != JsonValueKind.Array)
+                        return false;
+
+                    var toolNamesById = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (JsonElement message in messages.EnumerateArray()) {
+                        string role = message.TryGetProperty("role", out JsonElement roleElement) &&
+                                      roleElement.ValueKind == JsonValueKind.String
+                            ? roleElement.GetString()
+                            : "";
+
+                        if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase) &&
+                            message.TryGetProperty("tool_calls", out JsonElement toolCallsElement) &&
+                            toolCallsElement.ValueKind == JsonValueKind.Array) {
+                            foreach (JsonElement call in toolCallsElement.EnumerateArray()) {
+                                string id = call.TryGetProperty("id", out JsonElement idElement) &&
+                                            idElement.ValueKind == JsonValueKind.String
+                                    ? idElement.GetString()
+                                    : "";
+                                string name = "";
+                                if (call.TryGetProperty("function", out JsonElement function) &&
+                                    function.ValueKind == JsonValueKind.Object &&
+                                    function.TryGetProperty("name", out JsonElement nameElement) &&
+                                    nameElement.ValueKind == JsonValueKind.String)
+                                    name = nameElement.GetString();
+
+                                if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(name))
+                                    toolNamesById[id] = name;
+                            }
+                            continue;
+                        }
+
+                        if (!role.Equals("tool", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string toolCallId = message.TryGetProperty("tool_call_id", out JsonElement toolCallIdElement) &&
+                                            toolCallIdElement.ValueKind == JsonValueKind.String
+                            ? toolCallIdElement.GetString()
+                            : "";
+                        if (string.IsNullOrWhiteSpace(toolCallId) ||
+                            !toolNamesById.TryGetValue(toolCallId, out string toolName))
+                            continue;
+
+                        if (!toolName.Equals("file_search", StringComparison.Ordinal) &&
+                            !toolName.Equals("get_files_in_project", StringComparison.Ordinal) &&
+                            !toolName.Equals("code_search", StringComparison.Ordinal))
+                            continue;
+
+                        string content = message.TryGetProperty("content", out JsonElement contentElement)
+                            ? contentElement.ToString()
+                            : "";
+                        if (LooksLikeToolError(content) || LooksLikeFileSearchMiss(content))
+                            continue;
+
+                        string normalizedContent = NormalizePathForCompare(content);
+                        if (normalizedContent.Contains(normalizedTarget) ||
+                            (!string.IsNullOrWhiteSpace(targetFileName) &&
+                             normalizedContent.Contains(targetFileName)))
+                            return true;
+                    }
+                }
+            } catch { }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Gets a normalized filename token for loose result matching.
+        /// </summary>
+        private string ExtractFileNameForCompare(string path) {
+            if (string.IsNullOrWhiteSpace(path))
+                return "";
+
+            string normalized = NormalizePathForCompare(path);
+            int slash = normalized.LastIndexOf('\\');
+            return slash >= 0 ? normalized.Substring(slash + 1) : normalized;
+        }
+
+        /// <summary>
+        /// Rewrites vague get_file targets into an exact known path or a safer file_search.
+        /// </summary>
+        private void GuardVagueGetFileTargets(List<ToolCallData> toolCalls, string requestBody) {
+            if (toolCalls == null || toolCalls.Count == 0 || string.IsNullOrWhiteSpace(requestBody))
+                return;
+
+            bool canSearch = IsToolAdvertised(requestBody, "file_search");
+            foreach (ToolCallData toolCall in toolCalls) {
+                if (toolCall == null ||
+                    !toolCall.Name.Equals("get_file", StringComparison.Ordinal))
+                    continue;
+
+                string filename = ExtractFilenameFromGetFileArguments(toolCall.ArgumentsJson);
+                if (!LooksLikeVagueGetFileTarget(filename) &&
+                    !LooksLikeDefaultGetFileFallbackForActiveTopic(filename, requestBody))
+                    continue;
+
+                string query = ExtractBestFileSearchToken(filename);
+                if (string.IsNullOrWhiteSpace(query))
+                    query = ExtractLikelyActiveFileTopic(requestBody);
+                if (string.IsNullOrWhiteSpace(query))
+                    query = "MatrixControl";
+
+                if (TryResolveFilePathFromHistory(requestBody, query, out string resolvedPath)) {
+                    toolCall.ArgumentsJson = "{\"filename\":\"" + EscapeJson(resolvedPath) + "\",\"startLine\":1,\"endLine\":240,\"includeLineNumbers\":true}";
+                    LogMessage("[Get File Guard] Resolved vague get_file target '" + filename + "' to " + resolvedPath);
+                    continue;
+                }
+
+                if (!canSearch)
+                    continue;
+
+                toolCall.Name = "file_search";
+                string xamlQuery = query.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase) ? query : query + ".xaml";
+                string vbQuery = query.EndsWith(".xaml.vb", StringComparison.OrdinalIgnoreCase) ? query : query + ".xaml.vb";
+                toolCall.ArgumentsJson = "{\"queries\":[\"" + EscapeJson(query) + "\",\"" + EscapeJson(xamlQuery) + "\",\"" + EscapeJson(vbQuery) + "\"],\"maxResults\":20}";
+                LogMessage("[Get File Guard] Rewrote vague get_file target '" + filename + "' to file_search for " + query);
+            }
+        }
+
+        /// <summary>
+        /// Breaks repeated successful reads of the same file/range by expanding once or switching to edit intent.
+        /// </summary>
+        private void GuardRepeatedGetFileLoop(List<ToolCallData> toolCalls, string requestBody) {
+            if (toolCalls == null || toolCalls.Count == 0 || string.IsNullOrWhiteSpace(requestBody))
+                return;
+
+            foreach (ToolCallData toolCall in toolCalls) {
+                if (toolCall == null ||
+                    !toolCall.Name.Equals("get_file", StringComparison.Ordinal))
+                    continue;
+
+                string filename = ExtractFilenameFromGetFileArguments(toolCall.ArgumentsJson);
+                if (string.IsNullOrWhiteSpace(filename))
+                    continue;
+
+                int startLine = ExtractIntFromToolArguments(toolCall.ArgumentsJson, "startLine", 1);
+                int endLine = ExtractIntFromToolArguments(toolCall.ArgumentsJson, "endLine", 80);
+                int successfulRepeats = CountSuccessfulGetFileReads(requestBody, filename, startLine, endLine);
+                if (successfulRepeats < 2)
+                    continue;
+
+                if (endLine - startLine < 180) {
+                    int nextStart = Math.Max(1, endLine + 1);
+                    int nextEnd = nextStart + 199;
+                    toolCall.ArgumentsJson = "{\"filename\":\"" + EscapeJson(filename) + "\",\"startLine\":" +
+                                             nextStart.ToString() + ",\"endLine\":" + nextEnd.ToString() +
+                                             ",\"includeLineNumbers\":true}";
+                    LogMessage("[Get File Loop Guard] Expanded repeated get_file range for " + filename +
+                               " after " + successfulRepeats.ToString() + " successful repeat(s).");
+                    continue;
+                }
+
+                if (IsToolAdvertised(requestBody, "replace_string_in_file") &&
+                    LooksLikeEditRequest(requestBody) &&
+                    TryExtractLatestSuccessfulFileReadContent(requestBody, filename, out string oldContent) &&
+                    !string.IsNullOrWhiteSpace(oldContent)) {
+                    string newContent = SynthesizeEditPlaceholderContent(oldContent, filename, requestBody);
+                    toolCall.Name = "replace_string_in_file";
+                    toolCall.ArgumentsJson = "{\"filePath\":\"" + EscapeJson(filename) +
+                                             "\",\"oldString\":\"" + EscapeJson(oldContent) +
+                                             "\",\"newString\":\"" + EscapeJson(newContent) + "\"}";
+                    LogMessage("[Get File Loop Guard] Rewrote repeated broad get_file to replace_string_in_file for " + filename + ".");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Counts successful get_file results for an exact filename/range.
+        /// </summary>
+        private int CountSuccessfulGetFileReads(string requestBody, string targetPath, int startLine, int endLine) {
+            int count = 0;
+            string normalizedTarget = NormalizePathForCompare(targetPath);
+            string targetFileName = ExtractFileNameForCompare(targetPath);
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(requestBody)) {
+                    if (!document.RootElement.TryGetProperty("messages", out JsonElement messages) ||
+                        messages.ValueKind != JsonValueKind.Array)
+                        return 0;
+
+                    var getFileCalls = new Dictionary<string, Tuple<string, int, int>>(StringComparer.Ordinal);
+                    foreach (JsonElement message in messages.EnumerateArray()) {
+                        string role = message.TryGetProperty("role", out JsonElement roleElement) &&
+                                      roleElement.ValueKind == JsonValueKind.String
+                            ? roleElement.GetString()
+                            : "";
+
+                        if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase) &&
+                            message.TryGetProperty("tool_calls", out JsonElement toolCallsElement) &&
+                            toolCallsElement.ValueKind == JsonValueKind.Array) {
+                            foreach (JsonElement call in toolCallsElement.EnumerateArray()) {
+                                if (!call.TryGetProperty("id", out JsonElement idElement) ||
+                                    idElement.ValueKind != JsonValueKind.String ||
+                                    !call.TryGetProperty("function", out JsonElement function) ||
+                                    function.ValueKind != JsonValueKind.Object)
+                                    continue;
+
+                                string name = ExtractStringProperty(function, "name") ?? "";
+                                if (!name.Equals("get_file", StringComparison.Ordinal))
+                                    continue;
+
+                                string arguments = function.TryGetProperty("arguments", out JsonElement argumentsElement)
+                                    ? argumentsElement.ToString()
+                                    : "";
+                                string filename = ExtractFilenameFromGetFileArguments(arguments);
+                                if (string.IsNullOrWhiteSpace(filename))
+                                    continue;
+
+                                int readStart = ExtractIntFromToolArguments(arguments, "startLine", 1);
+                                int readEnd = ExtractIntFromToolArguments(arguments, "endLine", 80);
+                                getFileCalls[idElement.GetString()] = Tuple.Create(filename, readStart, readEnd);
+                            }
+                            continue;
+                        }
+
+                        if (!role.Equals("tool", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string toolCallId = message.TryGetProperty("tool_call_id", out JsonElement toolCallIdElement) &&
+                                            toolCallIdElement.ValueKind == JsonValueKind.String
+                            ? toolCallIdElement.GetString()
+                            : "";
+                        if (string.IsNullOrWhiteSpace(toolCallId) ||
+                            !getFileCalls.TryGetValue(toolCallId, out Tuple<string, int, int> read))
+                            continue;
+
+                        string normalizedRead = NormalizePathForCompare(read.Item1);
+                        string readFileName = ExtractFileNameForCompare(read.Item1);
+                        if (!normalizedRead.Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
+                            !readFileName.Equals(targetFileName, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (read.Item2 != startLine || read.Item3 != endLine)
+                            continue;
+
+                        string content = message.TryGetProperty("content", out JsonElement contentElement)
+                            ? contentElement.ToString()
+                            : "";
+                        string parsed = ExtractPlainFileContentFromToolResult(content);
+                        if (!LooksLikeToolError(content) &&
+                            !LooksLikeFileSearchMiss(content) &&
+                            LooksLikeSubstantiveFileContent(parsed, targetPath))
+                            count++;
+                    }
+                }
+            } catch { }
+
+            return count;
+        }
+
+        /// <summary>
+        /// Reads an integer from tool-call arguments.
+        /// </summary>
+        private int ExtractIntFromToolArguments(string argumentsJson, string propertyName, int fallback) {
+            try {
+                using (JsonDocument document = JsonDocument.Parse(argumentsJson)) {
+                    return TryGetIntProperty(document.RootElement, propertyName, out int value)
+                        ? value
+                        : fallback;
+                }
+            } catch {
+                return fallback;
+            }
+        }
+
+        /// <summary>
+        /// Returns true when the user's current ask requires modifying files.
+        /// </summary>
+        private bool LooksLikeEditRequest(string requestBody) {
+            string lastUser = ExtractLastUserMessage(requestBody) ?? "";
+            string lower = lastUser.ToLowerInvariant();
+            return lower.Contains("add ") ||
+                   lower.Contains("update ") ||
+                   lower.Contains("modify ") ||
+                   lower.Contains("replace ") ||
+                   lower.Contains("create ") ||
+                   lower.Contains("implement ") ||
+                   lower.Contains("enhance ") ||
+                   lower.Contains("fix ") ||
+                   lower.Contains("populate ");
+        }
+
+        /// <summary>
+        /// Produces a no-op placeholder replacement rather than rereading forever when no exact edit is available.
+        /// </summary>
+        private string SynthesizeEditPlaceholderContent(string oldContent, string filename, string requestBody) {
+            // Keep behavior unchanged if the proxy cannot safely infer the edit. The important part is breaking the read loop.
+            return oldContent;
+        }
+
+        /// <summary>
+        /// Returns true for get_file targets that are not actionable paths.
+        /// </summary>
+        private bool LooksLikeVagueGetFileTarget(string filename) {
+            if (string.IsNullOrWhiteSpace(filename))
+                return true;
+
+            string cleaned = NormalizeLoosePathEscapes(filename);
+            if (!HasUsableFileNameStem(cleaned))
+                return true;
+
+            string lower = cleaned.ToLowerInvariant();
+            return lower.Contains(" main project ") ||
+                   lower.StartsWith("main project ", StringComparison.Ordinal) ||
+                   lower.Contains(" current project ") ||
+                   lower.Contains(" the project ") ||
+                   lower.Contains(" file ");
+        }
+
+        /// <summary>
+        /// Detects when malformed get_file arguments were repaired to a generic fallback unrelated to the active task.
+        /// </summary>
+        private bool LooksLikeDefaultGetFileFallbackForActiveTopic(string filename, string requestBody) {
+            if (string.IsNullOrWhiteSpace(filename) || string.IsNullOrWhiteSpace(requestBody))
+                return false;
+
+            string normalized = NormalizePathForCompare(filename);
+            if (!normalized.EndsWith("toolselection.xaml", StringComparison.Ordinal))
+                return false;
+
+            string topic = ExtractLikelyActiveFileTopic(requestBody);
+            return !string.IsNullOrWhiteSpace(topic) &&
+                   !topic.Equals("ToolSelection", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Infers the current file/control topic from recent conversation text.
+        /// </summary>
+        private string ExtractLikelyActiveFileTopic(string requestBody) {
+            if (string.IsNullOrWhiteSpace(requestBody))
+                return null;
+
+            string lastUser = ExtractLastUserMessage(requestBody) ?? "";
+            string combined = lastUser + "\n" + ExtractRecentAssistantText(requestBody, 4);
+
+            var matches = System.Text.RegularExpressions.Regex.Matches(combined, @"[A-Z][A-Za-z0-9_]*(?:Control|Window|Page|View|Dialog|\.xaml(?:\.vb)?)?");
+            string best = null;
+            foreach (System.Text.RegularExpressions.Match match in matches) {
+                string token = match.Value;
+                if (token.Equals("Thinking", StringComparison.Ordinal) ||
+                    token.Equals("Tool", StringComparison.Ordinal) ||
+                    token.Equals("Window", StringComparison.Ordinal) ||
+                    token.Equals("Application", StringComparison.Ordinal))
+                    continue;
+
+                if (token.EndsWith(".xaml.vb", StringComparison.OrdinalIgnoreCase))
+                    token = token.Substring(0, token.Length - ".xaml.vb".Length);
+                else if (token.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase))
+                    token = token.Substring(0, token.Length - ".xaml".Length);
+
+                if (best == null || token.Length > best.Length)
+                    best = token;
+            }
+
+            return best;
+        }
+
+        /// <summary>
+        /// Returns recent assistant text content for topic inference.
+        /// </summary>
+        private string ExtractRecentAssistantText(string requestBody, int maxMessages) {
+            if (string.IsNullOrWhiteSpace(requestBody) || maxMessages <= 0)
+                return "";
+
+            var parts = new List<string>();
+            try {
+                using (JsonDocument document = JsonDocument.Parse(requestBody)) {
+                    if (!document.RootElement.TryGetProperty("messages", out JsonElement messages) ||
+                        messages.ValueKind != JsonValueKind.Array)
+                        return "";
+
+                    foreach (JsonElement message in messages.EnumerateArray()) {
+                        string role = message.TryGetProperty("role", out JsonElement roleElement) &&
+                                      roleElement.ValueKind == JsonValueKind.String
+                            ? roleElement.GetString()
+                            : "";
+                        if (!role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (message.TryGetProperty("content", out JsonElement contentElement) &&
+                            contentElement.ValueKind == JsonValueKind.String &&
+                            !string.IsNullOrWhiteSpace(contentElement.GetString())) {
+                            parts.Add(contentElement.GetString());
+                            if (parts.Count > maxMessages)
+                                parts.RemoveAt(0);
+                        }
+                    }
+                }
+            } catch { }
+
+            return string.Join("\n", parts);
+        }
+
+        /// <summary>
+        /// Extracts the most useful identifier from a vague get_file target.
+        /// </summary>
+        private string ExtractBestFileSearchToken(string text) {
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            string cleaned = NormalizeLoosePathEscapes(text);
+            var matches = System.Text.RegularExpressions.Regex.Matches(cleaned, @"[A-Za-z_][A-Za-z0-9_]*(?:\.xaml(?:\.vb)?)?");
+            string best = null;
+            foreach (System.Text.RegularExpressions.Match match in matches) {
+                string token = match.Value;
+                string lower = token.ToLowerInvariant();
+                if (lower.Equals("main", StringComparison.Ordinal) ||
+                    lower.Equals("project", StringComparison.Ordinal) ||
+                    lower.Equals("current", StringComparison.Ordinal) ||
+                    lower.Equals("file", StringComparison.Ordinal) ||
+                    lower.Equals("xaml", StringComparison.Ordinal) ||
+                    lower.Equals("vb", StringComparison.Ordinal))
+                    continue;
+
+                if (best == null || token.Length > best.Length)
+                    best = token;
+            }
+
+            return best;
+        }
+
+        /// <summary>
+        /// Finds an exact-ish file path for a token from previous file search/project results.
+        /// </summary>
+        private bool TryResolveFilePathFromHistory(string requestBody, string query, out string resolvedPath) {
+            resolvedPath = null;
+            if (string.IsNullOrWhiteSpace(requestBody) || string.IsNullOrWhiteSpace(query))
+                return false;
+
+            string token = NormalizePathForCompare(query);
+            int dot = token.IndexOf('.');
+            if (dot > 0)
+                token = token.Substring(0, dot);
+
+            try {
+                using (JsonDocument document = JsonDocument.Parse(requestBody)) {
+                    if (!document.RootElement.TryGetProperty("messages", out JsonElement messages) ||
+                        messages.ValueKind != JsonValueKind.Array)
+                        return false;
+
+                    foreach (JsonElement message in messages.EnumerateArray()) {
+                        if (!message.TryGetProperty("role", out JsonElement roleElement) ||
+                            roleElement.ValueKind != JsonValueKind.String ||
+                            !roleElement.GetString().Equals("tool", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string content = message.TryGetProperty("content", out JsonElement contentElement)
+                            ? contentElement.ToString()
+                            : "";
+                        if (LooksLikeToolError(content) || LooksLikeFileSearchMiss(content))
+                            continue;
+
+                        string candidate = ExtractBestMatchingPathFromText(content, token);
+                        if (!string.IsNullOrWhiteSpace(candidate)) {
+                            resolvedPath = candidate;
+                            return true;
+                        }
+                    }
+                }
+            } catch { }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Pulls the most relevant path from a tool result body.
+        /// </summary>
+        private string ExtractBestMatchingPathFromText(string text, string token) {
+            if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(token))
+                return null;
+
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                text,
+                @"(?<path>(?:[A-Za-z0-9_. \-]+[\\/]+)*[A-Za-z0-9_.\-]+\.(?:xaml\.vb|xaml|vb|cs))",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            string fallback = null;
+            foreach (System.Text.RegularExpressions.Match match in matches) {
+                string path = NormalizeLoosePathEscapes(match.Groups["path"].Value);
+                if (!HasUsableFileNameStem(path))
+                    continue;
+
+                string comparable = NormalizePathForCompare(path);
+                if (!comparable.Contains(token))
+                    continue;
+
+                if (comparable.EndsWith(".xaml", StringComparison.Ordinal))
+                    return path;
+                if (fallback == null)
+                    fallback = path;
+            }
+
+            return fallback;
+        }
+
+        /// <summary>
         /// Rewrites unsafe create_file calls into harmless reads so project files are never clobbered.
         /// </summary>
         private void GuardUnsafeCreateFileTargets(List<ToolCallData> toolCalls, string requestBody) {
@@ -3815,9 +6036,9 @@ prompt.focus();
                     continue;
                 }
 
-                string fallbackPath = string.IsNullOrWhiteSpace(filePath)
-                    ? "Maf Scale\\ToolSelection.xaml"
-                    : RepairPathControlCharacters(filePath).Trim().Trim('"', '\'', ',', ' ');
+                string fallbackPath = string.IsNullOrWhiteSpace(filePath) || !HasUsableFileNameStem(filePath)
+                    ? "Maf Scale/ToolSelection.xaml"
+                    : NormalizeToolPathForVsArgument(filePath);
 
                 toolCall.Name = "get_file";
                 toolCall.ArgumentsJson = "{\"filename\":\"" + EscapeJson(fallbackPath) + "\",\"startLine\":1,\"endLine\":80,\"includeLineNumbers\":true}";
@@ -3871,15 +6092,24 @@ prompt.focus();
                                 ? toolCallIdElement.GetString()
                                 : "";
                             if (string.IsNullOrWhiteSpace(toolCallId) ||
-                                !getFileCalls.TryGetValue(toolCallId, out string filename) ||
-                                !NormalizePathForCompare(filename).Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                                !getFileCalls.TryGetValue(toolCallId, out string filename))
+                                continue;
+
+                            string normalizedFilename = NormalizePathForCompare(filename);
+                            string readFileName = ExtractFileNameForCompare(filename);
+                            string targetFileName = ExtractFileNameForCompare(targetPath);
+                            if (!normalizedFilename.Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
+                                !readFileName.Equals(targetFileName, StringComparison.OrdinalIgnoreCase))
                                 continue;
 
                             string content = message.TryGetProperty("content", out JsonElement contentElement)
                                 ? contentElement.ToString()
                                 : "";
-                            if (!LooksLikeToolError(content) && !LooksLikeFileSearchMiss(content))
-                                return true;
+                        string parsed = ExtractPlainFileContentFromToolResult(content);
+                        if (!LooksLikeToolError(content) &&
+                            !LooksLikeFileSearchMiss(content) &&
+                            LooksLikeSubstantiveFileContent(parsed, targetPath))
+                            return true;
                         }
                     }
                 }
@@ -4380,7 +6610,18 @@ prompt.focus();
                         (!document.RootElement.TryGetProperty("projectPath", out JsonElement projectPath) ||
                          projectPath.ValueKind != JsonValueKind.String ||
                          string.IsNullOrWhiteSpace(projectPath.GetString()))) {
-                        return "{\"projectPath\":\"Maf Scale\\\\ME7Tools.vbproj\"}";
+                        return "{\"projectPath\":\"Maf Scale/ME7Tools.vbproj\"}";
+                    }
+
+                    if (toolName.Equals("get_files_in_project", StringComparison.Ordinal)) {
+                        string projectPathValue = document.RootElement.TryGetProperty("projectPath", out JsonElement projectPathElement) &&
+                                                  projectPathElement.ValueKind == JsonValueKind.String
+                            ? projectPathElement.GetString()
+                            : "Maf Scale/ME7Tools.vbproj";
+                        projectPathValue = NormalizeToolPathForVsArgument(projectPathValue);
+                        if (string.IsNullOrWhiteSpace(projectPathValue))
+                            projectPathValue = "Maf Scale/ME7Tools.vbproj";
+                        return "{\"projectPath\":\"" + EscapeJson(projectPathValue) + "\"}";
                     }
 
                     if (toolName.Equals("get_file", StringComparison.Ordinal)) {
@@ -4401,10 +6642,10 @@ prompt.focus();
                             ? parsedEndLine
                             : 240;
 
-                        filename = RepairPathControlCharacters(filename);
+                        filename = NormalizeToolPathForVsArgument(filename);
 
                         if (string.IsNullOrWhiteSpace(filename))
-                            filename = "Maf Scale\\\\ToolSelection.xaml";
+                            filename = "Maf Scale/ToolSelection.xaml";
 
                         if (startLine <= 0)
                             startLine = 1;
@@ -4444,13 +6685,13 @@ prompt.focus();
                 if (toolName.Equals("file_search", StringComparison.Ordinal))
                     return "{\"queries\":[\"ToolSelection.xaml\",\"fkkvs\"],\"maxResults\":20}";
                 if (toolName.Equals("get_files_in_project", StringComparison.Ordinal))
-                    return "{\"projectPath\":\"Maf Scale\\\\ME7Tools.vbproj\"}";
+                    return "{\"projectPath\":\"Maf Scale/ME7Tools.vbproj\"}";
                 if (toolName.Equals("get_file", StringComparison.Ordinal))
-                    return "{\"filename\":\"Maf Scale\\\\ToolSelection.xaml\",\"startLine\":1,\"endLine\":240,\"includeLineNumbers\":true}";
+                    return "{\"filename\":\"Maf Scale/ToolSelection.xaml\",\"startLine\":1,\"endLine\":240,\"includeLineNumbers\":true}";
                 if (toolName.Equals("run_command_in_terminal", StringComparison.Ordinal))
                     return "{\"command\":\"Write-Host \\\"Command arguments were malformed and were blocked by LmVsProxy.\\\"\",\"summary\":\"Malformed command blocked by proxy\",\"background\":false}";
                 if (toolName.Equals("replace_string_in_file", StringComparison.Ordinal))
-                    return "{\"filePath\":\"Maf Scale\\\\ToolSelection.xaml\",\"oldString\":\"\",\"newString\":\"\"}";
+                    return "{\"filePath\":\"Maf Scale/ToolSelection.xaml\",\"oldString\":\"\",\"newString\":\"\"}";
                 if (toolName.Equals("create_file", StringComparison.Ordinal))
                     return BuildCreateFileArguments(TryExtractLikelyFilePath(argumentsJson), null);
                 if (toolName.Equals("multi_replace_string_in_file", StringComparison.Ordinal))
@@ -4547,9 +6788,9 @@ prompt.focus();
         /// Builds safe create_file arguments, supplying a minimal file body if the model omitted one.
         /// </summary>
         private string BuildCreateFileArguments(string filePath, string content) {
-            filePath = RepairPathControlCharacters(filePath);
+            filePath = NormalizeLoosePathEscapes(filePath);
             if (string.IsNullOrWhiteSpace(filePath))
-                filePath = "Maf Scale\\fkkvs.xaml.vb";
+                filePath = "Maf Scale/fkkvs.xaml.vb";
 
             filePath = filePath.Trim().Trim('"', '\'', ',', ' ');
             filePath = TrimDanglingSlashAfterFileExtension(filePath);
@@ -4591,6 +6832,7 @@ prompt.focus();
                 ? newStringElement.GetString()
                 : "";
 
+            filePath = NormalizeLoosePathEscapes(filePath);
             oldString = NormalizeGeneratedFileText(oldString);
             newString = NormalizeGeneratedFileText(newString);
 
@@ -4689,7 +6931,8 @@ prompt.focus();
             int dot = className.IndexOf('.');
             if (dot > 0)
                 className = className.Substring(0, dot);
-            if (string.IsNullOrWhiteSpace(className))
+            if (string.IsNullOrWhiteSpace(className) ||
+                className.StartsWith(".", StringComparison.Ordinal))
                 className = "fkkvs";
 
             if (normalized.EndsWith(".xaml.vb", StringComparison.OrdinalIgnoreCase) ||
@@ -4725,9 +6968,73 @@ prompt.focus();
             if (!match.Success)
                 return null;
 
-            string path = match.Groups["path"].Value;
-            path = path.Replace("\\\"", "\"");
-            return path.Trim().Trim('"', '\'', ',', ' ');
+            string path = NormalizeLoosePathEscapes(match.Groups["path"].Value);
+            path = path.Trim().Trim('"', '\'', ',', ' ');
+            return HasUsableFileNameStem(path) ? path : null;
+        }
+
+        /// <summary>
+        /// Decodes common loose JSON path escapes such as \u0022 and repairs accidental control-character separators.
+        /// </summary>
+        private string NormalizeLoosePathEscapes(string value) {
+            if (string.IsNullOrEmpty(value))
+                return value;
+
+            string repaired = RepairPathControlCharacters(value);
+            repaired = repaired.Replace("\\\"", "\"")
+                               .Replace("\\u0022", "\"")
+                               .Replace("\\U0022", "\"")
+                               .Replace("u0022", "\"");
+
+            return CanonicalizeDuplicateFileExtensions(repaired.Trim().Trim('"', '\'', ',', ' '));
+        }
+
+        /// <summary>
+        /// Uses slash-separated paths in VS tool-call JSON so single Windows backslashes cannot become invalid JSON escapes.
+        /// </summary>
+        private string NormalizeToolPathForVsArgument(string value) {
+            if (string.IsNullOrWhiteSpace(value))
+                return value;
+
+            string repaired = NormalizeLoosePathEscapes(value)
+                .Trim()
+                .Trim('"', '\'', ',', ' ');
+            return repaired.Replace('\\', '/');
+        }
+
+        /// <summary>
+        /// Collapses malformed duplicate compound extensions such as ToolSelection.xaml.xaml.vb.
+        /// </summary>
+        private string CanonicalizeDuplicateFileExtensions(string path) {
+            if (string.IsNullOrWhiteSpace(path))
+                return path;
+
+            string normalized = path;
+            string previous;
+            do {
+                previous = normalized;
+                normalized = System.Text.RegularExpressions.Regex.Replace(
+                    normalized,
+                    @"(?i)\.xaml(?:\.xaml)+\.vb$",
+                    ".xaml.vb");
+                normalized = System.Text.RegularExpressions.Regex.Replace(
+                    normalized,
+                    @"(?i)\.xaml(?:\.xaml)+$",
+                    ".xaml");
+                normalized = System.Text.RegularExpressions.Regex.Replace(
+                    normalized,
+                    @"(?i)\.vb(?:\.vb)+$",
+                    ".vb");
+                normalized = System.Text.RegularExpressions.Regex.Replace(
+                    normalized,
+                    @"(?i)\.cs(?:\.cs)+$",
+                    ".cs");
+            } while (!string.Equals(previous, normalized, StringComparison.Ordinal));
+
+            if (!string.Equals(path, normalized, StringComparison.Ordinal))
+                LogMessage("[Path Repair] Canonicalized duplicate extension path: " + path + " -> " + normalized);
+
+            return normalized;
         }
 
         /// <summary>
@@ -5066,9 +7373,141 @@ prompt.focus();
 
             requestBody = RepairConversationToolCallHistory(requestBody);
             requestBody = AddCreateFileHintAfterRepeatedFileSearchMisses(requestBody);
+            requestBody = AddMissingCodebehindCreationHint(requestBody);
             requestBody = AddToolSchemaRecoveryHints(requestBody);
             requestBody = AddBuildErrorRepairHint(requestBody);
+            requestBody = AddProxyResearchTools(requestBody);
             return requestBody;
+        }
+
+        private string AddProxyResearchTools(string requestBody) {
+            try {
+                if (string.IsNullOrWhiteSpace(requestBody) ||
+                    requestBody.Contains("\"nuget_search\"", StringComparison.Ordinal) ||
+                    IsToolChoiceNone(requestBody))
+                    return requestBody;
+
+                using (JsonDocument document = JsonDocument.Parse(requestBody))
+                using (var stream = new MemoryStream())
+                using (var writer = new Utf8JsonWriter(stream)) {
+                    writer.WriteStartObject();
+                    bool wroteTools = false;
+                    bool wroteMessages = false;
+
+                    foreach (JsonProperty property in document.RootElement.EnumerateObject()) {
+                        if (property.NameEquals("tools") && property.Value.ValueKind == JsonValueKind.Array) {
+                            wroteTools = true;
+                            writer.WritePropertyName("tools");
+                            writer.WriteStartArray();
+                            foreach (JsonElement tool in property.Value.EnumerateArray())
+                                tool.WriteTo(writer);
+                            WriteProxyResearchToolSchemas(writer);
+                            writer.WriteEndArray();
+                            continue;
+                        }
+
+                        if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array) {
+                            wroteMessages = true;
+                            writer.WritePropertyName("messages");
+                            writer.WriteStartArray();
+                            foreach (JsonElement message in property.Value.EnumerateArray())
+                                message.WriteTo(writer);
+                            writer.WriteStartObject();
+                            writer.WriteString("role", "system");
+                            writer.WriteString("content", "[LmVsProxy research tools] When you need .NET package discovery or source examples, use nuget_search, nuget_package_info, and github_code_search. These are proxy-owned tools. Use them before adding unfamiliar NuGet libraries or calling APIs whose classes/usages you need to understand.");
+                            writer.WriteEndObject();
+                            writer.WriteEndArray();
+                            continue;
+                        }
+
+                        property.WriteTo(writer);
+                    }
+
+                    if (!wroteTools) {
+                        writer.WritePropertyName("tools");
+                        writer.WriteStartArray();
+                        WriteProxyResearchToolSchemas(writer);
+                        writer.WriteEndArray();
+                    }
+
+                    if (!wroteMessages) {
+                        writer.WritePropertyName("messages");
+                        writer.WriteStartArray();
+                        writer.WriteStartObject();
+                        writer.WriteString("role", "system");
+                        writer.WriteString("content", "[LmVsProxy research tools] Use nuget_search, nuget_package_info, and github_code_search for package and source-code discovery.");
+                        writer.WriteEndObject();
+                        writer.WriteEndArray();
+                    }
+
+                    writer.WriteEndObject();
+                    writer.Flush();
+                    LogMessage("[Proxy Research] Added NuGet/GitHub research tools to LM Studio request.");
+                    return Encoding.UTF8.GetString(stream.ToArray());
+                }
+            } catch (Exception ex) {
+                LogMessage("[Proxy Research] Could not add research tools: " + ex.Message);
+                return requestBody;
+            }
+        }
+
+        private void WriteProxyResearchToolSchemas(Utf8JsonWriter writer) {
+            WriteProxyResearchToolSchema(writer, "nuget_search",
+                "Search NuGet packages by query. Use before adding unfamiliar .NET libraries.",
+                new[] { "query", "take" },
+                new[] {
+                    new ProxyToolParameter("query", "string", "NuGet search query, package name, namespace, or feature."),
+                    new ProxyToolParameter("take", "integer", "Maximum number of packages to return. Default 10, max 25.")
+                });
+
+            WriteProxyResearchToolSchema(writer, "nuget_package_info",
+                "Fetch NuGet package metadata including versions, description, project URL, repository URL, tags, and dependencies when available.",
+                new[] { "packageId" },
+                new[] {
+                    new ProxyToolParameter("packageId", "string", "Exact NuGet package id."),
+                    new ProxyToolParameter("version", "string", "Optional package version to inspect.")
+                });
+
+            WriteProxyResearchToolSchema(writer, "github_code_search",
+                "Search GitHub source code for examples and API usage. Prefer repo-qualified searches when a repository URL is known.",
+                new[] { "query" },
+                new[] {
+                    new ProxyToolParameter("query", "string", "Code search query, class name, method name, or package API usage."),
+                    new ProxyToolParameter("repo", "string", "Optional owner/repo repository filter."),
+                    new ProxyToolParameter("language", "string", "Optional language filter such as C#, VB, JavaScript."),
+                    new ProxyToolParameter("take", "integer", "Maximum results to return. Default 8, max 20.")
+                });
+        }
+
+        private void WriteProxyResearchToolSchema(Utf8JsonWriter writer, string name, string description, string[] required, ProxyToolParameter[] parameters) {
+            writer.WriteStartObject();
+            writer.WriteString("type", "function");
+            writer.WritePropertyName("function");
+            writer.WriteStartObject();
+            writer.WriteString("name", name);
+            writer.WriteString("description", description);
+            writer.WritePropertyName("parameters");
+            writer.WriteStartObject();
+            writer.WriteString("type", "object");
+            writer.WritePropertyName("properties");
+            writer.WriteStartObject();
+            foreach (ProxyToolParameter parameter in parameters) {
+                writer.WritePropertyName(parameter.Name);
+                writer.WriteStartObject();
+                writer.WriteString("type", parameter.Type);
+                writer.WriteString("description", parameter.Description);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndObject();
+            writer.WritePropertyName("required");
+            writer.WriteStartArray();
+            foreach (string item in required)
+                writer.WriteStringValue(item);
+            writer.WriteEndArray();
+            writer.WriteBoolean("additionalProperties", false);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+            writer.WriteEndObject();
         }
 
         /// <summary>
@@ -5237,6 +7676,36 @@ prompt.focus();
                 return rewritten;
             } catch (Exception ex) {
                 LogMessage("[Create File Hint] Error: " + ex.Message);
+                return requestBody;
+            }
+        }
+
+        /// <summary>
+        /// Adds explicit guidance when the transcript shows a repeated missing XAML code-behind loop.
+        /// </summary>
+        private string AddMissingCodebehindCreationHint(string requestBody) {
+            try {
+                if (!IsToolAdvertised(requestBody, "create_file"))
+                    return requestBody;
+
+                if (!TryInferMissingCodebehindLoopTarget(requestBody, out string targetPath, out int signalCount))
+                    return requestBody;
+
+                const string hintMarker = "[LmVsProxy missing codebehind hint]";
+                if (requestBody.Contains(hintMarker))
+                    return requestBody;
+
+                string hint = hintMarker + " The conversation has already established that " + targetPath +
+                              " is the missing WPF XAML code-behind file. Do not keep searching, checking symbols, or checking errors for that missing code-behind. " +
+                              "Call create_file for that path with a concrete VB Window class that matches the XAML x:Class name, then continue with build/error fixes if needed.";
+
+                string rewritten = AppendSystemMessage(requestBody, hint);
+                if (!ReferenceEquals(rewritten, requestBody))
+                    LogMessage("[Codebehind Hint] Added missing code-behind creation guidance after " + signalCount.ToString() + " signal(s).");
+
+                return rewritten;
+            } catch (Exception ex) {
+                LogMessage("[Codebehind Hint] Error: " + ex.Message);
                 return requestBody;
             }
         }
@@ -5537,7 +8006,7 @@ prompt.focus();
         private string RepairConversationToolCallHistory(string requestBody) {
             try {
                 bool changed = false;
-                var toolCallNames = new Dictionary<string, string>(StringComparer.Ordinal);
+                var toolCallHistory = new Dictionary<string, ToolCallHistoryEntry>(StringComparer.Ordinal);
 
                 using (JsonDocument document = JsonDocument.Parse(requestBody))
                 using (var stream = new MemoryStream())
@@ -5548,7 +8017,7 @@ prompt.focus();
                             writer.WritePropertyName("messages");
                             writer.WriteStartArray();
                             foreach (JsonElement message in property.Value.EnumerateArray())
-                                WriteMessageWithRepairedToolHistory(writer, message, toolCallNames, ref changed);
+                                WriteMessageWithRepairedToolHistory(writer, message, toolCallHistory, ref changed);
                             writer.WriteEndArray();
                             continue;
                         }
@@ -5571,7 +8040,7 @@ prompt.focus();
             }
         }
 
-        private void WriteMessageWithRepairedToolHistory(Utf8JsonWriter writer, JsonElement message, Dictionary<string, string> toolCallNames, ref bool changed) {
+        private void WriteMessageWithRepairedToolHistory(Utf8JsonWriter writer, JsonElement message, Dictionary<string, ToolCallHistoryEntry> toolCallHistory, ref bool changed) {
             if (message.ValueKind != JsonValueKind.Object) {
                 message.WriteTo(writer);
                 return;
@@ -5590,15 +8059,15 @@ prompt.focus();
                     writer.WritePropertyName("tool_calls");
                     writer.WriteStartArray();
                     foreach (JsonElement toolCall in property.Value.EnumerateArray())
-                        WriteToolCallWithRepairedArguments(writer, toolCall, toolCallNames, ref changed);
+                        WriteToolCallWithRepairedArguments(writer, toolCall, toolCallHistory, ref changed);
                     writer.WriteEndArray();
                     continue;
                 }
 
                 if (role.Equals("tool", StringComparison.OrdinalIgnoreCase) &&
                     property.NameEquals("content") &&
-                    ShouldRepairToolHistoryResult(message, toolCallNames)) {
-                    writer.WriteString("content", "update_plan_progress arguments were repaired by LmVsProxy. Retry update_plan_progress with stepId, status, message, and autoAdvance.");
+                    TryRepairToolHistoryResultContent(message, toolCallHistory, property.Value, out string repairedContent)) {
+                    writer.WriteString("content", repairedContent);
                     changed = true;
                     continue;
                 }
@@ -5608,7 +8077,7 @@ prompt.focus();
             writer.WriteEndObject();
         }
 
-        private void WriteToolCallWithRepairedArguments(Utf8JsonWriter writer, JsonElement toolCall, Dictionary<string, string> toolCallNames, ref bool changed) {
+        private void WriteToolCallWithRepairedArguments(Utf8JsonWriter writer, JsonElement toolCall, Dictionary<string, ToolCallHistoryEntry> toolCallHistory, ref bool changed) {
             if (toolCall.ValueKind != JsonValueKind.Object) {
                 toolCall.WriteTo(writer);
                 return;
@@ -5624,13 +8093,26 @@ prompt.focus();
                 function.ValueKind == JsonValueKind.Object)
                 toolName = ExtractStringProperty(function, "name") ?? "";
 
-            if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(toolName))
-                toolCallNames[id] = toolName;
+            string arguments = "{}";
+            if (toolCall.TryGetProperty("function", out JsonElement originalFunction) &&
+                originalFunction.ValueKind == JsonValueKind.Object)
+                arguments = ExtractFunctionArguments(originalFunction);
+
+            string repairedArguments = string.IsNullOrWhiteSpace(toolName)
+                ? arguments
+                : RepairKnownToolArguments(toolName, arguments);
+
+            if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(toolName)) {
+                toolCallHistory[id] = new ToolCallHistoryEntry {
+                    Name = toolName,
+                    ArgumentsJson = repairedArguments
+                };
+            }
 
             writer.WriteStartObject();
             foreach (JsonProperty property in toolCall.EnumerateObject()) {
                 if (property.NameEquals("function") && property.Value.ValueKind == JsonValueKind.Object) {
-                    WriteFunctionWithRepairedArguments(writer, property.Value, toolName, ref changed);
+                    WriteFunctionWithRepairedArguments(writer, property.Value, toolName, repairedArguments, ref changed);
                     continue;
                 }
 
@@ -5639,13 +8121,14 @@ prompt.focus();
             writer.WriteEndObject();
         }
 
-        private void WriteFunctionWithRepairedArguments(Utf8JsonWriter writer, JsonElement function, string toolName, ref bool changed) {
-            string arguments = function.TryGetProperty("arguments", out JsonElement argumentsElement)
+        private string ExtractFunctionArguments(JsonElement function) {
+            return function.TryGetProperty("arguments", out JsonElement argumentsElement)
                 ? (argumentsElement.ValueKind == JsonValueKind.String ? argumentsElement.GetString() : argumentsElement.ToString())
                 : "{}";
-            string repairedArguments = string.IsNullOrWhiteSpace(toolName)
-                ? arguments
-                : RepairKnownToolArguments(toolName, arguments);
+        }
+
+        private void WriteFunctionWithRepairedArguments(Utf8JsonWriter writer, JsonElement function, string toolName, string repairedArguments, ref bool changed) {
+            string arguments = ExtractFunctionArguments(function);
             bool wroteArguments = false;
 
             writer.WritePropertyName("function");
@@ -5670,20 +8153,458 @@ prompt.focus();
             writer.WriteEndObject();
         }
 
-        private bool ShouldRepairToolHistoryResult(JsonElement message, Dictionary<string, string> toolCallNames) {
+        private bool TryRepairToolHistoryResultContent(JsonElement message, Dictionary<string, ToolCallHistoryEntry> toolCallHistory, JsonElement contentElement, out string repairedContent) {
+            repairedContent = null;
+
             string toolCallId = message.TryGetProperty("tool_call_id", out JsonElement toolCallIdElement) &&
                                 toolCallIdElement.ValueKind == JsonValueKind.String
                 ? toolCallIdElement.GetString()
                 : "";
             if (string.IsNullOrWhiteSpace(toolCallId) ||
-                !toolCallNames.TryGetValue(toolCallId, out string toolName) ||
-                !toolName.Equals("update_plan_progress", StringComparison.Ordinal))
+                !toolCallHistory.TryGetValue(toolCallId, out ToolCallHistoryEntry toolCall) ||
+                toolCall == null)
                 return false;
 
-            string content = message.TryGetProperty("content", out JsonElement contentElement)
-                ? contentElement.ToString()
-                : "";
-            return content.IndexOf("missing parameter autoAdvance", StringComparison.OrdinalIgnoreCase) >= 0;
+            string content = contentElement.ToString();
+            if (toolCall.Name.Equals("update_plan_progress", StringComparison.Ordinal) &&
+                content.IndexOf("missing parameter autoAdvance", StringComparison.OrdinalIgnoreCase) >= 0) {
+                repairedContent = "update_plan_progress arguments were repaired by LmVsProxy. Retry update_plan_progress with stepId, status, message, and autoAdvance.";
+                return true;
+            }
+
+            if (toolCall.Name.Equals("get_file", StringComparison.Ordinal) &&
+                ShouldHydrateGetFileResult(content, toolCall.ArgumentsJson) &&
+                TryReadLocalFileForGetFile(toolCall.ArgumentsJson, out string localContent)) {
+                repairedContent = localContent;
+                return true;
+            }
+
+            if (toolCall.Name.Equals("get_files_in_project", StringComparison.Ordinal) &&
+                ShouldHydrateGetFilesInProjectResult(content) &&
+                TryReadLocalProjectFilesForGetFilesInProject(toolCall.ArgumentsJson, out string localProjectContent)) {
+                repairedContent = localProjectContent;
+                return true;
+            }
+
+            if (toolCall.Name.Equals("replace_string_in_file", StringComparison.Ordinal) &&
+                ShouldApplyEditToolFallback(content) &&
+                TryApplyLocalReplaceStringInFile(toolCall.ArgumentsJson, out string replaceResult)) {
+                repairedContent = replaceResult;
+                return true;
+            }
+
+            if (toolCall.Name.Equals("create_file", StringComparison.Ordinal) &&
+                ShouldApplyEditToolFallback(content) &&
+                TryApplyLocalCreateFile(toolCall.ArgumentsJson, out string createResult)) {
+                repairedContent = createResult;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool ShouldApplyEditToolFallback(string content) {
+            string lower = (content ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(lower))
+                return true;
+
+            return LooksLikeToolError(content) ||
+                   lower.Contains("no changes") ||
+                   lower.Contains("0 changes") ||
+                   lower.Contains("did not find a match") ||
+                   lower.Contains("could not find a match") ||
+                   lower.Contains("not applied") ||
+                   lower.Contains("not changed") ||
+                   lower.Contains("unchanged");
+        }
+
+        private bool ShouldHydrateGetFilesInProjectResult(string content) {
+            string lower = (content ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(lower))
+                return true;
+
+            return LooksLikeToolError(content) ||
+                   lower.Contains("couldn't run") ||
+                   lower.Contains("could not run") ||
+                   lower.Contains("couldn't find") ||
+                   lower.Contains("could not find") ||
+                   lower.Contains("invalid arguments") ||
+                   lower.Contains("failed to execute") ||
+                   lower.Contains("not in solution") ||
+                   lower.Contains("project was not found");
+        }
+
+        /// <summary>
+        /// Returns true when Visual Studio reported a get_file success without forwarding source text.
+        /// </summary>
+        private bool ShouldHydrateGetFileResult(string content, string getFileArgumentsJson) {
+            string filename = ExtractFilenameFromGetFileArguments(getFileArgumentsJson);
+            if (string.IsNullOrWhiteSpace(filename))
+                return false;
+
+            string parsed = ExtractPlainFileContentFromToolResult(content ?? "");
+            if (LooksLikeSubstantiveFileContent(parsed, filename))
+                return false;
+
+            string lower = (content ?? "").Trim().ToLowerInvariant();
+            return string.IsNullOrWhiteSpace(lower) ||
+                   (lower.StartsWith("read ", StringComparison.Ordinal) && lower.Contains("lines ")) ||
+                   lower.Contains("read " + ExtractFileNameForCompare(filename)) ||
+                   lower.Contains("couldn't display") ||
+                   lower.Contains("could not display");
+        }
+
+        /// <summary>
+        /// Reads a get_file target locally and formats it like VS get_file output.
+        /// </summary>
+        private bool TryReadLocalFileForGetFile(string argumentsJson, out string content) {
+            content = null;
+
+            string filename = ExtractFilenameFromGetFileArguments(argumentsJson);
+            if (string.IsNullOrWhiteSpace(filename))
+                return false;
+
+            filename = NormalizeLoosePathEscapes(filename);
+            if (!TryResolveLocalFilePath(filename, out string fullPath))
+                return false;
+
+            int startLine = ExtractIntFromToolArguments(argumentsJson, "startLine", 1);
+            int endLine = ExtractIntFromToolArguments(argumentsJson, "endLine", startLine + 239);
+            bool includeLineNumbers = ExtractBoolFromToolArguments(argumentsJson, "includeLineNumbers", true);
+
+            try {
+                string[] lines = File.ReadAllLines(fullPath);
+                if (lines.Length == 0) {
+                    content = "```" + GetMarkdownLanguageForPath(fullPath) + " " + filename + " (0 lines total)\n```";
+                    return true;
+                }
+
+                if (startLine < 1)
+                    startLine = 1;
+                if (endLine < startLine)
+                    endLine = startLine;
+                if (endLine > lines.Length)
+                    endLine = lines.Length;
+
+                var sb = new StringBuilder();
+                sb.Append("```").Append(GetMarkdownLanguageForPath(fullPath)).Append(" ")
+                  .Append(filename).Append(" (Lines ").Append(startLine.ToString()).Append("-")
+                  .Append(endLine.ToString()).Append(" of ").Append(lines.Length.ToString()).Append(" total. Local fallback by LmVsProxy.)\n");
+
+                for (int lineNumber = startLine; lineNumber <= endLine; lineNumber++) {
+                    if (includeLineNumbers)
+                        sb.Append(lineNumber.ToString()).Append(": ");
+                    sb.Append(lines[lineNumber - 1]).Append("\n");
+                }
+
+                sb.Append("```");
+                content = sb.ToString();
+                LogMessage("[Get File Local Fallback] Hydrated get_file result for " + filename + " from " + fullPath);
+                return true;
+            } catch (Exception ex) {
+                LogMessage("[Get File Local Fallback] Failed to read " + fullPath + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Hydrates get_files_in_project from disk when VS reports a tool failure or summary-only result.
+        /// </summary>
+        private bool TryReadLocalProjectFilesForGetFilesInProject(string argumentsJson, out string content) {
+            content = null;
+
+            string projectPath = ExtractProjectPathFromGetFilesInProjectArguments(argumentsJson);
+            if (string.IsNullOrWhiteSpace(projectPath))
+                projectPath = "Maf Scale\\ME7Tools.vbproj";
+
+            projectPath = NormalizeLoosePathEscapes(projectPath);
+            if (!TryResolveLocalFilePath(projectPath, out string fullProjectPath))
+                return false;
+
+            try {
+                string projectDirectory = Path.GetDirectoryName(fullProjectPath);
+                var files = new List<string>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (string include in ExtractProjectIncludes(fullProjectPath)) {
+                    string relative = NormalizeLoosePathEscapes(include).Replace('/', Path.DirectorySeparatorChar);
+                    string full = Path.GetFullPath(Path.Combine(projectDirectory, relative));
+                    if (!File.Exists(full))
+                        continue;
+
+                    AddProjectFileResult(files, seen, projectDirectory, full);
+                }
+
+                if (files.Count == 0) {
+                    foreach (string pattern in new[] { "*.vb", "*.xaml", "*.resx", "*.config", "*.settings", "*.xml", "*.json" }) {
+                        foreach (string full in Directory.GetFiles(projectDirectory, pattern, SearchOption.AllDirectories)) {
+                            if (IsGeneratedOrBuildOutputPath(full))
+                                continue;
+                            AddProjectFileResult(files, seen, projectDirectory, full);
+                        }
+                    }
+                }
+
+                files.Sort(StringComparer.OrdinalIgnoreCase);
+
+                var sb = new StringBuilder();
+                sb.AppendLine("Files in project " + projectPath + " (Local fallback by LmVsProxy):");
+                foreach (string file in files)
+                    sb.AppendLine(file);
+
+                content = sb.ToString().TrimEnd();
+                LogMessage("[Get Files Local Fallback] Hydrated get_files_in_project for " + projectPath +
+                           " from " + fullProjectPath + "; files=" + files.Count.ToString());
+                return true;
+            } catch (Exception ex) {
+                LogMessage("[Get Files Local Fallback] Failed to list " + fullProjectPath + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private bool TryApplyLocalReplaceStringInFile(string argumentsJson, out string result) {
+            result = null;
+
+            string filePath = NormalizeLoosePathEscapes(ExtractFilePathFromReplaceStringArguments(argumentsJson));
+            string oldString = NormalizeGeneratedFileText(ExtractJsonStringProperty(argumentsJson, "oldString"));
+            string newString = NormalizeGeneratedFileText(ExtractJsonStringProperty(argumentsJson, "newString"));
+
+            if (string.IsNullOrWhiteSpace(filePath) ||
+                oldString == null ||
+                newString == null ||
+                string.Equals(oldString, newString, StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (!TryResolveLocalFilePath(filePath, out string fullPath))
+                return false;
+
+            try {
+                string existing = File.ReadAllText(fullPath);
+                string replacementTarget = oldString;
+                if (!existing.Contains(replacementTarget)) {
+                    string normalizedExisting = existing.Replace("\r\n", "\n").Replace('\r', '\n');
+                    string normalizedOld = oldString.Replace("\r\n", "\n").Replace('\r', '\n');
+                    if (normalizedExisting.Contains(normalizedOld)) {
+                        replacementTarget = existing.Contains(oldString.Replace("\n", "\r\n"))
+                            ? oldString.Replace("\n", "\r\n")
+                            : oldString;
+                    } else {
+                        LogMessage("[Local Edit Fallback] replace_string_in_file could not find oldString in " + fullPath);
+                        return false;
+                    }
+                }
+
+                string updated = existing.Replace(replacementTarget, newString);
+                if (string.Equals(existing, updated, StringComparison.Ordinal))
+                    return false;
+
+                File.WriteAllText(fullPath, updated, Encoding.UTF8);
+                result = "replace_string_in_file applied locally by LmVsProxy to " + filePath +
+                         ". Replaced " + CountOccurrences(existing, replacementTarget).ToString() + " occurrence(s).";
+                LogMessage("[Local Edit Fallback] " + result + " fullPath=" + fullPath);
+                return true;
+            } catch (Exception ex) {
+                LogMessage("[Local Edit Fallback] replace_string_in_file failed for " + fullPath + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private bool TryApplyLocalCreateFile(string argumentsJson, out string result) {
+            result = null;
+
+            string filePath = NormalizeLoosePathEscapes(ExtractFilePathFromCreateFileArguments(argumentsJson));
+            string content = NormalizeGeneratedFileText(ExtractCreateFileContent(argumentsJson));
+            if (string.IsNullOrWhiteSpace(filePath) || !IsSafeCreateFileTarget(filePath))
+                return false;
+
+            if (string.IsNullOrWhiteSpace(content))
+                content = BuildMinimalFileContent(filePath);
+
+            try {
+                string root = Directory.GetCurrentDirectory();
+                string fullPath = Path.GetFullPath(Path.Combine(root, filePath.Replace('/', Path.DirectorySeparatorChar)));
+                string fullRoot = Path.GetFullPath(root);
+                if (!fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+                if (File.Exists(fullPath)) {
+                    result = "create_file local fallback skipped because file already exists: " + filePath;
+                    LogMessage("[Local Edit Fallback] " + result);
+                    return true;
+                }
+
+                File.WriteAllText(fullPath, content, Encoding.UTF8);
+                result = "create_file applied locally by LmVsProxy: " + filePath +
+                         " (" + content.Length.ToString() + " chars).";
+                LogMessage("[Local Edit Fallback] " + result + " fullPath=" + fullPath);
+                return true;
+            } catch (Exception ex) {
+                LogMessage("[Local Edit Fallback] create_file failed for " + filePath + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private int CountOccurrences(string text, string value) {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(value))
+                return 0;
+
+            int count = 0;
+            int index = 0;
+            while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0) {
+                count++;
+                index += value.Length;
+            }
+            return count;
+        }
+
+        private string ExtractProjectPathFromGetFilesInProjectArguments(string argumentsJson) {
+            string projectPath = ExtractJsonStringProperty(argumentsJson, "projectPath");
+            if (!string.IsNullOrWhiteSpace(projectPath))
+                return projectPath;
+
+            if (string.IsNullOrWhiteSpace(argumentsJson))
+                return null;
+
+            var match = System.Text.RegularExpressions.Regex.Match(argumentsJson,
+                @"""projectPath""\s*:\s*""(?<path>[^""]+)""",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return match.Success ? RepairPathControlCharacters(match.Groups["path"].Value) : null;
+        }
+
+        private List<string> ExtractProjectIncludes(string fullProjectPath) {
+            var includes = new List<string>();
+            string text = File.ReadAllText(fullProjectPath);
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                         text,
+                         @"\b(?:Include|Update)\s*=\s*""(?<path>[^""]+)""",
+                         System.Text.RegularExpressions.RegexOptions.IgnoreCase)) {
+                string include = match.Groups["path"].Value;
+                if (!string.IsNullOrWhiteSpace(include))
+                    includes.Add(include);
+            }
+
+            return includes;
+        }
+
+        private void AddProjectFileResult(List<string> files, HashSet<string> seen, string projectDirectory, string fullPath) {
+            string relative = Path.GetRelativePath(projectDirectory, fullPath).Replace(Path.DirectorySeparatorChar, '\\');
+            if (seen.Add(relative))
+                files.Add(relative);
+        }
+
+        private bool IsGeneratedOrBuildOutputPath(string fullPath) {
+            string normalized = fullPath.Replace('/', '\\').ToLowerInvariant();
+            return normalized.Contains("\\bin\\") ||
+                   normalized.Contains("\\obj\\") ||
+                   normalized.Contains("\\.vs\\") ||
+                   normalized.Contains("\\packages\\");
+        }
+
+        /// <summary>
+        /// Resolves VS-relative file paths against common local solution roots.
+        /// </summary>
+        private bool TryResolveLocalFilePath(string requestedPath, out string fullPath) {
+            fullPath = null;
+            if (string.IsNullOrWhiteSpace(requestedPath))
+                return false;
+
+            string cleaned = NormalizeLoosePathEscapes(requestedPath)
+                .Replace('/', Path.DirectorySeparatorChar)
+                .Trim()
+                .Trim('"', '\'', ',', ' ');
+
+            if (Path.IsPathRooted(cleaned) && File.Exists(cleaned)) {
+                fullPath = Path.GetFullPath(cleaned);
+                return true;
+            }
+
+            var roots = new List<string>();
+            AddCandidateRoot(roots, Directory.GetCurrentDirectory());
+            AddCandidateRoot(roots, AppDomain.CurrentDomain.BaseDirectory);
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(userProfile)) {
+                AddCandidateRoot(roots, Path.Combine(userProfile, "source", "repos"));
+                AddCandidateRoot(roots, Path.Combine(userProfile, "Documents", "GitHub"));
+                AddCandidateRoot(roots, Path.Combine(userProfile, "Documents"));
+            }
+
+            foreach (string root in roots) {
+                string candidate = Path.Combine(root, cleaned);
+                if (File.Exists(candidate)) {
+                    fullPath = Path.GetFullPath(candidate);
+                    return true;
+                }
+            }
+
+            string fileName = Path.GetFileName(cleaned);
+            if (string.IsNullOrWhiteSpace(fileName))
+                return false;
+
+            string normalizedSuffix = NormalizePathForCompare(cleaned);
+            foreach (string root in roots) {
+                try {
+                    if (!Directory.Exists(root))
+                        continue;
+
+                    foreach (string candidate in Directory.EnumerateFiles(root, fileName, SearchOption.AllDirectories)) {
+                        string comparable = NormalizePathForCompare(candidate);
+                        if (comparable.EndsWith(normalizedSuffix, StringComparison.OrdinalIgnoreCase) ||
+                            comparable.EndsWith("\\" + fileName.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase)) {
+                            fullPath = candidate;
+                            return true;
+                        }
+                    }
+                } catch { }
+            }
+
+            return false;
+        }
+
+        private void AddCandidateRoot(List<string> roots, string root) {
+            if (string.IsNullOrWhiteSpace(root))
+                return;
+
+            try {
+                string full = Path.GetFullPath(root);
+                if (Directory.Exists(full) && !roots.Contains(full))
+                    roots.Add(full);
+            } catch { }
+        }
+
+        private bool ExtractBoolFromToolArguments(string argumentsJson, string propertyName, bool fallback) {
+            try {
+                using (JsonDocument document = JsonDocument.Parse(argumentsJson)) {
+                    if (!document.RootElement.TryGetProperty(propertyName, out JsonElement property))
+                        return fallback;
+                    if (property.ValueKind == JsonValueKind.True)
+                        return true;
+                    if (property.ValueKind == JsonValueKind.False)
+                        return false;
+                    if (property.ValueKind == JsonValueKind.String &&
+                        bool.TryParse(property.GetString(), out bool parsed))
+                        return parsed;
+                }
+            } catch { }
+
+            return fallback;
+        }
+
+        private string GetMarkdownLanguageForPath(string path) {
+            string lower = (path ?? "").ToLowerInvariant();
+            if (lower.EndsWith(".xaml", StringComparison.Ordinal))
+                return "xml";
+            if (lower.EndsWith(".vb", StringComparison.Ordinal))
+                return "visualbasic";
+            if (lower.EndsWith(".cs", StringComparison.Ordinal))
+                return "csharp";
+            if (lower.EndsWith(".json", StringComparison.Ordinal))
+                return "json";
+            if (lower.EndsWith(".xml", StringComparison.Ordinal))
+                return "xml";
+            return "";
         }
 
         /// <summary>
@@ -6352,8 +9273,33 @@ prompt.focus();
         /// Represents a parsed Qwen raw tool call.
         /// </summary>
         private class ToolCallData {
+            public string Id { get; set; }
             public string Name { get; set; }
             public string ArgumentsJson { get; set; }
+        }
+
+        private class ToolCallHistoryEntry {
+            public string Name { get; set; }
+            public string ArgumentsJson { get; set; }
+        }
+
+        private class ProxyToolParameter {
+            public string Name { get; }
+            public string Type { get; }
+            public string Description { get; }
+
+            public ProxyToolParameter(string name, string type, string description) {
+                Name = name;
+                Type = type;
+                Description = description;
+            }
+        }
+
+        private class ProxyToolExecutionResult {
+            public string Id { get; set; }
+            public string Name { get; set; }
+            public string ArgumentsJson { get; set; }
+            public string Result { get; set; }
         }
 
         /// <summary>
