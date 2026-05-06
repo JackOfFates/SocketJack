@@ -92,49 +92,99 @@ The core transport. `TcpClient` and `TcpServer` provide reliable, ordered, strea
 
 The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `TcpClient` or `UdpClient` connection. The sharer captures JPEG frames at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in an `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
 
-### LmVsProxy – Local AI Model Bridge
+### LmVsProxy - Local AI Control Plane
 
-`LmVsProxy` bridges Visual Studio's GitHub Copilot tool-calling interface with locally-hosted language models via LM Studio. Instead of paying per API call to cloud providers, run open-source models (Qwen, Mistral, Phi, and others) on your own hardware and only pay for electricity.
+`LmVsProxy` started as a bridge between Visual Studio's Copilot-style tool calls and LM Studio's OpenAI-compatible `/v1/chat/completions` endpoint. It has grown into a local web console for running, governing, observing, and remotely administering a private model stack.
 
-**How it works:**
+It still translates GitHub/Copilot tool-call traffic into LM Studio-friendly requests, but the web layer now brings the rest of the cockpit: chat sessions, prompt services, file access, authentication, per-client permissions, cost tracking, diagnostics, and WPF Remote Admin.
 
-1. Visual Studio sends GitHub-format tool requests to the proxy
-2. LmVsProxy translates schemas and method calls to OpenAI-compatible format
-3. Requests forward to LM Studio's `/v1/chat/completions` endpoint
-4. Responses convert back to VS-compatible SSE format
-5. Multi-turn conversations seamlessly relay tool results back to the model
+**Web Console Feature Set**
 
-**Features:**
+| Area | What it does |
+|---|---|
+| **Chat Workspace** | Browser chat UI with streaming responses, stop/cancel support, model refresh, temperature/top-p/max-token controls, service selection, rich code blocks, images, and file attachments. |
+| **Prompt Intellisense** | Slash-command style suggestions for sessions, reflection, terminal tools, service hints, and proxy-owned actions. |
+| **Sessions** | Persisted chat history, active prompt tracking, session owner keys, resumable conversations, and debug diagnostics. |
+| **Permissions** | Per-client capability gates for agent access, internet search, VS tools, uploads, downloads, image input, FTP, SQL admin, terminal commands, and forever-approved terminal mode. |
+| **WebAuth** | Local registration, registration approval, bearer/basic auth, token expiry, administrator roles, host-local admin access, and CORS-aware auth endpoints. |
+| **Files and Explorer** | Session file uploads/downloads, filesystem allowlists, directory browsing, file preview, and a Solution Explorer-style tree for approved roots. |
+| **Remote Admin** | Live WPF capture of the LmVsProxy GUI plus remote mouse, wheel, text, and key input routed directly to WPF window handlers. |
+| **Services** | Internet search, local terminal execution with approval prompts, reflection/service inspection, VS Copilot tool routing, FTP configuration, and SQL admin surface. |
+| **Billing and Usage** | Token/electricity/storage cost settings, per-user usage snapshots, and storage profile controls for local-model accounting. |
+| **LLM Client APIs** | Authenticated `/api/llm-client/*` endpoints for status, chat, streaming chat, screenshots, bitmap capture, and remote input. |
 
-- Full protocol translation (GitHub format ↔ OpenAI format)
-- Built-in browser-based chat web UI via `ChatServer` property (automatically hosted)
-- Streaming and non-streaming request support
-- Single-port multiplexing with SocketJack's `MutableTcpServer`
-- Support for any LM Studio-compatible model
+**Architecture at a Glance**
 
-**Getting Started:**
+```mermaid
+flowchart LR
+    VS["Visual Studio / Copilot"] --> Proxy["LmVsProxy translator"]
+    Browser["Browser Web Console"] --> Server["MutableTcpServer ChatServer"]
+    Remote["Remote Admin overlay"] --> Server
+    Server --> Auth["WebAuth + host-local admin"]
+    Server --> Data["SocketJack DataServer"]
+    Server --> Services["Prompt services"]
+    Server --> Wpf["SocketJack.WPF capture/input"]
+    Proxy --> LM["LM Studio OpenAI API"]
+    Services --> LM
+    Services --> Tools["Search, terminal, reflection, files, SQL, FTP"]
+    Data --> Store["Sessions, permissions, auth, costs, artifacts"]
+    Wpf --> Gui["LmVsProxy WPF GUI"]
+```
 
-1. Install LM Studio and download your preferred model (Qwen, Mistral, Phi, etc.)
-2. Start LM Studio on its default port (e.g., `localhost:1234`)
-3. In your application, create and start the proxy:
+**Request Flow**
+
+1. Visual Studio, a browser, or an LLM client calls the proxy.
+2. `MutableTcpServer` accepts the connection and routes HTTP, WebSocket, SocketJack, SQL admin, FTP config, or custom protocol traffic through one shared server surface.
+3. WebAuth and host-local admin checks decide what the caller may see or change.
+4. `LmVsProxy` translates Visual Studio/GitHub tool schemas into OpenAI-compatible chat payloads.
+5. Services add only the tools the current owner key is allowed to use.
+6. LM Studio streams the model response back through the same SocketJack HTTP stack.
+7. Sessions, usage, costs, files, and permission changes are persisted in the embedded SocketJack database.
+
+**Public Web/API Surface**
+
+| Route family | Purpose |
+|---|---|
+| `/` | Browser chat console. |
+| `/health` | Runtime status, proxy ports, SQL/FTP state, and chat database metadata. |
+| `/api/models` | LM Studio model discovery with fallback behavior. |
+| `/api/chat` and `/api/chat-stream` | Browser chat completion and SSE streaming. |
+| `/api/chat-sessions` and `/api/chat-session` | List, load, and save chat sessions. |
+| `/api/chat-permissions` | Read/write owner-key permissions for admins. |
+| `/api/chat-filesystem-access` | Manage approved local filesystem roots. |
+| `/api/chat-solution-explorer` and `/api/chat-file-preview` | Browse and preview approved files from the web UI. |
+| `/api/web-auth/*` | Register, request approval, login, logout, inspect session, and manage token limits. |
+| `/api/llm-client/*` | Authenticated remote LLM client status, chat, stream, screen capture, bitmap capture, and input. |
+| `/FTP` and `/api/ftp-config` | Configure and operate the embedded FTP surface for approved session roots. |
+
+**Getting Started**
+
+1. Install LM Studio and download a local model.
+2. Start LM Studio's OpenAI-compatible server, usually `http://localhost:1234`.
+3. Start the proxy and optional web console:
 
 ```cs
 var proxy = new LmVsProxy("localhost", 1234, 11434);
 proxy.Start();
 
-// Enable the built-in web chat UI (optional)
 if (!proxy.ChatServer.IsListening)
 {
     proxy.ChatServer.Listen();
 }
 
-Console.WriteLine("Proxy running at http://localhost:11434/v1/chat/completions");
-Console.WriteLine("Chat web UI available at http://localhost:" + proxy.ChatServerPort);
+Console.WriteLine("Copilot bridge: http://localhost:11434/v1/chat/completions");
+Console.WriteLine("Web console:    " + proxy.ChatServerUrl);
 ```
 
-4. Configure Visual Studio to use the proxy as your Copilot endpoint at `http://localhost:11434/v1/chat/completions`
-5. Open the chat UI in your browser: `http://localhost:{chatServerPort}` to interact with your local model directly
-6. All tool calls from Visual Studio now execute against your local model — no cloud bills, just electricity
+![LmVsProxy Web Console](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/1.jpg)
+
+![LmVsProxy Diagnostics](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/2.jpg)
+
+![LmVsProxy Remote Admin](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/3.jpg)
+
+4. Configure Visual Studio or another OpenAI-compatible client to call `http://localhost:11434/v1/chat/completions`.
+5. Open `proxy.ChatServerUrl` for the browser console, permissions, sessions, diagnostics, and Remote Admin.
+6. For WPF Remote Admin, register a WPF capture element through `SocketJack.WPF` so the web console can capture and control the GUI.
 
 ---
 
@@ -143,9 +193,9 @@ Console.WriteLine("Chat web UI available at http://localhost:" + proxy.ChatServe
 - **Real-time multiplayer games** — low-latency communication with dynamic peer discovery.
 - **Distributed chat** — P2P messaging with metadata-driven room discovery.
 - **IoT device networks** — efficient, secure communication across flexible topologies.
-- **Remote control & automation** — event-driven command/control of remote systems.
+- **Remote control & automation** — event-driven command/control of remote systems, including WPF capture and web-based Remote Admin.
 - **Custom protocols** — build domain-specific protocols on top of any transport with full control over serialization and peer management.
-- **Local AI model serving** — run enterprise-grade open-source LLMs (Qwen, Mistral, Phi) via LM Studio on your own hardware with zero cloud costs through LmVsProxy.
+- **Local AI operations** — run LM Studio-backed models behind an authenticated browser console with sessions, tools, files, permissions, diagnostics, and usage accounting through LmVsProxy.
 
 ---
 
