@@ -1,0 +1,1118 @@
+<Window x:Class="LmVsProxyGUI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="LmVsProxy GUI"
+        Width="1280"
+        Height="820"
+        MinWidth="700"
+        MinHeight="540"
+        Background="Transparent"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        StateChanged="Window_StateChanged"
+        SourceInitialized="Window_SourceInitialized"
+        Loaded="Window_Loaded"
+        SizeChanged="Window_SizeChanged"
+        Closing="Window_Closing">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="44"
+                            ResizeBorderThickness="7"
+                            GlassFrameThickness="0"
+                            CornerRadius="6"
+                            UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
+
+    <Border x:Name="WindowFrame"
+            BorderBrush="{StaticResource PanelBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="6"
+            SnapsToDevicePixels="True">
+        <Border.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#A8080B10" Offset="0"/>
+                <GradientStop Color="#A8111827" Offset="0.45"/>
+                <GradientStop Color="#A8072021" Offset="1"/>
+            </LinearGradientBrush>
+        </Border.Background>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    BorderBrush="{StaticResource PanelBorderBrush}"
+                    BorderThickness="0,0,0,1"
+                    Padding="14,0,6,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Width="11"
+                            Height="11"
+                            CornerRadius="6"
+                            Background="{StaticResource AccentBrush}"
+                            VerticalAlignment="Center"
+                            Margin="0,0,10,0"/>
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource TextBrush}"
+                               VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="2"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button x:Name="MinimizeButton"
+                                Style="{StaticResource WindowChromeButtonStyle}"
+                                Click="MinimizeButton_Click"
+                                ToolTip="Minimize">
+                            <Path Data="M 4 9 H 12"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.7"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"/>
+                        </Button>
+                        <Button x:Name="MaximizeRestoreButton"
+                                Style="{StaticResource WindowChromeButtonStyle}"
+                                Click="MaximizeRestoreButton_Click"
+                                ToolTip="Maximize">
+                            <Grid Width="16" Height="16">
+                                <Path x:Name="MaximizeGlyph"
+                                      Data="M 4 4 H 12 V 12 H 4 Z"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="1.35"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"/>
+                                <Path x:Name="RestoreGlyph"
+                                      Data="M 6 3 H 13 V 10 M 3 6 H 10 V 13 H 3 Z"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="1.35"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      Visibility="Collapsed"/>
+                            </Grid>
+                        </Button>
+                        <Button x:Name="CloseButton"
+                                Style="{StaticResource WindowChromeCloseButtonStyle}"
+                                Click="CloseButton_Click"
+                                ToolTip="Close">
+                            <Path Data="M 4 4 L 12 12 M 12 4 L 4 12"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.6"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <ScrollViewer x:Name="MainScrollViewer"
+                          Grid.Row="1"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto"
+                          CanContentScroll="False"
+                          Padding="14,12,14,14">
+                <Grid MinHeight="{Binding ActualHeight, ElementName=MainScrollViewer}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel>
+                            <TextBlock Text="LmVsProxy Diagnostics" FontSize="24" FontWeight="SemiBold"/>
+                            <TextBlock Text="LM Studio &lt;-&gt; App &lt;-&gt; VS Copilot metrics and debug console"
+                               Foreground="{StaticResource SubtleTextBrush}"
+                               FontSize="13"
+                               TextWrapping="Wrap"
+                               Margin="0,4,0,0"/>
+                        </StackPanel>
+
+                        <WrapPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0" ItemHeight="32">
+                            <Button x:Name="ProbeButton" Content="Probe LM Studio" Click="ProbeButton_Click" Margin="0,0,8,0"/>
+                            <Button x:Name="OpenChatButton" Content="Open Chat UI" Click="OpenChatButton_Click" Margin="0,0,8,0" IsEnabled="False"/>
+                            <Button x:Name="StartStopButton" Content="Start Proxy" Click="StartStopButton_Click" Background="#1F7A68"/>
+                        </WrapPanel>
+                    </Grid>
+
+                    <Border Grid.Row="1"
+                        Background="{StaticResource PanelBrush}"
+                        BorderBrush="{StaticResource PanelBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10"
+                        Margin="0,0,0,12">
+                        <WrapPanel x:Name="SettingsGroupsPanel"
+                                   Orientation="Horizontal"
+                                   ItemWidth="300">
+                            <GroupBox Header="Application" Margin="0,0,10,10">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <CheckBox x:Name="StartByDefaultCheckBox"
+                                          Content="Start proxy on open"
+                                          IsChecked="True"
+                                          Checked="StartByDefaultCheckBox_Changed"
+                                          Unchecked="StartByDefaultCheckBox_Changed"/>
+                                    <WrapPanel Grid.Row="1" Margin="0,10,0,0">
+                                        <CheckBox x:Name="WindowsStartupCheckBox"
+                                              Content="Start with Windows"
+                                              Checked="WindowsStartupCheckBox_Changed"
+                                              Unchecked="WindowsStartupCheckBox_Changed"/>
+                                        <CheckBox x:Name="HideToTrayOnStartupCheckBox"
+                                              Content="Hide to tray"
+                                              Margin="16,0,0,0"
+                                              IsChecked="True"
+                                              Checked="HideToTrayOnStartupCheckBox_Changed"
+                                              Unchecked="HideToTrayOnStartupCheckBox_Changed"/>
+                                    </WrapPanel>
+
+                                    <StackPanel Grid.Row="3" Margin="0,8,0,0">
+
+                                        <TextBlock x:Name="SettingsStatusText"
+                                               Text="Saved in runtime directory."
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource SubtleTextBrush}"
+                                               Margin="0,5,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                            </GroupBox>
+
+                            <GroupBox Header="Network" Margin="0,0,10,10">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox x:Name="RemoteLmStudioCheckBox"
+                                          Content="Remote LM Studio"
+                                          Checked="RemoteLmStudioCheckBox_Changed"
+                                          Unchecked="RemoteLmStudioCheckBox_Changed"/>
+                                    <TextBox x:Name="RemoteServerTextBox"
+                                         Grid.Column="1"
+                                         Text="127.0.0.1:11435"
+                                         Height="30"
+                                         Margin="12,0,0,0"
+                                         VerticalContentAlignment="Center"
+                                         IsEnabled="False"
+                                         TextChanged="RemoteServerTextBox_TextChanged"
+                                         ToolTip="Use host, host:port, or http(s) URL. The local app still talks to localhost:11435."/>
+                                    <CheckBox x:Name="PortForwardingCheckBox"
+                                          Grid.Row="1"
+                                          Grid.ColumnSpan="2"
+                                          Content="Forward web and FTP ports 11436, 2121"
+                                          Margin="0,10,0,0"
+                                          IsChecked="True"
+                                          Checked="PortForwardingCheckBox_Changed"
+                                          Unchecked="PortForwardingCheckBox_Changed"/>
+                                    <TextBlock x:Name="PortForwardStatusText"
+                                           Grid.Row="2"
+                                           Grid.ColumnSpan="2"
+                                           Text="Enabled. Waiting to forward TCP 11436, 2121."
+                                           TextWrapping="Wrap"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Margin="0,8,0,0"/>
+                                    <CheckBox x:Name="AllowOpenRegistrationCheckBox"
+                                          Grid.Row="3"
+                                          Grid.ColumnSpan="2"
+                                          Content="Allow open registration approval"
+                                          Foreground="#F87171"
+                                          BorderBrush="#EF4444"
+                                          FontWeight="SemiBold"
+                                          Margin="0,10,0,0"
+                                          Checked="AllowOpenRegistrationCheckBox_Changed"
+                                          Unchecked="AllowOpenRegistrationCheckBox_Changed"/>
+                                    <TextBlock x:Name="OpenRegistrationWarningText"
+                                           Grid.Row="4"
+                                           Grid.ColumnSpan="2"
+                                           Text="WARNING: Open Registration Approval means anyone can use your model without approval since there is currently no billing setup."
+                                           Foreground="#FACC15"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           Margin="0,6,0,0"
+                                           Visibility="Collapsed"/>
+                                </Grid>
+                            </GroupBox>
+
+                            <GroupBox Header="Billing" Margin="0,0,10,10">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                    <Border Width="28" Height="28" CornerRadius="7" Background="#3340C9A2" BorderBrush="#6640C9A2" BorderThickness="1" VerticalAlignment="Center" Margin="0,0,10,0">
+                                        <TextBlock Text="$" Foreground="{StaticResource AccentBrush}" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Storage" FontWeight="SemiBold"/>
+                                        <TextBlock Text="Base cost profile" Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
+                                    </StackPanel>
+                                    <ComboBox x:Name="StorageTypeComboBox"
+                                          Grid.Column="2"
+                                          MinWidth="118"
+                                          Height="30"
+                                          VerticalContentAlignment="Center"
+                                          SelectionChanged="StorageCostSettings_Changed"
+                                          ToolTip="Storage base cost per GB: NVMe and SATA SSD $0.10, SATA HDD $0.015.">
+                                        <ComboBoxItem Content="Nvme"/>
+                                        <ComboBoxItem Content="SATA SSD"/>
+                                        <ComboBoxItem Content="SATA HDD"/>
+                                    </ComboBox>
+                                    <Border Grid.Row="1" Width="28" Height="28" CornerRadius="7" Background="#333B82F6" BorderBrush="#663B82F6" BorderThickness="1" VerticalAlignment="Center" Margin="0,12,10,0">
+                                        <TextBlock Text="GB" Foreground="#9CC3FF" FontSize="10" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Cost factor (x)" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" Margin="0,12,10,0"/>
+                                    <Grid Grid.Row="1" Grid.Column="2" Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="48"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Slider x:Name="StorageCostFactorSlider"
+                                            Minimum="-1"
+                                            Maximum="1"
+                                            Value="0"
+                                            TickFrequency="0.1"
+                                            IsSnapToTickEnabled="True"
+                                            VerticalAlignment="Center"
+                                            ValueChanged="StorageCostSettings_Changed"
+                                            ToolTip="-1 makes storage free, 0 uses base cost, +1 doubles storage cost."/>
+                                        <TextBlock x:Name="StorageCostFactorText"
+                                               Grid.Column="1"
+                                               Text="0.0"
+                                               Foreground="{StaticResource TextBrush}"
+                                               FontFamily="Consolas"
+                                               VerticalAlignment="Center"
+                                               TextAlignment="Right"
+                                               Margin="10,0,0,0"/>
+                                    </Grid>
+                                    <Border Grid.Row="2" Width="28" Height="28" CornerRadius="7" Background="#3322C55E" BorderBrush="#6622C55E" BorderThickness="1" VerticalAlignment="Center" Margin="0,12,10,0">
+                                        <TextBlock Text="GPU" Foreground="#86EFAC" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Power profile (TDP)" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" Margin="0,12,10,0"/>
+                                    <TextBlock x:Name="GpuTdpBillingText"
+                                           Grid.Row="2"
+                                           Grid.Column="2"
+                                           Text="not detected"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Right"
+                                           Margin="0,12,0,0"/>
+                                    <Border Grid.Row="3" Width="28" Height="28" CornerRadius="7" Background="#33A855F7" BorderBrush="#66A855F7" BorderThickness="1" VerticalAlignment="Center" Margin="0,12,10,0">
+                                        <TextBlock Text="CPU" Foreground="#C4B5FD" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="CPU TDP estimate" Foreground="{StaticResource SubtleTextBrush}" VerticalAlignment="Center" Margin="0,12,10,0"/>
+                                    <TextBlock x:Name="CpuTdpBillingText"
+                                           Grid.Row="3"
+                                           Grid.Column="2"
+                                           Text="not detected"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Right"
+                                           Margin="0,12,0,0"
+                                           ToolTip="CPU TDP estimate used by chat electricity cost calculations."/>
+                                </Grid>
+                            </GroupBox>
+
+                            <GroupBox Header="Health" Margin="0,0,0,10">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Width="28" Height="28" CornerRadius="7" Background="#3322C55E" BorderBrush="#6622C55E" BorderThickness="1" VerticalAlignment="Center" Margin="0,0,10,0">
+                                        <TextBlock Text="GPU" Foreground="#86EFAC" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock x:Name="GpuUtilizationHealthText"
+                                           Grid.Column="2"
+                                           Text="unavailable"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Top" Margin="10,15,0,0"/>
+                                    <ProgressBar x:Name="GpuUtilizationProgressBar"
+                                             Grid.Column="1"
+                                             Style="{StaticResource BandwidthProgressBarStyle}"
+                                             Margin="0,0,0,0"/>
+
+                                    <Border Grid.Row="1" Width="28" Height="28" CornerRadius="7" Background="#333B82F6" BorderBrush="#663B82F6" BorderThickness="1" VerticalAlignment="Center" Margin="0,8,10,0">
+                                        <TextBlock Text="VR" Foreground="#9CC3FF" FontSize="10" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock x:Name="VramUsageHealthText"
+                                           Grid.Row="1"
+                                           Grid.Column="2"
+                                           Text="unavailable"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Top"
+                                           Margin="10,15,0,0"/>
+                                    <ProgressBar x:Name="VramUsageProgressBar"
+                                             Grid.Row="1"
+                                             Grid.Column="1"
+                                             Style="{StaticResource BandwidthProgressBarStyle}"
+                                             Margin="0,8,0,0"/>
+
+                                    <Border Grid.Row="2" Width="28" Height="28" CornerRadius="7" Background="#33F59E0B" BorderBrush="#66F59E0B" BorderThickness="1" VerticalAlignment="Center" Margin="0,8,10,0">
+                                        <TextBlock Text="RAM" Foreground="#FCD34D" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock x:Name="RamUsageHealthText"
+                                           Grid.Row="2"
+                                           Grid.Column="2"
+                                           Text="measuring"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Top"
+                                           Margin="10,15,0,0"/>
+                                    <ProgressBar x:Name="RamUsageProgressBar"
+                                             Grid.Row="2"
+                                             Grid.Column="1"
+                                             Style="{StaticResource BandwidthProgressBarStyle}"
+                                             Margin="0,8,0,0"/>
+
+                                    <Border Grid.Row="3" Width="28" Height="28" CornerRadius="7" Background="#33A855F7" BorderBrush="#66A855F7" BorderThickness="1" VerticalAlignment="Center" Margin="0,8,10,0">
+                                        <TextBlock Text="CPU" Foreground="#C4B5FD" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock x:Name="CpuUsageHealthText"
+                                           Grid.Row="3"
+                                           Grid.Column="2"
+                                           Text="measuring"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Top"
+                                           Margin="10,15,0,0"/>
+                                    <ProgressBar x:Name="CpuUsageProgressBar"
+                                             Grid.Row="3"
+                                             Grid.Column="1"
+                                             Style="{StaticResource BandwidthProgressBarStyle}"
+                                             Margin="0,8,0,0"/>
+
+                                    <Border Grid.Row="4" Width="28" Height="28" CornerRadius="7" Background="#330EA5E9" BorderBrush="#660EA5E9" BorderThickness="1" VerticalAlignment="Center" Margin="0,8,10,0">
+                                        <TextBlock Text="UP" Foreground="#7DD3FC" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock x:Name="NetworkUpHealthText"
+                                           Grid.Row="4"
+                                           Grid.Column="2"
+                                           Text="0.0 kbps"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Top"
+                                           Margin="10,15,0,0"/>
+                                    <ProgressBar x:Name="NetworkUpProgressBar"
+                                             Grid.Row="4"
+                                             Style="{StaticResource BandwidthProgressBarStyle}"
+                                             Margin="0,8,0,0" Grid.Column="1"/>
+
+                                    <Border Grid.Row="5" Width="28" Height="28" CornerRadius="7" Background="#3314B8A6" BorderBrush="#6614B8A6" BorderThickness="1" VerticalAlignment="Center" Margin="0,8,10,0">
+                                        <TextBlock Text="DN" Foreground="#5EEAD4" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock x:Name="NetworkDownHealthText"
+                                           Grid.Row="5"
+                                           Grid.Column="2"
+                                           Text="0.0 kbps"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontFamily="Consolas"
+                                           VerticalAlignment="Top"
+                                           Margin="10,15,0,0"/>
+                                    <ProgressBar x:Name="NetworkDownProgressBar"
+                                             Grid.Row="5"
+                                             Style="{StaticResource BandwidthProgressBarStyle}"
+                                             Margin="0,8,0,0" Grid.Column="1"/>
+
+                                    <Border Grid.Row="6" Width="28" Height="28" CornerRadius="7" Background="#33F97316" BorderBrush="#66F97316" BorderThickness="1" VerticalAlignment="Center" Margin="0,8,10,0">
+                                        <TextBlock Text="I/O" Foreground="#FDBA74" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <WrapPanel Grid.Row="6"
+                                               Grid.Column="2"
+                                               VerticalAlignment="Top"
+                                               Margin="10,15,0,0">
+                                        <TextBlock Text="R "
+                                                   Foreground="{StaticResource SubtleTextBrush}"
+                                                   FontFamily="Consolas"/>
+                                        <TextBlock x:Name="IoReadHealthText"
+                                                   Text="0 B/s"
+                                                   Foreground="{StaticResource TextBrush}"
+                                                   FontFamily="Consolas"
+                                                   Margin="0,0,10,0"/>
+                                        <TextBlock Text="W "
+                                                   Foreground="{StaticResource SubtleTextBrush}"
+                                                   FontFamily="Consolas"/>
+                                        <TextBlock x:Name="IoWriteHealthText"
+                                                   Text="0 B/s"
+                                                   Foreground="{StaticResource TextBrush}"
+                                                   FontFamily="Consolas"
+                                                   Margin="0,0,10,0"/>
+                                        <TextBlock Text="Total "
+                                                   Foreground="{StaticResource SubtleTextBrush}"
+                                                   FontFamily="Consolas"/>
+                                        <TextBlock x:Name="IoTotalHealthText"
+                                                   Text="0 B/s"
+                                                   Foreground="{StaticResource TextBrush}"
+                                                   FontFamily="Consolas"/>
+                                    </WrapPanel>
+                                    <ProgressBar x:Name="IoProgressBar"
+                                             Grid.Row="6"
+                                             Grid.Column="1"
+                                             Style="{StaticResource BandwidthProgressBarStyle}"
+                                             Margin="0,8,0,0"/>
+                                </Grid>
+                            </GroupBox>
+                        </WrapPanel>
+                    </Border>
+
+                    <Grid x:Name="MainWorkspaceGrid"
+                          Grid.Row="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition x:Name="MainWorkspacePrimaryRow" Height="*"/>
+                            <RowDefinition x:Name="MainWorkspaceStackedRow" Height="0"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="SidebarColumn" Width="310" MinWidth="270"/>
+                            <ColumnDefinition x:Name="DiagnosticsColumn" Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border x:Name="SidebarPanel"
+                        Grid.Column="0"
+                        Background="{StaticResource PanelBrush}"
+                        BorderBrush="{StaticResource PanelBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="12"
+                        Margin="0,0,14,0">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="1.05*"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="0.55*"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="1.15*"/>
+                                </Grid.RowDefinitions>
+                                <DockPanel>
+                                    <Button x:Name="RefreshSessionsButton"
+                                    Content="Refresh"
+                                    DockPanel.Dock="Right"
+                                    Click="RefreshSessionsButton_Click"
+                                    Padding="9,4"/>
+                                    <Button x:Name="StoredSessionsMenuButton"
+                                    Content="History"
+                                    DockPanel.Dock="Right"
+                                    Click="StoredSessionsMenuButton_Click"
+                                    Padding="9,4"
+                                    Margin="0,0,6,0"/>
+                                    <TextBlock Text="Sessions"
+                                       FontSize="17"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"/>
+                                </DockPanel>
+                                <TextBlock x:Name="SessionsSummaryText"
+                                   Grid.Row="1"
+                                   Text="No sessions loaded"
+                                   Foreground="{StaticResource SubtleTextBrush}"
+                                   Margin="0,9,0,10"/>
+                                <ListBox x:Name="SessionsListBox"
+                                 Grid.Row="2"
+                                 Background="#66070A10"
+                                 BorderBrush="{StaticResource PanelBorderBrush}"
+                                 BorderThickness="1"
+                                 Foreground="{StaticResource TextBrush}"
+                                 HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 SelectionChanged="SessionsListBox_SelectionChanged">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="0"/>
+                                            <Setter Property="Margin" Value="0,0,0,8"/>
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#99111924"
+                                            BorderBrush="#334E5E74"
+                                            BorderThickness="1"
+                                            CornerRadius="7"
+                                            Padding="10">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Title}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding OwnerLine}"
+                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,5,0,0"/>
+                                                        <TextBlock Text="{Binding DetailLine}"
+                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,0"/>
+                                                        <TextBlock Text="{Binding UpdatedLine}"
+                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,0"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1"
+                                                    Content="..."
+                                                    Tag="{Binding}"
+                                                    Click="SessionAdminButton_Click"
+                                                    Padding="8,2"
+                                                    MinWidth="32"
+                                                    Height="26"
+                                                    Margin="8,0,0,0"
+                                                    VerticalAlignment="Top"
+                                                    ToolTip="Administrative options"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Border Grid.Row="3"
+                                Height="1"
+                                Background="{StaticResource PanelBorderBrush}"
+                                Margin="0,12,0,12"/>
+
+                                <DockPanel Grid.Row="4">
+                                    <Button x:Name="RefreshExplorerButton"
+                                    Content="Refresh"
+                                    DockPanel.Dock="Right"
+                                    Click="RefreshExplorerButton_Click"
+                                    Padding="9,4"/>
+                                    <TextBlock Text="Solution Explorer"
+                                       FontSize="17"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"/>
+                                </DockPanel>
+                                <StackPanel Grid.Row="5"
+                                    Margin="0,9,0,8">
+                                    <TextBlock x:Name="FilesystemOwnerText"
+                                       Text="Owner: ip:127.0.0.1"
+                                       Foreground="{StaticResource SubtleTextBrush}"
+                                       TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="FilesystemAccessStatusText"
+                                       Text="No accessible directories defined."
+                                       Foreground="{StaticResource SubtleTextBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <ListBox x:Name="AccessibleDirectoriesListBox"
+                                 Grid.Row="6"
+                                 Background="#66070A10"
+                                 BorderBrush="{StaticResource PanelBorderBrush}"
+                                 BorderThickness="1"
+                                 Foreground="{StaticResource TextBrush}"
+                                 HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 SelectionChanged="AccessibleDirectoriesListBox_SelectionChanged">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="0"/>
+                                            <Setter Property="Margin" Value="0,0,0,6"/>
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#99111924"
+                                            BorderBrush="#334E5E74"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="8">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Ellipse Width="8"
+                                                     Height="8"
+                                                     Fill="{Binding StatusBrush}"
+                                                     VerticalAlignment="Top"
+                                                     Margin="0,5,8,0"/>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding Name}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding DetailLine}"
+                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           FontSize="11"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,0"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="2"
+                                                    Content="X"
+                                                    Tag="{Binding}"
+                                                    Click="RemoveAccessibleDirectoryEntryButton_Click"
+                                                    Padding="7,2"
+                                                    MinWidth="26"
+                                                    Height="24"
+                                                    Margin="8,0,0,0"
+                                                    VerticalAlignment="Top"
+                                                    ToolTip="Remove directory access"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <StackPanel Grid.Row="7"
+                                    Margin="0,8,0,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Accessible directories are saved for the selected owner."
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"
+                                           VerticalAlignment="Center"/>
+                                        <Button x:Name="BrowseAccessibleDirectoryButton"
+                                        Grid.Column="1"
+                                        Content="..."
+                                        Click="BrowseAccessibleDirectoryButton_Click"
+                                        Padding="10,4"
+                                        MinWidth="36"
+                                        Margin="8,0,0,0"
+                                        ToolTip="Add accessible directory"/>
+                                    </Grid>
+                                </StackPanel>
+                                <TextBlock x:Name="WorkspaceSummaryText"
+                                   Grid.Row="8"
+                                   Text="No workspace loaded"
+                                   Foreground="{StaticResource SubtleTextBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
+                                <TreeView x:Name="WorkspaceTreeView"
+                                  Grid.Row="9"
+                                  Background="#66070A10"
+                                  BorderBrush="{StaticResource PanelBorderBrush}"
+                                  BorderThickness="1"
+                                  Foreground="{StaticResource TextBrush}"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                    <TreeView.ItemContainerStyle>
+                                        <Style TargetType="TreeViewItem">
+                                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                            <Setter Property="Padding" Value="1"/>
+                                        </Style>
+                                    </TreeView.ItemContainerStyle>
+                                    <TreeView.ItemTemplate>
+                                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                            <Grid Margin="0,2">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Icon}"
+                                                   FontFamily="Consolas"
+                                                   Foreground="{Binding AccentBrush}"
+                                                   Margin="0,0,6,0"/>
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{Binding DisplayName}"
+                                                       FontWeight="{Binding FontWeight}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Detail}"
+                                                       Foreground="{StaticResource SubtleTextBrush}"
+                                                       FontSize="11"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </HierarchicalDataTemplate>
+                                    </TreeView.ItemTemplate>
+                                </TreeView>
+                            </Grid>
+                        </Border>
+
+                        <Grid x:Name="DiagnosticsPanel"
+                              Grid.Column="1"
+                              MinWidth="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <Border Grid.Row="0"
+                            Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="9"
+                            Margin="0,0,0,10">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <DockPanel>
+                                        <TextBlock x:Name="PipelineSummaryText"
+                                           DockPanel.Dock="Right"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Text="Pipeline idle"
+                                           TextWrapping="Wrap"
+                                           Margin="16,2,0,0"/>
+                                        <TextBlock Text="Services"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"/>
+                                    </DockPanel>
+                                    <ItemsControl x:Name="PipelineItemsControl"
+                                          Grid.Row="1"
+                                          Margin="0,6,0,6">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,4">
+                                                    <Border Background="{Binding BackgroundBrush}"
+                                                    BorderBrush="{Binding BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="7"
+                                                    Padding="8,3">
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}"
+                                                               FontWeight="SemiBold"
+                                                               FontSize="12"/>
+                                                            <TextBlock Text="{Binding Detail}"
+                                                               Foreground="{StaticResource SubtleTextBrush}"
+                                                               FontSize="10"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <TextBlock Text=">"
+                                                       Visibility="{Binding ArrowVisibility}"
+                                                       Foreground="{StaticResource AccentBrush}"
+                                                       FontWeight="Bold"
+                                                       VerticalAlignment="Center"
+                                                       Margin="6,0,0,0"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <ItemsControl x:Name="ServicesItemsControl"
+                                          Grid.Row="2"
+                                          Margin="-3,0,-3,-3">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <UniformGrid x:Name="ServicesUniformGrid" Columns="4"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border x:Name="ServiceBorder"
+                                                Background="#AA111924"
+                                                BorderThickness="1"
+                                                CornerRadius="7"
+                                                Padding="8,5"
+                                                Margin="3"
+                                                MinHeight="58">
+                                                    <Border.BorderBrush>
+                                                        <SolidColorBrush Color="#334E5E74"/>
+                                                    </Border.BorderBrush>
+                                                    <Border.Effect>
+                                                        <DropShadowEffect x:Name="ServiceGlow"
+                                                                  Color="#5DFF9B"
+                                                                  BlurRadius="18"
+                                                                  ShadowDepth="0"
+                                                                  Opacity="0"/>
+                                                    </Border.Effect>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                            </Grid.RowDefinitions>
+                                                            <DockPanel>
+                                                                <Ellipse x:Name="ServiceDot"
+                                                                 Width="9"
+                                                                 Height="9"
+                                                                 DockPanel.Dock="Right"
+                                                                 Margin="8,4,0,0">
+                                                                    <Ellipse.Fill>
+                                                                        <SolidColorBrush Color="#596777"/>
+                                                                    </Ellipse.Fill>
+                                                                </Ellipse>
+                                                                <TextBlock Text="{Binding Name}"
+                                                                   FontWeight="SemiBold"
+                                                                   FontSize="12"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                            </DockPanel>
+                                                            <TextBlock Grid.Row="1"
+                                                               Text="{Binding Status}"
+                                                               Foreground="{StaticResource SubtleTextBrush}"
+                                                               FontSize="11"
+                                                               Margin="0,1,0,0"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Grid.Row="2"
+                                                               Text="{Binding CountLine}"
+                                                               Foreground="#C3D0E1"
+                                                               FontSize="11"
+                                                               Margin="0,1,0,0"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Grid.Row="3"
+                                                               Text="{Binding Detail}"
+                                                               Foreground="{StaticResource SubtleTextBrush}"
+                                                               FontSize="10"
+                                                               Margin="0,1,0,0"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                        </Grid>
+                                                        <StackPanel Grid.Column="1"
+                                                                Orientation="Horizontal"
+                                                                Margin="6,0,0,0"
+                                                                VerticalAlignment="Stretch"
+                                                                Visibility="{Binding BandwidthVisibility}">
+                                                            <StackPanel Margin="0,0,4,0" ToolTip="{Binding BandwidthInText}">
+                                                                <ProgressBar Style="{StaticResource BandwidthProgressBarStyle}"
+                                                                         Minimum="{Binding BandwidthInMinimum, Mode=OneWay}"
+                                                                         Maximum="{Binding BandwidthInMaximum, Mode=OneWay}"
+                                                                         Value="{Binding BandwidthInValue, Mode=OneWay}"
+                                                                         Height="34"/>
+                                                                <TextBlock Text="I"
+                                                                       Foreground="{StaticResource SubtleTextBrush}"
+                                                                       FontSize="9"
+                                                                       TextAlignment="Center"
+                                                                       Margin="0,1,0,0"/>
+                                                            </StackPanel>
+                                                            <StackPanel ToolTip="{Binding BandwidthOutText}">
+                                                                <ProgressBar Style="{StaticResource BandwidthProgressBarStyle}"
+                                                                         Minimum="{Binding BandwidthOutMinimum, Mode=OneWay}"
+                                                                         Maximum="{Binding BandwidthOutMaximum, Mode=OneWay}"
+                                                                         Value="{Binding BandwidthOutValue, Mode=OneWay}"
+                                                                         Height="34"/>
+                                                                <TextBlock Text="O"
+                                                                       Foreground="{StaticResource SubtleTextBrush}"
+                                                                       FontSize="9"
+                                                                       TextAlignment="Center"
+                                                                       Margin="0,1,0,0"/>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                                <DataTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding IsPulsing}" Value="True">
+                                                        <DataTrigger.EnterActions>
+                                                            <BeginStoryboard>
+                                                                <Storyboard>
+                                                                    <ColorAnimation Storyboard.TargetName="ServiceBorder"
+                                                                            Storyboard.TargetProperty="(Border.BorderBrush).(SolidColorBrush.Color)"
+                                                                            To="#6BFF98"
+                                                                            Duration="0:0:0.08"/>
+                                                                    <ColorAnimation Storyboard.TargetName="ServiceBorder"
+                                                                            Storyboard.TargetProperty="(Border.BorderBrush).(SolidColorBrush.Color)"
+                                                                            To="#334E5E74"
+                                                                            BeginTime="0:0:0.5"
+                                                                            Duration="0:0:0.35"/>
+                                                                    <DoubleAnimation Storyboard.TargetName="ServiceGlow"
+                                                                             Storyboard.TargetProperty="Opacity"
+                                                                             To="0.78"
+                                                                             Duration="0:0:0.10"/>
+                                                                    <DoubleAnimation Storyboard.TargetName="ServiceGlow"
+                                                                             Storyboard.TargetProperty="Opacity"
+                                                                             To="0"
+                                                                             BeginTime="0:0:0.5"
+                                                                             Duration="0:0:0.35"/>
+                                                                    <ColorAnimation Storyboard.TargetName="ServiceDot"
+                                                                            Storyboard.TargetProperty="(Shape.Fill).(SolidColorBrush.Color)"
+                                                                            To="#7CFF9D"
+                                                                            Duration="0:0:0.06"/>
+                                                                    <ColorAnimation Storyboard.TargetName="ServiceDot"
+                                                                            Storyboard.TargetProperty="(Shape.Fill).(SolidColorBrush.Color)"
+                                                                            To="#596777"
+                                                                            BeginTime="0:0:0.14"
+                                                                            Duration="0:0:0.20"/>
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </DataTrigger.EnterActions>
+                                                    </DataTrigger>
+                                                </DataTemplate.Triggers>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Row="1"
+                        Background="#E60B1018"
+                        BorderBrush="{StaticResource PanelBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    <DockPanel Margin="12,10,12,8">
+                                        <Button Content="Clear" DockPanel.Dock="Right" Click="ClearLogButton_Click" Padding="10,4"/>
+                                        <TextBlock Text="Debug diagnostics" FontWeight="SemiBold" FontSize="15"/>
+                                    </DockPanel>
+                                    <StackPanel Grid.Row="1"
+                                    Margin="12,0,12,8">
+                                        <ItemsControl x:Name="TerminalPermissionRequestsControl">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="#F02A1820"
+                                                BorderBrush="#FFFFB020"
+                                                BorderThickness="1"
+                                                CornerRadius="7"
+                                                Padding="10"
+                                                Margin="0,0,0,8">
+                                                        <Grid>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                            </Grid.RowDefinitions>
+                                                            <TextBlock Text="{Binding Title}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="Wrap"/>
+                                                            <TextBlock Grid.Row="1"
+                                                           Text="{Binding Detail}"
+                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,4,0,8"/>
+                                                            <WrapPanel Grid.Row="2">
+                                                                <Button Content="Approve IP" Tag="{Binding}" Click="TerminalPermissionApprove_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="Always Approve IP" Tag="{Binding}" Click="TerminalPermissionAlwaysApprove_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="Deny" Tag="{Binding}" Click="TerminalPermissionDeny_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="Always Deny IP" Tag="{Binding}" Click="TerminalPermissionAlwaysDeny_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="&#x26A0; FOREVER APPROVE"
+                                                            Tag="{Binding}"
+                                                            Click="TerminalPermissionForeverApprove_Click"
+                                                            Background="#B91C1C"
+                                                            BorderBrush="#FFF16A"
+                                                            Foreground="#FFF16A"
+                                                            ToolTip="THIS IS DANGEROUS AND CAN BE USED TO HARM YOUR COMPUTER."
+                                                            Padding="8,3"/>
+                                                            </WrapPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <ItemsControl x:Name="FilesystemPermissionRequestsControl">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="#F0182432"
+                                                BorderBrush="#FF4B7CFF"
+                                                BorderThickness="1"
+                                                CornerRadius="7"
+                                                Padding="10"
+                                                Margin="0,0,0,8">
+                                                        <Grid>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                            </Grid.RowDefinitions>
+                                                            <TextBlock Text="{Binding Title}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="Wrap"/>
+                                                            <TextBlock Grid.Row="1"
+                                                           Text="{Binding Detail}"
+                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,4,0,8"/>
+                                                            <WrapPanel Grid.Row="2">
+                                                                <Button Content="Allow" Tag="{Binding}" Click="FilesystemPermissionAllow_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="Always Allow" Tag="{Binding}" Click="FilesystemPermissionAlwaysAllow_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="Deny" Tag="{Binding}" Click="FilesystemPermissionDeny_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="Always Deny" Tag="{Binding}" Click="FilesystemPermissionAlwaysDeny_Click" Margin="0,0,6,0" Padding="8,3"/>
+                                                                <Button Content="Ban IP" Tag="{Binding}" Click="FilesystemPermissionBan_Click" Padding="8,3"/>
+                                                            </WrapPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                    <TextBox x:Name="LogTextBox"
+                                 Grid.Row="2"
+                                 Margin="12,0,12,12"
+                                 Background="#070A10"
+                                 BorderThickness="0"
+                                 FontFamily="Consolas"
+                                 FontSize="12.5"
+                                 IsReadOnly="True"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 Foreground="#A8FFFFFF"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Grid>
+
+                    <TextBlock x:Name="StatusBarText"
+                       Grid.Row="3"
+                       Text="Ready"
+                       Foreground="{StaticResource SubtleTextBrush}"
+                       Margin="2,12,0,0"/>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Window>

@@ -1163,6 +1163,22 @@ namespace SocketJack.Net {
         }
 
         /// <summary>
+        /// Gets a snapshot of routes registered through this HTTP handler.
+        /// </summary>
+        public IReadOnlyList<HttpMappedRoute> MappedRoutes {
+            get {
+                EnsureServer();
+                return _server.MappedRoutes;
+            }
+        }
+
+        /// <inheritdoc cref="HttpServer.GetMappedRoutes"/>
+        public IReadOnlyList<HttpMappedRoute> GetMappedRoutes() {
+            EnsureServer();
+            return _server.GetMappedRoutes();
+        }
+
+        /// <summary>
         /// When <see langword="true"/>, mapped directories that contain no
         /// <c>index.html</c> / <c>index.htm</c> will return an auto-generated
         /// HTML listing of their contents. Defaults to <see langword="false"/>.
@@ -1199,12 +1215,14 @@ namespace SocketJack.Net {
         public void Map(string method, string path, RouteHandler handler) {
             EnsureServer();
             _server.Map(method, path, (HttpServer.RouteHandler)((conn, req, ct) => handler(conn, req, ct)));
+            _server.SetMappedRouteMetadata(method, path, handler, null);
         }
 
         /// <inheritdoc cref="HttpServer.Map{T}(string, string, HttpServer.RouteHandler{T})"/>
         public void Map<T>(string method, string path, RouteHandler<T> handler) {
             EnsureServer();
             _server.Map<T>(method, path, (HttpServer.RouteHandler<T>)((conn, body, req, ct) => handler(conn, body, req, ct)));
+            _server.SetMappedRouteMetadata(method, path, handler, typeof(T));
         }
 
         /// <inheritdoc cref="HttpServer.RemoveRoute"/>

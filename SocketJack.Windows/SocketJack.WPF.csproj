@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows7.0</TargetFramework>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
 
     <SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
     <OutputType>Library</OutputType>
@@ -26,15 +26,15 @@
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
     <Copyright>Copyright © JackOfFates 2025</Copyright>
-    <AssemblyVersion>1.5.0</AssemblyVersion>
-    <FileVersion>1.5.0</FileVersion>
+    <AssemblyVersion>2.0.0</AssemblyVersion>
+    <FileVersion>2.0.0</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
     <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>1.6.7</Version>
+    <Version>2.0.0</Version>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
@@ -310,11 +310,19 @@
     <Compile Include="..\SocketJack\Net\Database\TdsProtocolHandler.cs" Link="Net\Database\TdsProtocolHandler.cs" />
     <Compile Include="..\SocketJack\Net\Database\TdsWrapperStream.cs" Link="Net\Database\TdsWrapperStream.cs" />
     <Compile Include="..\SocketJack\Net\EventArguments.cs" Link="Net\EventArguments.cs" />
+    <Compile Include="..\SocketJack\Net\FtpSftp.cs" Link="Net\FtpSftp.cs" />
     <Compile Include="..\SocketJack\Net\HtAccessBuilder.cs" Link="Net\HtAccessBuilder.cs" />
     <Compile Include="..\SocketJack\Net\HtmlBuilder.cs" Link="Net\HtmlBuilder.cs" />
     <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
     <Compile Include="..\SocketJack\Net\HttpServer.cs" Link="Net\HttpServer.cs" />
     <Compile Include="..\SocketJack\Net\ISocket.cs" Link="Net\ISocket.cs" />
+    <Compile Include="..\SocketJack\LmVs\ChatUiResources.cs" Link="LmVs\ChatUiResources.cs" />
+    <Compile Include="..\SocketJack\LmVs\DiagnosticsModels.cs" Link="LmVs\DiagnosticsModels.cs" />
+    <Compile Include="..\SocketJack\LmVs\InternalModels.cs" Link="LmVs\InternalModels.cs" />
+    <Compile Include="..\SocketJack\LmVs\RemoteControl.cs" Link="LmVs\RemoteControl.cs" />
+    <Compile Include="..\SocketJack\LmVs\SafeAhoCorasickSearchIndex.cs" Link="LmVs\SafeAhoCorasickSearchIndex.cs" />
+    <Compile Include="..\SocketJack\LmVs\ToolExecutor.cs" Link="LmVs\ToolExecutor.cs" />
+    <Compile Include="..\SocketJack\LmVs\UpstreamAdapter.cs" Link="LmVs\UpstreamAdapter.cs" />
     <Compile Include="..\SocketJack\Net\LmVsProxy.cs" Link="Net\LmVsProxy.cs" />
     <Compile Include="..\SocketJack\Net\MutableTcpServer.cs" Link="Net\MutableTcpServer.cs" />
     <Compile Include="..\SocketJack\Net\NetworkBase.cs" Link="Net\NetworkBase.cs" />
@@ -331,13 +339,13 @@
     <Compile Include="..\SocketJack\Net\P2P\Ping.cs" Link="Net\P2P\Ping.cs" />
     <Compile Include="..\SocketJack\Net\BroadcastServer.cs" Link="Net\BroadcastServer.cs" />
     <Compile Include="..\SocketJack\Net\RtmpSession.cs" Link="Net\RtmpSession.cs" />
-    <Compile Include="..\SocketJack\Net\Runescape\IsaacRandom.cs" Link="Net\Runescape\IsaacRandom.cs" />
-    <Compile Include="..\SocketJack\Net\Runescape\IsaacRandomPair.cs" Link="Net\Runescape\IsaacRandomPair.cs" />
-    <Compile Include="..\SocketJack\Net\Runescape\OldschoolRunescapeProtocol.cs" Link="Net\Runescape\OldschoolRunescapeProtocol.cs" />
-    <Compile Include="..\SocketJack\Net\Runescape\OldschoolServer.cs" Link="Net\Runescape\OldschoolServer.cs" />
-    <Compile Include="..\SocketJack\Net\Runescape\PlayerCredentials.cs" Link="Net\Runescape\PlayerCredentials.cs" />
     <Compile Include="..\SocketJack\Net\Segment.cs" Link="Net\Segment.cs" />
     <Compile Include="..\SocketJack\Net\SendQueueItem.cs" Link="Net\SendQueueItem.cs" />
+    <Compile Include="..\SocketJack\Net\Services\PromptIntellisense.cs" Link="Net\Services\PromptIntellisense.cs" />
+    <Compile Include="..\SocketJack\Net\Services\ReflectionService.cs" Link="Net\Services\ReflectionService.cs" />
+    <Compile Include="..\SocketJack\Net\Services\SearchInternet.cs" Link="Net\Services\SearchInternet.cs" />
+    <Compile Include="..\SocketJack\Net\Services\SearchService.cs" Link="Net\Services\SearchService.cs" />
+    <Compile Include="..\SocketJack\Net\Services\TerminalService.cs" Link="Net\Services\TerminalService.cs" />
     <Compile Include="..\SocketJack\Net\TcpClient.cs" Link="Net\TcpClient.cs" />
     <Compile Include="..\SocketJack\Net\TcpDuplicator.cs" Link="Net\TcpDuplicator.cs" />
     <Compile Include="..\SocketJack\Net\TcpServer.cs" Link="Net\TcpServer.cs" />
@@ -371,14 +379,14 @@
     <Content Include="..\SocketJack\Resources\SqlPanel.html" Link="Resources\SqlPanel.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="..\SocketJack\Resources\VsLmProxyWebChat.html" Link="Resources\VsLmProxyWebChat.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="..\SocketJack\SocketJackIcon.png" Link="SocketJackIcon.png" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Mono.Nat" Version="3.0.4" />
-    <PackageReference Include="System.Collections.Concurrent" Version="4.3.0" />
-    <PackageReference Include="System.Drawing.Common" Version="9.0.10" />
-    <PackageReference Include="System.Text.Encodings.Web" Version="9.0.7" />
-    <PackageReference Include="System.Text.Json" Version="9.0.7" />
+    <PackageReference Include="SSH.NET" Version="2025.1.0" />
   </ItemGroup>
   <ItemGroup>
     <Compile Update="My Project\Application.Designer.cs">
@@ -412,9 +420,9 @@
     </ItemGroup>
     <ItemGroup>
       <Folder Include="Compression\" />
-      <Folder Include="Net\Runescape\" />
+      <Folder Include="Net\Services\" />
+      <Folder Include="LmVs\" />
       <Folder Include="Torrent\" />
-      <Folder Include="Resources\" />
       <Folder Include="Net\P2P\" />
       <Folder Include="Serialization\Json\Converters\" />
     </ItemGroup>

@@ -25,7 +25,6 @@
     <PackageReference Include="MsgPack.Cli" Version="1.0.1" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
     <PackageReference Include="UI.SyntaxBox" Version="1.0.0" />
   </ItemGroup>
 

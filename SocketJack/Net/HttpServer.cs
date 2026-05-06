@@ -6,12 +6,67 @@ using System.IO;
 using System.Linq;
 using System.Net.Mime;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketJack.Serialization;
 
 namespace SocketJack.Net {
+
+    /// <summary>
+    /// Read-only description of a route registered through <see cref="HttpServer.Map"/>.
+    /// </summary>
+    public sealed class HttpMappedRoute {
+        /// <summary>The HTTP method registered for the route.</summary>
+        public string Method { get; private set; }
+
+        /// <summary>The URL path registered for the route.</summary>
+        public string Path { get; private set; }
+
+        /// <summary>The declaring type for the runtime handler delegate, when available.</summary>
+        public string HandlerType { get; private set; }
+
+        /// <summary>The runtime handler method name, when available.</summary>
+        public string HandlerName { get; private set; }
+
+        /// <summary>A best-effort runtime signature for the handler delegate.</summary>
+        public string HandlerSignature { get; private set; }
+
+        /// <summary>Comma-separated API input variables inferred from route and typed body metadata.</summary>
+        public string InputVariables { get; private set; }
+
+        /// <summary>JSON metadata describing route, query, body, and handler parameters.</summary>
+        public string ParametersSchema { get; private set; }
+
+        /// <summary>JSON schema/example inferred for typed request bodies.</summary>
+        public string RequestBodySchema { get; private set; }
+
+        /// <summary>JSON schema/example inferred for the handler return type.</summary>
+        public string ResponseSchema { get; private set; }
+
+        /// <summary>Best-effort request body mode inferred from the route registration.</summary>
+        public string RequestBodyKind { get; private set; }
+
+        public HttpMappedRoute(string method, string path) {
+            Method = method;
+            Path = path;
+        }
+
+        internal HttpMappedRoute(string method, string path, string handlerType, string handlerName, string handlerSignature, string inputVariables, string parametersSchema, string requestBodySchema, string responseSchema, string requestBodyKind) {
+            Method = method;
+            Path = path;
+            HandlerType = handlerType;
+            HandlerName = handlerName;
+            HandlerSignature = handlerSignature;
+            InputVariables = inputVariables;
+            ParametersSchema = parametersSchema;
+            RequestBodySchema = requestBodySchema;
+            ResponseSchema = responseSchema;
+            RequestBodyKind = requestBodyKind;
+        }
+    }
 
     public class HttpServer : TcpServer {
 
@@ -135,7 +190,9 @@ namespace SocketJack.Net {
         /// </summary>
         public delegate Task RtmpPublishHandler(NetworkConnection connection, string app, string streamKey, UploadStream uploadStream, CancellationToken cancellationToken);
 
+        private readonly object _routesLock = new object();
         private readonly Dictionary<string, Dictionary<string, RouteHandler>> _routes = new Dictionary<string, Dictionary<string, RouteHandler>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, HttpMappedRoute>> _routeMetadata = new Dictionary<string, Dictionary<string, HttpMappedRoute>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, StreamRouteHandler>> _streamRoutes = new Dictionary<string, Dictionary<string, StreamRouteHandler>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, UploadStreamRouteHandler>> _uploadStreamRoutes = new Dictionary<string, Dictionary<string, UploadStreamRouteHandler>>(StringComparer.OrdinalIgnoreCase);
 
@@ -255,11 +312,14 @@ namespace SocketJack.Net {
             if (handler == null)
                 throw new ArgumentNullException(nameof(handler));
 
-            if (!_routes.TryGetValue(method, out var byPath)) {
-                byPath = new Dictionary<string, RouteHandler>(StringComparer.OrdinalIgnoreCase);
-                _routes[method] = byPath;
+            lock (_routesLock) {
+                if (!_routes.TryGetValue(method, out var byPath)) {
+                    byPath = new Dictionary<string, RouteHandler>(StringComparer.OrdinalIgnoreCase);
+                    _routes[method] = byPath;
+                }
+                byPath[path] = handler;
+                SetMappedRouteMetadataLocked(method, path, CreateMappedRouteMetadata(method, path, handler, null));
             }
-            byPath[path] = handler;
         }
 
         /// <summary>
@@ -286,14 +346,332 @@ namespace SocketJack.Net {
                 }
                 return handler(connection, body, request, cancellationToken);
             });
+            SetMappedRouteMetadata(method, path, handler, typeof(T));
         }
 
         public bool RemoveRoute(string method, string path) {
-            if (!_routes.TryGetValue(method, out var byPath))
-                return false;
-            return byPath.Remove(path);
+            lock (_routesLock) {
+                if (!_routes.TryGetValue(method, out var byPath))
+                    return false;
+                var removed = byPath.Remove(path);
+                if (removed && _routeMetadata.TryGetValue(method, out var metaByPath))
+                    metaByPath.Remove(path);
+                return removed;
+            }
         }
 
+        internal void SetMappedRouteMetadata(string method, string path, Delegate handler, Type requestBodyType) {
+            if (string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(path))
+                return;
+
+            lock (_routesLock) {
+                SetMappedRouteMetadataLocked(method, path, CreateMappedRouteMetadata(method, path, handler, requestBodyType));
+            }
+        }
+
+        private void SetMappedRouteMetadataLocked(string method, string path, HttpMappedRoute metadata) {
+            if (!_routeMetadata.TryGetValue(method, out var byPath)) {
+                byPath = new Dictionary<string, HttpMappedRoute>(StringComparer.OrdinalIgnoreCase);
+                _routeMetadata[method] = byPath;
+            }
+            byPath[path] = metadata;
+        }
+
+        /// <summary>
+        /// Gets a snapshot of routes registered through <see cref="Map(string, string, RouteHandler)"/>.
+        /// </summary>
+        public IReadOnlyList<HttpMappedRoute> MappedRoutes => GetMappedRoutes();
+
+        /// <summary>
+        /// Returns a point-in-time snapshot of routes registered through <see cref="Map(string, string, RouteHandler)"/>.
+        /// </summary>
+        public IReadOnlyList<HttpMappedRoute> GetMappedRoutes() {
+            var mappedRoutes = new List<HttpMappedRoute>();
+            lock (_routesLock) {
+                foreach (var byMethod in _routes) {
+                    foreach (var byPath in byMethod.Value) {
+                        if (_routeMetadata.TryGetValue(byMethod.Key, out var metaByPath)
+                            && metaByPath.TryGetValue(byPath.Key, out var metadata)) {
+                            mappedRoutes.Add(metadata);
+                        } else {
+                            mappedRoutes.Add(new HttpMappedRoute((byMethod.Key ?? string.Empty).ToUpperInvariant(), byPath.Key));
+                        }
+                    }
+                }
+            }
+            return mappedRoutes
+                .OrderBy(route => route.Path, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(route => route.Method, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static HttpMappedRoute CreateMappedRouteMetadata(string method, string path, Delegate handler, Type requestBodyType) {
+            var handlerMethod = handler?.Method;
+            var handlerType = handlerMethod?.DeclaringType != null ? TypeDisplayName(handlerMethod.DeclaringType) : "";
+            var handlerName = handlerMethod?.Name ?? "";
+            var handlerSignature = BuildHandlerSignature(handlerMethod);
+            var bodyKind = requestBodyType == null ? InferBodyKindFromMethod(method) : InferBodyKindFromType(requestBodyType);
+            var bodySchema = requestBodyType == null || bodyKind == "none" ? "" : SerializeSchema(DescribeTypeSchema(requestBodyType));
+            var responseSchema = handlerMethod == null ? "" : SerializeSchema(DescribeTypeSchema(UnwrapTaskType(handlerMethod.ReturnType)));
+            var inputVariables = InferInputVariables(path, handlerMethod, requestBodyType);
+            var parametersSchema = SerializeSchema(BuildParametersSchema(path, handlerMethod, requestBodyType));
+
+            return new HttpMappedRoute(
+                (method ?? string.Empty).ToUpperInvariant(),
+                path,
+                handlerType,
+                handlerName,
+                handlerSignature,
+                inputVariables,
+                parametersSchema,
+                bodySchema,
+                responseSchema,
+                bodyKind);
+        }
+
+        private static string BuildHandlerSignature(MethodInfo method) {
+            if (method == null)
+                return "";
+
+            var parameters = method.GetParameters()
+                .Select(p => TypeDisplayName(p.ParameterType) + " " + p.Name);
+            return TypeDisplayName(UnwrapTaskType(method.ReturnType)) + " "
+                + TypeDisplayName(method.DeclaringType) + "." + method.Name
+                + "(" + string.Join(", ", parameters) + ")";
+        }
+
+        private static object BuildParametersSchema(string path, MethodInfo method, Type requestBodyType) {
+            var pathParams = InferPathParameters(path)
+                .ToDictionary(name => name, name => (object)"string", StringComparer.OrdinalIgnoreCase);
+
+            var handlerParams = new List<object>();
+            if (method != null) {
+                foreach (var p in method.GetParameters()) {
+                    handlerParams.Add(new {
+                        name = p.Name,
+                        type = TypeDisplayName(p.ParameterType),
+                        source = IsInfrastructureParameter(p.ParameterType) ? "runtime" : "handler"
+                    });
+                }
+            }
+
+            return new {
+                path = pathParams,
+                query = new Dictionary<string, object> { { "*", "string" } },
+                headers = new Dictionary<string, object> {
+                    { "Content-Type", "string" },
+                    { "Authorization", "string" }
+                },
+                body = requestBodyType == null ? null : DescribeTypeSchema(requestBodyType),
+                handler = new {
+                    signature = BuildHandlerSignature(method),
+                    parameters = handlerParams
+                }
+            };
+        }
+
+        private static IEnumerable<string> InferPathParameters(string path) {
+            if (string.IsNullOrWhiteSpace(path))
+                yield break;
+
+            var parts = path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            int wildcardIndex = 1;
+            foreach (var part in parts) {
+                if (part == "*") {
+                    yield return "path" + wildcardIndex++;
+                } else if (part.StartsWith("{", StringComparison.Ordinal) && part.EndsWith("}", StringComparison.Ordinal) && part.Length > 2) {
+                    yield return CleanVariableName(part.Substring(1, part.Length - 2));
+                } else if (part.StartsWith(":", StringComparison.Ordinal) && part.Length > 1) {
+                    yield return CleanVariableName(part.Substring(1));
+                } else if (part.StartsWith("<", StringComparison.Ordinal) && part.EndsWith(">", StringComparison.Ordinal) && part.Length > 2) {
+                    yield return CleanVariableName(part.Substring(1, part.Length - 2));
+                } else if (part.EndsWith("/*", StringComparison.Ordinal)) {
+                    yield return "path" + wildcardIndex++;
+                }
+            }
+        }
+
+        private static string InferInputVariables(string path, MethodInfo method, Type requestBodyType) {
+            var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in InferPathParameters(path))
+                if (!string.IsNullOrWhiteSpace(p)) names.Add("$" + p);
+
+            if (requestBodyType != null && !IsSimpleType(requestBodyType)) {
+                foreach (var prop in requestBodyType.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.GetIndexParameters().Length == 0)) {
+                    if (!string.IsNullOrWhiteSpace(prop.Name))
+                        names.Add("$" + prop.Name);
+                }
+            } else if (requestBodyType != null) {
+                names.Add("$body");
+            }
+
+            if (method != null) {
+                foreach (var p in method.GetParameters()) {
+                    if (!IsInfrastructureParameter(p.ParameterType) && !string.IsNullOrWhiteSpace(p.Name))
+                        names.Add("$" + CleanVariableName(p.Name));
+                }
+            }
+
+            return string.Join(",", names);
+        }
+
+        private static string InferBodyKindFromMethod(string method) {
+            if (string.IsNullOrWhiteSpace(method))
+                return "none";
+            switch (method.ToUpperInvariant()) {
+                case "POST":
+                case "PUT":
+                case "PATCH":
+                    return "json";
+                default:
+                    return "none";
+            }
+        }
+
+        private static string InferBodyKindFromType(Type type) {
+            if (type == null || type == typeof(void))
+                return "none";
+            if (type == typeof(byte[]) || type == typeof(Stream))
+                return "binary";
+            if (type == typeof(string))
+                return "string";
+            return "json";
+        }
+
+        private static object DescribeTypeSchema(Type type, int depth = 0) {
+            type = UnwrapTaskType(type);
+            if (type == null || type == typeof(void))
+                return "void";
+
+            var nullable = Nullable.GetUnderlyingType(type);
+            if (nullable != null)
+                type = nullable;
+
+            if (type == typeof(string) || type == typeof(char) || type == typeof(Guid) || type == typeof(Uri))
+                return "string";
+            if (type == typeof(bool))
+                return "boolean";
+            if (type == typeof(DateTime) || type == typeof(DateTimeOffset))
+                return "datetime";
+            if (IsNumericType(type))
+                return "number";
+            if (type == typeof(byte[]) || type == typeof(Stream))
+                return "binary";
+            if (type.IsEnum)
+                return Enum.GetNames(type);
+            if (depth >= 2)
+                return TypeDisplayName(type);
+
+            var elementType = GetEnumerableElementType(type);
+            if (elementType != null && type != typeof(string))
+                return new[] { DescribeTypeSchema(elementType, depth + 1) };
+
+            var schema = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) {
+                { "$type", TypeDisplayName(type) }
+            };
+
+            foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.CanRead && p.GetIndexParameters().Length == 0)) {
+                schema[prop.Name] = DescribeTypeSchema(prop.PropertyType, depth + 1);
+            }
+            foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Instance)) {
+                if (!schema.ContainsKey(field.Name))
+                    schema[field.Name] = DescribeTypeSchema(field.FieldType, depth + 1);
+            }
+
+            return schema.Count == 1 ? (object)TypeDisplayName(type) : schema;
+        }
+
+        private static Type UnwrapTaskType(Type type) {
+            if (type == null)
+                return null;
+            if (type == typeof(Task))
+                return typeof(void);
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Task<>))
+                return type.GetGenericArguments()[0];
+            return type;
+        }
+
+        private static Type GetEnumerableElementType(Type type) {
+            if (type == null || type == typeof(string))
+                return null;
+            if (type.IsArray)
+                return type.GetElementType();
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                return type.GetGenericArguments()[0];
+            var enumerable = type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+            return enumerable?.GetGenericArguments()[0];
+        }
+
+        private static bool IsInfrastructureParameter(Type type) {
+            if (type == null)
+                return false;
+            return type == typeof(NetworkConnection)
+                || type == typeof(HttpRequest)
+                || type == typeof(CancellationToken)
+                || type == typeof(ChunkedStream)
+                || type == typeof(UploadStream);
+        }
+
+        private static bool IsSimpleType(Type type) {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+            return type.IsPrimitive
+                || type.IsEnum
+                || type == typeof(string)
+                || type == typeof(decimal)
+                || type == typeof(DateTime)
+                || type == typeof(DateTimeOffset)
+                || type == typeof(Guid)
+                || type == typeof(Uri);
+        }
+
+        private static bool IsNumericType(Type type) {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+            return type == typeof(byte)
+                || type == typeof(sbyte)
+                || type == typeof(short)
+                || type == typeof(ushort)
+                || type == typeof(int)
+                || type == typeof(uint)
+                || type == typeof(long)
+                || type == typeof(ulong)
+                || type == typeof(float)
+                || type == typeof(double)
+                || type == typeof(decimal);
+        }
+
+        private static string TypeDisplayName(Type type) {
+            if (type == null)
+                return "";
+            type = UnwrapTaskType(type);
+            if (type == typeof(void))
+                return "void";
+            if (!type.IsGenericType)
+                return type.FullName ?? type.Name;
+
+            var name = type.FullName ?? type.Name;
+            var tick = name.IndexOf('`');
+            if (tick >= 0)
+                name = name.Substring(0, tick);
+            return name + "<" + string.Join(", ", type.GetGenericArguments().Select(TypeDisplayName)) + ">";
+        }
+
+        private static string CleanVariableName(string name) {
+            if (string.IsNullOrWhiteSpace(name))
+                return "";
+            var sb = new StringBuilder(name.Length);
+            foreach (var c in name) {
+                if (char.IsLetterOrDigit(c) || c == '_')
+                    sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        private static string SerializeSchema(object schema) {
+            if (schema == null)
+                return "";
+            return JsonSerializer.Serialize(schema, new JsonSerializerOptions { WriteIndented = true });
+        }
         /// <summary>
         /// Maps a streaming route. The handler receives a <see cref="ChunkedStream"/> it can
         /// write to line-by-line. The connection stays open until the handler returns.

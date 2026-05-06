@@ -6,21 +6,24 @@
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A .NET networking library that lets you send and receive any object over TCP or UDP with a single method call. Powered by `System.Text.Json` serialization, SocketJack handles framing, segmentation, and deserialization automatically — just call `Send(myObject)` on one end and register a typed callback on the other. No manual byte wrangling, no protocol boilerplate. Built on `System.Net.Sockets` with optional `SslStream` TLS 1.2 encryption, peer-to-peer relay, and a unified API across TCP, UDP, HTTP, and WebSocket transports.
+A batteries-included .NET networking stack for object transport, browser-native HTTP/WebSocket apps, WPF control sharing, and local AI model orchestration.
 
-**Target frameworks:** .NET 8 · .NET 10
+SocketJack handles framing, segmentation, serialization, compression, routing, and protocol detection so the application code can stay boring: `Send(myObject)` on one side, register a typed callback on the other, and let the transport worry about the bytes.
+
+> One library. Many transports. A surprisingly capable local AI control plane.
+
+**Targets:** SocketJack core: .NET Standard 2.1 | SocketJack.WPF: `net10.0-windows7.0`
 
 ---
 
-## What's New in v1.7.1?
+## What's New in v2.0.0?
 
-- **LmVsProxy – AI Model Bridge** – Translate Visual Studio's GitHub-style tool calling into OpenAI-compatible API requests for locally-hosted LLMs (Qwen, Mistral, and other models via LM Studio). Run enterprise-grade AI tools on your own hardware with zero cloud costs — just your electrical company.
-- **WebSocket support in `MutableTcpServer`**
-- **`WebSocketClientConnected` event** — fires after a successful WebSocket upgrade handshake, making it easy to initialize browser clients.
-- **`MapFile`** — map an individual file to a URL path (e.g., `MapFile("/js/app.js", @"C:\Pages\app.js")`).
-- **`CacheControl` property** — set a global `Cache-Control` header for all HTTP responses. Static files also emit `ETag` and `Last-Modified` headers with `304 Not Modified` support.
-- **Protocol-aware broadcasting** — `SendBroadcast` on `MutableTcpServer` pre-serializes once per protocol type (SocketJack vs WebSocket) to eliminate redundant work.
-- **Protocol-aware `Send(Identifier, object)`** — identifier-based sends automatically route through the correct framing (SocketJack or WebSocket).
+- **LmVsProxy Web Console** - a full browser workspace for LM Studio-backed chat, sessions, model selection, file uploads, prompt intellisense, service routing, diagnostics, and per-client permissions.
+- **Remote Admin for WPF hosts** - view and control the LmVsProxy GUI from the web console through SocketJack.WPF capture/input providers without moving the real Windows cursor.
+- **WebAuth and host-local administration** - token/basic auth, registration approvals, administrator roles, host-IP admin detection, and CORS-friendly local LLM client APIs.
+- **Per-client capability gates** - enable or disable agent access, internet search, VS Copilot tools, file transfer, SQL admin, FTP, terminal commands, image uploads, and downloads by owner key.
+- **Session and artifact persistence** - SocketJack's embedded data server now backs chat sessions, auth records, usage costs, filesystem access lists, and uploaded/downloaded files.
+- **Architecture upgrades** - `MutableTcpServer` is now the shared front door for HTTP, WebSocket, SocketJack protocols, SQL admin, FTP configuration, LLM client endpoints, and the web UI.
 
 ---
 
@@ -28,16 +31,15 @@ A .NET networking library that lets you send and receive any object over TCP or 
 
 | Category | Highlights |
 |---|---|
-| **Transport** | Built on `System.Net.Sockets.Socket` and `NetworkStream`. Unified `TcpClient` / `TcpServer`, `UdpClient` / `UdpServer`, and WebSocket API with consistent connection lifecycle events. |
-| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, WebSocket, and RTMP on a single port. Register custom `IProtocolHandler` implementations for any binary protocol. |
-| **HTTP** | Full HTTP server with route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file & directory serving via `MapFile` / `MapDirectory`, `.htaccess` security with `HtAccessBuilder`, `Cache-Control` / `ETag` / `304` support, chunked transfer encoding, and RTMP ingest via `MapRtmpPublish`. |
-| **Serialization** | Default `System.Text.Json` serializer with pluggable `ISerializer` interface, custom `JsonConverter` support (e.g., `Bitmap`, `byte[]`, `Type`), and type whitelist/blacklist for secure deserialization. |
-| **Peer-to-Peer** | Automatic peer discovery, host/client role management, relay-based NAT traversal, and metadata propagation via the `Identifier` class. |
-| **Compression** | Pluggable `ICompression` interface with built-in `GZipStream` and `DeflateStream` implementations, configurable `CompressionLevel`. |
-| **Performance** | Large configurable buffers (default 100 MB), fully async I/O, automatic message segmentation, outbound chunking with configurable flush interval, and upload/download bandwidth throttling (Mbps). |
-| **Security** | `SslStream` with TLS 1.2, `X509Certificate` authentication, `.htaccess`-based access control with IP allow/deny, HTTP Basic auth, and file-pattern restrictions. |
-| **Extensibility** | Rich event system for connection, disconnection, peer updates, and data receipt. Attach arbitrary metadata to any peer or connection for dynamic routing and discovery. |
-| **AI Model Bridge** | `LmVsProxy` translates Visual Studio's GitHub-style tool calling into OpenAI-compatible API requests. Run enterprise-grade AI models (Qwen, Mistral, Phi, etc.) locally via LM Studio with zero cloud costs. |
+| **Transport Core** | Unified `TcpClient` / `TcpServer`, `UdpClient` / `UdpServer`, HTTP, and WebSocket APIs on top of `System.Net.Sockets`, with consistent lifecycle events and typed callbacks. |
+| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, WebSocket, RTMP, and custom protocols on one port, then routes each connection through the right handler. |
+| **HTTP App Hosting** | Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), file and directory serving, `.htaccess` controls, chunked responses, upload streams, static caching, `ETag`, `Last-Modified`, and `304` support. |
+| **Serialization** | Default `System.Text.Json`, pluggable `ISerializer`, custom converters, and type whitelist/blacklist support for safer object transport. |
+| **Peer-to-Peer** | Peer discovery, host/client role management, relay-assisted NAT traversal, and metadata-driven routing through the `Identifier` class. |
+| **Compression and Throughput** | Pluggable compression (`GZipStream`, `DeflateStream`), large configurable buffers, async I/O, automatic segmentation, outbound chunking, and bandwidth throttling. |
+| **Security** | TLS via `SslStream`, X.509 auth, `.htaccess` IP allow/deny, HTTP Basic auth, file-pattern restrictions, WebAuth records, bearer tokens, and local-host admin detection. |
+| **WPF Remoting** | Capture any WPF `FrameworkElement`, stream it as JPEG frames, and forward remote mouse/keyboard input to the target window. |
+| **LmVsProxy** | Local LM Studio bridge for Visual Studio/Copilot-compatible tooling, browser chat, prompt services, per-client permissions, WebAuth, remote admin, terminal approvals, FTP, SQL admin, and usage-cost tracking. |
 
 ---
 

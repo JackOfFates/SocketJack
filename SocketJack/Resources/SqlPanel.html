@@ -357,17 +357,25 @@ body.light-theme .status-bar{background:#0066b8}
 .api-toolbar button.sec{background:linear-gradient(180deg,#3c3c3c 0%,#333 100%);color:#d4d4d4}
 .api-toolbar button.sec:hover{background:linear-gradient(180deg,#505050 0%,#3c3c3c 100%)}
 .api-list{flex:1;overflow:auto;padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;align-content:start}
-.api-card{background:#252526;border:1px solid #3c3c3c;border-radius:8px;padding:14px;cursor:pointer;transition:all .2s;animation:fadeIn .3s ease}
+.api-card{background:#252526;border:1px solid #3c3c3c;border-radius:8px;padding:14px 46px 14px 14px;cursor:pointer;transition:all .2s;animation:fadeIn .3s ease;position:relative}
 .api-card:hover{border-color:#569cd6;transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.api-card.mapped{border-left:3px solid #4ec9b0}
+.api-card.mapped:hover{border-color:#4ec9b0;transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.api-more{position:absolute;top:10px;right:10px;width:28px;height:26px;border:1px solid #3c3c3c;border-radius:5px;background:#1e1e1e;color:#d4d4d4;cursor:pointer;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center}
+.api-more:hover{border-color:#569cd6;background:#2d2d2d;color:#fff}
 .api-card .api-name{font-weight:600;color:#4ec9b0;font-size:13px;display:flex;align-items:center;gap:8px}
 .api-card .api-route{color:#9cdcfe;font-family:'Cascadia Code','Consolas',monospace;font-size:12px;margin-top:6px;padding:6px 10px;background:#1e1e1e;border-radius:4px;border-left:3px solid #569cd6}
 .api-card .api-meta{color:#808080;font-size:11px;margin-top:8px;display:flex;gap:12px;flex-wrap:wrap}
 .api-card .api-meta span{display:flex;align-items:center;gap:4px}
+.api-source-badge{display:inline-flex;align-items:center;gap:4px;border:1px solid #2e7d32;color:#4ec9b0;border-radius:4px;padding:1px 6px;font-size:10px;text-transform:uppercase}
 .method-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.5px}
 .method-badge.get{background:#2e7d32}
 .method-badge.post{background:#e65100}
 .method-badge.put{background:#1565c0}
+.method-badge.patch{background:#6a1b9a}
 .method-badge.delete{background:#c62828}
+.method-badge.head,.method-badge.options{background:#455a64}
+.method-badge.trace,.method-badge.connect{background:#5d4037}
 .api-editor{flex:1;overflow:auto;padding:20px;display:none;animation:fadeIn .2s ease}
 .api-editor.active{display:block}
 .api-field{margin-bottom:16px}
@@ -1068,13 +1076,15 @@ body.light-theme .status-bar{background:#0066b8}
         </div>
         <div class="api-editor" id="apiEditor">
          <input type="hidden" id="apiEditId">
+         <input type="hidden" id="apiEditSource">
          <div class="api-field"><label>Endpoint Name</label><input type="text" id="apiName" placeholder="e.g. Get Users"></div>
-         <div class="api-field"><label>Route Path</label><input type="text" id="apiRoute" placeholder="e.g. /api/users"><div class="help">The URL path where this endpoint will be accessible.</div></div>
-         <div class="api-field"><label>HTTP Method</label><select id="apiMethod"><option value="GET">GET</option><option value="POST">POST</option></select></div>
-         <div class="api-field"><label>Database</label><select id="apiDatabase"></select></div>
+          <div class="api-field" id="apiRouteField"><label>Route Path</label><input type="text" id="apiRoute" placeholder="e.g. /api/users"><div class="help">The URL path where this endpoint will be accessible.</div></div>
+          <div class="api-field" id="apiMethodField"><label>HTTP Method</label><select id="apiMethod"><option value="GET">GET</option><option value="POST">POST</option><option value="PUT">PUT</option><option value="PATCH">PATCH</option><option value="DELETE">DELETE</option><option value="OPTIONS">OPTIONS</option></select></div>
+          <div class="api-field" id="apiDatabaseField"><label>Database</label><select id="apiDatabase"></select></div>
+          <div class="api-field"><label>Description</label><textarea id="apiDescription" placeholder="What this endpoint does, auth expectations, side effects, etc." style="min-height:70px"></textarea></div>
 
-         <!-- Query Steps Section -->
-         <div class="api-steps-section">
+          <!-- Query Steps Section -->
+         <div class="api-steps-section" id="apiStepsSection">
           <div class="api-steps-header">
            <span class="ash-title">&#128279; Query Steps</span>
            <button class="ash-add" onclick="apiStepAdd('lookup')">+ Lookup</button>
@@ -1102,12 +1112,14 @@ body.light-theme .status-bar{background:#0066b8}
           </div>
          </div>
          <div class="api-field"><label>Request Body Type</label><select id="apiBodyType" onchange="onApiBodyTypeChange()"><option value="none">None</option><option value="json">JSON Object</option><option value="string">String / Text</option><option value="binary">Binary / File Upload</option><option value="form">Form Data (key=value)</option></select><div class="help">The type of request body this endpoint accepts. Parameters from the body are available as @paramName in the SQL query.</div></div>
-         <div class="api-field api-body-field" id="apiBodyField" style="display:none"><label>Request Body Schema / Example</label><textarea id="apiBodySchema" placeholder='e.g. {"name": "string", "age": 0}'></textarea><div class="help">Provide an example or schema of the expected request body format.</div></div>
-         <div class="api-field"><label>Response Format</label><select id="apiFormat" onchange="onApiFormatChange()"><option value="json">JSON (array of objects)</option><option value="plaintext">Plain Text (tab-separated)</option><option value="binary">Binary (MIME / Download)</option></select></div>
-         <div class="api-field" id="apiContentTypeField" style="display:none"><label>Content-Type (MIME)</label><input type="text" id="apiContentType" placeholder="e.g. application/octet-stream, image/png, text/csv"><div class="help">The MIME type returned for binary responses. First row/first column value is used as the response body.</div></div>
-         <div class="api-actions">
-          <button class="save" onclick="saveApiEndpoint()">&#128190; Save Endpoint</button>
-          <button class="test-btn" onclick="testApiEndpoint()">&#9654; Test</button>
+          <div class="api-field api-body-field" id="apiBodyField" style="display:none"><label>Request Body Schema / Example</label><textarea id="apiBodySchema" placeholder='e.g. {"name": "string", "age": 0}'></textarea><div class="help">Provide an example or schema of the expected request body format.</div></div>
+          <div class="api-field"><label>Parameters</label><textarea id="apiParameters" placeholder='{"id": "query string", "page": "number"}' style="min-height:70px"></textarea></div>
+          <div class="api-field"><label>Response Format</label><select id="apiFormat" onchange="onApiFormatChange()"><option value="handler">Handler Output</option><option value="json">JSON (array of objects)</option><option value="plaintext">Plain Text (tab-separated)</option><option value="binary">Binary (MIME / Download)</option></select></div>
+          <div class="api-field" id="apiContentTypeField" style="display:none"><label>Content-Type (MIME)</label><input type="text" id="apiContentType" placeholder="e.g. application/octet-stream, image/png, text/csv"><div class="help">The MIME type returned for binary responses. First row/first column value is used as the response body.</div></div>
+          <div class="api-field"><label>Outputs</label><textarea id="apiOutputSchema" placeholder='{"id": "number", "name": "string"}' style="min-height:70px"></textarea></div>
+          <div class="api-actions">
+          <button class="save" id="apiSaveBtn" onclick="saveApiEndpoint()">&#128190; Save Endpoint</button>
+          <button class="test-btn" id="apiTestBtn" onclick="testApiEndpoint()">&#9654; Test</button>
           <button class="del" id="apiDeleteBtn" style="display:none" onclick="deleteApiEndpoint()">&#128465; Delete</button>
           <button class="sec" onclick="closeApiEditor()">Cancel</button>
          </div>
@@ -1284,9 +1296,91 @@ body.light-theme .status-bar{background:#0066b8}
     var messages = [];
     var lastGridHtml = '';
     var activeTab = 'grid';
+    var sqlRouteApplying = false;
+    var sqlRouteUrlMuted = false;
+    var sqlRouteHydrated = false;
+
+    // ---- URL page map ----
+    function sqlRouteParam(name) {
+        try { return new URLSearchParams(window.location.search).get(name) || '' } catch (e) { return '' }
+    }
+    function sqlRunWithoutUrlUpdate(fn) {
+        var wasMuted = sqlRouteUrlMuted;
+        sqlRouteUrlMuted = true;
+        try { fn() } finally { sqlRouteUrlMuted = wasMuted }
+    }
+    function sqlSetDatabase(db) {
+        if (!db) return;
+        currentDb = db;
+        var sel = document.getElementById('dbSelect');
+        if (sel) sel.value = db;
+        if (typeof updateStatusBar === 'function') updateStatusBar();
+    }
+    function sqlRouteForState() {
+        if (qbActive) return { tool: 'query' };
+        if (apiActive) return { tool: 'api' };
+        if (evActive) return { tool: 'events' };
+        if (dsnActive && dsnDb) return { database: dsnDb, table: dsnTable || '' };
+        return currentDb ? { database: currentDb } : {};
+    }
+    function sqlBuildUrl(route) {
+        var path = (BASE || window.location.pathname || '/sql').replace(/\/+$/, '') || '/';
+        var qs = new URLSearchParams();
+        if (route.tool) qs.set('tool', route.tool);
+        if (route.database) qs.set('database', route.database);
+        if (route.table) qs.set('table', route.table);
+        var query = qs.toString();
+        return path + (query ? '?' + query : '');
+    }
+    function sqlSyncUrlFromState(replace) {
+        if (sqlRouteApplying || sqlRouteUrlMuted || !window.history || !window.history.pushState) return;
+        var url = sqlBuildUrl(sqlRouteForState());
+        if ((window.location.pathname + window.location.search) === url) return;
+        window.history[replace ? 'replaceState' : 'pushState']({ sqlPageMap: true }, '', url);
+    }
+    function sqlClosePageTools() {
+        if (qbActive) closeQueryBuilder();
+        if (apiActive) closeApiCreator();
+        if (evActive) closeEventsEditor();
+        if (dsnActive) closeDesigner();
+    }
+    function sqlShowQueryEditor() {
+        sqlClosePageTools();
+        document.getElementById('queryView').classList.remove('hidden');
+    }
+    function sqlApplyRouteFromUrl(replace) {
+        var tool = (sqlRouteParam('tool') || '').toLowerCase();
+        var db = sqlRouteParam('database');
+        var table = sqlRouteParam('table');
+        var hadRoute = !!(tool || db || table);
+        sqlRouteHydrated = true;
+        sqlRouteApplying = true;
+        try {
+            if (db) sqlSetDatabase(db);
+            if (tool === 'api') {
+                openApiCreator();
+            } else if (tool === 'query' || tool === 'builder') {
+                sqlShowQueryEditor();
+                openQueryBuilder();
+            } else if (tool === 'events') {
+                openEventsEditor();
+            } else if (table) {
+                openDesigner(db || currentDb || 'db', table);
+            } else {
+                sqlShowQueryEditor();
+                if (db) loadObjectExplorer();
+            }
+        } finally {
+            sqlRouteApplying = false;
+        }
+        if (replace && hadRoute) sqlSyncUrlFromState(true);
+    }
+    window.addEventListener('popstate', function () { sqlApplyRouteFromUrl(false) });
 
     // ---- Database selector ----
     function loadDatabases() {
+        var routeDb = sqlRouteParam('database');
+        if (routeDb) currentDb = routeDb;
         fetch(BASE + '/api/databases').then(function (r) { return r.json() }).then(function (d) {
             var sel = document.getElementById('dbSelect');
             sel.innerHTML = '';
@@ -1297,11 +1391,15 @@ body.light-theme .status-bar{background:#0066b8}
                 sel.appendChild(o);
             });
             loadObjectExplorer();
+            if (!sqlRouteHydrated) sqlApplyRouteFromUrl(true);
         });
     }
     function onDbChange() {
         currentDb = document.getElementById('dbSelect').value;
+        if (dsnActive) sqlRunWithoutUrlUpdate(closeDesigner);
         loadObjectExplorer();
+        updateStatusBar();
+        sqlSyncUrlFromState();
     }
 
     // ---- Object Explorer ----
@@ -1314,7 +1412,11 @@ body.light-theme .status-bar{background:#0066b8}
                 item.dataset.db = db.name;
                 if (db.name === currentDb) item.classList.add('expanded');
                 container.appendChild(item);
-                item.querySelector('.tree-header').addEventListener('click', function () { item.classList.toggle('expanded') });
+                item.querySelector('.tree-header').addEventListener('click', function () {
+                    item.classList.toggle('expanded');
+                    sqlSetDatabase(db.name);
+                    sqlSyncUrlFromState();
+                });
                 var children = item.querySelector('.tree-children');
                 // Tables folder
                 var tablesFolder = createTreeItem('\uD83D\uDCC1', 'Tables', '', true);
@@ -1363,6 +1465,8 @@ body.light-theme .status-bar{background:#0066b8}
                     document.getElementById('queryEditor').value = 'SELECT TOP 200 * FROM [' + tbl.name + ']';
                     currentDb = dbName;
                     document.getElementById('dbSelect').value = dbName;
+                    updateStatusBar();
+                    sqlSyncUrlFromState();
                     executeQuery();
                 });
             });
@@ -1521,6 +1625,10 @@ body.light-theme .status-bar{background:#0066b8}
         if (!s) return '';
         return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');
     }
+    function escapeJsString(s) {
+        if (!s) return '';
+        return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+    }
 
     // ---- Keyboard shortcuts ----
     document.addEventListener('keydown', function (e) {
@@ -1549,19 +1657,23 @@ body.light-theme .status-bar{background:#0066b8}
 
     function openDesigner(db, table) {
         dsnDb = db; dsnTable = table; dsnActive = true;
-        if (apiActive) { apiActive = false; document.getElementById('apiCreatorView').classList.remove('active') }
-        if (qbActive) { qbActive = false; document.getElementById('qbView').classList.remove('active') }
+        sqlSetDatabase(db);
+        if (apiActive) sqlRunWithoutUrlUpdate(closeApiCreator);
+        if (qbActive) sqlRunWithoutUrlUpdate(closeQueryBuilder);
+        if (evActive) sqlRunWithoutUrlUpdate(closeEventsEditor);
         document.getElementById('queryView').classList.add('hidden');
         var dv = document.getElementById('designerView'); dv.classList.add('active');
         document.getElementById('dsnDbName').textContent = '[' + db + '].';
         document.getElementById('dsnTblName').textContent = '[' + table + ']';
         switchDesignerTab('data');
         designerRefresh();
+        sqlSyncUrlFromState();
     }
     function closeDesigner() {
         dsnActive = false;
         document.getElementById('queryView').classList.remove('hidden');
         document.getElementById('designerView').classList.remove('active');
+        sqlSyncUrlFromState();
     }
     function switchDesignerTab(tab) {
         document.querySelectorAll('.dtab').forEach(function (t) { t.classList.toggle('active', t.dataset.dt === tab) });
@@ -1781,23 +1893,35 @@ body.light-theme .status-bar{background:#0066b8}
 
     function openApiCreator() {
         apiActive = true;
-        if (dsnActive) closeDesigner();
-        if (qbActive) closeQueryBuilder();
-        if (evActive) closeEventsEditor();
+        if (dsnActive) sqlRunWithoutUrlUpdate(closeDesigner);
+        if (qbActive) sqlRunWithoutUrlUpdate(closeQueryBuilder);
+        if (evActive) sqlRunWithoutUrlUpdate(closeEventsEditor);
         document.getElementById('queryView').classList.add('hidden');
         document.getElementById('apiCreatorView').classList.add('active');
+        document.getElementById('apiList').style.display = '';
+        document.getElementById('apiEditor').classList.remove('active');
         loadApiEndpoints();
+        sqlSyncUrlFromState();
     }
     function closeApiCreator() {
         apiActive = false;
         closeApiEditor();
         document.getElementById('queryView').classList.remove('hidden');
         document.getElementById('apiCreatorView').classList.remove('active');
+        sqlSyncUrlFromState();
     }
     function loadApiEndpoints() {
+        var list = document.getElementById('apiList');
+        list.innerHTML = '<div class="api-empty"><div class="icon">&#128268;</div>Loading API endpoints...</div>';
         fetch(BASE + '/api/endpoints/list').then(function (r) { return r.json() }).then(function (d) {
+            if (d.error) {
+                list.innerHTML = '<div class="api-empty"><div class="icon">&#9888;</div>' + escapeHtml(d.error) + '</div>';
+                return;
+            }
             apiEndpoints = d.endpoints || [];
             renderApiList();
+        }).catch(function (err) {
+            list.innerHTML = '<div class="api-empty"><div class="icon">&#9888;</div>Could not load API endpoints.<br>' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
         });
     }
     function renderApiList() {
@@ -1808,6 +1932,11 @@ body.light-theme .status-bar{background:#0066b8}
         }
         var html = '';
         apiEndpoints.forEach(function (ep) {
+            ep = ep || {};
+            var id = ep.id || '';
+            var method = ep.httpMethod || 'GET';
+            var methodClass = String(method).toLowerCase();
+            var isMapped = ep.source === 'mapped' || ep.readOnly;
             // Count steps if available
             var stepCount = 0;
             try {
@@ -1815,51 +1944,80 @@ body.light-theme .status-bar{background:#0066b8}
                 stepCount = steps.length;
             } catch (e) { }
             var stepInfo = stepCount > 0 ? '<span>&#128279; ' + stepCount + ' step' + (stepCount > 1 ? 's' : '') + '</span>' : '';
+            var sourceInfo = isMapped
+                ? '<span class="api-source-badge">Mapped</span><span>Source: HttpServer.Map</span><span>Format: ' + escapeHtml(ep.responseFormat || 'handler') + '</span>'
+                : '<span>DB: ' + escapeHtml(ep.database) + '</span>' + stepInfo + '<span>Format: ' + escapeHtml(ep.responseFormat) + '</span>';
+            var activeInfo = ep.enabled ? '<span style="color:#16c784">\u25CF Active</span>' : '<span style="color:#808080">\u25CB Disabled</span>';
+            var openAction = ' onclick="openApiEditor(\'' + escapeJsString(id) + '\')"';
+            var moreBtn = '<button class="api-more" onclick="event.stopPropagation(); openApiEditor(\'' + escapeJsString(id) + '\')" title="Edit API">...</button>';
 
-            html += '<div class="api-card" onclick="openApiEditor(\'' + ep.id + '\')"><div class="api-name"><span class="method-badge ' + ep.httpMethod.toLowerCase() + '">'
-                + escapeHtml(ep.httpMethod) + '</span> ' + escapeHtml(ep.name) + '</div>'
+            html += '<div class="api-card' + (isMapped ? ' mapped' : '') + '"' + openAction + '>' + moreBtn + '<div class="api-name"><span class="method-badge ' + escapeHtml(methodClass) + '">'
+                + escapeHtml(method) + '</span> ' + escapeHtml(ep.name || ep.route || id || 'API Endpoint') + '</div>'
                 + '<div class="api-route">' + escapeHtml(ep.route) + '</div>'
-                + '<div class="api-meta"><span>DB: ' + escapeHtml(ep.database) + '</span>' + stepInfo + '<span>Format: ' + escapeHtml(ep.responseFormat) + '</span>'
-                + (ep.enabled ? '<span style="color:#16c784">\u25CF Active</span>' : '<span style="color:#808080">\u25CB Disabled</span>') + '</div></div>';
+                + '<div class="api-meta">' + sourceInfo + activeInfo + '</div></div>';
         });
         list.innerHTML = html;
     }
+    function apiSetEditorMode(isMapped, isEdit) {
+        document.getElementById('apiRoute').readOnly = !!isMapped;
+        document.getElementById('apiMethod').disabled = !!isMapped;
+        document.getElementById('apiDatabase').disabled = !!isMapped;
+        document.getElementById('apiDatabaseField').style.display = isMapped ? 'none' : '';
+        document.getElementById('apiStepsSection').style.display = isMapped ? 'none' : '';
+        document.getElementById('apiDeleteBtn').style.display = (!isMapped && isEdit) ? '' : 'none';
+        document.getElementById('apiTestBtn').style.display = isMapped ? 'none' : '';
+        document.getElementById('apiSaveBtn').innerHTML = isMapped ? '&#128190; Save Settings' : '&#128190; Save Endpoint';
+    }
+    function apiSetSelectValue(selectId, value, fallback) {
+        var sel = document.getElementById(selectId);
+        sel.value = value || fallback || '';
+        if (sel.selectedIndex < 0 && fallback) sel.value = fallback;
+    }
     function openApiEditor(id) {
         var isEdit = !!id;
+        var ep = null;
+        if (id) {
+            for (var i = 0; i < apiEndpoints.length; i++) { if (apiEndpoints[i].id === id) { ep = apiEndpoints[i]; break } }
+        }
+        var isMapped = !!(ep && (ep.source === 'mapped' || ep.readOnly));
         document.getElementById('apiList').style.display = 'none';
         document.getElementById('apiEditor').classList.add('active');
-        document.getElementById('apiDeleteBtn').style.display = isEdit ? '' : 'none';
         document.getElementById('apiTestSection').classList.remove('show');
+        document.getElementById('apiEditSource').value = isMapped ? 'mapped' : (ep && ep.source ? ep.source : '');
+        apiSetEditorMode(isMapped, isEdit);
         // Populate database select from main db selector
         var dbSel = document.getElementById('apiDatabase');
         dbSel.innerHTML = document.getElementById('dbSelect').innerHTML;
-        if (id) {
-            var ep = null;
-            for (var i = 0; i < apiEndpoints.length; i++) { if (apiEndpoints[i].id === id) { ep = apiEndpoints[i]; break } }
-            if (ep) {
-                document.getElementById('apiEditId').value = ep.id;
-                document.getElementById('apiName').value = ep.name;
-                document.getElementById('apiRoute').value = ep.route;
-                document.getElementById('apiMethod').value = ep.httpMethod;
-                document.getElementById('apiDatabase').value = ep.database;
-                document.getElementById('apiFormat').value = ep.responseFormat;
-                document.getElementById('apiContentType').value = ep.contentType || '';
-                document.getElementById('apiBodyType').value = ep.bodyType || 'none';
-                document.getElementById('apiBodySchema').value = ep.bodySchema || '';
-                apiVarsLoad(ep.variables || '');
-                // Load steps - support legacy single sqlQuery
-                apiStepsLoad(ep.querySteps || ep.sqlQuery || '');
-            }
+        if (ep) {
+            document.getElementById('apiEditId').value = ep.id;
+            document.getElementById('apiName').value = ep.name || ep.route || '';
+            document.getElementById('apiDescription').value = ep.description || '';
+            document.getElementById('apiRoute').value = ep.route || '';
+            apiSetSelectValue('apiMethod', ep.httpMethod, 'GET');
+            document.getElementById('apiDatabase').value = ep.database || currentDb;
+            apiSetSelectValue('apiFormat', ep.responseFormat, isMapped ? 'handler' : 'json');
+            document.getElementById('apiContentType').value = ep.contentType || '';
+            apiSetSelectValue('apiBodyType', ep.bodyType, 'none');
+            document.getElementById('apiBodySchema').value = ep.bodySchema || '';
+            document.getElementById('apiParameters').value = ep.parameters || '';
+            document.getElementById('apiOutputSchema').value = ep.outputSchema || '';
+            apiVarsLoad(ep.variables || '');
+            // Mapped APIs get their SQL-free runtime shape from reflected route metadata.
+            apiStepsLoad(isMapped ? '' : (ep.querySteps || ep.sqlQuery || ''));
         } else {
             document.getElementById('apiEditId').value = '';
+            document.getElementById('apiEditSource').value = '';
             document.getElementById('apiName').value = '';
+            document.getElementById('apiDescription').value = '';
             document.getElementById('apiRoute').value = '/api/';
-            document.getElementById('apiMethod').value = 'GET';
+            apiSetSelectValue('apiMethod', 'GET', 'GET');
             document.getElementById('apiDatabase').value = currentDb;
-            document.getElementById('apiFormat').value = 'json';
+            apiSetSelectValue('apiFormat', 'json', 'json');
             document.getElementById('apiContentType').value = '';
-            document.getElementById('apiBodyType').value = 'none';
+            apiSetSelectValue('apiBodyType', 'none', 'none');
             document.getElementById('apiBodySchema').value = '';
+            document.getElementById('apiParameters').value = '';
+            document.getElementById('apiOutputSchema').value = '';
             apiVarsLoad('');
             apiStepsLoad('');
         }
@@ -1871,7 +2029,8 @@ body.light-theme .status-bar{background:#0066b8}
         document.getElementById('apiEditor').classList.remove('active');
     }
     function onApiFormatChange() {
-        document.getElementById('apiContentTypeField').style.display = document.getElementById('apiFormat').value === 'binary' ? '' : 'none';
+        var fmt = document.getElementById('apiFormat').value;
+        document.getElementById('apiContentTypeField').style.display = (fmt === 'binary' || fmt === 'handler') ? '' : 'none';
     }
     function onApiBodyTypeChange() {
         var bt = document.getElementById('apiBodyType').value;
@@ -2102,6 +2261,31 @@ body.light-theme .status-bar{background:#0066b8}
         return apiVars.map(function (v) { return v.startsWith('$') ? v : '$' + v }).join(',');
     }
     function saveApiEndpoint() {
+        var isMapped = document.getElementById('apiEditSource').value === 'mapped';
+        if (isMapped) {
+            var mappedPayload = {
+                id: document.getElementById('apiEditId').value || '',
+                name: document.getElementById('apiName').value,
+                description: document.getElementById('apiDescription').value,
+                route: document.getElementById('apiRoute').value,
+                httpMethod: document.getElementById('apiMethod').value,
+                variables: apiVarsSerialize(),
+                bodyType: document.getElementById('apiBodyType').value,
+                bodySchema: document.getElementById('apiBodySchema').value,
+                parameters: document.getElementById('apiParameters').value,
+                responseFormat: document.getElementById('apiFormat').value || 'handler',
+                contentType: document.getElementById('apiContentType').value,
+                outputSchema: document.getElementById('apiOutputSchema').value
+            };
+            if (!mappedPayload.name || !mappedPayload.route) { alert('Name and route are required.'); return }
+            fetch(BASE + '/api/endpoints/settings/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mappedPayload) })
+                .then(function (r) { return r.json() }).then(function (r) {
+                    if (r.error) { alert(r.error); return }
+                    closeApiEditor();
+                    loadApiEndpoints();
+                });
+            return;
+        }
         // Build combined SQL from steps for backwards compatibility
         var combinedSql = '';
         if (apiSteps.length > 0) {
@@ -2111,6 +2295,7 @@ body.light-theme .status-bar{background:#0066b8}
         var payload = {
             id: document.getElementById('apiEditId').value || '',
             name: document.getElementById('apiName').value,
+            description: document.getElementById('apiDescription').value,
             route: document.getElementById('apiRoute').value,
             httpMethod: document.getElementById('apiMethod').value,
             database: document.getElementById('apiDatabase').value,
@@ -2120,6 +2305,8 @@ body.light-theme .status-bar{background:#0066b8}
             contentType: document.getElementById('apiContentType').value,
             bodyType: document.getElementById('apiBodyType').value,
             bodySchema: document.getElementById('apiBodySchema').value,
+            parameters: document.getElementById('apiParameters').value,
+            outputSchema: document.getElementById('apiOutputSchema').value,
             variables: apiVarsSerialize(),
             enabled: 'true'
         };
@@ -2216,6 +2403,7 @@ body.light-theme .status-bar{background:#0066b8}
         }
         qbLoadTables();
         qbRender();
+        sqlSyncUrlFromState();
     }
 
     function openQueryBuilder() {
@@ -2226,6 +2414,7 @@ body.light-theme .status-bar{background:#0066b8}
         document.getElementById('qbView').classList.remove('active');
         document.getElementById('qbOverlay').classList.remove('active');
         qbTarget = null;
+        sqlSyncUrlFromState();
     }
 
     function qbInsertToTarget() {
@@ -4204,6 +4393,8 @@ body.light-theme .status-bar{background:#0066b8}
         if (tab.db) {
             currentDb = tab.db;
             document.getElementById('dbSelect').value = tab.db;
+            updateStatusBar();
+            sqlSyncUrlFromState();
         }
         updateLineNumbers();
     }
@@ -4714,12 +4905,13 @@ body.light-theme .status-bar{background:#0066b8}
 
     function openEventsEditor(){
      evActive=true;
-     if(dsnActive)closeDesigner();
-     if(apiActive)closeApiCreator();
-     if(qbActive)closeQueryBuilder();
+     if(dsnActive)sqlRunWithoutUrlUpdate(closeDesigner);
+     if(apiActive)sqlRunWithoutUrlUpdate(closeApiCreator);
+     if(qbActive)sqlRunWithoutUrlUpdate(closeQueryBuilder);
      document.getElementById('queryView').classList.add('hidden');
      document.getElementById('eventsView').classList.add('active');
      evLoadEvents();
+     sqlSyncUrlFromState();
     }
     function closeEventsEditor(){
      evActive=false;
@@ -4727,6 +4919,7 @@ body.light-theme .status-bar{background:#0066b8}
      document.getElementById('queryView').classList.remove('hidden');
      document.getElementById('eventsView').classList.remove('active');
      evCurrentId=null;
+     sqlSyncUrlFromState();
     }
     function evLoadEvents(){
      fetch(BASE+'/api/events/list').then(function(r){return r.json()}).then(function(d){

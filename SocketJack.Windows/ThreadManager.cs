@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -169,7 +169,7 @@ namespace SocketJack {
                 }
                 do {
                     Thread.Sleep(1);
-                } while (DateTime.UtcNow - LastCount < OneSecond);
+                } while (_Alive && DateTime.UtcNow - LastCount < OneSecond );
                 LastCount = DateTime.UtcNow;
             }
         }

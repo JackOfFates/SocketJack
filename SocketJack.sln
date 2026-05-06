@@ -29,8 +29,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.WPF", "SocketJack.Windows\SocketJack.WPF.csproj", "{A6438549-731B-7C7C-82DD-1F6DA504429E}"
+	ProjectSection(ProjectDependencies) = postProject
+		{A9488B32-E02A-D73C-446B-780E35191A15} = {A9488B32-E02A-D73C-446B-780E35191A15}
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.WpfBasicGame", "SocketJack.WpfBasicGame\SocketJack.WpfBasicGame.csproj", "{02244906-0B64-4CF6-BF13-9D5504044092}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LmVsProxyGUI", "LmVsProxyGUI\LmVsProxyGUI.csproj", "{6E560CB5-6800-4910-8C13-D0B6ECF175C6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -138,6 +143,18 @@ Global
 		{02244906-0B64-4CF6-BF13-9D5504044092}.Release|x64.Build.0 = Release|Any CPU
 		{02244906-0B64-4CF6-BF13-9D5504044092}.Release|x86.ActiveCfg = Release|Any CPU
 		{02244906-0B64-4CF6-BF13-9D5504044092}.Release|x86.Build.0 = Release|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Debug|x64.Build.0 = Debug|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Debug|x86.Build.0 = Debug|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x64.ActiveCfg = Release|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x64.Build.0 = Release|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x86.ActiveCfg = Release|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

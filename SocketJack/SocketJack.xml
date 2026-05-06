@@ -1522,6 +1522,41 @@
             Removes a previously registered protocol handler.
             </summary>
         </member>
+        <member name="T:SocketJack.Net.HttpMappedRoute">
+            <summary>
+            Read-only description of a route registered through <see cref="M:SocketJack.Net.HttpServer.Map(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.Method">
+            <summary>The HTTP method registered for the route.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.Path">
+            <summary>The URL path registered for the route.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.HandlerType">
+            <summary>The declaring type for the runtime handler delegate, when available.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.HandlerName">
+            <summary>The runtime handler method name, when available.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.HandlerSignature">
+            <summary>A best-effort runtime signature for the handler delegate.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.InputVariables">
+            <summary>Comma-separated API input variables inferred from route and typed body metadata.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.ParametersSchema">
+            <summary>JSON metadata describing route, query, body, and handler parameters.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.RequestBodySchema">
+            <summary>JSON schema/example inferred for typed request bodies.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.ResponseSchema">
+            <summary>JSON schema/example inferred for the handler return type.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.RequestBodyKind">
+            <summary>Best-effort request body mode inferred from the route registration.</summary>
+        </member>
         <member name="M:SocketJack.Net.HttpServer.RouteFile(System.String,System.String,System.String,System.String[][],System.Int32)">
             <summary>
             Maps a route to an HTML file with variable replacement (e.g., $Username) and caching.
@@ -1665,6 +1700,16 @@
             <summary>
             Maps a route whose handler receives a deserialized body of type <typeparamref name="T"/>.
             The request body is deserialized using the configured serializer before the handler is invoked.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.MappedRoutes">
+            <summary>
+            Gets a snapshot of routes registered through <see cref="M:SocketJack.Net.HttpServer.Map(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.GetMappedRoutes">
+            <summary>
+            Returns a point-in-time snapshot of routes registered through <see cref="M:SocketJack.Net.HttpServer.Map(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>.
             </summary>
         </member>
         <member name="M:SocketJack.Net.HttpServer.MapStream(System.String,System.String,SocketJack.Net.HttpServer.StreamRouteHandler)">
@@ -1927,6 +1972,16 @@
             Local URL for the lightweight browser chat UI.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.LmVsProxy.ChatSessionRoot">
+            <summary>
+            Root folder where the browser chat database and session files are stored.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.LmVsProxy.ChatSessionFilesRoot">
+            <summary>
+            Folder where uploaded chat files and downloaded session artifacts are stored.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.LmVsProxy.ChatModel">
             <summary>
             Model id sent by the chat UI to LM Studio's OpenAI-compatible endpoint.
@@ -2008,7 +2063,7 @@
             Simple JSON serialization helper.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.BuildLmStudioRequest(SocketJack.Net.LmVsProxy.VsRequest,System.String[])">
+        <member name="M:SocketJack.Net.LmVsProxy.BuildLmStudioRequest(LmVs.VsRequest,System.String[])">
             <summary>
             Builds a request JSON for LM Studio.
             </summary>
@@ -2138,6 +2193,17 @@
             Writes an OpenAI-shaped SSE error and terminates the stream.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.LmVsProxy.AppendVisibleAssistantTextFromPayload(System.String,System.Text.StringBuilder)">
+            <summary>
+            Captures visible assistant content from passthrough SSE frames so text-only tool intent can be rescued.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.TryBuildToolCallFromPlainTextIntent(System.String,System.String,LmVs.ToolCallData@)">
+            <summary>
+            Some local models narrate "let me read/check/open file X" instead of emitting the tool call.
+            Convert that stuck text-only intent into the get_file call Visual Studio expects.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.LmVsProxy.LooksLikeLargeEditArguments(System.Text.Json.JsonElement)">
             <summary>
             Detects edit arguments whose text fields would make the visible tool summary huge.
@@ -2188,7 +2254,7 @@
             Prevents a text-only ending immediately after build/get_errors failures by requesting the failing file.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.BuildToolCallSseResponse(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.BuildToolCallSseResponse(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Builds a compact OpenAI-compatible SSE response containing repaired tool calls.
             </summary>
@@ -2203,7 +2269,7 @@
             Builds Responses API SSE frames for text output.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesToolCallSse(System.String,System.Int64,System.String,System.Collections.Generic.Dictionary{System.Int32,SocketJack.Net.LmVsProxy.ToolCallBuilder},System.Boolean)">
+        <member name="M:SocketJack.Net.LmVsProxy.BuildResponsesToolCallSse(System.String,System.Int64,System.String,System.Collections.Generic.Dictionary{System.Int32,LmVs.ToolCallBuilder},System.Boolean)">
             <summary>
             Builds Responses API SSE frames for function-call output.
             </summary>
@@ -2218,7 +2284,7 @@
             Extracts Qwen-style tool calls from assistant text.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.LogToolCalls(System.String,System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData})">
+        <member name="M:SocketJack.Net.LmVsProxy.LogToolCalls(System.String,System.Collections.Generic.List{LmVs.ToolCallData})">
             <summary>
             Logs concise tool-call diagnostics without dumping the full prompt.
             </summary>
@@ -2233,17 +2299,17 @@
             Gets tool names still advertised to LM Studio in the current request.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.RemapSuppressedToolCalls(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.Collections.Generic.HashSet{System.String},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.RemapSuppressedToolCalls(System.Collections.Generic.List{LmVs.ToolCallData},System.Collections.Generic.HashSet{System.String},System.String)">
             <summary>
             Redirects repeated low-value tool calls to a more specific next tool when possible.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.RedirectSearchLoopToCreateFile(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.RedirectSearchLoopToCreateFile(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Redirects repeated search/navigation loops for a missing creation target into create_file.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.RedirectMissingCodebehindLoopToCreateFile(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.RedirectMissingCodebehindLoopToCreateFile(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Converts repeated probes for a missing XAML code-behind file into the creation step.
             </summary>
@@ -2318,17 +2384,36 @@
             Rejects extension-only or directory-only paths such as ".xaml" and "Maf Scale\.xaml".
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.GuardCreateFileForExistingTarget(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.TranslateUnsupportedBatchReplaceToolCalls(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
+            <summary>
+            Converts hallucinated batch-replace calls into real VS replace_string_in_file calls.
+            Visual Studio's tool surface does not include a batch replace tool, but some models infer
+            one from previous schema hints. Keep that phantom tool from reaching Copilot.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GuardMalformedEditToolCalls(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
+            <summary>
+            Downgrades partial/truncated edit tool arguments to safe reads. A truncated edit is worse
+            than no edit: VS records a failure, the model sees the failure, and the loop repeats.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.GuardCreateFileForExistingTarget(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Rewrites create_file to get_file when history already shows that target exists.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.GuardBlankReplaceStringCalls(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.GuardBlankReplaceStringCalls(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Prevents malformed replace_string_in_file calls from becoming blank destructive edits.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.RemoveRedundantGetFileCalls(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String,SocketJack.Net.LmVsProxy.ToolCallData)">
+        <member name="M:SocketJack.Net.LmVsProxy.GuardNoOpReplaceStringCalls(System.Collections.Generic.List{LmVs.ToolCallData})">
+            <summary>
+            Removes replace_string_in_file calls that cannot change anything. Sending these to VS
+            produces a no-changes result, which the model tends to interpret as a reason to retry.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RemoveRedundantGetFileCalls(System.Collections.Generic.List{LmVs.ToolCallData},System.String,LmVs.ToolCallData)">
             <summary>
             Removes same-file get_file calls once an edit tool is already going to execute.
             </summary>
@@ -2373,12 +2458,12 @@
             Gets a normalized filename token for loose result matching.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.GuardVagueGetFileTargets(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.GuardVagueGetFileTargets(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Rewrites vague get_file targets into an exact known path or a safer file_search.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.GuardRepeatedGetFileLoop(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.GuardRepeatedGetFileLoop(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Breaks repeated successful reads of the same file/range by expanding once or switching to edit intent.
             </summary>
@@ -2438,7 +2523,7 @@
             Pulls the most relevant path from a tool result body.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.GuardUnsafeCreateFileTargets(System.Collections.Generic.List{SocketJack.Net.LmVsProxy.ToolCallData},System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.GuardUnsafeCreateFileTargets(System.Collections.Generic.List{LmVs.ToolCallData},System.String)">
             <summary>
             Rewrites unsafe create_file calls into harmless reads so project files are never clobbered.
             </summary>
@@ -2528,7 +2613,7 @@
             Parses one Qwen tool-call JSON object.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.RepairKnownToolArguments(System.String,System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.IsValidJsonObject(System.String)">
             <summary>
             Repairs common malformed Qwen tool arguments before Visual Studio receives them.
             </summary>
@@ -2598,16 +2683,6 @@
             Collapses malformed duplicate compound extensions such as ToolSelection.xaml.xaml.vb.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.RepairMultiReplaceArguments(System.Text.Json.JsonElement)">
-            <summary>
-            Ensures multi_replace_string_in_file has the required explanation field.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.LmVsProxy.BuildNormalizedReplacementsJson(System.Text.Json.JsonElement)">
-            <summary>
-            Normalizes text fields inside multi_replace_string_in_file replacements.
-            </summary>
-        </member>
         <member name="M:SocketJack.Net.LmVsProxy.RepairFileSearchArguments(System.Text.Json.JsonElement)">
             <summary>
             Normalizes file_search arguments to Visual Studio's required schema.
@@ -2621,6 +2696,16 @@
         <member name="M:SocketJack.Net.LmVsProxy.AddDistinctNonEmpty(System.Collections.Generic.List{System.String},System.String)">
             <summary>
             Adds a unique non-empty value to a list.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairBareWindowsBackslashesInJsonStrings(System.String,System.String)">
+            <summary>
+            Escapes unescaped Windows path separators inside model-produced JSON strings before JsonDocument can turn them into control characters.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.LmVsProxy.RepairDecodedWindowsPathEscapesInText(System.String)">
+            <summary>
+            Repairs Windows path escape sequences that were already decoded inside a larger text field such as a terminal command.
             </summary>
         </member>
         <member name="M:SocketJack.Net.LmVsProxy.RepairPathControlCharacters(System.String)">
@@ -2708,7 +2793,7 @@
             Returns true when a tool is still advertised in the current request.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.RepairConversationToolCallHistory(System.String)">
+        <member name="M:SocketJack.Net.LmVsProxy.RepairConversationToolCallHistory(System.String,System.String,System.String)">
             <summary>
             Repairs malformed tool-call history before forwarding it back to LM Studio.
             </summary>
@@ -2718,12 +2803,12 @@
             Returns true when Visual Studio reported a get_file success without forwarding source text.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.TryReadLocalFileForGetFile(System.String,System.String@)">
+        <member name="M:SocketJack.Net.LmVsProxy.TryReadLocalFileForGetFile(System.String,System.String,System.String,System.String@)">
             <summary>
             Reads a get_file target locally and formats it like VS get_file output.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.LmVsProxy.TryReadLocalProjectFilesForGetFilesInProject(System.String,System.String@)">
+        <member name="M:SocketJack.Net.LmVsProxy.TryReadLocalProjectFilesForGetFilesInProject(System.String,System.String,System.String,System.String@)">
             <summary>
             Hydrates get_files_in_project from disk when VS reports a tool failure or summary-only result.
             </summary>
@@ -2806,26 +2891,6 @@
         <member name="M:SocketJack.Net.LmVsProxy.EscapeControlCharsForLog(System.String)">
             <summary>
             Makes control characters visible in logs so hidden bytes are diagnosable.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.LmVsProxy.VsRequest">
-            <summary>
-            Represents a request from Visual Studio.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.LmVsProxy.ToolCallData">
-            <summary>
-            Represents a parsed Qwen raw tool call.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.LmVsProxy.ToolCallBuilder">
-            <summary>
-            Accumulates fragmented native OpenAI streaming tool-call deltas.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.OutputLogEventArgs">
-            <summary>
-            Event arguments for OutputLog events from LmVsProxy.
             </summary>
         </member>
         <member name="T:SocketJack.Net.IProtocolHandler">
@@ -3146,6 +3211,14 @@
             Size of each chunk when using chunked transfer encoding.
             Delegates to the underlying <see cref="P:SocketJack.Net.HttpServer.ChunkedSize"/>.
             </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpProtocolHandler.MappedRoutes">
+            <summary>
+            Gets a snapshot of routes registered through this HTTP handler.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.GetMappedRoutes">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.GetMappedRoutes"/>
         </member>
         <member name="P:SocketJack.Net.HttpProtocolHandler.AllowDirectoryListing">
             <summary>
@@ -4040,147 +4113,6 @@
         <member name="M:SocketJack.Net.RtmpSession.EnqueueMedia(System.Byte,System.Int32,System.Byte[])">
             <summary>
             Enqueue format: [typeId:1][timestamp_ms big-endian:4][payload]
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.Runescape.IsaacRandom">
-            <summary>
-            The Isaac Random
-            See www.rosettacode.org/wiki/The_ISAAC_Cipher
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.Runescape.IsaacRandomPair">
-            <summary>
-            Holds a pair of <see cref="T:SocketJack.Net.Runescape.IsaacRandom"/> ciphers used for encoding
-            and decoding game packets.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.Runescape.OsrsLoginState">
-            <summary>
-            Login state machine states for an Old School RuneScape connection.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.Runescape.OsrsSession">
-            <summary>
-            Per-connection session state for the OSRS protocol.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.Runescape.OldschoolRunescapeProtocol">
-            <summary>
-            An <see cref="T:SocketJack.Net.IProtocolHandler"/> that detects and processes Old School
-            RuneScape (revision 317) client connections on a <see cref="T:SocketJack.Net.MutableTcpServer"/>.
-            <para>
-            Register this handler so a single port can serve OSRS game clients alongside
-            HTTP, WebSocket, and other SocketJack protocols.
-            </para>
-            <example>
-            <code>
-            var server = new MutableTcpServer(43594, "GameServer");
-            server.RegisterProtocol(new OldschoolRunescape());
-            server.Listen();
-            </code>
-            </example>
-            </summary>
-        </member>
-        <member name="E:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.PlayerAuthenticated">
-            <summary>
-            Raised when a player has been fully authenticated and ISAAC ciphers are ready.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.CanHandle(System.Byte[])">
-            <summary>
-            Returns <see langword="true"/> when the first byte is the OSRS game
-            login handshake opcode (14).
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.DecodeHandshake(SocketJack.Net.NetworkConnection,SocketJack.Net.Runescape.OsrsSession)">
-            <summary>
-            Reads the handshake opcode and username hash, then sends back
-            the server session key (exchange data response).
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.DecodeLoginHeader(SocketJack.Net.NetworkConnection,SocketJack.Net.Runescape.OsrsSession)">
-            <summary>
-            Reads the login type byte and payload length.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.DecodeLoginPayload(SocketJack.Net.NetworkConnection,SocketJack.Net.Runescape.OsrsSession)">
-            <summary>
-            Reads the full login payload: client version, archive CRCs, ISAAC seeds,
-            username, and password.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.Runescape.OldschoolServer">
-            <summary>
-            A convenience wrapper that creates a <see cref="T:SocketJack.Net.MutableTcpServer"/> pre-configured
-            with the <see cref="T:SocketJack.Net.Runescape.OldschoolRunescapeProtocol"/> protocol handler.
-            <example>
-            <code>
-            var server = new OldschoolServer(43594);
-            server.Protocol.PlayerAuthenticated += (conn, session) => {
-                Console.WriteLine($"{session.Credentials.Username} logged in.");
-            };
-            server.Listen();
-            </code>
-            </example>
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.OldschoolServer.Protocol">
-            <summary>
-            The underlying OSRS protocol handler.
-            Subscribe to <see cref="E:SocketJack.Net.Runescape.OldschoolRunescapeProtocol.PlayerAuthenticated"/>
-            to receive login events.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.OldschoolServer.Server">
-            <summary>
-            The underlying <see cref="T:SocketJack.Net.MutableTcpServer"/> instance.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.Runescape.OldschoolServer.#ctor(System.Int32,System.String)">
-            <summary>
-            Creates a new OSRS server on the specified port.
-            </summary>
-            <param name="port">The TCP port to listen on (default 43594).</param>
-            <param name="name">Display name for logging.</param>
-        </member>
-        <member name="M:SocketJack.Net.Runescape.OldschoolServer.Listen">
-            <summary>
-            Starts listening for incoming connections.
-            </summary>
-        </member>
-        <member name="T:SocketJack.Net.Runescape.PlayerCredentials">
-            <summary>
-            Holds the player credentials for a player.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.EncodedUsername">
-            <summary>
-            Gets or sets the encoded username.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.Password">
-            <summary>
-            Gets or sets the password.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.Uid">
-            <summary>
-            Gets or sets the uid.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.Username">
-            <summary>
-            Gets or sets the username.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.UsernameHash">
-            <summary>
-            Gets or sets the username hash.
-            </summary>
-        </member>
-        <member name="P:SocketJack.Net.Runescape.PlayerCredentials.HostAddress">
-            <summary>
-            Gets or sets the host address.
             </summary>
         </member>
         <member name="T:SocketJack.Net.TcpClient">
@@ -5503,6 +5435,218 @@
         <member name="M:SocketJack.ThreadManager.Shutdown">
             <summary>
             Must be called on application shutdown to ensure all threads are closed.
+            </summary>
+        </member>
+        <member name="T:LmVs.VsRequest">
+            <summary>
+            Represents a request from Visual Studio.
+            </summary>
+        </member>
+        <member name="T:LmVs.ToolCallData">
+            <summary>
+            Represents a parsed Qwen raw tool call.
+            </summary>
+        </member>
+        <member name="T:LmVs.ToolCallBuilder">
+            <summary>
+            Accumulates fragmented native OpenAI streaming tool-call deltas.
+            </summary>
+        </member>
+        <member name="T:LmVs.OutputLogEventArgs">
+            <summary>
+            Event arguments for OutputLog events from LmVsProxy.
+            </summary>
+        </member>
+        <member name="M:LmVs.ToolExecutor.ExecuteToolAsync(LmVs.ITool,System.String)">
+            <summary>
+            Executes a tool and forwards the final tool output to the model via UpstreamAdapter.
+            Replace existing forwarding logic with this pattern so the model receives a single
+            assistant message containing the tool output, followed by a final stop chunk and [DONE].
+            </summary>
+        </member>
+        <member name="M:LmVs.UpstreamAdapter.ShouldForwardToolCall(System.String,System.String,System.String)">
+            <summary>
+            Returns false when a tool call has already been forwarded recently.
+            Use this before emitting tool-call SSE deltas to Visual Studio.
+            </summary>
+        </member>
+        <member name="M:LmVs.UpstreamAdapter.HandleToolResultAsync(System.String,System.String,System.String,System.IO.Stream,System.Threading.CancellationToken)">
+            <summary>
+            Call this method when a tool finishes executing and you need to forward the tool result
+            back into the LM Studio streaming response in the exact shape the model expects.
+            </summary>
+            <param name="toolCallId">Unique id for the tool invocation (if null a GUID will be generated)</param>
+            <param name="toolName">Registered tool name (must match model's tool name exactly)</param>
+            <param name="toolOutput">Tool output text (plain text or JSON depending on tool)</param>
+            <param name="clientStream">Downstream client stream (SSE) to write frames to</param>
+            <param name="ct">Cancellation token</param>
+        </member>
+        <member name="M:LmVs.UpstreamAdapter.WriteSseFrameAsync(System.IO.Stream,System.String,System.Threading.CancellationToken)">
+            <summary>
+            Writes a single SSE frame to the client stream in the format: data: {json}\n\n
+            </summary>
+        </member>
+        <member name="M:LmVs.UpstreamAdapter.WriteSseDoneAsync(System.IO.Stream,System.Threading.CancellationToken)">
+            <summary>
+            Writes the SSE done marker: data: [DONE]\n\n
+            </summary>
+        </member>
+        <member name="M:LmVs.UpstreamAdapter.ComputeHashKey(System.String,System.String)">
+            <summary>
+            Small helper to compute a stable key for debouncing repeated file edits.
+            </summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense">
+            <summary>
+            Provides intellisense-style completions for the WinAgent prompt input.
+            Handles command completion, parameter completion, and file system browsing.
+            Supports dynamic registration � call <see cref="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.AddCommand(EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.CompletionItem)"/> or <see cref="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.AddFeature(System.String,System.String,System.String,System.String)"/>
+            at any time and completions update automatically.
+            </summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.CompletionItem">
+            <summary>A single completion item with display text, insert text, and description.</summary>
+        </member>
+        <member name="P:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.CompletionItem.Writeup">
+            <summary>Extended writeup shown in expanded tooltips / help panels.</summary>
+        </member>
+        <member name="P:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.CompletionItem.IsExecutable">
+            <summary>Whether this item can be executed directly from intellisense.</summary>
+        </member>
+        <member name="F:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense._commands">
+            <summary>All registered commands � dynamically extensible.</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.AddCommand(EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.CompletionItem)">
+            <summary>Register a single command into intellisense.</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.AddCommands(System.Collections.Generic.IEnumerable{EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.CompletionItem})">
+            <summary>Register multiple commands at once.</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.AddFeature(System.String,System.String,System.String,System.String)">
+            <summary>Register an LLM / AI feature that appears in intellisense and is executable.</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.AddAgentActions(System.Collections.Generic.IEnumerable{System.ValueTuple{System.String,System.String,System.Boolean}})">
+            <summary>Register agent slave actions so they appear in intellisense and can be invoked.</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.ClearCategory(System.String)">
+            <summary>Remove all commands in a given category (useful before re-registering).</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.GetAllCommands">
+            <summary>Get a snapshot of all registered commands (for help display, etc.).</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.SetSequenceProvider(System.Func{System.Collections.Generic.List{System.String}})">
+            <summary>
+            Register a callback that returns current sequence names (for play/delete completion).
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.SetModelProvider(System.Func{System.Collections.Generic.List{System.String}})">
+            <summary>
+            Register a callback that returns available .gguf model file paths (for ai load completion).
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.SetReflectionProvider(System.Func{System.Collections.Generic.List{EasyYoloOcr.Example.Wpf.Services.ReflectionService.MemberInfo}},System.Func{System.String,EasyYoloOcr.Example.Wpf.Services.ReflectionService.MemberInfo},System.Func{System.String,System.Collections.Generic.List{EasyYoloOcr.Example.Wpf.Services.ReflectionService.MemberInfo}})">
+            <summary>
+            Register a callback that returns discoverable reflection members.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.GetCompletions(System.String,System.Int32)">
+            <summary>
+            Get completion items for the current input text and caret position.
+            Returns an empty list if no completions are relevant.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.ApplyCompletion(System.String,System.Int32,EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.CompletionItem)">
+            <summary>
+            Apply a completion item to the current input, returning the new text and caret position.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.PromptIntellisense.ExtractTrailingPath(System.String)">
+            <summary>
+            Extract a trailing file path from the input (e.g. "ai load C:\Users" ? "C:\Users").
+            Returns null if no path-like segment is found.
+            </summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.ReflectionService">
+            <summary>
+            Provides reflection-based execution of properties, fields, and methods on a target object.
+            Results are serialized to JSON using SocketJack-compatible settings with safe fallback
+            for non-serializable types.
+            Supports scanning all loaded assemblies and parsing method parameters.
+            </summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.ReflectionService.AssemblyInfo">
+            <summary>Describes a loaded assembly with its types.</summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.ReflectionService.MemberInfo">
+            <summary>Describes a discoverable member on the target object.</summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.ReflectionService.ParameterDetail">
+            <summary>Describes a parameter of a method.</summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.ReflectionService.ExecutionResult">
+            <summary>Result of executing a reflection command.</summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.GetLoadedAssemblies">
+            <summary>
+            Gets all loaded assemblies with their public types.
+            Includes framework and application assemblies so /reflect can inspect the full runtime.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.NavigateTo(System.String)">
+            <summary>
+            Navigate a dot-separated member path and return a ReflectionService for the resolved object.
+            Returns null if any segment is null or not found.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.ReadMember(System.String)">
+            <summary>
+            Read the current value of a member by name (property or field).
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.DiscoverMembers">
+            <summary>
+            Discovers all accessible members (properties, fields, methods) on the target.
+            Excludes compiler-generated, WPF infrastructure, and common noise members.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.GetMatchingMembers(System.String)">
+            <summary>
+            Get members filtered by a prefix for intellisense.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.GetMethodInfo(System.String)">
+            <summary>
+            Get parameter info for a specific method by name.
+            Returns null if the method is not found.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.ParseParameters(System.String)">
+            <summary>
+            Parse parameter string from /reflect command. 
+            Parameters are in format (param1, param2, ...) where strings are quoted and numerics are not.
+            Example: (123, "hello world", 45.6, "test")
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.Execute(System.String,System.String[])">
+            <summary>
+            Execute a member by name, optionally with string arguments.
+            Properties/fields return their value; methods are invoked.
+            Supports parsing parameters from method call syntax: method(arg1, arg2, ...)
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.SafeSerialize(System.Object,System.Type)">
+            <summary>
+            Safely serialize a value to JSON. Skips non-serializable objects gracefully.
+            Uses SocketJack-compatible serializer options.
+            </summary>
+        </member>
+        <member name="M:EasyYoloOcr.Example.Wpf.Services.ReflectionService.IsFileType(System.Type)">
+            <summary>Returns true for types that represent file-like inputs (byte[], Stream, FileInfo, etc.).</summary>
+        </member>
+        <member name="T:EasyYoloOcr.Example.Wpf.Services.TerminalService">
+            <summary>
+            Executes local terminal commands for LmVsProxy after the caller has passed
+            the GUI-owned permission gate.
             </summary>
         </member>
     </members>

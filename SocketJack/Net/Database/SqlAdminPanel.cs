@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 
 namespace SocketJack.Net.Database {
@@ -30,6 +31,7 @@ namespace SocketJack.Net.Database {
         private readonly MutableTcpServer _server;
         private readonly ConcurrentDictionary<string, SqlAdminSession> _sessions = new ConcurrentDictionary<string, SqlAdminSession>();
         private readonly ConcurrentDictionary<string, ApiEndpointDef> _apiEndpoints = new ConcurrentDictionary<string, ApiEndpointDef>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, ApiEndpointDef> _apiRouteSettings = new ConcurrentDictionary<string, ApiEndpointDef>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, EventDef> _eventDefs = new ConcurrentDictionary<string, EventDef>(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, string> _pageTemplateCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, string> _pageHashCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -94,6 +96,7 @@ namespace SocketJack.Net.Database {
             _server.Map("POST", basePath + "/api/endpoints/save", (conn, req, ct) => ApiEndpointsSave(req));
             _server.Map("POST", basePath + "/api/endpoints/delete", (conn, req, ct) => ApiEndpointsDelete(req));
             _server.Map("POST", basePath + "/api/endpoints/test", (conn, req, ct) => ApiEndpointsTest(req));
+            _server.Map("POST", basePath + "/api/endpoints/settings/save", (conn, req, ct) => ApiEndpointSettingsSave(req));
 
             // Query Builder saved trees
             _server.Map("GET", basePath + "/api/qb/list-trees", (conn, req, ct) => QbListTrees(req));
@@ -110,6 +113,7 @@ namespace SocketJack.Net.Database {
 
             // Load and register saved API endpoints
             LoadApiEndpoints();
+            LoadApiRouteSettings();
             LoadEventDefs();
         }
 
@@ -148,6 +152,7 @@ namespace SocketJack.Net.Database {
             _server.RemoveRoute("POST", basePath + "/api/endpoints/save");
             _server.RemoveRoute("POST", basePath + "/api/endpoints/delete");
             _server.RemoveRoute("POST", basePath + "/api/endpoints/test");
+            _server.RemoveRoute("POST", basePath + "/api/endpoints/settings/save");
 
             // Query Builder tree routes
             _server.RemoveRoute("GET", basePath + "/api/qb/list-trees");
@@ -167,6 +172,7 @@ namespace SocketJack.Net.Database {
                 try { _server.RemoveRoute(ep.HttpMethod.ToUpperInvariant(), ep.Route); } catch { }
             }
             _apiEndpoints.Clear();
+            _apiRouteSettings.Clear();
             _eventDefs.Clear();
 
             _sessions.Clear();
@@ -196,6 +202,13 @@ namespace SocketJack.Net.Database {
             public string ContentType;
             public string Variables; // Comma-separated list of $variable names
             public bool Enabled;
+            public string BodyType;
+            public string BodySchema;
+            public string Parameters;
+            public string OutputSchema;
+            public string Description;
+            public string Source;
+            public bool ReadOnly;
         }
 
         /// <summary>
@@ -1977,7 +1990,14 @@ namespace SocketJack.Net.Database {
                     ContentType = row.Length > 7 ? row[7]?.ToString() : null,
                     Enabled = row.Length > 8 && (row[8]?.ToString() ?? "").Equals("true", StringComparison.OrdinalIgnoreCase),
                     Variables = row.Length > 9 ? row[9]?.ToString() : null,
-                    QuerySteps = row.Length > 10 ? row[10]?.ToString() : null
+                    QuerySteps = row.Length > 10 ? row[10]?.ToString() : null,
+                    BodyType = row.Length > 11 ? row[11]?.ToString() : null,
+                    BodySchema = row.Length > 12 ? row[12]?.ToString() : null,
+                    Parameters = row.Length > 13 ? row[13]?.ToString() : null,
+                    OutputSchema = row.Length > 14 ? row[14]?.ToString() : null,
+                    Description = row.Length > 15 ? row[15]?.ToString() : null,
+                    Source = "creator",
+                    ReadOnly = false
                 };
                 if (string.IsNullOrEmpty(ep.Id) || string.IsNullOrEmpty(ep.Route)) continue;
                 _apiEndpoints[ep.Id] = ep;
@@ -2005,12 +2025,19 @@ namespace SocketJack.Net.Database {
             table.Columns.Add(new Column("Enabled", typeof(string), 5));
             table.Columns.Add(new Column("Variables", typeof(string), -1));
             table.Columns.Add(new Column("QuerySteps", typeof(string), -1));
+            table.Columns.Add(new Column("BodyType", typeof(string), 20));
+            table.Columns.Add(new Column("BodySchema", typeof(string), -1));
+            table.Columns.Add(new Column("Parameters", typeof(string), -1));
+            table.Columns.Add(new Column("OutputSchema", typeof(string), -1));
+            table.Columns.Add(new Column("Description", typeof(string), -1));
 
             foreach (var ep in _apiEndpoints.Values) {
                 table.Rows.Add(new object[] {
                     ep.Id, ep.Name, ep.Route, ep.HttpMethod, ep.Database,
                     ep.SqlQuery, ep.ResponseFormat, ep.ContentType,
-                    ep.Enabled ? "true" : "false", ep.Variables ?? "", ep.QuerySteps ?? ""
+                    ep.Enabled ? "true" : "false", ep.Variables ?? "", ep.QuerySteps ?? "",
+                    ep.BodyType ?? "", ep.BodySchema ?? "", ep.Parameters ?? "",
+                    ep.OutputSchema ?? "", ep.Description ?? ""
                 });
             }
 
@@ -2018,32 +2045,307 @@ namespace SocketJack.Net.Database {
             ds.ScheduleSave();
         }
 
+        private void LoadApiRouteSettings() {
+            var ds = GetDataServer();
+            if (ds == null) return;
+            if (!ds.Databases.ContainsKey("db")) ds.Databases.TryAdd("db", new Database("db"));
+            if (!ds.Databases.TryGetValue("db", out var configDb)) return;
+            if (!configDb.Tables.TryGetValue("ApiRouteSettings", out var table)) return;
+
+            for (int r = 0; r < table.Rows.Count; r++) {
+                var row = table.Rows[r];
+                var ep = new ApiEndpointDef {
+                    Id = row.Length > 0 ? row[0]?.ToString() : null,
+                    HttpMethod = row.Length > 1 ? row[1]?.ToString() : "GET",
+                    Route = row.Length > 2 ? row[2]?.ToString() : null,
+                    Name = row.Length > 3 ? row[3]?.ToString() : null,
+                    Description = row.Length > 4 ? row[4]?.ToString() : null,
+                    Variables = row.Length > 5 ? row[5]?.ToString() : null,
+                    BodyType = row.Length > 6 ? row[6]?.ToString() : null,
+                    BodySchema = row.Length > 7 ? row[7]?.ToString() : null,
+                    Parameters = row.Length > 8 ? row[8]?.ToString() : null,
+                    OutputSchema = row.Length > 9 ? row[9]?.ToString() : null,
+                    ResponseFormat = row.Length > 10 ? row[10]?.ToString() : "handler",
+                    ContentType = row.Length > 11 ? row[11]?.ToString() : null,
+                    Enabled = true,
+                    Source = "mapped",
+                    ReadOnly = true
+                };
+                if (string.IsNullOrEmpty(ep.Route)) continue;
+                ep.HttpMethod = (ep.HttpMethod ?? "GET").ToUpperInvariant();
+                if (string.IsNullOrEmpty(ep.Id)) ep.Id = MappedEndpointId(ep.HttpMethod, ep.Route);
+                _apiRouteSettings[ApiEndpointRouteKey(ep.HttpMethod, ep.Route)] = ep;
+            }
+        }
+
+        private void SaveApiRouteSettingsTable() {
+            var ds = GetDataServer();
+            if (ds == null) return;
+            if (!ds.Databases.ContainsKey("db")) ds.Databases.TryAdd("db", new Database("db"));
+            if (!ds.Databases.TryGetValue("db", out var configDb)) return;
+
+            var table = new Table("ApiRouteSettings");
+            table.Columns.Add(new Column("Id", typeof(string), -1));
+            table.Columns.Add(new Column("HttpMethod", typeof(string), 10));
+            table.Columns.Add(new Column("Route", typeof(string), -1));
+            table.Columns.Add(new Column("Name", typeof(string), -1));
+            table.Columns.Add(new Column("Description", typeof(string), -1));
+            table.Columns.Add(new Column("Variables", typeof(string), -1));
+            table.Columns.Add(new Column("BodyType", typeof(string), 20));
+            table.Columns.Add(new Column("BodySchema", typeof(string), -1));
+            table.Columns.Add(new Column("Parameters", typeof(string), -1));
+            table.Columns.Add(new Column("OutputSchema", typeof(string), -1));
+            table.Columns.Add(new Column("ResponseFormat", typeof(string), 20));
+            table.Columns.Add(new Column("ContentType", typeof(string), -1));
+
+            foreach (var ep in _apiRouteSettings.Values
+                .OrderBy(e => e.Route, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(e => e.HttpMethod, StringComparer.OrdinalIgnoreCase)) {
+                table.Rows.Add(new object[] {
+                    ep.Id, ep.HttpMethod, ep.Route, ep.Name ?? "", ep.Description ?? "",
+                    ep.Variables ?? "", ep.BodyType ?? "", ep.BodySchema ?? "",
+                    ep.Parameters ?? "", ep.OutputSchema ?? "", ep.ResponseFormat ?? "handler",
+                    ep.ContentType ?? ""
+                });
+            }
+
+            configDb.Tables["ApiRouteSettings"] = table;
+            ds.ScheduleSave();
+        }
+
         private object ApiEndpointsList(HttpRequest req) {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
-            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return JsonSerializer.Serialize(new { error = "Not authenticated." }); }
 
-            var sb = new StringBuilder();
-            sb.Append("{\"endpoints\":[");
-            bool first = true;
-            foreach (var ep in _apiEndpoints.Values) {
-                if (!first) sb.Append(",");
-                first = false;
-                sb.Append("{\"id\":\"").Append(EscapeJson(ep.Id))
-                  .Append("\",\"name\":\"").Append(EscapeJson(ep.Name))
-                  .Append("\",\"route\":\"").Append(EscapeJson(ep.Route))
-                  .Append("\",\"httpMethod\":\"").Append(EscapeJson(ep.HttpMethod))
-                  .Append("\",\"database\":\"").Append(EscapeJson(ep.Database))
-                  .Append("\",\"sqlQuery\":\"").Append(EscapeJson(ep.SqlQuery ?? ""))
-                  .Append("\",\"querySteps\":\"").Append(EscapeJson(ep.QuerySteps ?? ""))
-                  .Append("\",\"responseFormat\":\"").Append(EscapeJson(ep.ResponseFormat))
-                  .Append("\",\"contentType\":\"").Append(EscapeJson(ep.ContentType ?? ""))
-                  .Append("\",\"variables\":\"").Append(EscapeJson(ep.Variables ?? ""))
-                  .Append("\",\"enabled\":").Append(ep.Enabled ? "true" : "false")
-                  .Append("}");
+            var endpoints = GetApiEndpointList()
+                .Select(ep => new {
+                    id = ep.Id ?? "",
+                    name = ep.Name ?? "",
+                    route = ep.Route ?? "",
+                    httpMethod = ep.HttpMethod ?? "GET",
+                    database = ep.Database ?? "",
+                    sqlQuery = ep.SqlQuery ?? "",
+                    querySteps = ep.QuerySteps ?? "",
+                    responseFormat = ep.ResponseFormat ?? "",
+                    contentType = ep.ContentType ?? "",
+                    variables = ep.Variables ?? "",
+                    bodyType = string.IsNullOrWhiteSpace(ep.BodyType) ? "none" : ep.BodyType,
+                    bodySchema = ep.BodySchema ?? "",
+                    parameters = ep.Parameters ?? "",
+                    outputSchema = ep.OutputSchema ?? "",
+                    description = ep.Description ?? "",
+                    enabled = ep.Enabled,
+                    source = string.IsNullOrEmpty(ep.Source) ? "creator" : ep.Source,
+                    readOnly = ep.ReadOnly
+                })
+                .ToList();
+
+            return JsonSerializer.Serialize(new { endpoints });
+        }
+
+        private List<ApiEndpointDef> GetApiEndpointList() {
+            var endpoints = new List<ApiEndpointDef>();
+            var seenRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var ep in _apiEndpoints.Values
+                .OrderBy(e => e.Route, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(e => e.HttpMethod, StringComparer.OrdinalIgnoreCase)) {
+                ep.Source = "creator";
+                ep.ReadOnly = false;
+                endpoints.Add(ep);
+                seenRoutes.Add(ApiEndpointRouteKey(ep.HttpMethod, ep.Route));
             }
-            sb.Append("]}");
-            return sb.ToString();
+
+            foreach (var route in _server.GetMappedRoutes()) {
+                if (!IsRestApiMethod(route.Method) || IsAdminPanelRoute(route.Path))
+                    continue;
+
+                var routeKey = ApiEndpointRouteKey(route.Method, route.Path);
+                if (seenRoutes.Contains(routeKey))
+                    continue;
+
+                _apiRouteSettings.TryGetValue(routeKey, out var settings);
+                var ep = new ApiEndpointDef {
+                    Id = MappedEndpointId(route.Method, route.Path),
+                    Name = route.Method + " " + route.Path,
+                    Route = route.Path,
+                    HttpMethod = route.Method,
+                    Database = "",
+                    SqlQuery = "",
+                    QuerySteps = "",
+                    ResponseFormat = "handler",
+                    ContentType = "",
+                    Variables = route.InputVariables ?? "",
+                    BodyType = string.IsNullOrWhiteSpace(route.RequestBodyKind) ? "none" : route.RequestBodyKind,
+                    BodySchema = route.RequestBodySchema ?? "",
+                    Parameters = route.ParametersSchema ?? "",
+                    OutputSchema = route.ResponseSchema ?? "",
+                    Description = BuildMappedRouteDescription(route),
+                    Enabled = true,
+                    Source = "mapped",
+                    ReadOnly = true
+                };
+                ApplyApiMetadata(ep, settings);
+                endpoints.Add(ep);
+                seenRoutes.Add(routeKey);
+            }
+
+            return endpoints;
+        }
+
+        private static string BuildMappedRouteDescription(HttpMappedRoute route) {
+            if (route == null)
+                return "";
+            if (!string.IsNullOrWhiteSpace(route.HandlerSignature))
+                return "Runtime handler: " + route.HandlerSignature;
+            if (!string.IsNullOrWhiteSpace(route.HandlerType) || !string.IsNullOrWhiteSpace(route.HandlerName))
+                return "Runtime handler: " + ((route.HandlerType ?? "") + "." + (route.HandlerName ?? "")).Trim('.');
+            return "Mapped at runtime with HttpServer.Map.";
+        }
+        private static void ApplyApiMetadata(ApiEndpointDef target, ApiEndpointDef settings) {
+            if (target == null || settings == null)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(settings.Name)) target.Name = settings.Name;
+            target.Description = settings.Description ?? "";
+            target.Variables = settings.Variables ?? "";
+            target.BodyType = string.IsNullOrWhiteSpace(settings.BodyType) ? "none" : settings.BodyType;
+            target.BodySchema = settings.BodySchema ?? "";
+            target.Parameters = settings.Parameters ?? "";
+            target.OutputSchema = settings.OutputSchema ?? "";
+            target.ResponseFormat = string.IsNullOrWhiteSpace(settings.ResponseFormat) ? target.ResponseFormat : settings.ResponseFormat;
+            target.ContentType = settings.ContentType ?? "";
+        }
+
+        private static void AppendApiEndpointJson(StringBuilder sb, ApiEndpointDef ep) {
+            sb.Append(@"{""id"":""").Append(EscapeJson(ep.Id))
+              .Append(@""",""name"":""").Append(EscapeJson(ep.Name))
+              .Append(@""",""route"":""").Append(EscapeJson(ep.Route))
+              .Append(@""",""httpMethod"":""").Append(EscapeJson(ep.HttpMethod))
+              .Append(@""",""database"":""").Append(EscapeJson(ep.Database ?? ""))
+              .Append(@""",""sqlQuery"":""").Append(EscapeJson(ep.SqlQuery ?? ""))
+              .Append(@""",""querySteps"":""").Append(EscapeJson(ep.QuerySteps ?? ""))
+              .Append(@""",""responseFormat"":""").Append(EscapeJson(ep.ResponseFormat ?? ""))
+              .Append(@""",""contentType"":""").Append(EscapeJson(ep.ContentType ?? ""))
+              .Append(@""",""variables"":""").Append(EscapeJson(ep.Variables ?? ""))
+              .Append(@""",""bodyType"":""").Append(EscapeJson(ep.BodyType ?? "none"))
+              .Append(@""",""bodySchema"":""").Append(EscapeJson(ep.BodySchema ?? ""))
+              .Append(@""",""parameters"":""").Append(EscapeJson(ep.Parameters ?? ""))
+              .Append(@""",""outputSchema"":""").Append(EscapeJson(ep.OutputSchema ?? ""))
+              .Append(@""",""description"":""").Append(EscapeJson(ep.Description ?? ""))
+              .Append(@""",""enabled"":").Append(ep.Enabled ? "true" : "false")
+              .Append(@",""source"":""").Append(EscapeJson(string.IsNullOrEmpty(ep.Source) ? "creator" : ep.Source))
+              .Append(@""",""readOnly"":").Append(ep.ReadOnly ? "true" : "false")
+              .Append("}");
+        }
+
+        private bool IsAdminPanelRoute(string path) {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            var basePath = BasePath.TrimEnd('/');
+            if (string.IsNullOrEmpty(basePath))
+                basePath = "/";
+
+            if (path.Equals(basePath, StringComparison.OrdinalIgnoreCase)
+                || path.Equals(basePath + "/", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var adminSuffixes = new[] {
+                "/login",
+                "/logout",
+                "/api/databases",
+                "/api/tables",
+                "/api/columns",
+                "/api/rows",
+                "/api/query",
+                "/api/users",
+                "/api/sessions",
+                "/api/designer/create-table",
+                "/api/designer/drop-table",
+                "/api/designer/rename-table",
+                "/api/designer/save-schema",
+                "/api/designer/add-column",
+                "/api/designer/remove-column",
+                "/api/designer/update-column",
+                "/api/designer/insert-row",
+                "/api/designer/update-cell",
+                "/api/designer/delete-row",
+                "/api/designer/viewport",
+                "/api/endpoints/list",
+                "/api/endpoints/save",
+                "/api/endpoints/delete",
+                "/api/endpoints/test",
+                "/api/endpoints/settings/save",
+                "/api/qb/list-trees",
+                "/api/qb/load-tree",
+                "/api/qb/save-tree",
+                "/api/qb/delete-tree",
+                "/api/events/list",
+                "/api/events/save",
+                "/api/events/delete",
+                "/api/events/execute",
+                "/api/events/reflect"
+            };
+
+            return adminSuffixes.Any(suffix =>
+                path.Equals(AppendAdminRouteSuffix(basePath, suffix), StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string AppendAdminRouteSuffix(string basePath, string suffix) {
+            if (basePath == "/")
+                return suffix;
+            return basePath + suffix;
+        }
+
+        private static bool IsRestApiMethod(string method) {
+            if (string.IsNullOrWhiteSpace(method))
+                return false;
+
+            switch (method.ToUpperInvariant()) {
+                case "GET":
+                case "POST":
+                case "PUT":
+                case "PATCH":
+                case "DELETE":
+                case "HEAD":
+                case "OPTIONS":
+                case "TRACE":
+                case "CONNECT":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string ApiEndpointRouteKey(string method, string route) {
+            return (method ?? "GET").ToUpperInvariant() + " " + NormalizeApiEndpointRoute(route);
+        }
+
+        private static string NormalizeApiEndpointRoute(string route) {
+            if (string.IsNullOrWhiteSpace(route))
+                return "/";
+            var q = route.IndexOf('?');
+            if (q >= 0)
+                route = route.Substring(0, q);
+            if (!route.StartsWith("/"))
+                route = "/" + route;
+            if (route.Length > 1 && route.EndsWith("/", StringComparison.Ordinal))
+                route = route.Substring(0, route.Length - 1);
+            return route;
+        }
+
+        private static string MappedEndpointId(HttpMappedRoute route) {
+            return MappedEndpointId(route.Method, route.Path);
+        }
+
+        private static string MappedEndpointId(string method, string path) {
+            var raw = (method ?? "") + ":" + (path ?? "");
+            return "mapped-" + Convert.ToBase64String(Encoding.UTF8.GetBytes(raw))
+                .Replace("+", "-")
+                .Replace("/", "_")
+                .TrimEnd('=');
         }
 
         private object ApiEndpointsSave(HttpRequest req) {
@@ -2052,17 +2354,22 @@ namespace SocketJack.Net.Database {
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
 
             var body = req.Body ?? "";
-            var id = ExtractJsonString(body, "id");
-            var name = ExtractJsonString(body, "name");
-            var route = ExtractJsonString(body, "route");
-            var httpMethod = ExtractJsonString(body, "httpMethod") ?? "GET";
-            var database = ExtractJsonString(body, "database") ?? "db";
-            var sqlQuery = ExtractJsonString(body, "sqlQuery");
-            var querySteps = ExtractJsonString(body, "querySteps");
-            var responseFormat = ExtractJsonString(body, "responseFormat") ?? "json";
-            var contentType = ExtractJsonString(body, "contentType");
-            var variables = ExtractJsonString(body, "variables");
-            var enabledStr = ExtractJsonString(body, "enabled") ?? "true";
+            var id = ExtractJsonProperty(body, "id");
+            var name = ExtractJsonProperty(body, "name");
+            var route = ExtractJsonProperty(body, "route");
+            var httpMethod = ExtractJsonProperty(body, "httpMethod") ?? "GET";
+            var database = ExtractJsonProperty(body, "database") ?? "db";
+            var sqlQuery = ExtractJsonProperty(body, "sqlQuery");
+            var querySteps = ExtractJsonProperty(body, "querySteps");
+            var responseFormat = ExtractJsonProperty(body, "responseFormat") ?? "json";
+            var contentType = ExtractJsonProperty(body, "contentType");
+            var variables = ExtractJsonProperty(body, "variables");
+            var bodyType = ExtractJsonProperty(body, "bodyType") ?? "none";
+            var bodySchema = ExtractJsonProperty(body, "bodySchema");
+            var parameters = ExtractJsonProperty(body, "parameters");
+            var outputSchema = ExtractJsonProperty(body, "outputSchema");
+            var description = ExtractJsonProperty(body, "description");
+            var enabledStr = ExtractJsonProperty(body, "enabled") ?? "true";
 
             if (string.IsNullOrWhiteSpace(name)) return "{\"error\":\"Endpoint name is required.\"}";
             if (string.IsNullOrWhiteSpace(route)) return "{\"error\":\"Route path is required.\"}";
@@ -2092,6 +2399,13 @@ namespace SocketJack.Net.Database {
                 ResponseFormat = responseFormat,
                 ContentType = contentType,
                 Variables = variables,
+                BodyType = bodyType,
+                BodySchema = bodySchema,
+                Parameters = parameters,
+                OutputSchema = outputSchema,
+                Description = description,
+                Source = "creator",
+                ReadOnly = false,
                 Enabled = enabledStr.Equals("true", StringComparison.OrdinalIgnoreCase)
             };
 
@@ -2104,6 +2418,74 @@ namespace SocketJack.Net.Database {
 
             SaveApiEndpointsTable();
             return "{\"success\":true,\"id\":\"" + EscapeJson(id) + "\"}";
+        }
+
+        private object ApiEndpointSettingsSave(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return @"{""error"":""Not authenticated.""}"; }
+
+            var body = req.Body ?? "";
+            var id = ExtractJsonProperty(body, "id");
+            var route = ExtractJsonProperty(body, "route");
+            var httpMethod = (ExtractJsonProperty(body, "httpMethod") ?? "GET").ToUpperInvariant();
+            var name = ExtractJsonProperty(body, "name");
+            var description = ExtractJsonProperty(body, "description");
+            var variables = ExtractJsonProperty(body, "variables");
+            var bodyType = ExtractJsonProperty(body, "bodyType") ?? "none";
+            var bodySchema = ExtractJsonProperty(body, "bodySchema");
+            var parameters = ExtractJsonProperty(body, "parameters");
+            var outputSchema = ExtractJsonProperty(body, "outputSchema");
+            var responseFormat = ExtractJsonProperty(body, "responseFormat") ?? "handler";
+            var contentType = ExtractJsonProperty(body, "contentType");
+
+            ApiEndpointDef existingCreator = null;
+            if (!string.IsNullOrEmpty(id)) {
+                _apiEndpoints.TryGetValue(id, out existingCreator);
+            }
+
+            if (existingCreator != null) {
+                if (!string.IsNullOrWhiteSpace(name)) existingCreator.Name = name;
+                existingCreator.Description = description;
+                existingCreator.Variables = variables;
+                existingCreator.BodyType = bodyType;
+                existingCreator.BodySchema = bodySchema;
+                existingCreator.Parameters = parameters;
+                existingCreator.OutputSchema = outputSchema;
+                existingCreator.ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? existingCreator.ResponseFormat : responseFormat;
+                existingCreator.ContentType = contentType;
+                SaveApiEndpointsTable();
+                return "{\"success\":true,\"id\":\"" + EscapeJson(existingCreator.Id) + "\",\"source\":\"creator\"}";
+            }
+
+            if (string.IsNullOrWhiteSpace(route)) return @"{""error"":""Route path is required.""}";
+            route = NormalizeApiEndpointRoute(route);
+            if (string.IsNullOrEmpty(id)) id = MappedEndpointId(httpMethod, route);
+
+            var setting = new ApiEndpointDef {
+                Id = id,
+                Name = name,
+                Route = route,
+                HttpMethod = httpMethod,
+                Database = "",
+                SqlQuery = "",
+                QuerySteps = "",
+                ResponseFormat = responseFormat,
+                ContentType = contentType,
+                Variables = variables,
+                BodyType = bodyType,
+                BodySchema = bodySchema,
+                Parameters = parameters,
+                OutputSchema = outputSchema,
+                Description = description,
+                Enabled = true,
+                Source = "mapped",
+                ReadOnly = true
+            };
+
+            _apiRouteSettings[ApiEndpointRouteKey(httpMethod, route)] = setting;
+            SaveApiRouteSettingsTable();
+            return "{\"success\":true,\"id\":\"" + EscapeJson(id) + "\",\"source\":\"mapped\"}";
         }
 
         private object ApiEndpointsDelete(HttpRequest req) {
@@ -3292,6 +3674,34 @@ namespace SocketJack.Net.Database {
 
         #region JSON Helpers
 
+        private static string ExtractJsonProperty(string json, string key) {
+            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key)) return null;
+            try {
+                using (var document = JsonDocument.Parse(json)) {
+                    if (document.RootElement.ValueKind != JsonValueKind.Object)
+                        return null;
+                    if (!document.RootElement.TryGetProperty(key, out var value))
+                        return null;
+
+                    switch (value.ValueKind) {
+                        case JsonValueKind.String:
+                            return value.GetString();
+                        case JsonValueKind.True:
+                            return "true";
+                        case JsonValueKind.False:
+                            return "false";
+                        case JsonValueKind.Null:
+                        case JsonValueKind.Undefined:
+                            return null;
+                        default:
+                            return value.GetRawText();
+                    }
+                }
+            } catch {
+                return ExtractJsonString(json, key);
+            }
+        }
+
         private static string ExtractJsonString(string json, string key) {
             if (string.IsNullOrEmpty(json)) return null;
             var search = "\"" + key + "\"";
@@ -3328,7 +3738,25 @@ namespace SocketJack.Net.Database {
 
         private static string EscapeJson(string s) {
             if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
+            var sb = new StringBuilder(s.Length + 8);
+            foreach (var c in s) {
+                switch (c) {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < ' ')
+                            sb.Append("\\u").Append(((int)c).ToString("x4"));
+                        else
+                            sb.Append(c);
+                        break;
+                }
+            }
+            return sb.ToString();
         }
 
         #endregion

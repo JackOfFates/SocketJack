@@ -10,13 +10,12 @@ Imports SocketJack.Net.P2P
 Public Class HttpServerTest
     Implements ITest
 
-    Private ServerPort As Integer = 11434
-    Public WithEvents Server As New LmVsProxy("localhost", 11435, 11434)
+    Private ServerPort As Integer = 11434, ChatServerPort As Integer = 11436, LocalLmStudioProxyPort As Integer = 11435
+    Public WithEvents Server As New SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort)
     'Public WithEvents Server As HttpServer
     Private _broadcast As BroadcastServer
     Private _statsTimer As DispatcherTimer
     Private _remoteLmStudioProxy As TcpDuplicator
-    Private Const LocalLmStudioProxyPort As Integer = 11435
 
 
     Public Sub New()
@@ -25,7 +24,7 @@ Public Class HttpServerTest
         InitializeComponent()
 
         ' Add any initialization after the InitializeComponent() call.
-        Server = New LmVsProxy("localhost", 11435, 11434)
+        Server = New SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort)
         Server.PromptTimeout = TimeSpan.FromMinutes(30)
         AddHandler Server.OutputLog, AddressOf OnServerLog
         NIC.ForwardPort(ServerPort).ConfigureAwait(True)
@@ -198,7 +197,9 @@ Public Class HttpServerTest
                 Log("VS proxy endpoint: http://localhost:" & ServerPort & "/v1/chat/completions")
                 Log("Chat UI available at: " & Server.ChatServerUrl)
                 Log("LM Studio prompt timeout: " & Server.PromptTimeout.TotalMinutes.ToString("0") & " minutes")
-                Process.Start(Server.ChatServerUrl)
+                Process.Start(New ProcessStartInfo(Server.ChatServerUrl) With {
+                    .UseShellExecute = True
+                })
             Catch ex As Exception
                 Log("Chat UI start error: " & ex.Message)
             End Try
@@ -383,7 +384,7 @@ Public Class HttpServerTest
         Catch : End Try
     End Sub
 
-    Private Sub OnServerLog(sender As Object, e As SocketJack.Net.OutputLogEventArgs)
+    Private Sub OnServerLog(sender As Object, e As LmVs.OutputLogEventArgs)
         Log(e.Message)
     End Sub
 
@@ -396,9 +397,9 @@ Public Class HttpServerTest
     End Sub
 
     Public Async Function Forward() As Task(Of Boolean)
-        Dim forwarded As Boolean = Await NIC.ForwardPorts(New Integer() {80, 11434, 11435, 11436})
+        Dim forwarded As Boolean = Await NIC.ForwardPorts(New Integer() {80, ServerPort, LocalLmStudioProxyPort, ChatServerPort})
         If forwarded Then
-            Log("Ports 80, 11434, 11435, & 11436 forwarded successfully via UPnP." & Environment.NewLine)
+            Log("Ports 80, " & ServerPort & ", " & LocalLmStudioProxyPort & ", & " & ChatServerPort & " forwarded successfully via UPnP." & Environment.NewLine)
         Else
             Log("Port forwarding via UPnP failed or not available." & Environment.NewLine)
         End If
