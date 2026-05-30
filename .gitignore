@@ -386,8 +386,8 @@ log_sess*.txt
 **/[Aa]udit/*.jsonl
 
 # Local LLM model payloads and generated runtimes
-[Mm]odels/
-**/[Mm]odels/
+/[Mm]odels/
+/CompleteModels/
 *.gguf
 *.gguf.partial
 *.safetensors
