@@ -40,12 +40,6 @@ jobs:
     - name: "Publish Linux JackLLM Workstation"
       run: dotnet publish ./JackLLM.Workstation/JackLLM.Workstation.csproj --configuration Release --runtime linux-x64 --self-contained false -p:NoWarn=true
 
-    - name: "Restore WPF sample app"
-      run: dotnet restore ./SocketJack.WpfBasicGame/SocketJack.WpfBasicGame.csproj
-
-    - name: "Build WPF sample app"
-      run: dotnet build ./SocketJack.WpfBasicGame/SocketJack.WpfBasicGame.csproj --configuration Release --no-restore -p:NoWarn=true
-
  deploy:
     name: "Deploy"
     runs-on: windows-latest
@@ -76,6 +70,12 @@ jobs:
 
     - name: "Build WPF"
       run: dotnet build ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-restore -p:NoWarn=true
+
+    - name: "Restore WPF sample app"
+      run: dotnet restore ./SocketJack.WpfBasicGame/SocketJack.WpfBasicGame.csproj
+
+    - name: "Build WPF sample app"
+      run: dotnet build ./SocketJack.WpfBasicGame/SocketJack.WpfBasicGame.csproj --configuration Release --no-restore -p:NoWarn=true
 
     - name: "Pack WPF Project"
       run: dotnet pack ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-build --include-symbols -o ./nupkg/SocketJack.WPF
