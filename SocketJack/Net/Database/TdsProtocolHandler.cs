@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.IO;
@@ -56,7 +56,7 @@ namespace SocketJack.Net.Database {
         /// Use this when the handler is registered on a <see cref="MutableTcpServer"/>.
         /// </summary>
         public TdsProtocolHandler() {
-            _dataServer = new DataServer("DataServer", hosted: true);
+            _dataServer = new DataServer("DataServer", hosted: true, loadFromDisk: false);
         }
 
         /// <summary>
@@ -93,7 +93,7 @@ namespace SocketJack.Net.Database {
             if (_dataServer.Sessions.TryGetValue(connection.ID, out var existingSession) && existingSession.IsTlsActive)
                 return;
 
-            // Detect first data — create session
+            // Detect first data â€” create session
             bool isNew = !_buffers.ContainsKey(connection.ID);
             if (isNew) {
                 connection._Protocol = TcpProtocol.Tds;
@@ -122,7 +122,7 @@ namespace SocketJack.Net.Database {
             if (_dataServer.Sessions.TryRemove(connection.ID, out var session)) {
                 // Signal the wrapper to stop feeding data so that any blocked
                 // SslStream.Read returns promptly.  Do NOT dispose the TlsStream
-                // here — RunTdsReadLoop may still be reading from it on another
+                // here â€” RunTdsReadLoop may still be reading from it on another
                 // thread.  The read loop will detect connection.Closed and exit,
                 // and the post-loop cleanup (or GC) handles disposal.
                 session.WrapperStream?.FeedClose();
@@ -160,7 +160,7 @@ namespace SocketJack.Net.Database {
                     continue;
                 }
 
-                // EOM packet — combine with any buffered data from earlier packets
+                // EOM packet â€” combine with any buffered data from earlier packets
                 if (_multiPacketBuffer != null && _multiPacketBuffer.TryGetValue(connection.ID, out var pending)) {
                     pending.data.AddRange(data);
                     data = pending.data.ToArray();
@@ -202,7 +202,7 @@ namespace SocketJack.Net.Database {
                     SendDone(connection, 0x0020, 0, 0); // DONE_ATTN = 0x0020
                     break;
                 default:
-                    // Unknown packet types — just send DONE to avoid hanging.
+                    // Unknown packet types â€” just send DONE to avoid hanging.
                     SendDone(connection, 0, 0, 0);
                     break;
             }
@@ -233,13 +233,13 @@ namespace SocketJack.Net.Database {
             //   ENCRYPT_REQ   (0x03): Server requires full encryption.
             //
             // Use the server's configured EncryptionMode.  Default is ENCRYPT_OFF
-            // which encrypts only the login phase then reverts to plaintext —
+            // which encrypts only the login phase then reverts to plaintext â€”
             // matching what most SQL clients request with Encrypt=Optional.
             // If the client requests ENCRYPT_ON or ENCRYPT_REQ, honor it.
             byte serverMode = _dataServer.EncryptionMode;
             byte negotiated;
             if (clientEncryption == 0x01 || clientEncryption == 0x03) {
-                // Client wants full encryption — comply.
+                // Client wants full encryption â€” comply.
                 negotiated = 0x01;
             } else {
                 negotiated = serverMode;
@@ -253,30 +253,30 @@ namespace SocketJack.Net.Database {
             //   ENCRYPTION data: offset 32, length 1
             //   INSTOPT data: offset 33, length 1  (0x00 = default instance)
             //   THREADID data: offset 34, length 4  (0x00000000)
-            //   MARS option (token 0x04) — offset 38, length 1
+            //   MARS option (token 0x04) â€” offset 38, length 1
             using (var ms = new MemoryStream()) {
                 using (var writer = new BinaryWriter(ms)) {
-                    // VERSION option (token 0x00) — offset 26, length 6
+                    // VERSION option (token 0x00) â€” offset 26, length 6
                     writer.Write((byte)0x00);
                     writer.Write((byte)0x00); writer.Write((byte)0x1A); // offset = 26
                     writer.Write((byte)0x00); writer.Write((byte)0x06); // length = 6
 
-                    // ENCRYPTION option (token 0x01) — offset 32, length 1
+                    // ENCRYPTION option (token 0x01) â€” offset 32, length 1
                     writer.Write((byte)0x01);
                     writer.Write((byte)0x00); writer.Write((byte)0x20); // offset = 32
                     writer.Write((byte)0x00); writer.Write((byte)0x01); // length = 1
 
-                    // INSTOPT option (token 0x02) — offset 33, length 1
+                    // INSTOPT option (token 0x02) â€” offset 33, length 1
                     writer.Write((byte)0x02);
                     writer.Write((byte)0x00); writer.Write((byte)0x21); // offset = 33
                     writer.Write((byte)0x00); writer.Write((byte)0x01); // length = 1
 
-                    // THREADID option (token 0x03) — offset 34, length 4
+                    // THREADID option (token 0x03) â€” offset 34, length 4
                     writer.Write((byte)0x03);
                     writer.Write((byte)0x00); writer.Write((byte)0x22); // offset = 34
                     writer.Write((byte)0x00); writer.Write((byte)0x04); // length = 4
 
-                    // MARS option (token 0x04) — offset 38, length 1
+                    // MARS option (token 0x04) â€” offset 38, length 1
                     writer.Write((byte)0x04);
                     writer.Write((byte)0x00); writer.Write((byte)0x26); // offset = 38
                     writer.Write((byte)0x00); writer.Write((byte)0x01); // length = 1
@@ -291,16 +291,16 @@ namespace SocketJack.Net.Database {
                     writer.Write((byte)(4025 & 0xFF));       // Build low byte
                     writer.Write((byte)0); writer.Write((byte)3); // Sub-build
 
-                    // ENCRYPTION data (1 byte) — the negotiated value
+                    // ENCRYPTION data (1 byte) â€” the negotiated value
                     writer.Write(negotiated);
 
-                    // INSTOPT data (1 byte) — 0x00 = default instance (null-terminated empty string)
+                    // INSTOPT data (1 byte) â€” 0x00 = default instance (null-terminated empty string)
                     writer.Write((byte)0x00);
 
-                    // THREADID data (4 bytes) — server thread ID (0 = not applicable)
+                    // THREADID data (4 bytes) â€” server thread ID (0 = not applicable)
                     writer.Write((uint)0);
 
-                    // MARS data (1 byte) — 0x00 = MARS not supported
+                    // MARS data (1 byte) â€” 0x00 = MARS not supported
                     writer.Write((byte)0x00);
 
                     SendTdsPacket(connection, session, 0x04, ms.ToArray());
@@ -323,7 +323,7 @@ namespace SocketJack.Net.Database {
 
                 // In MutableTcpServer mode, enter the blocking read loop that
                 // owns the stream until the session ends.  In standalone mode
-                // (RunTdsLoop), just return — the caller handles TLS I/O and
+                // (RunTdsLoop), just return â€” the caller handles TLS I/O and
                 // feeder startup.
                 if (_buffers.ContainsKey(connection.ID)) {
                     RunTdsReadLoop(connection, session);
@@ -364,7 +364,7 @@ namespace SocketJack.Net.Database {
             // Suppress the connection-test poll BEFORE the TLS handshake.
             // AuthenticateAsServer performs multiple round-trips during which
             // SslStream reads ahead from the raw socket, making Socket.Available
-            // return 0 — the poll loop would accumulate failures and close the
+            // return 0 â€” the poll loop would accumulate failures and close the
             // connection before the handshake completes.
             connection.SuppressConnectionTest = true;
 
@@ -600,7 +600,7 @@ namespace SocketJack.Net.Database {
 
                     HandleTdsPacket(connection, session, packetType, data);
                 }
-            } catch (Exception ex) {
+            } catch (Exception) {
                 // Last-resort catch: check for ENCRYPT_OFF transition even here,
                 // in case an unexpected exception type propagated from SslStream.
                 if (feederActive && session.PlaintextLeftover != null) {
@@ -699,6 +699,12 @@ namespace SocketJack.Net.Database {
             return buffer;
         }
 
+        private static string ExtractTdsClientIp(NetworkConnection connection) {
+            try {
+                return DataServer.NormalizeSqlLoginIpAddress(connection?.EndPoint?.Address?.ToString());
+            } catch { }
+            return "";
+        }
         private void ProcessLogin(NetworkConnection connection, SqlSession session, byte[] data) {
             try {
                 string username = ExtractLoginUsername(data);
@@ -713,7 +719,9 @@ namespace SocketJack.Net.Database {
                     session.ClientTdsVersion = tdsVer;
                 }
 
-                bool authenticated = _dataServer.Authenticate(username, password);
+                string clientIp = ExtractTdsClientIp(connection);
+                bool ipAllowed = _dataServer.IsSqlLoginIpAllowed(clientIp);
+                bool authenticated = ipAllowed && _dataServer.Authenticate(username, password);
 
                 if (authenticated) {
                     session.Username = username;
@@ -735,9 +743,9 @@ namespace SocketJack.Net.Database {
                     List<byte> clientFeatureIds = new List<byte>();
                     if (hasFeatureExt) {
                         // Per [MS-TDS] 2.2.6.3 Login7, the fixed portion is 94 bytes.
-                        // ibExtension is at offset 56 (USHORT) — byte offset within the
+                        // ibExtension is at offset 56 (USHORT) â€” byte offset within the
                         // Login7 packet to the Extension area.  The first DWORD at that
-                        // position is ibFeatureExtLong — the byte offset from the start
+                        // position is ibFeatureExtLong â€” the byte offset from the start
                         // of the Login7 packet to the FeatureExt option list.
                         if (data.Length >= 94) {
                             ushort ibExtension = BitConverter.ToUInt16(data, 56);
@@ -780,7 +788,7 @@ namespace SocketJack.Net.Database {
                             WriteInfoToken(combinedWriter, connection, 5701, 2, "Changed database context to '" + session.CurrentDatabase + "'.");
                             WriteInfoToken(combinedWriter, connection, 5703, 1, "Changed language setting to us_english.");
 
-                            // FEATUREEXTACK (0xAE) — only if the client sent FeatureExt data.
+                            // FEATUREEXTACK (0xAE) â€” only if the client sent FeatureExt data.
                             // Per [MS-TDS], the server MUST send this when OptionFlags3.fExtension is set
                             // and MUST NOT send it otherwise.
                             //
@@ -790,58 +798,58 @@ namespace SocketJack.Net.Database {
                             // recognizes, with correct per-feature data formats.
                             //
                             // Feature requirements (from SqlClient source):
-                            //   0x01 SRECOVERY       — only if _sessionRecoveryRequested (skip otherwise)
-                            //   0x04 TCE             — DataLen>=1, Data[0]=version (1-3, NOT 0)
-                            //   0x05 GLOBALTRANSACTIONS — DataLen>=1, Data[0]=0x00 or 0x01
-                            //   0x09 DATACLASSIFICATION — DataLen==2, Data[0]=version, Data[1]=enabled
-                            //   0x0A UTF8SUPPORT     — DataLen>=1
-                            //   0x0B SQLDNSCACHING   — DataLen>=1, Data[0]=0x00 or 0x01
-                            //   0x0D JSONSUPPORT     — DataLen==1, Data[0]=version (1+)
-                            //   0x0E VECTORSUPPORT   — DataLen==1, Data[0]=version (1+)
-                            //   default              — THROWS fatal error
+                            //   0x01 SRECOVERY       â€” only if _sessionRecoveryRequested (skip otherwise)
+                            //   0x04 TCE             â€” DataLen>=1, Data[0]=version (1-3, NOT 0)
+                            //   0x05 GLOBALTRANSACTIONS â€” DataLen>=1, Data[0]=0x00 or 0x01
+                            //   0x09 DATACLASSIFICATION â€” DataLen==2, Data[0]=version, Data[1]=enabled
+                            //   0x0A UTF8SUPPORT     â€” DataLen>=1
+                            //   0x0B SQLDNSCACHING   â€” DataLen>=1, Data[0]=0x00 or 0x01
+                            //   0x0D JSONSUPPORT     â€” DataLen==1, Data[0]=version (1+)
+                            //   0x0E VECTORSUPPORT   â€” DataLen==1, Data[0]=version (1+)
+                            //   default              â€” THROWS fatal error
                             if (hasFeatureExt) {
                                 combinedWriter.Write((byte)0xAE);
 
                                 foreach (byte featureId in clientFeatureIds) {
                                     switch (featureId) {
-                                        case 0x02: // FEDAUTH (Federated Authentication) — skip
+                                        case 0x02: // FEDAUTH (Federated Authentication) â€” skip
                                             // Skip: server doesn't support federated auth
                                             break;
-                                        case 0x04: // TCE (ColumnEncryption) — version 1
+                                        case 0x04: // TCE (ColumnEncryption) â€” version 1
                                             combinedWriter.Write(featureId);
                                             combinedWriter.Write((uint)1);
                                             combinedWriter.Write((byte)0x01);
                                             break;
-                                        case 0x05: // GlobalTransactions — not enabled
+                                        case 0x05: // GlobalTransactions â€” not enabled
                                             combinedWriter.Write(featureId);
                                             combinedWriter.Write((uint)1);
                                             combinedWriter.Write((byte)0x00);
                                             break;
-                                        case 0x08: // AZURESQLSUPPORT — skip (not Azure)
+                                        case 0x08: // AZURESQLSUPPORT â€” skip (not Azure)
                                             break;
-                                        case 0x09: // DataClassification — version 1, not enabled
+                                        case 0x09: // DataClassification â€” version 1, not enabled
                                             combinedWriter.Write(featureId);
                                             combinedWriter.Write((uint)2);
                                             combinedWriter.Write((byte)0x01); // version
                                             combinedWriter.Write((byte)0x00); // not enabled
                                             break;
-                                        case 0x0A: // UTF8Support — not supported
+                                        case 0x0A: // UTF8Support â€” not supported
                                             combinedWriter.Write(featureId);
                                             combinedWriter.Write((uint)1);
                                             combinedWriter.Write((byte)0x00);
                                             break;
-                                        case 0x0B: // SqlDNSCaching — not supported
+                                        case 0x0B: // SqlDNSCaching â€” not supported
                                             combinedWriter.Write(featureId);
                                             combinedWriter.Write((uint)1);
                                             combinedWriter.Write((byte)0x00);
                                             break;
                                         // Skip features we cannot safely acknowledge:
-                                        //   0x01 SRECOVERY — throws if client didn't request it
-                                        //   0x0D JSONSUPPORT — version must be 1+, skip to avoid issues
-                                        //   0x0E VECTORSUPPORT — version must be 1+, skip to avoid issues
-                                        //   0x0F ENHANCEDROUTINGSUPPORT — skip
-                                        //   0x10 USERAGENT — safe to skip
-                                        //   unknown IDs — MUST skip (default throws in SqlClient)
+                                        //   0x01 SRECOVERY â€” throws if client didn't request it
+                                        //   0x0D JSONSUPPORT â€” version must be 1+, skip to avoid issues
+                                        //   0x0E VECTORSUPPORT â€” version must be 1+, skip to avoid issues
+                                        //   0x0F ENHANCEDROUTINGSUPPORT â€” skip
+                                        //   0x10 USERAGENT â€” safe to skip
+                                        //   unknown IDs â€” MUST skip (default throws in SqlClient)
                                         default:
                                             break;
                                     }
@@ -861,9 +869,9 @@ namespace SocketJack.Net.Database {
                         // Send first, THEN clear IsTlsActive.
                         SendTdsPacket(connection, session, 0x04, loginResponseData);
 
-                        // ENCRYPT_OFF teardown — now that the login response has
+                        // ENCRYPT_OFF teardown â€” now that the login response has
                         // been sent over TLS, clear IsTlsActive so subsequent
-                        // packets go over plaintext.  Do NOT dispose SslStream —
+                        // packets go over plaintext.  Do NOT dispose SslStream â€”
                         // that would send a TLS close_notify alert and confuse
                         // the client.
                         if (session.NegotiatedEncryption == 0x00 && session.IsTlsActive) {
@@ -874,12 +882,15 @@ namespace SocketJack.Net.Database {
                         }
                     }
                 } else {
-                    _dataServer.LogFormat("[{0}] Login failed for user '{1}'",
-                        new[] { _dataServer.Name, username });
+                    string failureMessage = ipAllowed
+                        ? "Login failed for user '" + username + "'."
+                        : "SQL login from this IP address is not allowed.";
+                    _dataServer.LogFormat("[{0}] {1} User='{2}' ClientIp='{3}'",
+                        new[] { _dataServer.Name, failureMessage, username, clientIp });
 
                     // Per [MS-TDS] 2.2.6.5, the error response MUST be sent
                     // over TLS even for ENCRYPT_OFF.  Tear down after sending.
-                    SendErrorResponse(connection, session, 18456, "Login failed for user '" + username + "'.");
+                    SendErrorResponse(connection, session, 18456, failureMessage);
 
                     if (session.NegotiatedEncryption == 0x00 && session.IsTlsActive) {
                         session.IsTlsActive = false;
@@ -956,7 +967,7 @@ namespace SocketJack.Net.Database {
         /// <summary>
         /// Returns <see langword="true"/> if the SQL batch contains the given
         /// statement keyword at a line/statement boundary (not inside a string).
-        /// This is a simple heuristic — it looks for the keyword at the start of
+        /// This is a simple heuristic â€” it looks for the keyword at the start of
         /// any line or after a semicolon.
         /// </summary>
         private static bool ContainsStatement(string sql, string keyword) {
@@ -1021,7 +1032,7 @@ namespace SocketJack.Net.Database {
         /// <summary>
         /// Handles TDS RPC requests (packet type 0x03).
         /// SSMS uses RPC for sp_executesql, sp_prepexec, and similar calls.
-        /// The RPC payload format differs from SQL batch — it starts with
+        /// The RPC payload format differs from SQL batch â€” it starts with
         /// ALL_HEADERS, then a procedure name or ID, followed by parameters.
         /// </summary>
         private void ProcessRpc(NetworkConnection connection, SqlSession session, byte[] data) {
@@ -1061,7 +1072,7 @@ namespace SocketJack.Net.Database {
                 }
 
                 // Try to extract the SQL text from sp_executesql (procId=10) or
-                // sp_prepexec (procId=13) — the first NTEXT/NVARCHAR parameter
+                // sp_prepexec (procId=13) â€” the first NTEXT/NVARCHAR parameter
                 // contains the actual SQL statement.
                 string sql = null;
                 if (rpcProcId == 10 || rpcProcId == 13 || 
@@ -1162,7 +1173,7 @@ namespace SocketJack.Net.Database {
                     writer.Write(tokenLength);
 
                     writer.Write((byte)0x01);
-                    // TDS version — written as big-endian per [MS-TDS] 2.2.7.13.
+                    // TDS version â€” written as big-endian per [MS-TDS] 2.2.7.13.
                     // Echo the client's version so the handshake matches.
                     uint tdsVer = session.ClientTdsVersion;
                     writer.Write((byte)((tdsVer >> 24) & 0xFF));
@@ -1356,7 +1367,7 @@ namespace SocketJack.Net.Database {
         /// <summary>
         /// Sends multiple result sets in a single TDS message (single EOM packet).
         /// For each result set, writes COLMETADATA + ROW(s) followed by
-        /// DONE (0xFD) with DONE_MORE — except the last which gets DONE (0xFD) without DONE_MORE.
+        /// DONE (0xFD) with DONE_MORE â€” except the last which gets DONE (0xFD) without DONE_MORE.
         /// Per [MS-TDS], SQL batch results use DONE (0xFD); DONEINPROC (0xFF) is only for stored procedures.
         /// </summary>
         private void SendMultiResultSet(NetworkConnection connection, List<QueryResult> results) {
@@ -1391,7 +1402,7 @@ namespace SocketJack.Net.Database {
 
         /// <summary>
         /// Writes COLMETADATA + ROW tokens for a single result set to a BinaryWriter.
-        /// Does NOT write a DONE token — the caller is responsible for that.
+        /// Does NOT write a DONE token â€” the caller is responsible for that.
         /// </summary>
         private void WriteResultSetTokens(BinaryWriter writer, QueryResult result) {
             // --- COLMETADATA token (0x81) ---

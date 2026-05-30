@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="html\*.html" />
     <None Remove="WebSocketClient.ts" />
   </ItemGroup>
 
@@ -25,6 +26,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="html\*.html">
+      <LogicalName>WebSocketTestApplication.Html.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <TypeScriptCompile Include="WebSocketClient.ts" />
   </ItemGroup>
 

@@ -1,0 +1,21 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputName>JackLLM-Setup</OutputName>
+    <OutputType>Package</OutputType>
+    <IsPackable>false</IsPackable>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.5</ProductVersion>
+    <PayloadDir Condition="'$(PayloadDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\JackLLM\publish</PayloadDir>
+    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
+  </ItemGroup>
+  <Target Name="PublishJackLLMPayload" BeforeTargets="BeforeBuild">
+    <RemoveDir Directories="$(PayloadDir)" Condition="Exists('$(PayloadDir)')" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\JackLLM\JackLLM.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\JackLLMUpdater\JackLLMUpdater.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\JackLLMCompanion\JackLLMCompanion.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+  </Target>
+</Project>

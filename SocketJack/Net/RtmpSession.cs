@@ -44,7 +44,7 @@ namespace SocketJack.Net {
         internal Action<string, string> OnPublishStart;
 
         /// <summary>Fired when media data arrives. Args: messageTypeId (8=audio, 9=video, 18=data), payload.</summary>
-        internal Action<byte, byte[]> OnMediaData;
+        internal Action<byte, byte[]> OnMediaData = delegate { };
 
         /// <summary>Fired when the publish session ends.</summary>
         internal Action OnPublishStop;

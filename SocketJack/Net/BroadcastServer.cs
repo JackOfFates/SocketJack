@@ -370,6 +370,18 @@ namespace SocketJack.Net {
             _server.MapRtmpPublish("*", HandleRtmpPublish);
         }
 
+        /// <summary>
+        /// Registers ingest-only routes on an additional plaintext RTMP server while
+        /// keeping all stream state, viewers, recordings, and keys on this instance.
+        /// </summary>
+        public void RegisterRtmpIngest(MutableTcpServer server) {
+            if (server == null) throw new ArgumentNullException(nameof(server));
+
+            server.Http.MapUploadStream("PUT", "/stream/upload", HandleOBSUploadMutable);
+            server.Http.MapUploadStream("POST", "/stream/upload", HandleOBSUploadMutable);
+            server.MapRtmpPublish("*", HandleRtmpPublish);
+        }
+
         private void RegisterMutable() {
             var http = _mutableServer.Http;
 

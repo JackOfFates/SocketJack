@@ -184,6 +184,8 @@ namespace SocketJack.Net {
         /// </summary>
         public const int MaxDatagramSize = 65507;
 
+        internal SocketJackPatternCache PatternCache { get; } = new SocketJackPatternCache();
+
         #endregion
 
         #region Internal

@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <TargetFrameworks>net8.0-windows7.0;net10.0-windows7.0</TargetFrameworks>
 
     <SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
     <OutputType>Library</OutputType>
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
     <RootNamespace>SocketJack</RootNamespace>
     <AssemblyName>SocketJack.WPF</AssemblyName>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -12,6 +13,7 @@
     <ImportWindowsDesktopTargets>True</ImportWindowsDesktopTargets>
     <DefaultItemExcludes>$(DefaultItemExcludes);$(ProjectDir)**\*.vb</DefaultItemExcludes>
     <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
    <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -25,16 +27,16 @@
   <PropertyGroup>
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
-    <Copyright>Copyright © JackOfFates 2025</Copyright>
-    <AssemblyVersion>2.0.0</AssemblyVersion>
-    <FileVersion>2.0.0</FileVersion>
+    <Copyright>Copyright © JackOfFates 2026</Copyright>
+    <AssemblyVersion>2026.0</AssemblyVersion>
+    <FileVersion>2026.0</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
-    <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
+    <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. LLM. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>2.0.0</Version>
+    <Version>2026.0</Version>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
@@ -271,14 +273,22 @@
     <WarningLevel>0</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="artifacts\**" />
+    <EmbeddedResource Remove="artifacts\**" />
+    <None Remove="artifacts\**" />
+    <Page Remove="artifacts\**" />
+  </ItemGroup>
+  <ItemGroup>
     <None Remove="runtimeconfig.template.json" />
     <None Remove="Readme.md" />
     <None Remove="SocketJackWpfIcon.png" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\SocketJack\Com\SocketJackComClient.cs" Link="Com\SocketJackComClient.cs" />
     <Compile Include="..\SocketJack\Compression\DeflateCompression.cs" Link="Compression\DeflateCompression.cs" />
     <Compile Include="..\SocketJack\Compression\GZip2Compression.cs" Link="Compression\GZip2Compression.cs" />
     <Compile Include="..\SocketJack\Compression\ICompression.cs" Link="Compression\ICompression.cs" />
+    <Compile Include="..\SocketJack\HtmlPageResources.cs" Link="HtmlPageResources.cs" />
     <Compile Include="..\SocketJack\Extensions\ArrayExtensions.cs" Link="Extensions\ArrayExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\ByteExtensions.cs" Link="Extensions\ByteExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\ConcurrentBagExtensions.cs" Link="Extensions\ConcurrentBagExtensions.cs" />
@@ -295,10 +305,12 @@
     <Compile Include="..\SocketJack\Net\Database\ColumnSnapshot.cs" Link="Net\Database\ColumnSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\ConcatenatedStream.cs" Link="Net\Database\ConcatenatedStream.cs" />
     <Compile Include="..\SocketJack\Net\Database\Database.cs" Link="Net\Database\Database.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DatabaseCacheOptimizer.cs" Link="Net\Database\DatabaseCacheOptimizer.cs" />
     <Compile Include="..\SocketJack\Net\Database\DatabaseSnapshot.cs" Link="Net\Database\DatabaseSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataClient.cs" Link="Net\Database\DataClient.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataServer.cs" Link="Net\Database\DataServer.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataServerExample.cs" Link="Net\Database\DataServerExample.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DataServerStorageManifest.cs" Link="Net\Database\DataServerStorageManifest.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataServerSnapshot.cs" Link="Net\Database\DataServerSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\DbContextGenerator.cs" Link="Net\Database\DbContextGenerator.cs" />
     <Compile Include="..\SocketJack\Net\Database\DbContextGeneratorTool.cs" Link="Net\Database\DbContextGeneratorTool.cs" />
@@ -309,6 +321,8 @@
     <Compile Include="..\SocketJack\Net\Database\TableSnapshot.cs" Link="Net\Database\TableSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\TdsProtocolHandler.cs" Link="Net\Database\TdsProtocolHandler.cs" />
     <Compile Include="..\SocketJack\Net\Database\TdsWrapperStream.cs" Link="Net\Database\TdsWrapperStream.cs" />
+    <Compile Include="..\SocketJack\Net\DirectoryHashMetadata.cs" Link="Net\DirectoryHashMetadata.cs" />
+    <Compile Include="..\SocketJack\Net\EndpointSecurity.cs" Link="Net\EndpointSecurity.cs" />
     <Compile Include="..\SocketJack\Net\EventArguments.cs" Link="Net\EventArguments.cs" />
     <Compile Include="..\SocketJack\Net\FtpSftp.cs" Link="Net\FtpSftp.cs" />
     <Compile Include="..\SocketJack\Net\HtAccessBuilder.cs" Link="Net\HtAccessBuilder.cs" />
@@ -316,19 +330,12 @@
     <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
     <Compile Include="..\SocketJack\Net\HttpServer.cs" Link="Net\HttpServer.cs" />
     <Compile Include="..\SocketJack\Net\ISocket.cs" Link="Net\ISocket.cs" />
-    <Compile Include="..\SocketJack\LmVs\ChatUiResources.cs" Link="LmVs\ChatUiResources.cs" />
-    <Compile Include="..\SocketJack\LmVs\DiagnosticsModels.cs" Link="LmVs\DiagnosticsModels.cs" />
-    <Compile Include="..\SocketJack\LmVs\InternalModels.cs" Link="LmVs\InternalModels.cs" />
-    <Compile Include="..\SocketJack\LmVs\RemoteControl.cs" Link="LmVs\RemoteControl.cs" />
-    <Compile Include="..\SocketJack\LmVs\SafeAhoCorasickSearchIndex.cs" Link="LmVs\SafeAhoCorasickSearchIndex.cs" />
-    <Compile Include="..\SocketJack\LmVs\ToolExecutor.cs" Link="LmVs\ToolExecutor.cs" />
-    <Compile Include="..\SocketJack\LmVs\UpstreamAdapter.cs" Link="LmVs\UpstreamAdapter.cs" />
-    <Compile Include="..\SocketJack\Net\LmVsProxy.cs" Link="Net\LmVsProxy.cs" />
     <Compile Include="..\SocketJack\Net\MutableTcpServer.cs" Link="Net\MutableTcpServer.cs" />
     <Compile Include="..\SocketJack\Net\NetworkBase.cs" Link="Net\NetworkBase.cs" />
     <Compile Include="..\SocketJack\Net\NetworkConnection.cs" Link="Net\NetworkConnection.cs" />
     <Compile Include="..\SocketJack\Net\NetworkOptions.cs" Link="Net\NetworkOptions.cs" />
     <Compile Include="..\SocketJack\Net\NIC.cs" Link="Net\NIC.cs" />
+    <Compile Include="..\SocketJack\Net\PublicIpResolver.cs" Link="Net\PublicIpResolver.cs" />
     <Compile Include="..\SocketJack\Net\P2P\ConnectionRefusedArgs.cs" Link="Net\P2P\ConnectionRefusedArgs.cs" />
     <Compile Include="..\SocketJack\Net\P2P\Identifier.cs" Link="Net\P2P\Identifier.cs" />
     <Compile Include="..\SocketJack\Net\P2P\MetadataKeyValue.cs" Link="Net\P2P\MetadataKeyValue.cs" />
@@ -341,6 +348,8 @@
     <Compile Include="..\SocketJack\Net\RtmpSession.cs" Link="Net\RtmpSession.cs" />
     <Compile Include="..\SocketJack\Net\Segment.cs" Link="Net\Segment.cs" />
     <Compile Include="..\SocketJack\Net\SendQueueItem.cs" Link="Net\SendQueueItem.cs" />
+    <Compile Include="..\SocketJack\Net\SocketJackPatternCache.cs" Link="Net\SocketJackPatternCache.cs" />
+    <Compile Include="..\SocketJack\Net\Services\GitService.cs" Link="Net\Services\GitService.cs" />
     <Compile Include="..\SocketJack\Net\Services\PromptIntellisense.cs" Link="Net\Services\PromptIntellisense.cs" />
     <Compile Include="..\SocketJack\Net\Services\ReflectionService.cs" Link="Net\Services\ReflectionService.cs" />
     <Compile Include="..\SocketJack\Net\Services\SearchInternet.cs" Link="Net\Services\SearchInternet.cs" />
@@ -348,6 +357,8 @@
     <Compile Include="..\SocketJack\Net\Services\TerminalService.cs" Link="Net\Services\TerminalService.cs" />
     <Compile Include="..\SocketJack\Net\TcpClient.cs" Link="Net\TcpClient.cs" />
     <Compile Include="..\SocketJack\Net\TcpDuplicator.cs" Link="Net\TcpDuplicator.cs" />
+    <Compile Include="..\SocketJack\Net\ReverseTcpDuplicator.cs" Link="Net\ReverseTcpDuplicator.cs" />
+    <Compile Include="..\SocketJack\Net\TcpForwardingBufferProfile.cs" Link="Net\TcpForwardingBufferProfile.cs" />
     <Compile Include="..\SocketJack\Net\TcpServer.cs" Link="Net\TcpServer.cs" />
     <Compile Include="..\SocketJack\Net\Torrent\TorrentClient.cs" Link="Torrent\TorrentClient.cs" />
     <Compile Include="..\SocketJack\Net\Torrent\TorrentMessages.cs" Link="Torrent\TorrentMessages.cs" />
@@ -359,6 +370,10 @@
     <Compile Include="..\SocketJack\Net\WebSocketFrameHelper.cs" Link="Net\WebSocketFrameHelper.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketClient.cs" Link="Net\WebSockets\WebSocketClient.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketServer.cs" Link="Net\WebSockets\WebSocketServer.cs" />
+    <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderJson.cs" Link="Net\AgentBuilder\AgentBuilderJson.cs" />
+    <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderModels.cs" Link="Net\AgentBuilder\AgentBuilderModels.cs" />
+    <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderReflectionExecutor.cs" Link="Net\AgentBuilder\AgentBuilderReflectionExecutor.cs" />
+    <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderWorkflowEngine.cs" Link="Net\AgentBuilder\AgentBuilderWorkflowEngine.cs" />
     <Compile Include="..\SocketJack\Serialization\ISerializer.cs" Link="Serialization\ISerializer.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Converters\BitmapConverter.cs" Link="Serialization\Json\Converters\BitmapConverter.cs" />
     <Compile Include="..\SocketJack\Serialization\Json\Converters\ByteArrayConverter.cs" Link="Serialization\Json\Converters\ByteArrayConverter.cs" />
@@ -370,23 +385,24 @@
     <Compile Include="..\SocketJack\Serialization\TypeList.cs" Link="Serialization\TypeList.cs" />
     <Compile Include="..\SocketJack\Serialization\TypeNotAllowedException.cs" Link="Serialization\TypeNotAllowedException.cs" />
     <Compile Include="..\SocketJack\Serialization\Wrapper.cs" Link="Serialization\Wrapper.cs" />
+    <Compile Include="..\SocketJack\Sandbox\SandboxOptions.cs" Link="Sandbox\SandboxOptions.cs" />
+    <Compile Include="..\SocketJack\Sandbox\SandboxContracts.cs" Link="Sandbox\SandboxContracts.cs" />
+    <Compile Include="..\SocketJack\Sandbox\InMemorySandboxAuditLog.cs" Link="Sandbox\InMemorySandboxAuditLog.cs" />
+    <Compile Include="..\SocketJack\Sandbox\InMemorySandboxFileSystem.cs" Link="Sandbox\InMemorySandboxFileSystem.cs" />
+    <Compile Include="..\SocketJack\Sandbox\InMemorySandboxRegistry.cs" Link="Sandbox\InMemorySandboxRegistry.cs" />
+    <Compile Include="..\SocketJack\Sandbox\SandboxSession.cs" Link="Sandbox\SandboxSession.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\SocketJack\License.txt" Link="License.txt" />
-    <Content Include="..\SocketJack\Resources\SqlLogin.html" Link="Resources\SqlLogin.html">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\SocketJack\Resources\SqlPanel.html" Link="Resources\SqlPanel.html">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\SocketJack\Resources\VsLmProxyWebChat.html" Link="Resources\VsLmProxyWebChat.html">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <EmbeddedResource Include="..\SocketJack\html\*.html" Link="html\%(Filename)%(Extension)">
+      <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
     <Content Include="..\SocketJack\SocketJackIcon.png" Link="SocketJackIcon.png" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Mono.Nat" Version="3.0.4" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
+    <PackageReference Include="System.Drawing.Common" Version="9.0.8" />
   </ItemGroup>
   <ItemGroup>
     <Compile Update="My Project\Application.Designer.cs">
@@ -421,10 +437,15 @@
     <ItemGroup>
       <Folder Include="Compression\" />
       <Folder Include="Net\Services\" />
-      <Folder Include="LmVs\" />
       <Folder Include="Torrent\" />
       <Folder Include="Net\P2P\" />
       <Folder Include="Serialization\Json\Converters\" />
+    </ItemGroup>
+    <ItemGroup>
+      <None Include="..\SocketJack\Sandbox\README.md" Link="Sandbox\README.md" />
+      <None Include="..\SocketJack\Sandbox\SandboxFeatureSetPlan.md" Link="Sandbox\SandboxFeatureSetPlan.md" />
+      <None Include="..\SocketJack\Sandbox\SandboxOptionsMatrix.md" Link="Sandbox\SandboxOptionsMatrix.md" />
+      <None Include="..\SocketJack\Sandbox\JackLLMMigrationPlan.md" Link="Sandbox\JackLLMMigrationPlan.md" />
     </ItemGroup>
     <ItemGroup>
       <None Include="Readme.md">
@@ -440,4 +461,7 @@
         <PackagePath>\</PackagePath>
       </None>
     </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SocketJack.LlmCore\SocketJack.LlmCore.csproj" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

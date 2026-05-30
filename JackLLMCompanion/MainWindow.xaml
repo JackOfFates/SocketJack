@@ -1,0 +1,697 @@
+<Window x:Class="JackLLMCompanion.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SocketJack Companion"
+        Width="980"
+        Height="680"
+        MinWidth="760"
+        MinHeight="520"
+        Background="#080B10"
+        Foreground="{StaticResource TextBrush}"
+        Closing="Window_Closing">
+    <Border BorderBrush="{StaticResource PanelBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            SnapsToDevicePixels="True">
+        <Border.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#A8080B10" Offset="0"/>
+                <GradientStop Color="#A8111827" Offset="0.46"/>
+                <GradientStop Color="#A8072021" Offset="1"/>
+            </LinearGradientBrush>
+        </Border.Background>
+
+        <Grid Margin="18">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <DockPanel Margin="0,0,0,10">
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <Button Content="Open Workspace" Click="OpenWorkspace_Click"/>
+                    <Button Content="Open Files" Click="OpenFiles_Click"/>
+                    <Button Content="Emergency Stop" Background="#893442" BorderBrush="{StaticResource DangerBrush}" Click="EmergencyStop_Click"/>
+                    <Button Content="Hide" Click="Hide_Click"/>
+                </StackPanel>
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Width="11"
+                                Height="11"
+                                CornerRadius="6"
+                                Background="{StaticResource AccentBrush}"
+                                Margin="0,2,10,0"/>
+                        <TextBlock Text="SocketJack Companion"
+                                   FontSize="24"
+                                   FontWeight="SemiBold"/>
+                    </StackPanel>
+                    <TextBlock x:Name="StatusText"
+                               Text="Starting Companion..."
+                               Foreground="{StaticResource SubtleTextBrush}"
+                               FontSize="12"
+                               Margin="21,4,0,0"/>
+                    <TextBlock Text="Ctrl+Esc emergency stop disables live input, stops queued LLM desktop tasks, and stops recording."
+                               Foreground="{StaticResource SubtleTextBrush}"
+                               FontSize="11"
+                               Margin="21,3,0,0"/>
+                </StackPanel>
+            </DockPanel>
+
+            <TabControl Grid.Row="1">
+                <TabItem Header="Workspace">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <WrapPanel Margin="0,0,0,10">
+                                <Button x:Name="RecordingButton" Content="Start Recording" Click="RecordingButton_Click"/>
+                                <Button Content="Add Manual Event" Click="AddManualEvent_Click"/>
+                                <Button Content="Refresh" Click="Refresh_Click"/>
+                            </WrapPanel>
+                            <TextBox x:Name="OverviewTextBox"
+                                     Grid.Row="1"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     FontFamily="Consolas"
+                                     FontSize="13"
+                                     Background="#66070A10"/>
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="LLM Control">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.2*"/>
+                                <ColumnDefinition Width="0.8*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0" AllowDrop="True" DragOver="ShareDrop_DragOver" Drop="ShareDrop_Drop">
+                                <TextBlock Text="LLM desktop task"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="Queue a Companion task for JACK. Live desktop control still requires the Live Input approval gate."
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,12"/>
+                                <TextBlock Text="Goal" Foreground="{StaticResource SubtleTextBrush}"/>
+                                <TextBox x:Name="LlmGoalTextBox"
+                                         MinHeight="110"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Background="#66070A10"/>
+                                <TextBlock Text="Mode" Foreground="{StaticResource SubtleTextBrush}"/>
+                                <TextBox x:Name="LlmModeTextBox"
+                                         Text="assistive"/>
+                                <TextBlock Text="Model endpoint" Foreground="{StaticResource SubtleTextBrush}"/>
+                                <TextBox x:Name="RunnerEndpointTextBox"
+                                         Text="http://localhost:11435/v1/chat/completions"/>
+                                <UniformGrid Columns="2">
+                                    <StackPanel Margin="0,0,8,0">
+                                        <TextBlock Text="Model" Foreground="{StaticResource SubtleTextBrush}"/>
+                                        <DockPanel>
+                                            <Button DockPanel.Dock="Right"
+                                                    Content="Refresh"
+                                                    Click="RefreshModels_Click"/>
+                                            <ComboBox x:Name="RunnerModelComboBox"
+                                                      IsEditable="True"
+                                                      IsTextSearchEnabled="True"
+                                                      Text="local-model"/>
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Max steps" Foreground="{StaticResource SubtleTextBrush}"/>
+                                        <TextBox x:Name="RunnerMaxStepsTextBox"
+                                                 Text="8"/>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <WrapPanel>
+                                    <Button Content="Start Runner" Click="StartRunner_Click"/>
+                                    <Button Content="Stop Runner" Click="StopRunner_Click"/>
+                                    <Button Content="Queue LLM Task" Click="SubmitLlmTask_Click"/>
+                                    <Button Content="Stop LLM Task" Click="StopLlmTask_Click"/>
+                                </WrapPanel>
+                                <TextBlock x:Name="LlmStatusText"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Task queue"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBox x:Name="LlmTaskListTextBox"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         MinHeight="360"
+                                         Background="#66070A10"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="Remote Desktop">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.35*"/>
+                                <ColumnDefinition Width="0.65*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Border Grid.Column="0"
+                                    Grid.Row="0"
+                                    Background="#05080C"
+                                    BorderBrush="{StaticResource PanelBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    ClipToBounds="True">
+                                <Grid>
+                                    <TextBlock Text="Capture or start live view after enabling Live Input."
+                                               Foreground="{StaticResource SubtleTextBrush}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               Margin="20"/>
+                                    <Image x:Name="RemoteDesktopImage"
+                                           Stretch="Uniform"
+                                           MouseLeftButtonDown="RemoteDesktopImage_MouseLeftButtonDown"/>
+                                </Grid>
+                            </Border>
+                            <StackPanel Grid.Column="1"
+                                        Grid.Row="0"
+                                        Margin="12,0,0,0">
+                                <TextBlock Text="Remote control"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="Live Input is required. Click the preview to send a normalized desktop click."
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,12"/>
+                                <CheckBox x:Name="RemoteLiveCheckBox"
+                                          Content="Live view"
+                                          Checked="RemoteLiveCheckBox_Checked"
+                                          Unchecked="RemoteLiveCheckBox_Unchecked"/>
+                                <WrapPanel>
+                                    <Button Content="Capture Frame" Click="CaptureRemoteDesktop_Click"/>
+                                    <Button Content="Click Center" Click="ClickCenter_Click"/>
+                                    <Button Content="Esc" Click="SendEsc_Click"/>
+                                </WrapPanel>
+                                <TextBlock Text="Type text" Foreground="{StaticResource SubtleTextBrush}"/>
+                                <TextBox x:Name="RemoteTextTextBox"
+                                         MinHeight="88"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         Background="#66070A10"/>
+                                <WrapPanel>
+                                    <Button Content="Send Text" Click="SendRemoteText_Click"/>
+                                    <Button Content="Emergency Stop" Background="#893442" BorderBrush="{StaticResource DangerBrush}" Click="EmergencyStop_Click"/>
+                                </WrapPanel>
+                                <TextBlock x:Name="RemoteDesktopStatusText"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="Processes">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="150"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <DockPanel Margin="0,0,0,10">
+                                <StackPanel DockPanel.Dock="Right"
+                                            Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <CheckBox x:Name="ProcessWindowedOnlyCheckBox"
+                                              Content="Windowed only"
+                                              Margin="0,0,10,0"
+                                              Checked="ProcessFilter_Changed"
+                                              Unchecked="ProcessFilter_Changed"/>
+                                    <CheckBox x:Name="ProcessAutoRefreshCheckBox"
+                                              Content="Auto-refresh"
+                                              Margin="0,0,10,0"
+                                              Checked="ProcessAutoRefresh_Checked"
+                                              Unchecked="ProcessAutoRefresh_Unchecked"/>
+                                    <Button Content="Refresh" Click="RefreshProcesses_Click"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Running processes"
+                                               FontSize="18"
+                                               FontWeight="SemiBold"/>
+                                    <TextBox x:Name="ProcessFilterTextBox"
+                                             Width="320"
+                                             HorizontalAlignment="Left"
+                                             ToolTip="Filter by process name, PID, path, or window title"
+                                             TextChanged="ProcessFilter_Changed"/>
+                                </StackPanel>
+                            </DockPanel>
+
+                            <DataGrid x:Name="ProcessDataGrid"
+                                      Grid.Row="1"
+                                      AutoGenerateColumns="False"
+                                      CanUserSortColumns="True"
+                                      IsReadOnly="True"
+                                      SelectionMode="Single"
+                                      GridLinesVisibility="Horizontal"
+                                      HeadersVisibility="Column"
+                                      Background="#66070A10"
+                                      Foreground="{StaticResource TextBrush}"
+                                      BorderBrush="{StaticResource PanelBorderBrush}"
+                                      RowHeaderWidth="0"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" MinWidth="130"/>
+                                    <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70"/>
+                                    <DataGridTextColumn Header="CPU" Binding="{Binding CpuPercentDisplay}" Width="80"/>
+                                    <DataGridTextColumn Header="GPU" Binding="{Binding GpuPercentDisplay}" Width="90"/>
+                                    <DataGridTextColumn Header="RAM %" Binding="{Binding RamPercentDisplay}" Width="90"/>
+                                    <DataGridTextColumn Header="RAM GB" Binding="{Binding RamGbDisplay}" Width="95"/>
+                                    <DataGridTextColumn Header="Total GB" Binding="{Binding RamTotalGbDisplay}" Width="95"/>
+                                    <DataGridTextColumn Header="Admin" Binding="{Binding AdminState}" Width="95"/>
+                                    <DataGridTextColumn Header="Windows" Binding="{Binding WindowSummary}" MinWidth="220"/>
+                                    <DataGridTextColumn Header="Path" Binding="{Binding ExecutablePath}" MinWidth="260"/>
+                                    <DataGridTemplateColumn Header="Actions" Width="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Button Content="Open"
+                                                            Padding="6,2"
+                                                            IsEnabled="{Binding HasExecutablePath}"
+                                                            Click="OpenProcessLocation_Click"/>
+                                                    <Button Content="Kill"
+                                                            Padding="6,2"
+                                                            Margin="6,0,0,0"
+                                                            Background="#893442"
+                                                            BorderBrush="{StaticResource DangerBrush}"
+                                                            Click="KillProcess_Click">
+                                                        <Button.Style>
+                                                            <Style TargetType="Button">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Button.Style>
+                                                    </Button>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <Grid Grid.Row="2" Margin="0,10,0,8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="Start process"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"/>
+                                <Grid Grid.Row="1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="220"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="Selected path" Foreground="{StaticResource SubtleTextBrush}"/>
+                                        <TextBox x:Name="ProcessStartPathTextBox"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                        <TextBlock Text="Arguments" Foreground="{StaticResource SubtleTextBrush}"/>
+                                        <TextBox x:Name="ProcessStartArgumentsTextBox"/>
+                                    </StackPanel>
+                                    <WrapPanel Grid.Column="2" VerticalAlignment="Bottom">
+                                        <Button Content="Start" Click="StartProcess_Click"/>
+                                        <Button Content="Browse" Click="BrowseProcessPath_Click"/>
+                                        <Button Content="Parent" Click="BrowseProcessParent_Click"/>
+                                    </WrapPanel>
+                                </Grid>
+                            </Grid>
+
+                            <ListView x:Name="ProcessBrowserListView"
+                                      Grid.Row="3"
+                                      MouseDoubleClick="ProcessBrowserListView_MouseDoubleClick"
+                                      Background="#66070A10"
+                                      BorderBrush="{StaticResource PanelBorderBrush}">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="260"/>
+                                        <GridViewColumn Header="Type" DisplayMemberBinding="{Binding Kind}" Width="90"/>
+                                        <GridViewColumn Header="Path" DisplayMemberBinding="{Binding Path}" Width="520"/>
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+
+                            <TextBlock x:Name="ProcessStatusText"
+                                       Grid.Row="4"
+                                       Foreground="{StaticResource SubtleTextBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,10,0,0"/>
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="File Sharing">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1*"/>
+                                <ColumnDefinition Width="1*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                <TextBlock Text="Share a file with Companion"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="Use Files approval is required. Shared files are copied into the Companion share and indexed for /file."
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,12"/>
+                                <TextBlock Text="Selected file" Foreground="{StaticResource SubtleTextBrush}"/>
+                                 <DockPanel>
+                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                         <Button Content="File" Click="ChooseShareFile_Click"/>
+                                         <Button Content="Folder" Click="ChooseShareFolder_Click"/>
+                                     </StackPanel>
+                                     <TextBox x:Name="SharePathTextBox"/>
+                                 </DockPanel>
+                                 <TextBlock Text="You can also drop files or folders here."
+                                            Foreground="{StaticResource SubtleTextBrush}"
+                                            Margin="0,2,0,8"/>
+                                <TextBlock Text="Note" Foreground="{StaticResource SubtleTextBrush}"/>
+                                <TextBox x:Name="ShareNoteTextBox"
+                                         MinHeight="80"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         Background="#66070A10"/>
+                                <WrapPanel>
+                                    <Button Content="Share Selected File" Click="ShareSelectedFile_Click"/>
+                                    <Button Content="Refresh Shares" Click="RefreshShares_Click"/>
+                                </WrapPanel>
+                                <TextBlock x:Name="ShareStatusText"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Shared and session files"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBox x:Name="SharedFilesTextBox"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         MinHeight="390"
+                                         Background="#66070A10"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="Training">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="0.95*"/>
+                                <ColumnDefinition Width="1.05*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                <TextBlock Text="Self-training skills"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="Recordings become evidence packs, draft skills, and reviewed reusable JACK guidance."
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,12"/>
+                                <TextBlock Text="Learning" Foreground="{StaticResource SubtleTextBrush}"/>
+                                <ComboBox x:Name="TrainingLearningComboBox">
+                                    <ComboBoxItem Content="Enabled" Tag="true"/>
+                                    <ComboBoxItem Content="Disabled" Tag="false"/>
+                                </ComboBox>
+                                <TextBlock Text="Approval mode" Foreground="{StaticResource SubtleTextBrush}"/>
+                                <ComboBox x:Name="TrainingApprovalModeComboBox">
+                                    <ComboBoxItem Content="Review first" Tag="review_first"/>
+                                    <ComboBoxItem Content="Auto-enable low risk" Tag="auto_enable_low_risk"/>
+                                    <ComboBoxItem Content="Enable all learned skills" Tag="enable_all"/>
+                                </ComboBox>
+                                <UniformGrid Columns="2">
+                                    <StackPanel Margin="0,0,8,0">
+                                        <TextBlock Text="Max replay frames" Foreground="{StaticResource SubtleTextBrush}"/>
+                                        <TextBox x:Name="TrainingMaxFramesTextBox" Text="300"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Max replay MB" Foreground="{StaticResource SubtleTextBrush}"/>
+                                        <TextBox x:Name="TrainingMaxMbTextBox" Text="250"/>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <WrapPanel>
+                                    <Button Content="Save Training Settings" Click="SaveTrainingSettings_Click"/>
+                                    <Button Content="Train Latest Session" Click="StartTraining_Click"/>
+                                    <Button Content="Cancel Training" Click="CancelTraining_Click"/>
+                                </WrapPanel>
+                                <TextBlock x:Name="TrainingStatusText"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           TextWrapping="Wrap"/>
+                                <TextBlock Text="Training runs"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"
+                                           Margin="0,12,0,0"/>
+                                <TextBox x:Name="TrainingRunsTextBox"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         MinHeight="185"
+                                         Background="#66070A10"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Draft skill review"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <ComboBox x:Name="SkillDraftsComboBox"
+                                          DisplayMemberPath="Name"
+                                          SelectionChanged="SkillDraftsComboBox_SelectionChanged"
+                                          Margin="0,4,0,8"/>
+                                <TextBox x:Name="SkillDraftDetailTextBox"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         MinHeight="260"
+                                         Background="#66070A10"/>
+                                <WrapPanel>
+                                    <Button Content="Approve Draft" Click="ApproveSkillDraft_Click"/>
+                                    <Button Content="Enable Draft" Click="EnableSkillDraft_Click"/>
+                                    <Button Content="Reject Draft" Click="RejectSkillDraft_Click"/>
+                                </WrapPanel>
+                                <TextBlock Text="Replay evidence"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"
+                                           Margin="0,12,0,0"/>
+                                <TextBox x:Name="ReplayEvidenceTextBox"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         MinHeight="120"
+                                         Background="#66070A10"/>
+                                <Button Content="Open Replay Folder"
+                                        HorizontalAlignment="Left"
+                                        Click="OpenReplayFolder_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="JACK Template">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock Text="Companion name"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           FontSize="12"/>
+                                <DockPanel Margin="0,0,0,4">
+                                    <Button DockPanel.Dock="Right" Content="AI Name" Click="GenerateName_Click"/>
+                                    <TextBox x:Name="CompanionNameTextBox"/>
+                                </DockPanel>
+
+                                <TextBlock Text="Hobbies and interests"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           FontSize="12"/>
+                                <DockPanel Margin="0,0,0,4">
+                                    <Button DockPanel.Dock="Right" Content="AI Interests" Click="InferInterests_Click"/>
+                                    <TextBox x:Name="InterestsTextBox"/>
+                                </DockPanel>
+
+                                <TextBlock Text="Template text"
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           FontSize="12"/>
+                                <TextBox x:Name="TemplateTextBox"
+                                         MinHeight="210"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Background="#66070A10"/>
+
+                                <WrapPanel>
+                                    <Button Content="Save Template" Click="SaveTemplate_Click"/>
+                                    <Button Content="Reload" Click="Refresh_Click"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="Approvals">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Pending approvals"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock x:Name="ApprovalSummaryText"
+                                           Text="No pending approvals."
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Margin="0,4,0,12"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ComboBox x:Name="ApprovalRequestsComboBox"
+                                      Grid.Row="1"
+                                      DisplayMemberPath="Title"
+                                      SelectionChanged="ApprovalRequestsComboBox_SelectionChanged"
+                                      Margin="0,0,0,10"/>
+                            <TextBox x:Name="ApprovalDetailTextBox"
+                                     Grid.Row="2"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     FontFamily="Consolas"
+                                     FontSize="13"
+                                     Background="#66070A10"/>
+                            <WrapPanel Grid.Row="3" Margin="0,10,0,0">
+                                <Button x:Name="ApproveSelectedButton"
+                                        Content="Approve Selected"
+                                        Click="ApproveSelectedApproval_Click"/>
+                                <Button x:Name="DenySelectedButton"
+                                        Content="Deny Selected"
+                                        Click="DenySelectedApproval_Click"/>
+                                <Button Content="Refresh"
+                                        Click="Refresh_Click"/>
+                            </WrapPanel>
+                        </Grid>
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="Permissions">
+                    <Border Background="{StaticResource PanelBrush}"
+                            BorderBrush="{StaticResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock Text="Approval-gated capabilities"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="Leave disabled until a real task needs the capability. Every change is audited."
+                                           Foreground="{StaticResource SubtleTextBrush}"
+                                           Margin="0,4,0,14"
+                                           TextWrapping="Wrap"/>
+                                <UniformGrid Columns="2" Margin="0,0,0,8">
+                                    <CheckBox x:Name="PermHumanInteraction" Content="Interact with real humans"/>
+                                    <CheckBox x:Name="PermSpendMoney" Content="Attempt to spend money"/>
+                                    <CheckBox x:Name="PermAccountLogin" Content="Login to accounts"/>
+                                    <CheckBox x:Name="PermUseFiles" Content="Use real files"/>
+                                    <CheckBox x:Name="PermPcSettings" Content="Change PC settings"/>
+                                    <CheckBox x:Name="PermInternet" Content="Access the internet"/>
+                                    <CheckBox x:Name="PermLiveInput" Content="Live mouse/keyboard control"/>
+                                </UniformGrid>
+                                <Button Content="Save Permissions"
+                                        HorizontalAlignment="Left"
+                                        Click="SavePermissions_Click"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </TabItem>
+            </TabControl>
+
+            <TextBlock Grid.Row="2"
+                       x:Name="FooterText"
+                       Foreground="{StaticResource SubtleTextBrush}"
+                       FontSize="12"
+                       Margin="0,12,0,0"
+                       TextWrapping="Wrap"/>
+        </Grid>
+    </Border>
+</Window>

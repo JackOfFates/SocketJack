@@ -278,13 +278,14 @@
     </ApplicationDefinition>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\SocketJack\Net\WebSocketFrameHelper.cs" Link="Net\WebSocketFrameHelper.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketServer.cs" Link="Net\WebSockets\WebSocketServer.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Mono.Nat" Version="3.0.4" />
     <PackageReference Include="System.Collections.Concurrent" Version="4.3.0" />
-    <PackageReference Include="System.Text.Encodings.Web" Version="9.0.7" />
-    <PackageReference Include="System.Text.Json" Version="9.0.7" />
+    <PackageReference Include="System.Text.Encodings.Web" Version="10.0.7" />
+    <PackageReference Include="System.Text.Json" Version="10.0.7" />
   </ItemGroup>
   <ItemGroup>
     <Compile Update="My Project\Application.Designer.cs">

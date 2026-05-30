@@ -82,7 +82,7 @@ namespace SocketJack.Net.WebSockets {
                 if (SslCertificate == null)
                     throw new InvalidOperationException("SSL is enabled but no certificate is set in SslCertificate property.");
                 connection.SslStream = new System.Net.Security.SslStream(connection._Stream, false);
-                await connection.SslStream.AuthenticateAsServerAsync(SslCertificate, false, System.Security.Authentication.SslProtocols.Tls12, false);
+                await connection.SslStream.AuthenticateAsServerAsync(SslCertificate, false, System.Security.Authentication.SslProtocols.None, false);
             }
 
             var buffer = new byte[Options.DownloadBufferSize];

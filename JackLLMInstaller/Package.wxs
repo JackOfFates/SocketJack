@@ -1,0 +1,107 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+    Name="JackLLM"
+    Manufacturer="SocketJack"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="{C77E28D2-7C1A-48F4-BE12-FB5D60A16B1C}"
+    Scope="perMachine">
+
+    <SummaryInformation Description="JackLLM installer" Manufacturer="SocketJack" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of JackLLM is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+    <Feature Id="MainFeature" Title="JackLLM" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="ApplicationRegistry" />
+      <ComponentRef Id="ApplicationWritableInstallFolder" />
+      <ComponentRef Id="ApplicationStartMenuShortcut" />
+      <ComponentRef Id="RuntimeSessionsFolderComponent" />
+      <ComponentRef Id="RuntimeSessionFilesFolderComponent" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="JackLLM" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="JackLLM" />
+    </StandardDirectory>
+
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PayloadDir)\**\*.*" />
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Directory Id="RuntimeSessionsFolder" Name="Sessions" />
+      <Directory Id="RuntimeSocketJackFolder" Name="SocketJack">
+        <Directory Id="RuntimeJackLLMChatFolder" Name="JackLLMChat">
+          <Directory Id="RuntimeSessionFilesFolder" Name="SessionFiles" />
+        </Directory>
+      </Directory>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="RuntimeSessionsFolder">
+      <Component Id="RuntimeSessionsFolderComponent" Guid="{C1F3733D-E981-44E5-A6E5-CE9E70208B57}">
+        <CreateFolder>
+          <util:PermissionEx User="Users" GenericAll="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="RuntimeSessionsFolder" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="RuntimeSessionFilesFolder">
+      <Component Id="RuntimeSessionFilesFolderComponent" Guid="{3FD0D050-9B80-4F0E-9C49-843B64C7776A}">
+        <CreateFolder>
+          <util:PermissionEx User="Users" GenericAll="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="RuntimeSessionFilesFolder" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ApplicationRegistry" Guid="{208953B7-201D-4F4A-9947-5DF235EA8B3B}">
+        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="InstallLocation" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+      </Component>
+      <Component Id="ApplicationWritableInstallFolder" Guid="{F469F8F2-5C09-47F6-B2C6-3F3E5A527048}">
+        <CreateFolder>
+          <util:PermissionEx User="Users" GenericAll="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="WritableInstallFolder" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationStartMenuShortcut" Guid="{618F1317-2A6B-47BF-A9C5-E356381EA834}">
+        <Shortcut Id="JackLLMStartMenuShortcut"
+                  Name="JackLLM"
+                  Description="Launch JackLLM"
+                  Target="[INSTALLFOLDER]JackLLM.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="JackLLMUpdaterConsoleShortcut"
+                  Name="JackLLM Updater Console"
+                  Description="Run a visible update check for JackLLM"
+                  Target="[SystemFolder]cmd.exe"
+                  Arguments="/k &quot;&quot;[INSTALLFOLDER]JackLLMUpdater.exe&quot; --check --target &quot;[INSTALLFOLDER]&quot; --manifest &quot;https://socketjack.com/update/meta&quot;&quot;"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\SocketJack\JackLLM" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

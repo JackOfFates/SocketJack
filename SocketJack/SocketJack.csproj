@@ -19,9 +19,13 @@
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Keep Net\Services opt-in until the legacy search service pair is refactored; only latency-safe chat services are source-included for SocketJack. -->
+    <Compile Remove="JackLLM.Android\**" />
     <Compile Remove="Net\Services\**\*.cs" />
+    <EmbeddedResource Remove="JackLLM.Android\**" />
     <Compile Include="Net\Services\PromptIntellisense.cs" />
     <Compile Include="Net\Services\ReflectionService.cs" />
+    <Compile Include="Net\Services\GitService.cs" />
     <Compile Include="Net\Services\TerminalService.cs" />
   </ItemGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -39,14 +43,14 @@
   <PropertyGroup>
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
-    <Copyright>Copyright ? JackOfFates 2025</Copyright>
-    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <Copyright>Copyright © JackOfFates 2026</Copyright>
+    <GeneratePackageOnBuild Condition="'$(BuildPackage)' == 'true'">True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
-    <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
+    <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS encryption, GZip/Deflate compression, and bandwidth throttling. Targets .NET Standard 2.1.</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>2.0.0</Version>
+    <Version>2026.0</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
@@ -546,7 +550,6 @@
   <ItemGroup>
     <None Remove="httpStream.PNG" />
     <None Remove="runtimeconfig.template.json" />
-    <None Remove="Readme.md" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="runtimeconfig.template.json">
@@ -557,7 +560,7 @@
     <PackageReference Include="Mono.Nat" Version="3.0.4" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
     <PackageReference Include="System.Collections.Concurrent" Version="4.3.0" />
-    <PackageReference Include="System.Text.Json" Version="9.0.7" />
+    <PackageReference Include="System.Text.Json" Version="10.0.7" />
         <!-- System.Drawing.Common only for Windows TFMs -->
     <PackageReference Include="System.Drawing.Common" Version="9.0.8" Condition=" '$(TargetFramework)'=='net6.0-windows' Or '$(TargetFramework)'=='net8.0-windows' Or '$(TargetFramework)'=='net9.0-windows' " />
   </ItemGroup>
@@ -588,30 +591,30 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
+    <None Update="Readme.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
     </ItemGroup>
     <ItemGroup>
       <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
     </ItemGroup>
     <ItemGroup>
-      <Content Include="Resources\SqlLogin.html" LogicalName="SocketJack.SqlLogin.html">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </Content>
-      <Content Include="Resources\SqlPanel.html" LogicalName="SocketJack.SqlPanel.html">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </Content>
-      <Content Include="Resources\VsLmProxyWebChat.html" LogicalName="SocketJack.VsLmProxyWebChat.html">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </Content>
+      <None Remove="html\*.html" />
+      <None Remove="html\*.png" />
+      <None Remove="JackLLM.Android\**" />
+      <EmbeddedResource Include="html\*.html">
+        <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
+      </EmbeddedResource>
+      <EmbeddedResource Include="html\*.png">
+        <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
+      </EmbeddedResource>
     </ItemGroup>
     <ItemGroup>
       <Import Include="System.Text.Json" />
       <Import Include="System.Text.Json.Serialization" />
     </ItemGroup>
     <ItemGroup>
-      <None Include="Readme.md">
-        <Pack>True</Pack>
-        <PackagePath>\</PackagePath>
-      </None>
       <None Include="SocketJackIcon.png">
         <Pack>True</Pack>
         <PackagePath>\</PackagePath>
@@ -627,6 +630,11 @@
         <LastGenOutput>Resources.Designer.cs</LastGenOutput>
       </EmbeddedResource>
     </ItemGroup>
+    <Target Name="GetTargetPath" Condition="'$(TargetFramework)' == ''" Returns="@(TargetPath)">
+      <ItemGroup>
+        <TargetPath Include="$(MSBuildProjectDirectory)\bin\$(Configuration)\netstandard2.1\$(AssemblyName).dll" />
+      </ItemGroup>
+    </Target>
 </Project>
 
 

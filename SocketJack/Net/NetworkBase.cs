@@ -414,7 +414,8 @@ namespace SocketJack.Net {
             Connection.Close(this, Reason);
         }
         protected internal void Bind(int Port) {
-            this.Socket.Bind(new IPEndPoint(IPAddress.Any, Port));
+            var bindAddress = Options?.BindAddress ?? IPAddress.Any;
+            this.Socket.Bind(new IPEndPoint(bindAddress, Port));
         }
         public void Log(string[] lines) {
             if (Options.Logging) {
@@ -460,12 +461,10 @@ namespace SocketJack.Net {
             if (Connection.Socket.Connected) {
                 var wrapped = new Wrapper(Obj, Connection.Parent);
                 var Bytes = Connection.Parent.Options.Serializer.Serialize(wrapped);
+                Bytes = Connection.PatternCache.PrepareSend(Bytes, Connection.Parent.Options);
                 byte[] ProcessedBytes = Connection.Compressed ? Options.CompressionAlgorithm.Compress(Bytes) : Bytes;
                 var SerializedBytes = ProcessedBytes.Terminate();
-                lock (Connection.SendQueueRaw) {
-                    Connection.SendQueueRaw.AddRange(SerializedBytes);
-                }
-                try { Connection._SendSignal.Release(); } catch (ObjectDisposedException) { }
+                Connection.TryEnqueueSendBytes(SerializedBytes);
             }
             //Connection.SendQueue.Enqueue(new SendQueueItem(Obj, Connection));
         }
@@ -692,10 +691,11 @@ namespace SocketJack.Net {
         /// Stops the background ping loop.
         /// </summary>
         protected void StopPingLoop() {
-            if (_pingCts != null) {
-                _pingCts.Cancel();
-                _pingCts = null;
-            }
+            var cts = _pingCts;
+            if (cts == null) return;
+            _pingCts = null;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
         }
 
         private bool _pongCallbackRegistered;
@@ -777,15 +777,30 @@ namespace SocketJack.Net {
 
         protected virtual void Dispose(bool disposing) {
             if (!disposedValue) {
+                isDisposed = true;
                 if (disposing) {
-                    // TODO: dispose managed state (managed objects)
                     StopPingLoop();
-                    OnDisposing?.Invoke();
+                    try { OnDisposing?.Invoke(); } catch { }
+                    try { Connection?.Close(this, DisconnectionReason.ObjectDisposed); } catch { }
+                    try { Socket?.Shutdown(SocketShutdown.Both); } catch { }
+                    try { Socket?.Close(); } catch { }
+                    try { Stream?.Dispose(); } catch { }
                     Buffers.Clear();
+                    P2P_ServerInformation.Clear();
+                    P2P_Servers.Clear();
+                    P2P_Clients.Clear();
+                    TypeCallbacks.Clear();
+#if WINDOWS
+                    _ControlShareSessions.Clear();
+#endif
+                    if (Options?.Whitelist != null)
+                        Options.Whitelist.Clear();
                 }
 
-                // TODO: free unmanaged resources (unmanaged objects) and override finalizer
-                // TODO: set large fields to null
+                Connection = null;
+                Socket = null;
+                Stream = null;
+                Peers = null;
                 disposedValue = true;
             }
         }
@@ -810,10 +825,7 @@ namespace SocketJack.Net {
                 Parallel.ForEach(SegmentedObject, (s) => {
                     //var state = new SendQueueItem(s, Client);
 
-                    lock (Client.SendQueueRaw) {
-                        Client.SendQueueRaw.AddRange(Options.Serializer.Serialize(s));
-                    }
-                    try { Client._SendSignal.Release(); } catch (ObjectDisposedException) { }
+                    Client.TryEnqueueSendBytes(Options.Serializer.Serialize(s));
                 });
             });
         }

@@ -12,6 +12,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -1093,7 +1094,8 @@ namespace SocketJack.Net.WebSockets {
         }
 
         public async Task<bool> Connect(string host, int port) {
-            return await ConnectAsync(new Uri($"ws://{host}:{port}"));
+            string scheme = Options.UseSsl ? "wss" : "ws";
+            return await ConnectAsync(new Uri($"{scheme}://{host}:{port}"));
         }
 
         private Type[] SkipLoggingTypes = new Type[] {
@@ -1106,11 +1108,23 @@ namespace SocketJack.Net.WebSockets {
                     LogFormatAsync("[{0}] Connecting to -> {1}", new[] { Name, uri.ToString() });
                 }
                 string host = uri.Host;
-                int port = uri.Port;
+                bool secure = uri.Scheme.Equals("wss", StringComparison.OrdinalIgnoreCase) || Options.UseSsl;
+                int port = uri.IsDefaultPort || uri.Port < 0
+                    ? (secure ? 443 : 80)
+                    : uri.Port;
                 _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 await _socket.ConnectAsync(host, port);
-                _stream = new NetworkStream(_socket, ownsSocket: false);
                 Connection = new NetworkConnection(this, _socket);
+                Connection._Stream = new NetworkStream(_socket, ownsSocket: false);
+                if (secure) {
+                    Options.UseSsl = true;
+                    var sslStream = new SslStream(Connection._Stream, false);
+                    await sslStream.AuthenticateAsClientAsync(host);
+                    Connection.SslStream = sslStream;
+                    _stream = sslStream;
+                } else {
+                    _stream = Connection._Stream;
+                }
                 var cts = new CancellationTokenSource();
                 // Monitor socket and connection state in a background task
                 var monitorTask = Task.Run(async () => {
@@ -1123,8 +1137,10 @@ namespace SocketJack.Net.WebSockets {
                 });
                 // Handshake
                 string secWebSocketKey = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
-                var request = $"GET {uri.PathAndQuery} HTTP/1.1\r\n" +
-                              $"Host: {host}:{port}\r\n" +
+                string requestTarget = string.IsNullOrEmpty(uri.PathAndQuery) ? "/" : uri.PathAndQuery;
+                string hostHeader = IsDefaultWebSocketPort(secure, port) ? host : host + ":" + port.ToString();
+                var request = $"GET {requestTarget} HTTP/1.1\r\n" +
+                              $"Host: {hostHeader}\r\n" +
                               "Upgrade: websocket\r\n" +
                               "Connection: Upgrade\r\n" +
                               $"Sec-WebSocket-Key: {secWebSocketKey}\r\n" +
@@ -1194,6 +1210,10 @@ namespace SocketJack.Net.WebSockets {
                 InvokeOnError(ex);
                 return false;
             }
+        }
+
+        private static bool IsDefaultWebSocketPort(bool secure, int port) {
+            return secure ? port == 443 : port == 80;
         }
 
         public void Dispose() {

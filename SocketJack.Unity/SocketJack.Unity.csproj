@@ -3,6 +3,7 @@
     <TargetFrameworks>netstandard2.1;</TargetFrameworks>
     <SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
     <OutputType>Library</OutputType>
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
     <RootNamespace>SocketJack</RootNamespace>
     <AssemblyName>SocketJack.Unity</AssemblyName>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -278,9 +279,11 @@
     </ApplicationDefinition>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\SocketJack\Compatibility\IsExternalInit.cs" Link="Compatibility\IsExternalInit.cs" />
     <Compile Include="..\SocketJack\Compression\DeflateCompression.cs" Link="Compression\DeflateCompression.cs" />
     <Compile Include="..\SocketJack\Compression\GZip2Compression.cs" Link="Compression\GZip2Compression.cs" />
     <Compile Include="..\SocketJack\Compression\ICompression.cs" Link="Compression\ICompression.cs" />
+    <Compile Include="..\SocketJack\HtmlPageResources.cs" Link="HtmlPageResources.cs" />
     <Compile Include="..\SocketJack\Extensions\ArrayExtensions.cs" Link="Extensions\ArrayExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\ByteExtensions.cs" Link="Extensions\ByteExtensions.cs" />
     <Compile Include="..\SocketJack\Extensions\ConcurrentBagExtensions.cs" Link="Extensions\ConcurrentBagExtensions.cs" />
@@ -298,10 +301,12 @@
     <Compile Include="..\SocketJack\Net\Database\ColumnSnapshot.cs" Link="Net\Database\ColumnSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\ConcatenatedStream.cs" Link="Net\Database\ConcatenatedStream.cs" />
     <Compile Include="..\SocketJack\Net\Database\Database.cs" Link="Net\Database\Database.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DatabaseCacheOptimizer.cs" Link="Net\Database\DatabaseCacheOptimizer.cs" />
     <Compile Include="..\SocketJack\Net\Database\DatabaseSnapshot.cs" Link="Net\Database\DatabaseSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataClient.cs" Link="Net\Database\DataClient.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataServer.cs" Link="Net\Database\DataServer.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataServerExample.cs" Link="Net\Database\DataServerExample.cs" />
+    <Compile Include="..\SocketJack\Net\Database\DataServerStorageManifest.cs" Link="Net\Database\DataServerStorageManifest.cs" />
     <Compile Include="..\SocketJack\Net\Database\DataServerSnapshot.cs" Link="Net\Database\DataServerSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\DbContextGenerator.cs" Link="Net\Database\DbContextGenerator.cs" />
     <Compile Include="..\SocketJack\Net\Database\DbContextGeneratorTool.cs" Link="Net\Database\DbContextGeneratorTool.cs" />
@@ -312,7 +317,10 @@
     <Compile Include="..\SocketJack\Net\Database\TableSnapshot.cs" Link="Net\Database\TableSnapshot.cs" />
     <Compile Include="..\SocketJack\Net\Database\TdsProtocolHandler.cs" Link="Net\Database\TdsProtocolHandler.cs" />
     <Compile Include="..\SocketJack\Net\Database\TdsWrapperStream.cs" Link="Net\Database\TdsWrapperStream.cs" />
+    <Compile Include="..\SocketJack\Net\DirectoryHashMetadata.cs" Link="Net\DirectoryHashMetadata.cs" />
+    <Compile Include="..\SocketJack\Net\EndpointSecurity.cs" Link="Net\EndpointSecurity.cs" />
     <Compile Include="..\SocketJack\Net\EventArguments.cs" Link="Net\EventArguments.cs" />
+    <Compile Include="..\SocketJack\Net\FtpSftp.cs" Link="Net\FtpSftp.cs" />
     <Compile Include="..\SocketJack\Net\HtAccessBuilder.cs" Link="Net\HtAccessBuilder.cs" />
     <Compile Include="..\SocketJack\Net\HtmlBuilder.cs" Link="Net\HtmlBuilder.cs" />
     <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
@@ -331,10 +339,20 @@
     <Compile Include="..\SocketJack\Net\P2P\PeerRedirect.cs" Link="Net\P2P\PeerRedirect.cs" />
     <Compile Include="..\SocketJack\Net\P2P\PeerServer.cs" Link="Net\P2P\PeerServer.cs" />
     <Compile Include="..\SocketJack\Net\P2P\Ping.cs" Link="Net\P2P\Ping.cs" />
+    <Compile Include="..\SocketJack\Net\PublicIpResolver.cs" Link="Net\PublicIpResolver.cs" />
+    <Compile Include="..\SocketJack\Net\ReverseTcpDuplicator.cs" Link="Net\ReverseTcpDuplicator.cs" />
     <Compile Include="..\SocketJack\Net\RtmpSession.cs" Link="Net\RtmpSession.cs" />
     <Compile Include="..\SocketJack\Net\Segment.cs" Link="Net\Segment.cs" />
     <Compile Include="..\SocketJack\Net\SendQueueItem.cs" Link="Net\SendQueueItem.cs" />
+    <Compile Include="..\SocketJack\Net\Services\GitService.cs" Link="Net\Services\GitService.cs" />
+    <Compile Include="..\SocketJack\Net\Services\PromptIntellisense.cs" Link="Net\Services\PromptIntellisense.cs" />
+    <Compile Include="..\SocketJack\Net\Services\ReflectionService.cs" Link="Net\Services\ReflectionService.cs" />
+    <Compile Include="..\SocketJack\Net\Services\SearchInternet.cs" Link="Net\Services\SearchInternet.cs" />
+    <Compile Include="..\SocketJack\Net\Services\SearchService.cs" Link="Net\Services\SearchService.cs" />
+    <Compile Include="..\SocketJack\Net\Services\TerminalService.cs" Link="Net\Services\TerminalService.cs" />
     <Compile Include="..\SocketJack\Net\TcpClient.cs" Link="Net\TcpClient.cs" />
+    <Compile Include="..\SocketJack\Net\TcpDuplicator.cs" Link="Net\TcpDuplicator.cs" />
+    <Compile Include="..\SocketJack\Net\TcpForwardingBufferProfile.cs" Link="Net\TcpForwardingBufferProfile.cs" />
     <Compile Include="..\SocketJack\Net\TcpServer.cs" Link="Net\TcpServer.cs" />
     <Compile Include="..\SocketJack\Net\UdpClient.cs" Link="Net\UdpClient.cs" />
     <Compile Include="..\SocketJack\Net\UdpConnection.cs" Link="Net\UdpConnection.cs" />
@@ -354,9 +372,10 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Mono.Nat" Version="3.0.4" />
+    <PackageReference Include="SSH.NET" Version="2025.1.0" />
     <PackageReference Include="System.Collections.Concurrent" Version="4.3.0" />
-    <PackageReference Include="System.Text.Encodings.Web" Version="9.0.7" />
-    <PackageReference Include="System.Text.Json" Version="9.0.7" />
+    <PackageReference Include="System.Text.Encodings.Web" Version="10.0.7" />
+    <PackageReference Include="System.Text.Json" Version="10.0.7" />
   </ItemGroup>
   <ItemGroup>
     <Compile Update="My Project\Application.Designer.cs">
@@ -405,7 +424,10 @@
   <ItemGroup>
     <Folder Include="Compression\" />
     <Folder Include="Net\Database\" />
+    <Folder Include="Net\Payments\" />
+    <Folder Include="Net\Services\" />
     <Folder Include="Net\P2P\" />
+    <Folder Include="LmVs\" />
     <Folder Include="Serialization\Json\Converters\" />
   </ItemGroup>
   <ItemGroup>
@@ -671,4 +693,12 @@
       <HintPath>..\..\..\..\..\..\Program Files\Unity\Hub\Editor\2022.3.17f1\Editor\Data\Managed\UnityEngine\UnityEngine.XRModule.dll</HintPath>
     </Reference>
   </ItemGroup>
-</Project>
+  <ItemGroup>
+    <ProjectReference Include="..\SocketJack.LlmCore\SocketJack.LlmCore.csproj" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\SocketJack\html\*.html" Link="html\%(Filename)%(Extension)">
+      <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup></Project>
+

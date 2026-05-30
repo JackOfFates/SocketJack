@@ -21,8 +21,8 @@ namespace SocketJack.Net {
 
     /// <summary>
     /// Fluent builder for generating <c>.htaccess</c> files that control directory
-    /// security and access when used with <see cref="HttpServer.MapDirectory"/> or
-    /// <see cref="HttpProtocolHandler.MapDirectory"/>.
+    /// security and access when used with <c>HttpServer.MapDirectory</c> or
+    /// <c>HttpProtocolHandler.MapDirectory</c>.
     /// <para>
     /// Example usage:
     /// <code>

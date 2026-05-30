@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 
-namespace EasyYoloOcr.Example.Wpf.Services;
+namespace SocketJack.Net.Services;
 
 /// <summary>
 /// Provides intellisense-style completions for the WinAgent prompt input.
@@ -61,9 +62,44 @@ public sealed class PromptIntellisense
         new("/caption ", BrowseTargetKind.File, "Select image to caption", "Image files|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp|All files|*.*")
     ];
 
-    /// <summary>All registered commands — dynamically extensible.</summary>
+    private const int MaxRuntimeAssemblyCompletions = 80;
+    private const int MaxRuntimeTypeCompletions = 80;
+    private static readonly TimeSpan RuntimeReflectionIndexLifetime = TimeSpan.FromSeconds(15);
+
+    private sealed class RuntimeAssemblyInfo
+    {
+        public string Name { get; set; } = "";
+        public string Location { get; set; } = "";
+        public List<string> PublicTypes { get; set; } = [];
+    }
+
+    private sealed class RuntimeTypeInfo
+    {
+        public string AssemblyName { get; set; } = "";
+        public string Namespace { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string FullName { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Kind { get; set; } = "Type";
+        public string Accessibility { get; set; } = "internal";
+        public string BaseType { get; set; } = "";
+        public int DeclaredMemberCount { get; set; }
+    }
+
+    private sealed class RuntimeReflectionIndex
+    {
+        public DateTimeOffset BuiltUtc { get; set; } = DateTimeOffset.MinValue;
+        public int AssemblyFingerprint { get; set; }
+        public List<RuntimeAssemblyInfo> Assemblies { get; set; } = [];
+        public List<RuntimeTypeInfo> Types { get; set; } = [];
+        public List<string> Namespaces { get; set; } = [];
+    }
+
+    /// <summary>All registered commands - dynamically extensible.</summary>
     private readonly List<CompletionItem> _commands = [];
     private readonly object _lock = new();
+    private readonly object _runtimeReflectionIndexLock = new();
+    private RuntimeReflectionIndex? _runtimeReflectionIndex;
 
     public PromptIntellisense()
     {
@@ -270,7 +306,13 @@ public sealed class PromptIntellisense
                 Writeup = "Access properties, fields, and methods on the running application instance. View values as JSON, call methods with parameters, and live-watch changing values. Supports dot-path navigation (e.g., _DataStore.SomeField) and parenthesis syntax for method calls." },
         new() { DisplayText = "/reflect assemblies", InsertText = "/reflect assemblies", Category = "Reflection",
                 Description = "List all loaded assemblies in the application domain",
-                Writeup = "Scans AppDomain.CurrentDomain and lists all loaded assemblies with their public types. Useful for discovering what's available for reflection." },
+                Writeup = "Scans AppDomain.CurrentDomain and lists all loaded assemblies with their loadable types. Useful for discovering what's available for reflection." },
+            new() { DisplayText = "/reflect types <query>", InsertText = "/reflect types ", Category = "Reflection",
+                Description = "Search every type from every loaded assembly",
+                Writeup = "Searches the cached runtime reflection index across all loadable public and non-public types in AppDomain.CurrentDomain." },
+            new() { DisplayText = "/reflect namespaces <query>", InsertText = "/reflect namespaces ", Category = "Reflection",
+                Description = "Search namespaces from loaded assemblies",
+                Writeup = "Lists namespaces discovered from all loaded assembly types, then lets you narrow into matching runtime types." },
             new() { DisplayText = "/reflect stop", InsertText = "/reflect stop", Category = "Reflection",
                 Description = "Stop live-watching a reflected member",
                 Writeup = "Stops the live-inspection timer that was started with '/reflect <member> watch'. The watch panel is removed from the console." },
@@ -419,23 +461,295 @@ public sealed class PromptIntellisense
         }
     }
 
-    // --- Private helpers ---
+    private RuntimeReflectionIndex GetRuntimeReflectionIndex()
+    {
+        Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+        int fingerprint = ComputeAssemblyFingerprint(assemblies);
+        lock (_runtimeReflectionIndexLock)
+        {
+            if (_runtimeReflectionIndex != null &&
+                _runtimeReflectionIndex.AssemblyFingerprint == fingerprint &&
+                DateTimeOffset.UtcNow - _runtimeReflectionIndex.BuiltUtc < RuntimeReflectionIndexLifetime)
+            {
+                return _runtimeReflectionIndex;
+            }
+
+            _runtimeReflectionIndex = BuildRuntimeReflectionIndex(assemblies, fingerprint);
+            return _runtimeReflectionIndex;
+        }
+    }
+
+    private static RuntimeReflectionIndex BuildRuntimeReflectionIndex(Assembly[] assemblies, int fingerprint)
+    {
+        var index = new RuntimeReflectionIndex
+        {
+            AssemblyFingerprint = fingerprint,
+            BuiltUtc = DateTimeOffset.UtcNow
+        };
+
+        foreach (var assembly in assemblies.OrderBy(a => a.GetName().Name ?? "", StringComparer.OrdinalIgnoreCase))
+        {
+            string assemblyName = assembly.GetName().Name ?? "";
+            var assemblyTypes = new List<RuntimeTypeInfo>();
+            foreach (Type type in GetLoadableTypes(assembly))
+            {
+                if (type == null || string.IsNullOrWhiteSpace(type.FullName ?? type.Name))
+                    continue;
+
+                try
+                {
+                    RuntimeTypeInfo info = BuildRuntimeTypeInfo(assemblyName, type);
+                    assemblyTypes.Add(info);
+                    index.Types.Add(info);
+                }
+                catch
+                {
+                    // Some runtime-generated types throw while resolving names or bases; keep indexing the rest.
+                }
+            }
+
+            if (assemblyTypes.Count == 0)
+                continue;
+
+            index.Assemblies.Add(new RuntimeAssemblyInfo
+            {
+                Name = assemblyName,
+                Location = SafeAssemblyLocation(assembly),
+                PublicTypes = assemblyTypes
+                    .Select(t => t.FullName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            });
+        }
+
+        index.Types = index.Types
+            .OrderBy(t => t.AssemblyName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(t => t.FullName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        index.Namespaces = index.Types
+            .Select(t => t.Namespace)
+            .Where(ns => !string.IsNullOrWhiteSpace(ns))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(ns => ns, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return index;
+    }
+
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            return ex.Types.Where(t => t != null).Cast<Type>();
+        }
+        catch
+        {
+            return Array.Empty<Type>();
+        }
+    }
+
+    private static RuntimeTypeInfo BuildRuntimeTypeInfo(string assemblyName, Type type)
+    {
+        string fullName = (type.FullName ?? type.Name).Replace('+', '.');
+        return new RuntimeTypeInfo
+        {
+            AssemblyName = assemblyName,
+            Namespace = type.Namespace ?? "",
+            Name = type.Name,
+            FullName = fullName,
+            DisplayName = FriendlyRuntimeTypeName(type),
+            Kind = RuntimeTypeKind(type),
+            Accessibility = RuntimeTypeAccessibility(type),
+            BaseType = type.BaseType == null ? "" : FriendlyRuntimeTypeName(type.BaseType),
+            DeclaredMemberCount = CountDeclaredMembers(type)
+        };
+    }
+
+    private static int ComputeAssemblyFingerprint(IEnumerable<Assembly> assemblies)
+    {
+        unchecked
+        {
+            int hash = 17;
+            foreach (Assembly assembly in assemblies.OrderBy(a => a.FullName ?? "", StringComparer.OrdinalIgnoreCase))
+            {
+                hash = hash * 31 + (assembly.FullName ?? "").GetHashCode();
+                hash = hash * 31 + (assembly.IsDynamic ? 1 : 0);
+            }
+            return hash;
+        }
+    }
+
+    private static string SafeAssemblyLocation(Assembly assembly)
+    {
+        try { return assembly.IsDynamic ? "dynamic" : assembly.Location ?? ""; }
+        catch { return ""; }
+    }
+
+    private static int CountDeclaredMembers(Type type)
+    {
+        try
+        {
+            return type.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly).Length;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static string RuntimeTypeKind(Type type)
+    {
+        if (type.IsInterface) return "interface";
+        if (type.IsEnum) return "enum";
+        if (typeof(Delegate).IsAssignableFrom(type)) return "delegate";
+        if (type.IsValueType) return "struct";
+        return "class";
+    }
+
+    private static string RuntimeTypeAccessibility(Type type)
+    {
+        if (type.IsPublic || type.IsNestedPublic) return "public";
+        if (type.IsNestedFamily) return "protected";
+        if (type.IsNestedFamORAssem) return "protected internal";
+        if (type.IsNestedPrivate) return "private";
+        return "internal";
+    }
+
+    private static string FriendlyRuntimeTypeName(Type type)
+    {
+        if (type == null)
+            return "";
+        if (!type.IsGenericType)
+            return (type.FullName ?? type.Name).Replace('+', '.');
+
+        string name = (type.FullName ?? type.Name).Replace('+', '.');
+        int tick = name.IndexOf('`');
+        if (tick >= 0)
+            name = name[..tick];
+        string[] args = type.GetGenericArguments()
+            .Select(arg => arg.IsGenericParameter ? arg.Name : FriendlyRuntimeTypeName(arg))
+            .ToArray();
+        return name + "<" + string.Join(", ", args) + ">";
+    }
+
+    private List<CompletionItem> GetRuntimeTypeCommandCompletions(string afterPrefix, string prefix, RuntimeReflectionIndex index)
+    {
+        string query = afterPrefix.Length > "types".Length ? afterPrefix["types".Length..].Trim() : "";
+        return GetRuntimeTypeCompletions(query, prefix + "types ", index, MaxRuntimeTypeCompletions);
+    }
+
+    private List<CompletionItem> GetRuntimeNamespaceCommandCompletions(string afterPrefix, string prefix, RuntimeReflectionIndex index)
+    {
+        string query = afterPrefix.Length > "namespaces".Length ? afterPrefix["namespaces".Length..].Trim() : "";
+        var results = new List<CompletionItem>();
+        foreach (string ns in index.Namespaces
+            .Where(ns => string.IsNullOrWhiteSpace(query) || ns.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Take(MaxRuntimeTypeCompletions))
+        {
+            int typeCount = index.Types.Count(t => string.Equals(t.Namespace, ns, StringComparison.Ordinal));
+            results.Add(new CompletionItem
+            {
+                DisplayText = ns,
+                InsertText = prefix + "namespaces " + ns,
+                Description = typeCount.ToString() + " loaded types",
+                Writeup = "Namespace discovered from loaded assemblies. Continue typing a type name to narrow further.",
+                Category = "Runtime Namespace"
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            int remaining = Math.Max(0, MaxRuntimeTypeCompletions - results.Count);
+            if (remaining > 0)
+                results.AddRange(GetRuntimeTypeCompletions(query, prefix + "types ", index, remaining));
+        }
+
+        return results;
+    }
+
+    private List<CompletionItem> GetRuntimeTypeCompletions(string typed, string prefix, RuntimeReflectionIndex index, int take, string? assemblyFilter = null)
+    {
+        typed = (typed ?? "").Trim();
+        if (take <= 0)
+            return [];
+
+        IEnumerable<RuntimeTypeInfo> source = index.Types;
+        if (!string.IsNullOrWhiteSpace(assemblyFilter))
+            source = source.Where(t => string.Equals(t.AssemblyName, assemblyFilter, StringComparison.OrdinalIgnoreCase));
+
+        var matches = source
+            .Select(type => new { Type = type, Score = ScoreRuntimeTypeMatch(type, typed) })
+            .Where(match => match.Score < 1000)
+            .OrderBy(match => match.Score)
+            .ThenBy(match => match.Type.AssemblyName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(match => match.Type.FullName, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Min(take, MaxRuntimeTypeCompletions))
+            .ToList();
+
+        var results = new List<CompletionItem>();
+        foreach (var match in matches)
+        {
+            RuntimeTypeInfo type = match.Type;
+            string baseText = string.IsNullOrWhiteSpace(type.BaseType) ? "" : " : " + type.BaseType;
+            results.Add(new CompletionItem
+            {
+                DisplayText = type.DisplayName + " (" + type.AssemblyName + ")",
+                InsertText = prefix + type.FullName,
+                Description = type.Accessibility + " " + type.Kind + " | " + type.AssemblyName + baseText,
+                Writeup = "Loaded runtime type. Namespace: " + (string.IsNullOrWhiteSpace(type.Namespace) ? "<global>" : type.Namespace) + ". Declared members: " + type.DeclaredMemberCount.ToString() + ".",
+                Category = "Runtime Type",
+                IsExecutable = false
+            });
+        }
+        return results;
+    }
+
+    private static int ScoreRuntimeTypeMatch(RuntimeTypeInfo type, string typed)
+    {
+        if (type == null)
+            return 1000;
+        if (string.IsNullOrWhiteSpace(typed))
+            return type.AssemblyName.StartsWith("SocketJack", StringComparison.OrdinalIgnoreCase) ? 10 : 80;
+        if (type.FullName.Equals(typed, StringComparison.OrdinalIgnoreCase)) return 0;
+        if (type.DisplayName.Equals(typed, StringComparison.OrdinalIgnoreCase)) return 1;
+        if (type.Name.Equals(typed, StringComparison.OrdinalIgnoreCase)) return 2;
+        if (type.FullName.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) return 10;
+        if (type.DisplayName.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) return 12;
+        if (type.Name.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) return 14;
+        if (type.Namespace.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) return 30;
+        if (type.FullName.Contains(typed, StringComparison.OrdinalIgnoreCase)) return 50;
+        if (type.DisplayName.Contains(typed, StringComparison.OrdinalIgnoreCase)) return 55;
+        if (type.Name.Contains(typed, StringComparison.OrdinalIgnoreCase)) return 60;
+        if (type.AssemblyName.Contains(typed, StringComparison.OrdinalIgnoreCase)) return 90;
+        return 1000;
+    }
 
     private List<CompletionItem> GetReflectionCompletions(string input, string prefix)
     {
         string afterPrefix = input.Length > prefix.Length ? input[prefix.Length..] : "";
         var parts = afterPrefix.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-        // Load assemblies for matching
-        List<ReflectionService.AssemblyInfo> assemblies;
+        // Load all currently available runtime assemblies and types for matching.
+        RuntimeReflectionIndex runtimeIndex;
         try
         {
-            assemblies = ReflectionService.GetLoadedAssemblies();
+            runtimeIndex = GetRuntimeReflectionIndex();
         }
         catch
         {
-            assemblies = [];
+            runtimeIndex = new RuntimeReflectionIndex();
         }
+        var assemblies = runtimeIndex.Assemblies;
+
+        if (afterPrefix.StartsWith("types", StringComparison.OrdinalIgnoreCase))
+            return GetRuntimeTypeCommandCompletions(afterPrefix, prefix, runtimeIndex);
+
+        if (afterPrefix.StartsWith("namespaces", StringComparison.OrdinalIgnoreCase))
+            return GetRuntimeNamespaceCommandCompletions(afterPrefix, prefix, runtimeIndex);
 
         // Special-case: "/reflect assemblies" — provide assembly + namespace completions
         if (afterPrefix.StartsWith("assemblies", StringComparison.OrdinalIgnoreCase))
@@ -447,7 +761,7 @@ public sealed class PromptIntellisense
             if (string.IsNullOrWhiteSpace(remainder))
             {
                 var results = new List<CompletionItem>();
-                foreach (var asm in assemblies.Take(50))
+                foreach (var asm in assemblies.Take(MaxRuntimeAssemblyCompletions))
                 {
                     results.Add(new CompletionItem
                     {
@@ -503,7 +817,7 @@ public sealed class PromptIntellisense
         // Assembly name matching: check if first token matches an assembly name
         string firstToken = parts.Length > 0 ? parts[0] : "";
         bool isFirstTokenAssembly = false;
-        ReflectionService.AssemblyInfo? matchedAssembly = null;
+        RuntimeAssemblyInfo? matchedAssembly = null;
         string namespaceOrTypePrefix = "";
 
         // Try to match assembly name (exact, prefix, or first part of dot-separated)
@@ -539,25 +853,7 @@ public sealed class PromptIntellisense
         {
             isFirstTokenAssembly = true;
 
-            // Filter types by the namespace/type prefix
-            var matchingTypes = matchedAssembly.PublicTypes
-                .Where(t => string.IsNullOrEmpty(namespaceOrTypePrefix) || 
-                           t.StartsWith(namespaceOrTypePrefix, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(t => t)
-                .Take(50);
-
-            var results = new List<CompletionItem>();
-            foreach (var type in matchingTypes)
-            {
-                results.Add(new CompletionItem
-                {
-                    DisplayText = type,
-                    InsertText = prefix + matchedAssembly.Name + "." + type,
-                    Description = $"Type in {matchedAssembly.Name}",
-                    Category = "Reflection"
-                });
-            }
-            return results;
+            return GetRuntimeTypeCompletions(namespaceOrTypePrefix, prefix, runtimeIndex, MaxRuntimeTypeCompletions, matchedAssembly.Name);
         }
         else if (matchedAssembly != null && afterPrefix.EndsWith(' ') && parts.Length == 1)
         {
@@ -599,7 +895,7 @@ public sealed class PromptIntellisense
             {
                 // Return assembly name completions
                 var results = new List<CompletionItem>();
-                foreach (var asm in matches.Take(50))
+                foreach (var asm in matches.Take(MaxRuntimeAssemblyCompletions))
                 {
                     results.Add(new CompletionItem
                     {
@@ -629,7 +925,11 @@ public sealed class PromptIntellisense
                     return GetReflectionMemberList(childTyped, prefix, parentPath + ".", drillMembers);
             }
 
-            return GetReflectionMemberList(typed, prefix);
+            var memberResults = GetReflectionMemberList(typed, prefix);
+            int remainingRuntimeTypeSlots = Math.Max(0, MaxRuntimeTypeCompletions - memberResults.Count);
+            if (remainingRuntimeTypeSlots > 0 && !string.IsNullOrWhiteSpace(typed))
+                memberResults.AddRange(GetRuntimeTypeCompletions(typed, prefix, runtimeIndex, remainingRuntimeTypeSlots));
+            return memberResults;
         }
 
         // If first token is assembly, don't continue to member name processing

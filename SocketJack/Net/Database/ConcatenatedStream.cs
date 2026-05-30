@@ -4,8 +4,8 @@ using System.IO;
 namespace SocketJack.Net.Database {
 
     /// <summary>
-    /// A read-only stream that reads from <paramref name="first"/> until it is
-    /// exhausted, then seamlessly continues reading from <paramref name="second"/>.
+    /// A read-only stream that reads from the first stream until it is
+    /// exhausted, then seamlessly continues reading from the second stream.
     /// Used to prepend buffered leftover bytes (already consumed from the socket
     /// by ReceiveData) in front of the live NetworkStream so that the TDS read
     /// loop processes them in order without missing any data.

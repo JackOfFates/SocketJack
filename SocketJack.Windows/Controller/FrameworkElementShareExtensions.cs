@@ -15,7 +15,9 @@ namespace SocketJack.WPF {
                 return true;
             }
 
-            private const int DefaultJpegQuality = 77;
+            private const int DefaultJpegQuality = 72;
+            private const int IdleFrameDelayMs = 250;
+            private const int IdleBackoffStepMs = 25;
 
             public static IDisposable Share(this FrameworkElement element, TcpClient client, Identifier peer, int fps = 10) {
                 return ShareInternal(element, client, peer, fps);
@@ -38,27 +40,47 @@ namespace SocketJack.WPF {
                 var cts = new CancellationTokenSource();
 
                 var actionCallback = RegisterRemoteActionReplay(client, peer, route, cts);
+                var captureState = new ControlBitmapCaptureState();
 
                 _ = Task.Run(async () =>
                 {
                     var delayMs = fps <= 0 ? 100 : (int)Math.Max(10, 1000.0 / fps);
+                    int unchangedTicks = 0;
                     while (!cts.IsCancellationRequested) {
                         try {
-                            var jpg = await ControlBitmapCapture.CaptureJpegAsync(element, quality: DefaultJpegQuality).ConfigureAwait(false);
-                            if (jpg != null && jpg.Length > 0) {
-                                var width = (int)Math.Ceiling(element.ActualWidth);
-                                var height = (int)Math.Ceiling(element.ActualHeight);
+                            var frame = await ControlBitmapCapture.CaptureAdaptiveJpegAsync(
+                                element,
+                                captureState,
+                                quality: DefaultJpegQuality).ConfigureAwait(false);
 
+                            if (frame != null && frame.JpegBytes.Length > 0) {
                                 client.Send(peer, new ControlShareFrame
                                 {
                                     ControlId = route.ID,
                                     Route = route,
-                                    JpegBytes = jpg,
-                                    Quality = DefaultJpegQuality,
-                                    Width = width,
-                                    Height = height,
+                                    JpegBytes = frame.IsDelta ? null : frame.JpegBytes,
+                                    DeltaJpegBytes = frame.IsDelta ? frame.JpegBytes : null,
+                                    IsDelta = frame.IsDelta,
+                                    DirtyX = frame.DirtyX,
+                                    DirtyY = frame.DirtyY,
+                                    DirtyWidth = frame.DirtyWidth,
+                                    DirtyHeight = frame.DirtyHeight,
+                                    PixelWidth = frame.PixelWidth,
+                                    PixelHeight = frame.PixelHeight,
+                                    DpiX = frame.DpiX,
+                                    DpiY = frame.DpiY,
+                                    Sequence = frame.Sequence,
+                                    BaseSequence = frame.BaseSequence,
+                                    ChangedRatio = frame.ChangedRatio,
+                                    Quality = frame.Quality,
+                                    Width = (int)Math.Ceiling(frame.LogicalWidth),
+                                    Height = (int)Math.Ceiling(frame.LogicalHeight),
                                     UnixMs = unchecked((int)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
                                 });
+                                captureState.Commit(frame);
+                                unchangedTicks = 0;
+                            } else {
+                                unchangedTicks = Math.Min(16, unchangedTicks + 1);
                             }
                         }
                         catch {
@@ -66,7 +88,10 @@ namespace SocketJack.WPF {
                         }
 
                         try {
-                            await Task.Delay(delayMs, cts.Token).ConfigureAwait(false);
+                            int nextDelayMs = unchangedTicks == 0
+                                ? delayMs
+                                : Math.Min(IdleFrameDelayMs, delayMs + (unchangedTicks * IdleBackoffStepMs));
+                            await Task.Delay(nextDelayMs, cts.Token).ConfigureAwait(false);
                         }
                         catch {
                             break;

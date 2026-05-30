@@ -1,711 +1,324 @@
-# SocketJack
+# SocketJack 2026
 
 ![SocketJack Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/SocketJackIcon.png)
 
 [![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
+[![SocketJack.WPF](https://img.shields.io/nuget/v/SocketJack.WPF.svg?label=SocketJack.WPF)](https://www.nuget.org/packages/SocketJack.WPF)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A batteries-included .NET networking stack for object transport, browser-native HTTP/WebSocket apps, WPF control sharing, and local AI model orchestration.
+SocketJack 2026 is a batteries-included .NET networking platform for typed object transport, TCP, UDP, WebSockets, HTTP apps, protocol multiplexing, SQL-backed management, peer-to-peer metadata, and remote WPF control.
 
-SocketJack handles framing, segmentation, serialization, compression, routing, and protocol detection so the application code can stay boring: `Send(myObject)` on one side, register a typed callback on the other, and let the transport worry about the bytes.
+It is built for projects that need real network behavior without rebuilding wire plumbing from scratch. Framing, segmentation, serialization, compression, routing, protocol detection, TLS, static file hosting, streaming routes, typed callbacks, peer identity, and P2P forwarding are already part of the platform.
 
-> One library. Many transports. A surprisingly capable local AI control plane.
-
-**Targets:** SocketJack core: .NET Standard 2.1 | SocketJack.WPF: `net10.0-windows7.0`
-
----
-
-## What's New in v2.0.0?
-
-- **LmVsProxy Web Console** - a full browser workspace for LM Studio-backed chat, sessions, model selection, file uploads, prompt intellisense, service routing, diagnostics, and per-client permissions.
-- **Remote Admin for WPF hosts** - view and control the LmVsProxy GUI from the web console through SocketJack.WPF capture/input providers without moving the real Windows cursor.
-- **WebAuth and host-local administration** - token/basic auth, registration approvals, administrator roles, host-IP admin detection, and CORS-friendly local LLM client APIs.
-- **Per-client capability gates** - enable or disable agent access, internet search, VS Copilot tools, file transfer, SQL admin, FTP, terminal commands, image uploads, and downloads by owner key.
-- **Session and artifact persistence** - SocketJack's embedded data server now backs chat sessions, auth records, usage costs, filesystem access lists, and uploaded/downloaded files.
-- **Architecture upgrades** - `MutableTcpServer` is now the shared front door for HTTP, WebSocket, SocketJack protocols, SQL admin, FTP configuration, LLM client endpoints, and the web UI.
-
----
-
-## Features
-
-| Category | Highlights |
+| Start here | Link |
 |---|---|
-| **Transport Core** | Unified `TcpClient` / `TcpServer`, `UdpClient` / `UdpServer`, HTTP, and WebSocket APIs on top of `System.Net.Sockets`, with consistent lifecycle events and typed callbacks. |
-| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, WebSocket, RTMP, and custom protocols on one port, then routes each connection through the right handler. |
-| **HTTP App Hosting** | Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), file and directory serving, `.htaccess` controls, chunked responses, upload streams, static caching, `ETag`, `Last-Modified`, and `304` support. |
-| **Serialization** | Default `System.Text.Json`, pluggable `ISerializer`, custom converters, and type whitelist/blacklist support for safer object transport. |
-| **Peer-to-Peer** | Peer discovery, host/client role management, relay-assisted NAT traversal, and metadata-driven routing through the `Identifier` class. |
-| **Compression and Throughput** | Pluggable compression (`GZipStream`, `DeflateStream`), large configurable buffers, async I/O, automatic segmentation, outbound chunking, and bandwidth throttling. |
-| **Security** | TLS via `SslStream`, X.509 auth, `.htaccess` IP allow/deny, HTTP Basic auth, file-pattern restrictions, WebAuth records, bearer tokens, and local-host admin detection. |
-| **WPF Remoting** | Capture any WPF `FrameworkElement`, stream it as JPEG frames, and forward remote mouse/keyboard input to the target window. |
-| **LmVsProxy** | Local LM Studio bridge for Visual Studio/Copilot-compatible tooling, browser chat, prompt services, per-client permissions, WebAuth, remote admin, terminal approvals, FTP, SQL admin, and usage-cost tracking. |
+| Install the NuGet packages | [#Install](#install) |
+| See the 2026 package line | [#Versions](#versions) |
+| Explore networking features | [#Networking](#networking) |
+| Share or control WPF windows | [#SocketJack.WPF](#socketjackwpf) |
+| Learn about JackLLM Workstation | [#JackLLM Workstation](#jackllm-workstation) |
 
----
+<a id="versions"></a>
+## #Versions
 
-## Supported Transports
+SocketJack 2026 is the current platform line. The core packages use year-based versions, while some companion tooling keeps its own package-compatible numbering.
 
-### TCP
+| Surface | Version | Target / format | Notes |
+|---|---:|---|---|
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.0` | `.NET Standard 2.1` | Core networking, protocol hosting, P2P, SQL/data, streaming, HTTP, and WebSockets. |
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.0` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF capture, remote input, and GUI remoting. |
+| `JackLLM Workstation` | `2026.0` | Windows app metadata | WPF workstation app in `JackLLM/`. |
+| `JackLLM Workstation Linux` | `1:26.0.1` | Debian package version | Linux-compatible Debian version for the 2026 line. The epoch keeps upgrades ordered after earlier `2026.0.x` packages. |
+| `SocketJack LlmRuntime VS Extension` | `0.1.4` | Visual Studio 2022 VSIX | Legacy VSSDK extension in `LlmRuntime.VisualStudio/`. |
+| `SocketJack LlmRuntime VS 2026 Extension` | `0.2.30` | Visual Studio 2026 VSIX | Modern VisualStudio.Extensibility extension in `LlmRuntime.VisualStudio2026/`. |
+| `SocketJack.Unity` | `1.1.0.1` | `.NET Standard 2.1` | Legacy Unity-facing package surface. |
+| `SocketJack.WebSocketServer` | `1.1.0.1` | `.NET Standard 2.1` | Legacy WebSocket server package surface. |
 
-The core transport. `TcpClient` and `TcpServer` provide reliable, ordered, stream-oriented communication with automatic message segmentation for arbitrarily large payloads. TLS is supported via `SslStream` and `X509Certificate`.
+<a id="install"></a>
+<details open>
+<summary><strong>#Install</strong> - package commands and first choice</summary>
 
-### UDP
+Install the core networking package:
 
-`UdpClient` and `UdpServer` mirror the TCP API but use connectionless datagrams. The same `NetworkOptions`, serialization, compression, peer-to-peer, and callback systems work identically. Payloads are limited by `MaxDatagramSize` (default 65,507 bytes).
-
-| | TCP | UDP |
-|---|---|---|
-| **Connection** | Stream-oriented, persistent | Connectionless datagrams |
-| **Reliability** | Guaranteed delivery & ordering | No built-in delivery guarantee |
-| **Max payload** | Unlimited (automatic segmentation) | Limited by `MaxDatagramSize` |
-| **TLS** | Supported via `SslStream` | Not supported |
-
-### HTTP
-
-`HttpServer` and `HttpClient` layer a familiar HTTP API on top of the TCP transport. Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file serving (`MapDirectory`), `.htaccess` security, typed callbacks, chunked transfer-encoding, RTMP ingest, HTTPS/TLS, and automatic redirects are all built in.
-
-| Class | Description |
-|---|---|
-| `HttpServer` | Extends `TcpServer`. Parses HTTP requests, resolves routes, serves static files, and writes responses. |
-| `HttpClient` | Extends `TcpClient`. Sends HTTP/HTTPS requests with redirect and chunked-transfer support. |
-| `MutableTcpServer` | Extends `HttpServer`. Auto-detects protocol (HTTP, SocketJack, WebSocket, RTMP, or custom) per-connection on a single port. |
-| `BroadcastServer` | Attaches to an `HttpServer` to relay live video from OBS (RTMP or HTTP upload) to browser and VLC viewers via FLV. |
-| `HtAccessBuilder` | Fluent builder for `.htaccess` rules: IP allow/deny, HTTP Basic auth, file restrictions, custom headers. |
-| `HttpContext` | Carries the `HttpRequest`, `HttpResponse`, status code, and content type for a single request cycle. |
-| `HttpRequest` | Parsed request: `Method`, `Path`, `Headers`, `Body`, `BodyBytes`, `QueryString`, `QueryParameters`. |
-| `HttpResponse` | Response: `StatusCodeNumber`, `Headers`, `Body`/`BodyBytes`, `ContentType`. |
-
-### WebSocket
-
-`WebSocketClient` and `WebSocketServer` implement RFC 6455 while sharing the same serialization, compression, P2P, and callback systems. The server handles the HTTP upgrade handshake automatically and can generate JavaScript class constructors for browser clients.
-
-| | TCP | WebSocket |
-|---|---|---|
-| **Protocol** | Raw TCP stream | WebSocket frames (RFC 6455) |
-| **Handshake** | TCP three-way handshake | HTTP Upgrade + WebSocket handshake |
-| **Browser support** | Not natively supported | Full browser `WebSocket` API compatibility |
-| **Client connect** | `Connect(host, port)` | `Connect(host, port)` or `ConnectAsync(uri)` |
-
-### WPF Live Control Sharing
-
-> **Requires the [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) NuGet package.**
-
-The `SocketJack.WPF` library lets you share any WPF `FrameworkElement` over a `TcpClient` or `UdpClient` connection. The sharer captures JPEG frames at a configurable frame rate and streams them to a remote peer. The viewer displays those frames in an `Image` control and automatically forwards mouse input back, so the remote user can interact with the shared element as if it were local.
-
-### LmVsProxy - Local AI Control Plane
-
-`LmVsProxy` started as a bridge between Visual Studio's Copilot-style tool calls and LM Studio's OpenAI-compatible `/v1/chat/completions` endpoint. It has grown into a local web console for running, governing, observing, and remotely administering a private model stack.
-
-It still translates GitHub/Copilot tool-call traffic into LM Studio-friendly requests, but the web layer now brings the rest of the cockpit: chat sessions, prompt services, file access, authentication, per-client permissions, cost tracking, diagnostics, and WPF Remote Admin.
-
-**Web Console Feature Set**
-
-| Area | What it does |
-|---|---|
-| **Chat Workspace** | Browser chat UI with streaming responses, stop/cancel support, model refresh, temperature/top-p/max-token controls, service selection, rich code blocks, images, and file attachments. |
-| **Prompt Intellisense** | Slash-command style suggestions for sessions, reflection, terminal tools, service hints, and proxy-owned actions. |
-| **Sessions** | Persisted chat history, active prompt tracking, session owner keys, resumable conversations, and debug diagnostics. |
-| **Permissions** | Per-client capability gates for agent access, internet search, VS tools, uploads, downloads, image input, FTP, SQL admin, terminal commands, and forever-approved terminal mode. |
-| **WebAuth** | Local registration, registration approval, bearer/basic auth, token expiry, administrator roles, host-local admin access, and CORS-aware auth endpoints. |
-| **Files and Explorer** | Session file uploads/downloads, filesystem allowlists, directory browsing, file preview, and a Solution Explorer-style tree for approved roots. |
-| **Remote Admin** | Live WPF capture of the LmVsProxy GUI plus remote mouse, wheel, text, and key input routed directly to WPF window handlers. |
-| **Services** | Internet search, local terminal execution with approval prompts, reflection/service inspection, VS Copilot tool routing, FTP configuration, and SQL admin surface. |
-| **Billing and Usage** | Token/electricity/storage cost settings, per-user usage snapshots, and storage profile controls for local-model accounting. |
-| **LLM Client APIs** | Authenticated `/api/llm-client/*` endpoints for status, chat, streaming chat, screenshots, bitmap capture, and remote input. |
-
-**Architecture at a Glance**
-
-```mermaid
-flowchart LR
-    VS["Visual Studio / Copilot"] --> Proxy["LmVsProxy translator"]
-    Browser["Browser Web Console"] --> Server["MutableTcpServer ChatServer"]
-    Remote["Remote Admin overlay"] --> Server
-    Server --> Auth["WebAuth + host-local admin"]
-    Server --> Data["SocketJack DataServer"]
-    Server --> Services["Prompt services"]
-    Server --> Wpf["SocketJack.WPF capture/input"]
-    Proxy --> LM["LM Studio OpenAI API"]
-    Services --> LM
-    Services --> Tools["Search, terminal, reflection, files, SQL, FTP"]
-    Data --> Store["Sessions, permissions, auth, costs, artifacts"]
-    Wpf --> Gui["LmVsProxy WPF GUI"]
+```powershell
+dotnet add package SocketJack
 ```
 
-**Request Flow**
+Or with Package Manager:
 
-1. Visual Studio, a browser, or an LLM client calls the proxy.
-2. `MutableTcpServer` accepts the connection and routes HTTP, WebSocket, SocketJack, SQL admin, FTP config, or custom protocol traffic through one shared server surface.
-3. WebAuth and host-local admin checks decide what the caller may see or change.
-4. `LmVsProxy` translates Visual Studio/GitHub tool schemas into OpenAI-compatible chat payloads.
-5. Services add only the tools the current owner key is allowed to use.
-6. LM Studio streams the model response back through the same SocketJack HTTP stack.
-7. Sessions, usage, costs, files, and permission changes are persisted in the embedded SocketJack database.
-
-**Public Web/API Surface**
-
-| Route family | Purpose |
-|---|---|
-| `/` | Browser chat console. |
-| `/health` | Runtime status, proxy ports, SQL/FTP state, and chat database metadata. |
-| `/api/models` | LM Studio model discovery with fallback behavior. |
-| `/api/chat` and `/api/chat-stream` | Browser chat completion and SSE streaming. |
-| `/api/chat-sessions` and `/api/chat-session` | List, load, and save chat sessions. |
-| `/api/chat-permissions` | Read/write owner-key permissions for admins. |
-| `/api/chat-filesystem-access` | Manage approved local filesystem roots. |
-| `/api/chat-solution-explorer` and `/api/chat-file-preview` | Browse and preview approved files from the web UI. |
-| `/api/web-auth/*` | Register, request approval, login, logout, inspect session, and manage token limits. |
-| `/api/llm-client/*` | Authenticated remote LLM client status, chat, stream, screen capture, bitmap capture, and input. |
-| `/FTP` and `/api/ftp-config` | Configure and operate the embedded FTP surface for approved session roots. |
-
-**Getting Started**
-
-1. Install LM Studio and download a local model.
-2. Start LM Studio's OpenAI-compatible server, usually `http://localhost:1234`.
-3. Start the proxy and optional web console:
-
-```cs
-var proxy = new LmVsProxy("localhost", 1234, 11434);
-proxy.Start();
-
-if (!proxy.ChatServer.IsListening)
-{
-    proxy.ChatServer.Listen();
-}
-
-Console.WriteLine("Copilot bridge: http://localhost:11434/v1/chat/completions");
-Console.WriteLine("Web console:    " + proxy.ChatServerUrl);
-```
-
-![LmVsProxy Web Console](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/1.jpg)
-
-![LmVsProxy Diagnostics](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/2.jpg)
-
-![LmVsProxy Remote Admin](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/3.jpg)
-
-4. Configure Visual Studio or another OpenAI-compatible client to call `http://localhost:11434/v1/chat/completions`.
-5. Open `proxy.ChatServerUrl` for the browser console, permissions, sessions, diagnostics, and Remote Admin.
-6. For WPF Remote Admin, register a WPF capture element through `SocketJack.WPF` so the web console can capture and control the GUI.
-
----
-
-## Use Cases
-
-- **Real-time multiplayer games** — low-latency communication with dynamic peer discovery.
-- **Distributed chat** — P2P messaging with metadata-driven room discovery.
-- **IoT device networks** — efficient, secure communication across flexible topologies.
-- **Remote control & automation** — event-driven command/control of remote systems, including WPF capture and web-based Remote Admin.
-- **Custom protocols** — build domain-specific protocols on top of any transport with full control over serialization and peer management.
-- **Local AI operations** — run LM Studio-backed models behind an authenticated browser console with sessions, tools, files, permissions, diagnostics, and usage accounting through LmVsProxy.
-
----
-
-## Getting Started
-
-Install via NuGet:
-
-```
+```powershell
 Install-Package SocketJack
 ```
 
----
+Install the WPF companion package when you want live WPF capture, remote input, or peer-controlled desktop windows:
 
-## Examples
+```powershell
+dotnet add package SocketJack.WPF
+```
 
-### TCP — Server & Client
+Use `SocketJack` for servers, clients, protocol hosting, HTTP/WebSocket apps, SQL/data, streaming, and peer routing. Add `SocketJack.WPF` when the network should see or control a WPF interface.
 
-```cs
-// Create and start a server
+</details>
+
+<a id="networking"></a>
+<details>
+<summary><strong>#Networking</strong> - TCP, UDP, WebSockets, standard protocols, and the SocketJack protocol</summary>
+
+SocketJack gives one consistent API family for local-network tools, multiplayer games, admin panels, browser apps, agent hosts, stream relays, database management, and peer-routed software.
+
+### #Tcp
+
+`TcpServer` and `TcpClient` provide typed object messaging over TCP. You register callbacks by message type and let SocketJack handle framing, segmentation, connection identity, serialization, compression, and broadcast routing.
+
+```csharp
+using SocketJack.Net;
+
 var server = new TcpServer(port: 12345);
+server.RegisterCallback<ChatMessage>(args =>
+{
+    Console.WriteLine(args.Object.Text);
+    args.Connection.Send(new ChatMessage("received"));
+});
 server.Listen();
 
-// Connect a client
 var client = new TcpClient();
 await client.Connect("127.0.0.1", 12345);
+client.Send(new ChatMessage("hello"));
 
-// Send any serializable object
-client.Send(new CustomMessage("Hello!"));
+public sealed record ChatMessage(string Text);
+```
 
-// Handle it with a typed callback
-server.RegisterCallback<CustomMessage>((args) =>
+### #Udp
+
+`UdpServer` and `UdpClient` use the same typed callback style for datagram workflows. This is useful for discovery, presence, lightweight state, games, telemetry, local-network devices, and low-overhead service coordination.
+
+### #WebSockets
+
+SocketJack includes browser-compatible WebSocket clients and servers. WebSocket connections can use the same serialization, compression, callbacks, peer metadata, and P2P routing as native SocketJack connections.
+
+```csharp
+using SocketJack.Net;
+
+var server = new WebSocketServer(port: 9000);
+server.RegisterCallback<ChatMessage>(args =>
 {
-    Console.WriteLine($"Received: {args.Object.Message}");
-
-    // Echo back to the sender
-    args.Connection.Send(new CustomMessage("10-4"));
+    server.SendBroadcast(new ChatMessage(args.Object.Text));
 });
-```
-
-### TCP — Default Options
-
-Must be set before creating any Client or Server instance.
-
-```cs
-NetworkOptions.DefaultOptions.UsePeerToPeer = true;
-```
-
-### TCP — Attach Metadata (Server-Side)
-
-```cs
-// Inside a server callback or ClientConnected handler:
-connection.SetMetaData("room", "Lobby1");
-```
-
-### UDP — Server & Client
-
-```cs
-var server = new UdpServer(port: 12345);
 server.Listen();
+```
 
-var client = new UdpClient();
-await client.Connect("127.0.0.1", 12345);
+### #Standard Protocols Built In
 
-// Same Send / RegisterCallback pattern as TCP
-client.Send(new CustomMessage("Hello via UDP!"));
+SocketJack can host normal internet and application protocols directly:
 
-server.RegisterCallback<CustomMessage>((args) =>
+| Protocol / surface | What it is used for |
+|---|---|
+| HTTP | Routes, APIs, typed request bodies, static files, directories, redirects, uploads, and stream responses. |
+| WebSockets | Browser clients, dashboards, chat, realtime admin, and app clients. |
+| RTMP streaming | Live media ingest and relay workflows. |
+| TDS / SQL | SQL-style clients and database management surfaces. |
+| FTP / SFTP helpers | File transport, session artifacts, and remote file movement. |
+| TLS / auth helpers | `SslStream`, certificates, Basic auth, bearer tokens, local-host checks, and allow/deny rules. |
+
+`MutableTcpServer` can detect and route multiple protocols on one listening port, so a single server can host HTTP, WebSocket, SocketJack protocol traffic, RTMP, SQL/TDS, and custom handlers.
+
+### #SocketJack Protocol Built In
+
+The native SocketJack protocol is the object-transport layer:
+
+- Send CLR objects directly with `client.Send(new MyMessage(...))`.
+- Register type-safe callbacks with `RegisterCallback<T>()`.
+- Broadcast to connected clients or route to a specific peer.
+- Use peer redirects for P2P-style delivery through a coordinating server.
+- Carry identity and metadata with each connection.
+- Let SocketJack handle wrappers, type information, chunking, compression, and reassembly.
+
+</details>
+
+<a id="serialization"></a>
+<details>
+<summary><strong>#Serialization</strong> - built-in System.Text.Json with type-safe callbacks</summary>
+
+SocketJack uses `System.Text.Json` by default and keeps application code strongly typed.
+
+| Feature | Benefit |
+|---|---|
+| Built-in JSON serializer | No serializer setup required for normal object messaging. |
+| Type-safe callbacks | Receive `T` directly instead of manually decoding bytes. |
+| Wrapper metadata | Type information and peer-routing metadata travel with each message. |
+| Pluggable surface | Advanced users can replace the serializer through `NetworkOptions.Serializer`. |
+
+```csharp
+server.RegisterCallback<OrderSubmitted>(args =>
 {
-    Console.WriteLine($"Received: {args.Object.Message}");
+    OrderSubmitted order = args.Object;
+    Console.WriteLine(order.OrderId);
 });
+
+client.Send(new OrderSubmitted("SO-1001", total: 42.50m));
+
+public sealed record OrderSubmitted(string OrderId, decimal Total);
 ```
 
-### UDP — Peer-to-Peer & Broadcasting
+</details>
 
-```cs
-// Send to a specific peer (relayed through the server)
-client.Send(remotePeer, new CustomMessage("P2P over UDP"));
+<a id="database--mvc"></a>
+<details>
+<summary><strong>#Database / MVC</strong> - SQL, web admin, HTTP routing, and peer metadata</summary>
 
-// Broadcast to all peers
-client.SendPeerBroadcast(new CustomMessage("Hello everyone!"));
+SocketJack includes enough web, data, and routing infrastructure to build admin panels, dashboards, internal tools, workstation state, and agent-facing management surfaces without adding a separate web stack first.
 
-// Server broadcasts to all connected clients
-server.SendBroadcast(new CustomMessage("Server announcement"));
+### #SQL Database
 
-// Server sends to a specific client by Identifier
-server.Send(clientIdentifier, new CustomMessage("Direct message"));
-```
+- Built-in data-server primitives for application records, snapshots, generated context, and cached query paths.
+- SQL/TDS protocol handling for SQL-style access paths.
+- Good fit for local-first tools, embedded admin systems, workstation state, sessions, permissions, and hosted metadata.
 
-### UDP — Options
+### #Web SQL Admin / Management
 
-```cs
-var options = new NetworkOptions();
-options.MaxDatagramSize      = 1400;     // Safe MTU (default 65,507)
-options.ClientTimeoutSeconds = 60;       // Default 30
-options.UdpReceiveBufferSize = 131072;   // Default 65,535
-options.EnableBroadcast      = true;     // Default false
-options.ClientTimeoutCheckIntervalMs = 10000; // Default 5,000
+- HTTP-hosted SQL admin and management surfaces can run directly on a SocketJack server.
+- Route mapping supports JSON APIs, typed request bodies, static pages, uploads, and stream responses.
+- The same host can serve an admin UI, a browser app, a database API, and native SocketJack peers.
 
-var server = new UdpServer(options, port: 12345);
-var client = new UdpClient(options);
-```
+```csharp
+using SocketJack.Net;
 
-### HTTP — Server
-
-```cs
 var server = new HttpServer(port: 8080);
-server.Listen();
 
-// Custom index page
-server.IndexPageHtml = "<html><body><h1>Welcome!</h1></body></html>";
-
-// Route mapping
-server.Map("GET", "/hello", (connection, request, ct) =>
-{
-    return "Hello, World!";
-});
-
-server.Map("POST", "/echo", (connection, request, ct) =>
-{
-    return new EchoResponse(request.Body);
-});
-
-server.RemoveRoute("GET", "/hello");
-
-// Fallback for unmatched routes
-server.OnHttpRequest += (connection, ref context, ct) =>
-{
-    context.Response.Body = "Custom response";
-    context.Response.ContentType = "text/plain";
-    context.StatusCode = "200 OK";
-};
-```
-
-### HTTP — Typed Routes
-
-Automatically deserialize the request body to a typed parameter:
-
-```cs
-server.Map<LoginRequest>("POST", "/login", (connection, body, request, ct) =>
-{
-    // body is already deserialized to LoginRequest
-    return new LoginResponse(body.Username);
-});
-```
-
-### HTTP — Static File Serving
-
-Map a local directory to a URL prefix to serve static files with automatic MIME type detection:
-
-```cs
-// Serve files from C:\wwwroot at /static
+server.Map("GET", "/health", (connection, request, ct) => new { status = "ok" });
 server.MapDirectory("/static", @"C:\wwwroot");
 
-// Enable auto-generated directory listings for directories without index.html
-server.AllowDirectoryListing = true;
-
-server.RemoveDirectoryMapping("/static");
-```
-
-### HTTP — .htaccess Security
-
-Use the `HtAccessBuilder` fluent API to configure per-directory access rules:
-
-```cs
-server.MapDirectory("/secure", @"C:\data", htaccess =>
-{
-    htaccess
-        .DenyDirectoryListing()
-        .AllowFrom("192.168.1.0/24")
-        .DenyFiles("*.log", "*.bak")
-        .RequireBasicAuth("Admin Area", "admin:secret")
-        .AddHeader("X-Frame-Options", "DENY");
-});
-```
-
-### HTTP — Streaming Routes
-
-Keep a connection open for server-sent events or long-lived responses:
-
-```cs
-// Chunked streaming response
-server.MapStream("GET", "/events", async (connection, request, chunkedStream, ct) =>
-{
-    for (int i = 0; i < 10; i++)
-    {
-        chunkedStream.WriteLine("event: " + i);
-        await Task.Delay(1000, ct);
-    }
-});
-
-// Upload streaming (e.g., continuous video ingest)
-server.MapUploadStream("POST", "/upload", (connection, request, uploadStream, ct) =>
-{
-    byte[] chunk;
-    while ((chunk = uploadStream.ReadAsync(ct).GetAwaiter().GetResult()) != null)
-    {
-        // Process each incoming data chunk
-    }
-});
-```
-
-### HTTP — RTMP Ingest
-
-Accept RTMP publish connections (e.g., from OBS) directly on the HTTP server port:
-
-```cs
-server.MapRtmpPublish("live", async (connection, app, streamKey, uploadStream, ct) =>
-{
-    byte[] chunk;
-    while ((chunk = await uploadStream.ReadAsync(ct)) != null)
-    {
-        // Process RTMP media chunks (prefixed with type byte: 8=audio, 9=video)
-    }
-});
-```
-
-### HTTP — Client
-
-```cs
-using var client = new HttpClient();
-
-// GET
-HttpResponse response = await client.GetAsync("http://localhost:8080/hello");
-Console.WriteLine(response.Body);
-
-// POST
-byte[] body = Encoding.UTF8.GetBytes("{\"message\":\"hi\"}");
-HttpResponse postResp = await client.PostAsync(
-    "http://localhost:8080/echo",
-    "application/json",
-    body);
-
-// Full control
-HttpResponse resp = await client.SendAsync(
-    "PUT",
-    "https://example.com/api/resource",
-    new Dictionary<string, string> { ["Authorization"] = "Bearer token" },
-    body);
-
-// Streaming
-using var fileStream = File.Create("download.bin");
-await client.GetAsync("http://example.com/largefile", responseStream: fileStream);
-```
-
-### HTTP — Client Options
-
-```cs
-var client = new HttpClient();
-client.Timeout    = TimeSpan.FromSeconds(60); // Default 30
-client.MaxRedirects = 10;                     // Default 5
-client.DefaultHeaders["Accept"] = "application/json";
-```
-
-### HTTP — Live Streaming with BroadcastServer
-
-`BroadcastServer` turns any `HttpServer` into a live video relay. Point OBS (or any RTMP encoder) at the server and viewers can watch in a browser or VLC — no additional dependencies required.
-
-![OBS streaming to SocketJack HttpServer via BroadcastServer](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/httpStream.PNG)
-
-```cs
-using SocketJack.Net;
-
-// Create the HTTP server
-var server = new HttpServer(port: 8080);
-
-// Attach BroadcastServer and register the default streaming routes:
-//   GET  /stream       — HTML player page (mpegts.js)
-//   GET  /stream/data  — raw FLV relay for the player / VLC
-//   PUT  /Upload       — OBS Custom Output (HTTP)
-//   POST /Upload       — OBS Custom Output (HTTP)
-//   RTMP rtmp://host:port/live  — OBS RTMP publish
-var broadcast = new BroadcastServer(server);
-broadcast.Register();
-
-// Start listening
 server.Listen();
-
-// The stream key is auto-generated. In OBS set:
-//   Server:     rtmp://localhost:8080/live
-//   Stream Key: <broadcast.StreamKey>
-Console.WriteLine("Stream Key: " + broadcast.StreamKey);
-
-// Viewers open http://localhost:8080/stream in a browser,
-// or play http://localhost:8080/stream/data directly in VLC.
-
-// Optional: poll stats once per second
-while (true) {
-    var stats = broadcast.UpdateStats();
-    if (stats.Active) {
-        Console.WriteLine(
-            stats.BitrateKbps.ToString("N0") + " kbps | " +
-            stats.VideoFrames + " video | " +
-            stats.AudioFrames + " audio | " +
-            BroadcastServer.FormatBytes(stats.TotalBytes));
-    }
-    Thread.Sleep(1000);
-}
 ```
 
-### WebSocket — Server & Client
+### #P2P Metadata Sharing
 
-```cs
-var server = new WebSocketServer(port: 9000);
-server.Listen();
+SocketJack peers can share metadata with the network. It works like network cookies for clients and servers:
 
-// Optional TLS
-server.SslCertificate = new X509Certificate2("cert.pfx", "password");
-server.Options.UseSsl = true;
-server.Listen();
+- Announce model, hardware, role, room, user, app, price, uptime, or service state.
+- Update peer metadata while connections are alive.
+- Route messages based on peer identity and metadata.
+- Build server browsers, room lists, workstation directories, or capability registries.
 
-// Connect a client
-var client = new WebSocketClient();
-await client.Connect("127.0.0.1", 9000);
+</details>
 
-// Or with a full URI
-await client.ConnectAsync(new Uri("ws://127.0.0.1:9000/path"));
-```
+<a id="socketjackwpf"></a>
+<details>
+<summary><strong>#SocketJack.WPF</strong> - share, control, and manipulate remote WPF windows</summary>
 
-### WebSocket — Send, Receive & Broadcast
+`SocketJack.WPF` makes WPF windows and controls remotely shareable over SocketJack.
 
-```cs
-client.Send(new CustomMessage("Hello via WebSocket!"));
+| Capability | What it means |
+|---|---|
+| Live control sharing | Share any WPF `FrameworkElement` as a live image stream. |
+| Remote viewing | View remote WPF content from another WPF client or a browser-backed admin surface. |
+| Remote input | Send mouse, wheel, text, and keyboard input back to the shared control. |
+| P2P discovery | Use peer identity and metadata so remote windows can be found, shared, controlled, and manipulated through peer flows. |
+| JackLLM admin | Powers browser-based remote administration for JackLLM Workstation. |
 
-server.RegisterCallback<CustomMessage>((args) =>
-{
-    Console.WriteLine($"Received: {args.Object.Message}");
-});
-
-server.Send(clientConnection, new CustomMessage("Reply"));
-server.SendBroadcast(new CustomMessage("Announcement"));
-```
-
-### WebSocket — Peer-to-Peer
-
-```cs
-var options = new NetworkOptions();
-options.UsePeerToPeer = true;
-
-var client = new WebSocketClient(options);
-await client.Connect("127.0.0.1", 9000);
-
-client.Send(remotePeer, new CustomMessage("P2P over WebSocket"));
-client.SendBroadcast(new CustomMessage("Hello everyone!"));
-```
-
-### WebSocket — Events
-
-```cs
-// Server
-server.ClientConnected  += (e) => Console.WriteLine($"Client connected: {e.Connection.Identity.ID}");
-server.ClientDisconnected += (e) => Console.WriteLine($"Client disconnected: {e.Connection.Identity.ID}");
-server.OnReceive += (ref e) => Console.WriteLine($"Received: {e.Obj}");
-
-// Client
-client.OnConnected    += (e) => Console.WriteLine("Connected!");
-client.OnDisconnected += (e) => Console.WriteLine("Disconnected.");
-client.PeerConnected    += (sender, peer) => Console.WriteLine($"Peer joined: {peer.ID}");
-client.PeerDisconnected += (sender, peer) => Console.WriteLine($"Peer left: {peer.ID}");
-```
-
-### MutableTcpServer — Multi-Protocol on a Single Port
-
-`MutableTcpServer` extends `HttpServer` and auto-detects the protocol for each incoming connection. **HTTP, SocketJack, WebSocket, and RTMP** connections can all share a single listening port. Custom protocols are supported via the `IProtocolHandler` interface.
-
-```cs
-var server = new MutableTcpServer(port: 9000);
-
-// HTTP routes are configured through the Http property
-server.Http.Map("GET", "/api/status", (connection, request, ct) =>
-{
-    return "{ \"status\": \"ok\" }";
-});
-
-// Serve static files through the HTTP handler
-server.Http.MapDirectory("/www", @"C:\wwwroot");
-
-// Serve an individual file at a specific URL
-server.Http.MapFile("/js/app.js", @"C:\Pages\app.js");
-
-// SocketJack clients connect to the same port and are routed automatically
-server.SocketJackClientConnected += (connection) =>
-{
-    Console.WriteLine($"SocketJack client connected: {connection.ID}");
-};
-
-// WebSocket clients are detected via the HTTP Upgrade handshake
-server.WebSocketClientConnected += (connection) =>
-{
-    Console.WriteLine($"WebSocket client connected: {connection.ID}");
-};
-
-// Normal SocketJack callbacks work for both SocketJack and WebSocket clients
-server.RegisterCallback<CustomMessage>((args) =>
-{
-    Console.WriteLine($"Received: {args.Object.Message}");
-});
-
-server.Listen();
-
-// SocketJack clients connect normally:
-var client = new TcpClient();
-await client.Connect("127.0.0.1", 9000);
-client.Send(new CustomMessage("Hello!"));
-
-// WebSocket clients connect to the same port:
-var wsClient = new WebSocketClient();
-await wsClient.ConnectAsync(new Uri("ws://127.0.0.1:9000"));
-wsClient.Send(new CustomMessage("Hello from browser!"));
-
-// HTTP clients hit the same port:
-// curl http://localhost:9000/api/status
-```
-
-### MutableTcpServer — Custom Protocol Handler
-
-Implement `IProtocolHandler` to add support for any binary protocol:
-
-```cs
-public class MyProtocolHandler : IProtocolHandler
-{
-    public string Name => "MyProtocol";
-
-    public bool CanHandle(byte[] data)
-    {
-        // Detect your protocol by inspecting the first bytes
-        return data.Length >= 4 && data[0] == 0xAB;
-    }
-
-    public void ProcessReceive(MutableTcpServer server, NetworkConnection connection, ref IReceivedEventArgs e)
-    {
-        // Handle incoming data for this protocol
-    }
-
-    public void OnDisconnected(MutableTcpServer server, NetworkConnection connection)
-    {
-        // Clean up when a connection using this protocol disconnects
-    }
-}
-
-server.RegisterProtocol(new MyProtocolHandler());
-```
-
-### WPF — Sharing a Control
-
-> **These examples require the [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) NuGet package, not `SocketJack`.**
-
-```cs
-using SocketJack.Net;
-using SocketJack.Net.P2P;
+```csharp
 using SocketJack.WPF;
 
-// Share any FrameworkElement (Canvas, Grid, Border, Window, etc.)
-IDisposable shareHandle = myCanvas.Share(client, peer, fps: 10);
-
-// Stop sharing
-shareHandle.Dispose();
-```
-
-### WPF — Viewing a Shared Control
-
-```cs
-using System.Windows.Controls;
-using SocketJack.Net;
-using SocketJack.WPF;
-
-var viewer = client.ViewShare(sharedImage, sharerPeer);
-
-// Dispose when finished
-viewer.Dispose();
-```
-
-### WPF — Full Example
-
-**XAML (both instances):**
-
-```xml
-<Image x:Name="SharedImage" Stretch="Uniform" />
-```
-
-**Sharer (Instance A):**
-
-```cs
-Identifier remotePeer = client.Peers.FirstNotMe();
 IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
+IDisposable viewerHandle = client.ViewShare(SharedImage, sharerPeer);
 ```
 
-**Viewer (Instance B):**
+</details>
 
-```cs
-Identifier remotePeer = client.Peers.FirstNotMe();
-var viewer = client.ViewShare(SharedImage, remotePeer);
-```
+<a id="jackllm-workstation"></a>
+<details>
+<summary><strong>#JackLLM Workstation</strong> - AI workstation, generation node, and Visual Studio agent bridge</summary>
 
----
+JackLLM Workstation is the AI workstation built on SocketJack. It is found at [SocketJack.com](https://socketjack.com/) and is designed around network nodes run by real people, not just datacenter-hosted model providers.
 
-## Documentation
+With JackLLM Workstation you can:
 
-- [API Reference](https://github.com/JackOfFates/SocketJack)
-- [Examples & Tutorials](https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls)
+- Use your PC as an LLM node, generation node, or custom agent host.
+- Publish model, hardware, tool, pricing, uptime, and availability metadata to the SocketJack network.
+- Use Visual Studio with a code agent through OpenAI-compatible and Copilot-compatible endpoints.
+- Run local or remote models, including large workstation-hosted models such as a Claude Opus 4.7 Distilled 35B-parameter compatible model when a node exposes one.
+- Use SocketJack.com to generate images and videos, ask AI questions, research the web, or work on a Visual Studio project through a Copilot MCP server tunnel to SocketJack.com agents.
+- Manage sessions, permissions, files, tools, SQL admin, payments, diagnostics, and remote WPF control from the workstation/web console.
+
+| Project | Version | Purpose |
+|---|---:|---|
+| `JackLLM/` | `2026.0` | Windows WPF JackLLM Workstation app. |
+| `JackLLM.Workstation/` | `2026.0` | Cross-platform native/service-style host. |
+| Linux `.deb` | `1:26.0.1` | Debian-compatible Linux package version for the 2026 release line. |
+| `SocketJack.LlmCore/` | repo library | Shared AI proxy, tools, sessions, payments, and workstation logic. |
+| `SocketJack.WorkstationMcp/` | repo bridge | MCP bridge surface for workstation and development tooling. |
+
+</details>
+
+<a id="repository-guide"></a>
+<details>
+<summary><strong>#Repository Guide</strong> - where the major pieces live</summary>
+
+| Path | Purpose |
+|---|---|
+| `SocketJack/` | Core `SocketJack` package, transports, HTTP/WebSocket stack, mutable protocol server, SQL/data, streaming, FTP/SFTP, and resources. |
+| `SocketJack.Windows/` | `SocketJack.WPF` package and WPF capture/input integration. |
+| `SocketJack.Tests/` | Core networking and protocol tests. |
+| `SocketJack.WebSocketServer/` | WebSocket server package/project surface. |
+| `SocketJack.Unity/` | Unity-compatible package surface. |
+| `SocketJack-MagicMasterList/` | Public server-list and SocketJack.com-facing host project. |
+| `JackLLM/` | Windows WPF JackLLM Workstation app. |
+| `JackLLM.Workstation/` | Linux/service-style JackLLM Workstation host. |
+| `LlmRuntime.VisualStudio/` | Visual Studio 2022 extension. |
+| `LlmRuntime.VisualStudio2026/` | Visual Studio 2026 extension. |
+| `LlmRuntime/` | LLM runtime project and documentation. |
+| `examples.md` | Longer runnable examples across SocketJack transports and utilities. |
+
+</details>
+
+<a id="documentation"></a>
+<details>
+<summary><strong>#Documentation</strong> - examples, packages, and companion docs</summary>
+
+- [Examples](examples.md)
+- [SocketJack package](https://www.nuget.org/packages/SocketJack)
+- [SocketJack.WPF package](https://www.nuget.org/packages/SocketJack.WPF)
+- [JackLLM Workstation README](JackLLM/README.md)
+- [LlmRuntime README](LlmRuntime/README.md)
+- [GitHub repository](https://github.com/JackOfFates/SocketJack)
+
+</details>
 
 ## License
 
 SocketJack is open source and licensed under the [MIT License](LICENSE).
 
-## Contributing
+<!-- LINECOUNTER-OUTPUT:START -->
+<details>
+<summary><strong>LineCounter - Output</strong> <code>11,961,735 lines / 916 files</code></summary>
 
-Contributions, bug reports, and feature requests are welcome! See [CONTRIBUTING.md](https://github.com/JackOfFates/SocketJack/blob/master/CONTRIBUTING.md) for details.
+<br>
 
----
+<strong>Scope:</strong> <code>.</code><br>
+<strong>Source:</strong> <code>GetLineCount.bat</code> rules, non-empty/non-whitespace lines only; build/vendor folders skipped.
 
-**SocketJack** — Fast, flexible, and modern networking for .NET.
+| Language | Files | Lines |
+|---|---:|---:|
+| Text | 282 | 11,578,223 |
+| C# | 379 | 239,378 |
+| HTML | 15 | 76,629 |
+| XML | 11 | 26,824 |
+| XAML | 32 | 13,313 |
+| Markdown | 77 | 7,766 |
+| Visual Basic | 18 | 5,364 |
+| MSBuild/XML | 33 | 3,336 |
+| PowerShell | 16 | 3,277 |
+| JSON | 33 | 2,271 |
+| C++ | 2 | 1,380 |
+| Shell | 3 | 1,104 |
+| Batch | 2 | 740 |
+| EditorConfig | 5 | 577 |
+| Solution | 1 | 547 |
+| JavaScript | 2 | 441 |
+| TypeScript | 2 | 430 |
+| YAML | 3 | 135 |
+| **Total** | **916** | **11,961,735** |
 
-[NuGet](https://www.nuget.org/packages/SocketJack) · [GitHub](https://github.com/JackOfFates/SocketJack) · [Examples](https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls)
+</details>
+<!-- LINECOUNTER-OUTPUT:END -->

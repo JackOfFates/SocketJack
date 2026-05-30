@@ -1,0 +1,49 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType Condition="'$(BuildDirectMlRunnerExe)' == 'true'">Exe</OutputType>
+    <AssemblyName Condition="'$(BuildDirectMlRunnerExe)' == 'true'">LlmRuntime.DirectMlRunner</AssemblyName>
+    <StartupObject Condition="'$(BuildDirectMlRunnerExe)' == 'true'">LlmRuntime.DirectMlRunner.Program</StartupObject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
+    <ProjectReference Include="..\SocketJack.LlmCore\SocketJack.LlmCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\tools\linux\install-jackllm-cuda-pytorch.sh" Link="install\linux\install-jackllm-cuda-pytorch.sh" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LlmRuntime.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LLamaSharp" Version="0.27.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.27.0" />
+    <PackageReference Include="LLamaSharp.Backend.Vulkan" Version="0.27.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+  </ItemGroup>
+
+  <Target Name="BuildSockJackDmlNative" BeforeTargets="Build" Condition="'$(BuildSockJackDmlNative)' == 'true'">
+    <PropertyGroup>
+      <SockJackDmlNativeConfiguration Condition="'$(Configuration)' == 'Release'">Release</SockJackDmlNativeConfiguration>
+      <SockJackDmlNativeConfiguration Condition="'$(SockJackDmlNativeConfiguration)' == ''">Debug</SockJackDmlNativeConfiguration>
+      <SockJackDmlNativePlatform>x64</SockJackDmlNativePlatform>
+      <SockJackDmlBuildScript>$(MSBuildThisFileDirectory)..\tools\Build-SockJackDml.ps1</SockJackDmlBuildScript>
+      <SockJackDmlRepoRoot>$(MSBuildThisFileDirectory)..\</SockJackDmlRepoRoot>
+    </PropertyGroup>
+
+    <Error Condition="'$(OS)' != 'Windows_NT'" Text="SockJackDml native build is Windows-only because it targets Direct3D 12 and DirectML." />
+    <Exec
+      WorkingDirectory="$(SockJackDmlRepoRoot)"
+      Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(SockJackDmlBuildScript)&quot; -Configuration &quot;$(SockJackDmlNativeConfiguration)&quot; -Platform &quot;$(SockJackDmlNativePlatform)&quot;" />
+  </Target>
+</Project>
+

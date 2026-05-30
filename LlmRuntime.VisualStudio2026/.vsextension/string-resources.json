@@ -1,0 +1,8 @@
+{
+  "SocketJack.Menu.DisplayName": "SocketJack",
+  "SocketJack.Toolbar.DisplayName": "SocketJack",
+  "SocketJack.SignIn.DisplayName": "Sign-in",
+  "SocketJack.CopilotServers.DisplayName": "Copilot Servers",
+  "SocketJack.SessionSync.DisplayName": "Session Sync",
+  "SocketJack.CreateMcpConfig.DisplayName": "Create MCP Config"
+}

@@ -1,9 +1,10 @@
-﻿using SocketJack.Compression;
+using SocketJack.Compression;
 using SocketJack.Extensions;
 using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using SocketJack.Serialization.Json;
 using System;
+using System.Net;
 using System.Net.Sockets;
 
 namespace SocketJack.Net {
@@ -95,6 +96,12 @@ namespace SocketJack.Net {
         public int Backlog { get; set; } = 100;
 
         /// <summary>
+        /// Local address used by TCP servers when binding their listening socket.
+        /// Defaults to <see cref="IPAddress.Any"/> for the existing listen-on-all behavior.
+        /// </summary>
+        public IPAddress BindAddress { get; set; } = IPAddress.Any;
+
+        /// <summary>
         /// Maximum buffer size per connection.
         /// </summary>
         /// <remarks>Default is 100MB.</remarks>
@@ -105,17 +112,24 @@ namespace SocketJack.Net {
                 return _MaximumBufferSize;
             }
             set {
-                _MaximumBufferSize = value;
+                _MaximumBufferSize = value <= 0 ? 1 : value;
             }
         }
         protected internal int _MaximumBufferSize = 104857600;
 
         /// <summary>
+        /// Maximum queued outbound bytes per connection before the connection is
+        /// closed to protect the host from slow-client memory growth.
+        /// </summary>
+        /// <remarks>Default is 100MB. Set to 0 for unlimited legacy behavior.</remarks>
+        public int MaximumSendQueueBytes { get; set; } = 104857600;
+
+        /// <summary>
         /// Maximum receiving bandwidth.
         /// </summary>
         /// <remarks>
-        /// <para>Default is 100Mbps. Set to 0 to disable buffering.</para>
-        /// <para>Disabling buffer will not work with SSL.</para>
+        /// <para>Default is 0, which means unlimited. Set a positive value to throttle downloads.</para>
+        /// <para>Setting 0 also disables explicit receive chunk throttling.</para>
         /// </remarks>
         /// <value>Integer</value>
         public double MaximumDownloadMbps {
@@ -132,9 +146,8 @@ namespace SocketJack.Net {
             }
         }
         internal bool isDownloadBuffered = true;
-        // Default to 100 Mbps. 100 Mbps = 100 * 1024 * 1024 bits/s -> /8 = 13107200 bytes/s
-        protected internal double _MaximumDownloadMbps = 100.0; // 100 Mbps
-        protected internal int MaximumDownloadBytesPerSecond = 13107200;
+        protected internal double _MaximumDownloadMbps = 0.0;
+        protected internal int MaximumDownloadBytesPerSecond = 0;
 
         /// <summary>
         /// Download buffer size.
@@ -147,7 +160,7 @@ namespace SocketJack.Net {
         /// <summary>
         /// Maximum Upload bandwidth.
         /// <remarks>
-        /// <para>Default is 100Mbps. Set to 0 for unlimited.</para>
+        /// <para>Default is 0, which means unlimited. Set a positive value to throttle uploads.</para>
         /// </remarks>
         /// <value>Integer</value>
         /// <remarks></remarks>
@@ -166,9 +179,8 @@ namespace SocketJack.Net {
             }
         }
         internal bool isUploadBuffered = true;
-        // Default to 100 Mbps.
-        protected internal double _MaximumUploadMbps = 100.0; // 100 Mbps
-        protected internal int MaximumUploadBytesPerSecond = 13107200;
+        protected internal double _MaximumUploadMbps = 0.0;
+        protected internal int MaximumUploadBytesPerSecond = 0;
 
         /// <summary>
         /// Upload buffer size.
@@ -185,6 +197,70 @@ namespace SocketJack.Net {
         public bool UseCompression { get; set; } = false;
 
         /// <summary>
+        /// Enables HTTP response compression when a client advertises support with
+        /// <c>Accept-Encoding</c>. This is independent of SocketJack object-stream
+        /// compression and is safe for browser/API HTTP traffic.
+        /// </summary>
+        public bool UseHttpCompression { get; set; } = true;
+
+        /// <summary>
+        /// Enables repeated-payload pattern caching for SocketJack TCP/UDP object
+        /// frames and stable-hash caching for generated HTTP route responses.
+        /// </summary>
+        public bool EnablePatternCache { get; set; } = true;
+
+        /// <summary>
+        /// Minimum serialized payload size before a repeated SocketJack value is
+        /// considered large enough to promote into the per-connection pattern cache.
+        /// </summary>
+        public int PatternCacheMinimumBytes { get; set; } = 4096;
+
+        /// <summary>
+        /// Number of times the same serialized payload must be seen on a connection
+        /// before the sender stores it remotely and later sends only its key.
+        /// </summary>
+        public int PatternCachePromotionThreshold { get; set; } = 6;
+
+        /// <summary>
+        /// Maximum bytes held by each per-connection pattern cache. Older cached
+        /// values are evicted until a new value can fit.
+        /// </summary>
+        public int PatternCacheMaximumBytes { get; set; } = 32 * 1024 * 1024;
+
+        /// <summary>
+        /// Bot filtering and endpoint abuse controls for HTTP, SocketJack,
+        /// WebSocket, and filesystem-backed administrative surfaces.
+        /// </summary>
+        public EndpointSecurityOptions EndpointSecurity { get; set; } = new EndpointSecurityOptions();
+
+        /// <summary>
+        /// Writes one HTTP access log entry per completed request.
+        /// </summary>
+        public bool HttpAccessLogging { get; set; } = true;
+
+        /// <summary>
+        /// Directory for daily HTTP access logs. Default is <c>C:\LmVsProxy\Logs</c>.
+        /// </summary>
+        public string HttpAccessLogDirectory { get; set; } = @"C:\LmVsProxy\Logs";
+
+        /// <summary>
+        /// Date format used for HTTP access log file names, followed by <c>.log</c>.
+        /// </summary>
+        public string HttpAccessLogDateFormat { get; set; } = "yyyy-MM-dd";
+
+        /// <summary>
+        /// Minimum uncompressed HTTP response size, in bytes, before compression is
+        /// considered. Small responses are usually cheaper to send as-is.
+        /// </summary>
+        public int HttpCompressionMinimumBytes { get; set; } = 1024;
+
+        /// <summary>
+        /// Optional default CORS origin for HTTP responses. Null or empty means SocketJack
+        /// will not add an Access-Control-Allow-Origin header automatically.
+        /// </summary>
+        public string HttpDefaultCorsOrigin { get; set; } = null;
+
+        /// <summary>
         /// Send and receive objects with terminator (default is <see langword="true"/>).
         /// <para><see langword="Required"/> to parse objects.
         /// An exception would be used in the case of HttpServer where the terminator is not used.
@@ -196,6 +272,7 @@ namespace SocketJack.Net {
         /// Use SSL for network transfer.
         /// </summary>
         public bool UseSsl { get; set; } = false;
+
 
         /// <summary>
         /// When enabled, outbound messages are buffered and flushed in large chunks

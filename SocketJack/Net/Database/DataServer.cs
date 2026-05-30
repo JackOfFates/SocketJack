@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
 using System.Linq;
 using System.IO;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography;
@@ -79,10 +80,10 @@ namespace SocketJack.Net.Database {
         /// <summary>
         /// TDS encryption mode negotiated during Pre-Login.
         /// <list type="bullet">
-        /// <item><c>0x00</c> – <b>ENCRYPT_OFF</b>: Encrypt the login packet only, then revert to plaintext.</item>
-        /// <item><c>0x01</c> – <b>ENCRYPT_ON</b>: Encrypt all traffic after the TLS handshake.</item>
-        /// <item><c>0x02</c> – <b>ENCRYPT_NOT_SUP</b>: No encryption at all (clients requiring encryption will refuse).</item>
-        /// <item><c>0x03</c> – <b>ENCRYPT_REQ</b>: Server requires full encryption.</item>
+        /// <item><c>0x00</c> â€“ <b>ENCRYPT_OFF</b>: Encrypt the login packet only, then revert to plaintext.</item>
+        /// <item><c>0x01</c> â€“ <b>ENCRYPT_ON</b>: Encrypt all traffic after the TLS handshake.</item>
+        /// <item><c>0x02</c> â€“ <b>ENCRYPT_NOT_SUP</b>: No encryption at all (clients requiring encryption will refuse).</item>
+        /// <item><c>0x03</c> â€“ <b>ENCRYPT_REQ</b>: Server requires full encryption.</item>
         /// </list>
         /// </summary>
         public byte EncryptionMode { get; set; } = 0x00; // ENCRYPT_OFF (login-only TLS, then plaintext)
@@ -123,11 +124,20 @@ namespace SocketJack.Net.Database {
                 // Export and re-import so the private key is stored in a way
                 // compatible with SslStream on all platforms.
                 // Use MachineKeySet (not EphemeralKeySet) for .NET Framework compatibility.
+                var pfx = cert.Export(X509ContentType.Pfx);
+#if NET9_0_OR_GREATER
+                return X509CertificateLoader.LoadPkcs12(
+                    pfx,
+                    null,
+                    X509KeyStorageFlags.Exportable | X509KeyStorageFlags.MachineKeySet
+                );
+#else
                 return new X509Certificate2(
-                    cert.Export(X509ContentType.Pfx),
+                    pfx,
                     (string)null,
                     X509KeyStorageFlags.Exportable | X509KeyStorageFlags.MachineKeySet
                 );
+#endif
             }
         }
 
@@ -135,6 +145,24 @@ namespace SocketJack.Net.Database {
         /// Collection of registered users with their passwords
         /// </summary>
         public ConcurrentDictionary<string, string> Users { get; set; } = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// When enabled, SQL logins are accepted only from loopback or addresses
+        /// listed in <see cref="AllowedSqlLoginIpAddresses"/>.
+        /// </summary>
+        public bool EnforceSqlLoginIpAllowList { get; set; } = false;
+
+        /// <summary>
+        /// Allows local SQL admin/bootstrap access even when the SQL login IP
+        /// allowlist is enforced.
+        /// </summary>
+        public bool AllowLoopbackSqlLogin { get; set; } = true;
+
+        /// <summary>
+        /// Remote IP addresses allowed to authenticate to SQL when
+        /// <see cref="EnforceSqlLoginIpAllowList"/> is enabled.
+        /// </summary>
+        public ConcurrentDictionary<string, byte> AllowedSqlLoginIpAddresses { get; set; } = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Databases available on this server
@@ -147,8 +175,9 @@ namespace SocketJack.Net.Database {
         internal ConcurrentDictionary<Guid, SqlSession> Sessions = new ConcurrentDictionary<Guid, SqlSession>();
 
         /// <summary>
-        /// File path used to persist database state.
-        /// When set, data is loaded from this file on startup and saved on every mutation.
+        /// Path used to persist database state.
+        /// If the path resolves to a file (or has a file extension), legacy JSON
+        /// persistence is used. Otherwise persistence is split across a folder.
         /// </summary>
         public string DataPath { get; set; } = "dataserver.json";
 
@@ -159,19 +188,61 @@ namespace SocketJack.Net.Database {
         public bool AutoSave { get; set; } = true;
 
         /// <summary>
+        /// Enables the database key/value cache optimizer. When enabled, simple
+        /// equality lookups are cached in memory and hot key metadata is persisted
+        /// so optimized cache indexes can be warmed on the next load.
+        /// </summary>
+        public bool EnableCacheOptimizing { get; set; } = true;
+
+        /// <summary>
+        /// File path used to persist optimized cache metadata. When
+        /// <see langword="null"/>, the path is derived from <see cref="DataPath"/>.
+        /// </summary>
+        public string CacheMetadataPath { get; set; }
+
+        /// <summary>
+        /// Maximum number of hot key/value lookups to keep in the optimized cache
+        /// metadata and warm on startup.
+        /// </summary>
+        public int CacheOptimizationMaxKeys { get; set; } = 1024;
+
+        /// <summary>
         /// Interval in milliseconds to debounce auto-save writes.
         /// Only the last mutation within this window triggers a write.
         /// </summary>
         public int AutoSaveDebounceMs { get; set; } = 500;
 
-        private readonly object _saveLock = new object();
+        private readonly SemaphoreSlim _persistenceLock = new SemaphoreSlim(1, 1);
+        private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
         private Timer _debounceTimer;
+        private readonly DatabaseCacheOptimizer _cacheOptimizer = new DatabaseCacheOptimizer();
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions {
             WriteIndented = true,
             PropertyNameCaseInsensitive = true,
             Converters = { new TypeConverter() }
         };
+        private static readonly byte[] _dataEncryptionSecret = Encoding.UTF8.GetBytes(GetDataServerMachineSecret());
+        private const string EncryptedPayloadHeader = "SJEP1:";
+        private const int EncryptionSaltSize = 16;
+        private const int EncryptionNonceSize = 12;
+        private const int EncryptionTagSize = 16;
+        private const int EncryptionKeySize = 32;
+        private const int EncryptionDerivationIterations = 120000;
+        private const int PasswordHashIterations = 210000;
+        private const int PasswordSaltSize = 16;
+        private const int PasswordHashSize = 32;
+        private const string PasswordHashPrefix = "SJPH1$";
+        private static readonly string EncryptionPurpose = "DataServerPersistence";
+        private const string SplitStorageManifestFile = "_manifest.json";
+        private const string SplitStorageTablesFolder = "tables";
+        private const string SplitStorageCacheMetadataFile = "_cachemeta.json";
+
+        /// <summary>
+        /// Set this to <see langword="false"/> to keep persisted files in plain JSON.
+        /// Default is <see langword="true"/> so data is not readable at a glance.
+        /// </summary>
+        public bool EnablePayloadEncryption { get; set; } = true;
 
         #endregion
 
@@ -198,12 +269,13 @@ namespace SocketJack.Net.Database {
         #region Constructors
 
         /// <summary>
-        /// Initialize a new MSSQL Server Emulator (standalone mode — owns the TCP listener).
+        /// Initialize a new MSSQL Server Emulator (standalone mode â€” owns the TCP listener).
         /// </summary>
         /// <param name="Port">Port to listen on (default MSSQL port is 1433)</param>
         /// <param name="Name">Server name for logging</param>
-        public DataServer(int Port = 1433, string Name = "DataServer") : base(Port, Name) {
-            InitDefaults();
+        /// <param name="loadFromDisk">Load persisted state during construction.</param>
+        public DataServer(int Port = 1433, string Name = "DataServer", bool loadFromDisk = true) : base(Port, Name) {
+            InitDefaults(loadFromDisk);
 
             // Hook into client events for standalone mode
             ClientConnected += DataServer_ClientConnected;
@@ -221,23 +293,138 @@ namespace SocketJack.Net.Database {
         /// </summary>
         /// <param name="Name">Server name for logging.</param>
         /// <param name="hosted">Must be <see langword="true"/>. Distinguishes this from the standalone constructor.</param>
-        internal DataServer(string Name, bool hosted) : base(0, Name) {
-            InitDefaults();
+        /// <param name="loadFromDisk">Load persisted state during construction.</param>
+        internal DataServer(string Name, bool hosted, bool loadFromDisk = true) : base(0, Name) {
+            InitDefaults(loadFromDisk);
         }
 
-        private void InitDefaults() {
+        private void InitDefaults(bool loadFromDisk) {
             RawTcpMode = true;
             SuppressConnectionTest = true;
-            Users.TryAdd(Username, Password);
+            Users.TryAdd(Username, NormalizeStoredPassword(Password));
 
             // Ensure default databases exist
             Databases.TryAdd("master", new Database("master"));
             Databases.TryAdd("db", new Database("db"));
 
-            // Load persisted state (merges into defaults)
-            Load();
+            if (loadFromDisk)
+                Load();
+
+            NormalizeAllStoredPasswords();
+            ApplyDatabaseSqlAdminCredentials();
+            if (Users.TryGetValue(Username, out var storedDefaultPassword))
+                Password = IsPasswordHash(storedDefaultPassword) ? "" : storedDefaultPassword;
 
             // Sync Users dictionary into the db.Users table so every configured user is visible
+            SyncUsersTable();
+        }
+
+        public bool RequiresSaPasswordSetup {
+            get {
+                if (Users.TryGetValue("sa", out var storedPassword))
+                    return string.IsNullOrEmpty(storedPassword);
+                return string.IsNullOrEmpty(Password);
+            }
+        }
+
+        public void SecureStoredPasswords() {
+            NormalizeAllStoredPasswords();
+            SyncUsersTable();
+            ScheduleSave();
+        }
+
+        public bool IsSqlAdminAccount(string username) {
+            if (string.IsNullOrWhiteSpace(username))
+                return false;
+            return string.Equals(username, Username, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(username, "sa", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public void SetSqlAdminAccount(string username, string password) {
+            if (string.IsNullOrWhiteSpace(username))
+                throw new ArgumentException("SQL admin username is required.", nameof(username));
+            if (password == null)
+                throw new ArgumentNullException(nameof(password));
+
+            Username = username.Trim();
+            Password = password;
+            Users[Username] = HashPassword(password);
+            if (!string.Equals(Username, "sa", StringComparison.OrdinalIgnoreCase)
+                && Users.TryGetValue("sa", out var saPassword)
+                && string.IsNullOrEmpty(saPassword)) {
+                Users.TryRemove("sa", out _);
+            }
+            SyncUsersTable();
+            ScheduleSave();
+        }
+
+        private static bool IsPasswordHash(string value) {
+            return !string.IsNullOrEmpty(value) && value.StartsWith(PasswordHashPrefix, StringComparison.Ordinal);
+        }
+
+        private static string NormalizeStoredPassword(string password) {
+            if (string.IsNullOrEmpty(password) || IsPasswordHash(password))
+                return password ?? "";
+            return HashPassword(password);
+        }
+
+        private void NormalizeAllStoredPasswords() {
+            foreach (var kvp in Users.ToArray())
+                Users[kvp.Key] = NormalizeStoredPassword(kvp.Value);
+
+            foreach (var database in Databases.Values) {
+                if (database != null && database.SqlAdminPassword != null)
+                    database.SqlAdminPassword = NormalizeStoredPassword(database.SqlAdminPassword);
+            }
+        }
+
+        private static string HashPassword(string password) {
+            if (string.IsNullOrEmpty(password))
+                return "";
+
+            byte[] salt = new byte[PasswordSaltSize];
+            RandomNumberGenerator.Fill(salt);
+            using var kdf = new Rfc2898DeriveBytes(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256);
+            byte[] hash = kdf.GetBytes(PasswordHashSize);
+            return PasswordHashPrefix + PasswordHashIterations.ToString() + "$" + Convert.ToBase64String(salt) + "$" + Convert.ToBase64String(hash);
+        }
+
+        private static bool VerifyPassword(string password, string storedPassword) {
+            storedPassword = storedPassword ?? "";
+            if (!IsPasswordHash(storedPassword))
+                return string.Equals(password ?? "", storedPassword, StringComparison.Ordinal);
+
+            string[] parts = storedPassword.Split('$');
+            if (parts.Length != 4 || !int.TryParse(parts[1], out int iterations))
+                return false;
+
+            try {
+                byte[] salt = Convert.FromBase64String(parts[2]);
+                byte[] expected = Convert.FromBase64String(parts[3]);
+                using var kdf = new Rfc2898DeriveBytes(password ?? "", salt, iterations, HashAlgorithmName.SHA256);
+                byte[] actual = kdf.GetBytes(expected.Length);
+                return CryptographicOperations.FixedTimeEquals(actual, expected);
+            } catch {
+                return false;
+            }
+        }
+        private void ApplyDatabaseSqlAdminCredentials() {
+            foreach (var database in Databases.Values) {
+                if (database == null || !database.HasSqlAdminCredentials)
+                    continue;
+                Username = database.SqlAdminUsername.Trim();
+                string storedPassword = NormalizeStoredPassword(database.SqlAdminPassword ?? "");
+                Password = IsPasswordHash(storedPassword) ? "" : storedPassword;
+                Users[Username] = storedPassword;
+                if (!string.Equals(Username, "sa", StringComparison.OrdinalIgnoreCase)
+                    && Users.TryGetValue("sa", out var saPassword)
+                    && string.IsNullOrEmpty(saPassword)) {
+                    Users.TryRemove("sa", out _);
+                }
+            }
+        }
+
+        private void SyncUsersTable() {
             if (Databases.TryGetValue("db", out var configDb)) {
                 var usersTable = new Table("Users") {
                     Columns = new List<Column> {
@@ -249,7 +436,19 @@ namespace SocketJack.Net.Database {
                 if (configDb.Tables.TryGetValue("Users", out var existingTable)) {
                     foreach (var row in existingTable.Rows) {
                         var name = row.Length > 0 ? row[0]?.ToString() : null;
-                        if (name != null) usersTable.Rows.Add(row);
+                        var password = NormalizeStoredPassword(row.Length > 1 ? row[1]?.ToString() ?? "" : "");
+                        if (name != null) {
+                            if (!string.Equals(Username, "sa", StringComparison.OrdinalIgnoreCase)
+                                && string.Equals(name, "sa", StringComparison.OrdinalIgnoreCase)
+                                && string.IsNullOrEmpty(password)) {
+                                continue;
+                            }
+                            if (!Users.TryGetValue(name, out var currentPassword)
+                                || (string.IsNullOrEmpty(currentPassword) && !string.IsNullOrEmpty(password))) {
+                                Users[name] = password;
+                            }
+                            usersTable.Rows.Add(new object[] { name, password });
+                        }
                     }
                 }
                 // Add any users from the dictionary that aren't already in the table
@@ -266,6 +465,9 @@ namespace SocketJack.Net.Database {
                 }
                 configDb.Tables["Users"] = usersTable;
             }
+
+            if (Users.TryGetValue(Username, out var syncedDefaultPassword))
+                Password = IsPasswordHash(syncedDefaultPassword) ? "" : syncedDefaultPassword;
         }
 
         #endregion
@@ -302,11 +504,72 @@ namespace SocketJack.Net.Database {
             bool authenticated = false;
             if (AllowSqlAuth) {
                 if (Users.TryGetValue(username, out string storedPassword)) {
-                    authenticated = (password == storedPassword);
+                    authenticated = VerifyPassword(password, storedPassword);
                 }
             }
             Authentication?.Invoke(username, password, ref authenticated);
             return authenticated;
+        }
+
+        public void AllowSqlLoginIpAddress(params string[] clientIps) {
+            if (clientIps == null)
+                return;
+
+            foreach (string clientIp in clientIps) {
+                string normalized = NormalizeSqlLoginIpAddress(clientIp);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                    AllowedSqlLoginIpAddresses[normalized] = 1;
+            }
+        }
+
+        public bool IsSqlLoginIpAllowed(string clientIp) {
+            if (!EnforceSqlLoginIpAllowList)
+                return true;
+
+            string normalized = NormalizeSqlLoginIpAddress(clientIp);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            if (AllowLoopbackSqlLogin &&
+                IPAddress.TryParse(normalized, out IPAddress address) &&
+                IPAddress.IsLoopback(address))
+                return true;
+
+            return AllowedSqlLoginIpAddresses.ContainsKey(normalized);
+        }
+
+        public static string NormalizeSqlLoginIpAddress(string clientIp) {
+            if (string.IsNullOrWhiteSpace(clientIp))
+                return "";
+
+            clientIp = clientIp.Trim();
+            int comma = clientIp.IndexOf(',');
+            if (comma >= 0)
+                clientIp = clientIp.Substring(0, comma).Trim();
+
+            if (clientIp.StartsWith("[", StringComparison.Ordinal)) {
+                int close = clientIp.IndexOf(']');
+                if (close > 0)
+                    clientIp = clientIp.Substring(1, close - 1);
+            }
+
+            if (IPAddress.TryParse(clientIp, out IPAddress parsed)) {
+                if (parsed.IsIPv4MappedToIPv6)
+                    parsed = parsed.MapToIPv4();
+                return parsed.ToString();
+            }
+
+            int colon = clientIp.LastIndexOf(':');
+            if (colon > 0 && clientIp.IndexOf(':') == colon) {
+                string withoutPort = clientIp.Substring(0, colon);
+                if (IPAddress.TryParse(withoutPort, out parsed)) {
+                    if (parsed.IsIPv4MappedToIPv6)
+                        parsed = parsed.MapToIPv4();
+                    return parsed.ToString();
+                }
+            }
+
+            return clientIp;
         }
 
         internal QueryResult ExecuteQuery(SqlSession session, string query) {
@@ -323,42 +586,42 @@ namespace SocketJack.Net.Database {
         /// Saves the current server state (users, databases, tables, rows) to <see cref="DataPath"/>.
         /// </summary>
         public void Save() {
+            SaveAsync().GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Asynchronously saves the current server state (users, databases, tables, rows) to <see cref="DataPath"/>.
+        /// </summary>
+        public async Task SaveAsync() {
+            await SaveAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Asynchronously saves the current server state (users, databases, tables, rows) to <see cref="DataPath"/>.
+        /// </summary>
+        public async Task SaveAsync(CancellationToken cancellationToken) {
             if (string.IsNullOrWhiteSpace(DataPath)) return;
+            bool lockTaken = false;
             try {
-                var snapshot = new DataServerSnapshot {
-                    Users = new Dictionary<string, string>(Users, StringComparer.OrdinalIgnoreCase),
-                    Databases = new Dictionary<string, DatabaseSnapshot>(StringComparer.OrdinalIgnoreCase)
-                };
+                await _persistenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                lockTaken = true;
 
-                foreach (var kvp in Databases) {
-                    var dbSnap = new DatabaseSnapshot { Name = kvp.Value.Name };
-                    foreach (var tkvp in kvp.Value.Tables) {
-                        var tblSnap = new TableSnapshot {
-                            Name = tkvp.Value.Name,
-                            Columns = tkvp.Value.Columns.Select(c => new ColumnSnapshot {
-                                Name = c.Name,
-                                DataTypeName = c.DataType?.FullName ?? typeof(string).FullName,
-                                MaxLength = c.MaxLength
-                            }).ToList(),
-                            Rows = tkvp.Value.Rows.Select(r =>
-                                r.Select(v => v?.ToString()).ToArray()
-                            ).ToList()
-                        };
-                        dbSnap.Tables[tkvp.Key] = tblSnap;
-                    }
-                    snapshot.Databases[kvp.Key] = dbSnap;
-                }
+                var snapshot = BuildSnapshot();
 
-                string json = System.Text.Json.JsonSerializer.Serialize(snapshot, _jsonOptions);
-                lock (_saveLock) {
-                    string dir = Path.GetDirectoryName(Path.GetFullPath(DataPath));
-                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                        Directory.CreateDirectory(dir);
-                    File.WriteAllText(DataPath, json, Encoding.UTF8);
-                }
+                if (IsSplitStoragePath())
+                    await SaveSplitStorageAsync(snapshot, cancellationToken).ConfigureAwait(false);
+                else
+                    await WritePersistedJsonAsync(DataPath, snapshot, cancellationToken).ConfigureAwait(false);
+
+                if (EnableCacheOptimizing)
+                    _cacheOptimizer.SaveMetadata(GetResolvedCacheMetadataPath(), CacheOptimizationMaxKeys);
+
                 LogFormat("[{0}] Data saved to {1}", new[] { Name, DataPath });
             } catch (Exception ex) {
                 LogFormat("[{0}] Save failed: {1}", new[] { Name, ex.Message });
+            } finally {
+                if (lockTaken)
+                    _persistenceLock.Release();
             }
         }
 
@@ -366,49 +629,487 @@ namespace SocketJack.Net.Database {
         /// Loads server state from <see cref="DataPath"/> into memory.
         /// </summary>
         public void Load() {
+            LoadAsync().GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Asynchronously loads server state from <see cref="DataPath"/> into memory.
+        /// </summary>
+        public async Task LoadAsync() {
+            await LoadAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Asynchronously loads server state from <see cref="DataPath"/> into memory.
+        /// </summary>
+        public async Task LoadAsync(CancellationToken cancellationToken) {
             if (string.IsNullOrWhiteSpace(DataPath)) return;
-            if (!File.Exists(DataPath)) return;
+            bool lockTaken = false;
             try {
-                string json;
-                lock (_saveLock) {
-                    json = File.ReadAllText(DataPath, Encoding.UTF8);
-                }
+                await _persistenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                lockTaken = true;
 
-                var snapshot = System.Text.Json.JsonSerializer.Deserialize<DataServerSnapshot>(json, _jsonOptions);
-                if (snapshot == null) return;
-
-                if (snapshot.Users != null) {
-                    foreach (var kvp in snapshot.Users)
-                        Users[kvp.Key] = kvp.Value;
-                }
-
-                if (snapshot.Databases != null) {
-                    foreach (var dbKvp in snapshot.Databases) {
-                        var db = Databases.GetOrAdd(dbKvp.Key, _ => new Database(dbKvp.Value.Name));
-                        if (dbKvp.Value.Tables != null) {
-                            foreach (var tblKvp in dbKvp.Value.Tables) {
-                                var table = new Table(tblKvp.Value.Name);
-                                if (tblKvp.Value.Columns != null) {
-                                    table.Columns = tblKvp.Value.Columns.Select(c => new Column(
-                                        c.Name,
-                                        Type.GetType(c.DataTypeName) ?? typeof(string),
-                                        c.MaxLength
-                                    )).ToList();
-                                }
-                                if (tblKvp.Value.Rows != null) {
-                                    table.Rows = tblKvp.Value.Rows
-                                        .Select(r => r.Cast<object>().ToArray())
-                                        .ToList();
-                                }
-                                db.Tables[tblKvp.Key] = table;
-                            }
+                bool loaded = false;
+                bool loadedFromLegacy = false;
+                if (IsSplitStoragePath()) {
+                    loaded = await LoadSplitStorageAsync(cancellationToken).ConfigureAwait(false);
+                    if (!loaded) {
+                        string legacyPath = GetLegacyStorageFallbackPath();
+                        if (!string.IsNullOrWhiteSpace(legacyPath) && File.Exists(legacyPath)) {
+                            loaded = await LoadLegacyFileAsync(cancellationToken, legacyPath).ConfigureAwait(false);
+                            loadedFromLegacy = loaded;
                         }
                     }
+                } else {
+                    loaded = await LoadLegacyFileAsync(cancellationToken, DataPath).ConfigureAwait(false);
                 }
 
+                if (!loaded)
+                    return;
+
+                if (loadedFromLegacy && IsSplitStoragePath())
+                    await MigrateFromLegacyToSplitAsync(cancellationToken).ConfigureAwait(false);
+
+                ReloadOptimizedCache();
                 LogFormat("[{0}] Data loaded from {1}", new[] { Name, DataPath });
             } catch (Exception ex) {
                 LogFormat("[{0}] Load failed: {1}", new[] { Name, ex.Message });
+            } finally {
+                if (lockTaken)
+                    _persistenceLock.Release();
+            }
+        }
+
+        private async Task<bool> LoadLegacyFileAsync(CancellationToken cancellationToken, string path) {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return false;
+
+            DataServerSnapshot snapshot = await ReadPersistedJsonAsync<DataServerSnapshot>(path, cancellationToken).ConfigureAwait(false);
+            if (snapshot == null)
+                return false;
+
+            ApplySnapshotToMemory(snapshot, null);
+            return true;
+        }
+
+        private async Task<bool> LoadSplitStorageAsync(CancellationToken cancellationToken) {
+            string rootPath = GetSplitStorageRootPath();
+            if (string.IsNullOrWhiteSpace(rootPath)) return false;
+            if (!Directory.Exists(rootPath))
+                return false;
+
+            string manifestPath = GetSplitStorageManifestPath();
+            if (!File.Exists(manifestPath))
+                return false;
+
+            DataServerManifest manifest = await ReadPersistedJsonAsync<DataServerManifest>(manifestPath, cancellationToken).ConfigureAwait(false);
+            if (manifest == null)
+                return false;
+
+            DataServerSnapshot snapshot = new DataServerSnapshot {
+                Users = manifest.Users != null
+                    ? new Dictionary<string, string>(manifest.Users, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                Databases = new Dictionary<string, DatabaseSnapshot>(StringComparer.OrdinalIgnoreCase)
+            };
+
+            string tablesDirectory = GetSplitStorageTablesPath();
+            if (Directory.Exists(tablesDirectory) && manifest.Databases != null) {
+                foreach (var dbKvp in manifest.Databases) {
+                    var dbSnapshot = new DatabaseSnapshot {
+                        Name = dbKvp.Value?.Name,
+                        Tables = new Dictionary<string, TableSnapshot>(StringComparer.OrdinalIgnoreCase)
+                    };
+
+                    if (dbKvp.Value?.Tables != null) {
+                        foreach (var tableKvp in dbKvp.Value.Tables) {
+                            if (string.IsNullOrWhiteSpace(tableKvp.Value))
+                                continue;
+                            if (tableKvp.Value.Contains(Path.DirectorySeparatorChar) ||
+                                tableKvp.Value.Contains(Path.AltDirectorySeparatorChar))
+                                continue;
+                            string tableFile = Path.Combine(tablesDirectory, tableKvp.Value);
+                            if (!File.Exists(tableFile))
+                                continue;
+
+                            TableSnapshot tableSnapshot = await ReadPersistedJsonAsync<TableSnapshot>(tableFile, cancellationToken).ConfigureAwait(false);
+                            if (tableSnapshot == null) continue;
+                            dbSnapshot.Tables[tableKvp.Key] = tableSnapshot;
+                        }
+                    }
+
+                    snapshot.Databases[dbKvp.Key] = dbSnapshot;
+                }
+            }
+
+            ApplySnapshotToMemory(snapshot, manifest.Databases);
+            return true;
+        }
+
+        private async Task MigrateFromLegacyToSplitAsync(CancellationToken cancellationToken) {
+            string legacyPath = GetLegacyStorageFallbackPath();
+            if (string.IsNullOrWhiteSpace(legacyPath) || !File.Exists(legacyPath))
+                return;
+
+            await SaveSplitStorageAsync(BuildSnapshot(), cancellationToken).ConfigureAwait(false);
+            try {
+                File.Delete(legacyPath);
+            } catch {
+                // Keep legacy file if deletion fails; migration still continues
+            }
+        }
+
+        private string GetLegacyStorageFallbackPath() {
+            if (string.IsNullOrWhiteSpace(DataPath))
+                return null;
+
+            string fallback = Path.GetFullPath(DataPath + ".json");
+            return File.Exists(fallback) ? fallback : null;
+        }
+
+        private DataServerSnapshot BuildSnapshot() {
+            var snapshot = new DataServerSnapshot {
+                Users = new Dictionary<string, string>(Users, StringComparer.OrdinalIgnoreCase),
+                Databases = new Dictionary<string, DatabaseSnapshot>(StringComparer.OrdinalIgnoreCase)
+            };
+
+            foreach (var dbKvp in Databases) {
+                var dbSnap = new DatabaseSnapshot {
+                    Name = dbKvp.Value?.Name,
+                    Tables = new Dictionary<string, TableSnapshot>(StringComparer.OrdinalIgnoreCase)
+                };
+
+                foreach (var tkvp in dbKvp.Value?.Tables ?? new ConcurrentDictionary<string, Table>()) {
+                    var tblSnap = new TableSnapshot {
+                        Name = tkvp.Value?.Name
+                    };
+
+                    if (tkvp.Value?.Columns != null) {
+                        tblSnap.Columns.AddRange(tkvp.Value.Columns.Select(c => new ColumnSnapshot {
+                            Name = c.Name,
+                            DataTypeName = c.DataType?.FullName ?? typeof(string).FullName,
+                            MaxLength = c.MaxLength
+                        }));
+                    }
+
+                    if (tkvp.Value?.Rows != null) {
+                        foreach (var row in tkvp.Value.Rows) {
+                            if (row == null)
+                                continue;
+                            tblSnap.Rows.Add(row.Select(v => v?.ToString()).ToArray());
+                        }
+                    }
+
+                    dbSnap.Tables[tkvp.Key] = tblSnap;
+                }
+
+                snapshot.Databases[dbKvp.Key] = dbSnap;
+            }
+
+            return snapshot;
+        }
+
+        private async Task<T> ReadPersistedJsonAsync<T>(string path, CancellationToken cancellationToken) where T : class {
+            string text = await ReadPersistedTextAsync(path, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            return JsonSerializer.Deserialize<T>(text, _jsonOptions);
+        }
+
+        private async Task<string> ReadPersistedTextAsync(string path, CancellationToken cancellationToken) {
+            string text = await File.ReadAllTextAsync(path, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+
+            if (!text.StartsWith(EncryptedPayloadHeader, StringComparison.Ordinal))
+                return text;
+
+            if (!TryDecryptPayload(text, out string decryptedText))
+                return text;
+
+            return decryptedText;
+        }
+
+        private async Task WritePersistedJsonAsync<T>(string path, T payload, CancellationToken cancellationToken) {
+            string text = JsonSerializer.Serialize(payload, _jsonOptions);
+            if (EnablePayloadEncryption)
+                text = EncryptPayload(text);
+
+            await WriteTextAtomicAsync(path, text, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task WriteTextAtomicAsync(string path, string text, CancellationToken cancellationToken) {
+            string normalizedPath = Path.GetFullPath(path);
+            string directory = Path.GetDirectoryName(normalizedPath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
+            string tempPath = normalizedPath + ".tmp";
+            await File.WriteAllTextAsync(tempPath, text, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            if (File.Exists(normalizedPath))
+                File.Delete(normalizedPath);
+            File.Move(tempPath, normalizedPath);
+        }
+
+        private async Task SaveSplitStorageAsync(DataServerSnapshot snapshot, CancellationToken cancellationToken) {
+            if (snapshot == null) return;
+
+            string rootPath = GetSplitStorageRootPath();
+            if (string.IsNullOrWhiteSpace(rootPath))
+                return;
+
+            string manifestPath = GetSplitStorageManifestPath();
+            string tablesPath = GetSplitStorageTablesPath();
+            Directory.CreateDirectory(tablesPath);
+
+            var manifest = new DataServerManifest {
+                Version = 2,
+                Users = snapshot.Users != null
+                    ? new Dictionary<string, string>(snapshot.Users, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                Databases = new Dictionary<string, DatabaseManifest>(StringComparer.OrdinalIgnoreCase)
+            };
+
+            foreach (var dbKvp in Databases) {
+                if (!snapshot.Databases.TryGetValue(dbKvp.Key, out var dbSnapshot))
+                    continue;
+
+                var dbManifest = new DatabaseManifest {
+                    Name = dbKvp.Value?.Name ?? dbKvp.Key,
+                    OwnerUsername = dbKvp.Value?.OwnerUsername,
+                    SqlAdminUsername = dbKvp.Value?.SqlAdminUsername,
+                    SqlAdminPassword = NormalizeStoredPassword(dbKvp.Value?.SqlAdminPassword)
+                };
+
+                foreach (var tableKvp in dbSnapshot.Tables) {
+                    string fileName = GetSplitTableFileName(dbKvp.Key, tableKvp.Key, tableKvp.Value);
+                    string tablePath = Path.Combine(tablesPath, fileName);
+
+                    dbManifest.Tables[tableKvp.Key] = fileName;
+                    await WritePersistedJsonAsync(tablePath, tableKvp.Value, cancellationToken).ConfigureAwait(false);
+                }
+
+                manifest.Databases[dbKvp.Key] = dbManifest;
+            }
+
+            await WritePersistedJsonAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
+        }
+
+        private void ApplySnapshotToMemory(DataServerSnapshot snapshot, Dictionary<string, DatabaseManifest> manifestLookup) {
+            if (snapshot.Users != null) {
+                foreach (var kvp in snapshot.Users)
+                    Users[kvp.Key] = NormalizeStoredPassword(kvp.Value);
+            }
+
+            if (snapshot.Databases != null) {
+                foreach (var dbKvp in snapshot.Databases) {
+                    var runtimeDb = Databases.GetOrAdd(dbKvp.Key, _ => new Database(dbKvp.Value?.Name ?? dbKvp.Key));
+                    if (dbKvp.Value?.Tables == null)
+                        continue;
+
+                    if (manifestLookup != null
+                        && manifestLookup.TryGetValue(dbKvp.Key, out var dbManifest)) {
+                        runtimeDb.OwnerUsername = dbManifest.OwnerUsername;
+                        runtimeDb.SqlAdminUsername = dbManifest.SqlAdminUsername;
+                        runtimeDb.SqlAdminPassword = NormalizeStoredPassword(dbManifest.SqlAdminPassword);
+                    }
+
+                    foreach (var tableKvp in dbKvp.Value.Tables) {
+                        var table = new Table(tableKvp.Value.Name ?? tableKvp.Key);
+                        if (tableKvp.Value.Columns != null) {
+                            table.Columns = tableKvp.Value.Columns.Select(c => new Column(
+                                c.Name,
+                                Type.GetType(c.DataTypeName) ?? typeof(string),
+                                c.MaxLength
+                            )).ToList();
+                        }
+
+                        if (tableKvp.Value.Rows != null) {
+                            table.Rows = tableKvp.Value.Rows
+                                .Select(r => r?.Select(v => (object)v).ToArray())
+                                .ToList();
+                        }
+
+                        runtimeDb.Tables[tableKvp.Key] = table;
+                    }
+                }
+            }
+        }
+
+        private string GetSplitStorageRootPath() {
+            if (string.IsNullOrWhiteSpace(DataPath))
+                return null;
+
+            return Path.GetFullPath(DataPath.Trim());
+        }
+
+        private string GetSplitStorageManifestPath() {
+            string rootPath = GetSplitStorageRootPath();
+            if (string.IsNullOrWhiteSpace(rootPath))
+                return null;
+            return Path.Combine(rootPath, SplitStorageManifestFile);
+        }
+
+        private string GetSplitStorageTablesPath() {
+            string rootPath = GetSplitStorageRootPath();
+            return string.IsNullOrWhiteSpace(rootPath) ? null : Path.Combine(rootPath, SplitStorageTablesFolder);
+        }
+
+        private bool IsSplitStoragePath() {
+            return !IsLegacyStoragePath();
+        }
+
+        private bool IsLegacyStoragePath() {
+            if (string.IsNullOrWhiteSpace(DataPath))
+                return true;
+
+            if (File.Exists(DataPath))
+                return true;
+
+            string extension = Path.GetExtension(DataPath);
+            return !string.IsNullOrWhiteSpace(extension);
+        }
+
+        private static string GetSplitTableFileName(string databaseName, string tableName, TableSnapshot tableSnapshot) {
+            string safeDatabase = SanitizePathComponent(databaseName);
+            string safeTable = SanitizePathComponent(tableName);
+            string hashSeed = string.Join("::", new[] { databaseName ?? "", tableName ?? "" , tableSnapshot?.Name ?? "" });
+            byte[] hash;
+            using (var sha = SHA256.Create()) {
+                hash = sha.ComputeHash(Encoding.UTF8.GetBytes(hashSeed));
+            }
+            string suffix = BitConverter.ToString(hash).Replace("-", "").Substring(0, Math.Min(16, hash.Length * 2));
+            return safeDatabase + "_" + safeTable + "_" + suffix + ".json";
+        }
+
+        private static string SanitizePathComponent(string value) {
+            const int maxLength = 64;
+            string safe = string.IsNullOrWhiteSpace(value) ? "item" : value;
+            var invalid = Path.GetInvalidFileNameChars();
+            var chars = safe.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray();
+            safe = new string(chars);
+            if (safe.Length > maxLength)
+                safe = safe.Substring(0, maxLength);
+            return safe.Replace(' ', '_');
+        }
+
+        private string EncryptPayload(string plainText) {
+            string normalized = plainText ?? "";
+            byte[] plainBytes = Encoding.UTF8.GetBytes(normalized);
+            byte[] salt = new byte[EncryptionSaltSize];
+            _rng.GetBytes(salt);
+
+            byte[] nonce = new byte[EncryptionNonceSize];
+            _rng.GetBytes(nonce);
+
+            byte[] key = DeriveEncryptionKey(salt, DataPath);
+            byte[] tag = new byte[EncryptionTagSize];
+            byte[] cipherBytes = new byte[plainBytes.Length];
+
+            #pragma warning disable SYSLIB0053
+            using (var aesgcm = new AesGcm(key)) {
+                aesgcm.Encrypt(nonce, plainBytes, cipherBytes, tag);
+            }
+            #pragma warning restore SYSLIB0053
+
+            byte[] payload = new byte[salt.Length + nonce.Length + tag.Length + cipherBytes.Length];
+            int offset = 0;
+            Buffer.BlockCopy(salt, 0, payload, offset, salt.Length);
+            offset += salt.Length;
+            Buffer.BlockCopy(nonce, 0, payload, offset, nonce.Length);
+            offset += nonce.Length;
+            Buffer.BlockCopy(tag, 0, payload, offset, tag.Length);
+            offset += tag.Length;
+            Buffer.BlockCopy(cipherBytes, 0, payload, offset, cipherBytes.Length);
+
+            return EncryptedPayloadHeader + Convert.ToBase64String(payload);
+        }
+
+        private bool TryDecryptPayload(string payload, out string plainText) {
+            plainText = null;
+            if (string.IsNullOrWhiteSpace(payload))
+                return false;
+            if (!payload.StartsWith(EncryptedPayloadHeader, StringComparison.Ordinal))
+                return false;
+
+            string b64 = payload.Substring(EncryptedPayloadHeader.Length);
+            if (string.IsNullOrWhiteSpace(b64))
+                return false;
+
+            byte[] allBytes;
+            try {
+                allBytes = Convert.FromBase64String(b64);
+            } catch {
+                return false;
+            }
+
+            if (allBytes.Length < EncryptionSaltSize + EncryptionNonceSize + EncryptionTagSize)
+                return false;
+
+            int offset = 0;
+            byte[] salt = new byte[EncryptionSaltSize];
+            Buffer.BlockCopy(allBytes, offset, salt, 0, EncryptionSaltSize);
+            offset += EncryptionSaltSize;
+
+            byte[] nonce = new byte[EncryptionNonceSize];
+            Buffer.BlockCopy(allBytes, offset, nonce, 0, EncryptionNonceSize);
+            offset += EncryptionNonceSize;
+
+            byte[] tag = new byte[EncryptionTagSize];
+            Buffer.BlockCopy(allBytes, offset, tag, 0, EncryptionTagSize);
+            offset += EncryptionTagSize;
+
+            int cipherLength = allBytes.Length - offset;
+            if (cipherLength < 0)
+                return false;
+
+            byte[] cipherBytes = new byte[cipherLength];
+            Buffer.BlockCopy(allBytes, offset, cipherBytes, 0, cipherLength);
+
+            byte[] key = DeriveEncryptionKey(salt, DataPath);
+            byte[] plainBytes = new byte[cipherBytes.Length];
+            try {
+            #pragma warning disable SYSLIB0053
+            using (var aesgcm = new AesGcm(key)) {
+                aesgcm.Decrypt(nonce, cipherBytes, tag, plainBytes);
+            }
+            #pragma warning restore SYSLIB0053
+            } catch {
+                return false;
+            }
+
+            plainText = Encoding.UTF8.GetString(plainBytes);
+            return true;
+        }
+
+        private byte[] DeriveEncryptionKey(byte[] salt, string purpose) {
+            string context = (purpose ?? "") + "|" + EncryptionPurpose;
+            byte[] contextBytes = Encoding.UTF8.GetBytes(context);
+            byte[] rawSeed = new byte[_dataEncryptionSecret.Length + contextBytes.Length];
+            Buffer.BlockCopy(_dataEncryptionSecret, 0, rawSeed, 0, _dataEncryptionSecret.Length);
+            Buffer.BlockCopy(contextBytes, 0, rawSeed, _dataEncryptionSecret.Length, contextBytes.Length);
+
+            #pragma warning disable SYSLIB0060
+            using (var kdf = new Rfc2898DeriveBytes(rawSeed, salt, EncryptionDerivationIterations, HashAlgorithmName.SHA256)) {
+                return kdf.GetBytes(EncryptionKeySize);
+            }
+            #pragma warning restore SYSLIB0060
+        }
+
+        private static string GetDataServerMachineSecret() {
+            string explicitSecret = Environment.GetEnvironmentVariable("SOCKETJACK_DATASERVER_ENCRYPTION_SECRET");
+            if (!string.IsNullOrWhiteSpace(explicitSecret))
+                return explicitSecret;
+
+            string machineName = Environment.MachineName ?? "";
+            string userName = Environment.UserName ?? "";
+            string userDomain = Environment.UserDomainName ?? "";
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) ?? "";
+            string machineSecretSeed = string.Join("|", new[] { machineName, userName, userDomain, home });
+            using (var sha = SHA256.Create()) {
+                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(machineSecretSeed));
+                return Convert.ToBase64String(hash);
             }
         }
 
@@ -417,12 +1118,77 @@ namespace SocketJack.Net.Database {
         /// <see cref="AutoSaveDebounceMs"/> collapse into a single write.
         /// </summary>
         public void ScheduleSave() {
+            if (EnableCacheOptimizing)
+                _cacheOptimizer.InvalidateAll();
+
             if (!AutoSave || string.IsNullOrWhiteSpace(DataPath)) return;
             _debounceTimer?.Dispose();
-            _debounceTimer = new Timer(_ => Save(), null, AutoSaveDebounceMs, Timeout.Infinite);
+            _debounceTimer = new Timer(_ => _ = SaveAsync(), null, AutoSaveDebounceMs, Timeout.Infinite);
+        }
+
+        /// <summary>
+        /// Reloads optimized cache metadata and warms hot key/value indexes.
+        /// </summary>
+        public void ReloadOptimizedCache() {
+            if (!EnableCacheOptimizing) return;
+            _cacheOptimizer.LoadMetadata(GetResolvedCacheMetadataPath());
+            _cacheOptimizer.Warm(Databases, CacheOptimizationMaxKeys);
+        }
+
+        /// <summary>
+        /// Clears all warmed optimized cache indexes. Metadata is kept so the
+        /// cache can be warmed again after the next load or lookup.
+        /// </summary>
+        public void ClearOptimizedCache() {
+            _cacheOptimizer.InvalidateAll();
+        }
+
+        internal bool TryGetCachedRowIndexes(
+            string databaseName,
+            string tableName,
+            Table table,
+            string whereClause,
+            out List<int> rowIndexes) {
+
+            rowIndexes = null;
+            if (!EnableCacheOptimizing)
+                return false;
+
+            return _cacheOptimizer.TryGetRowIndexes(
+                databaseName,
+                tableName,
+                table,
+                whereClause,
+                CacheOptimizationMaxKeys,
+                out rowIndexes);
+        }
+
+        private string GetResolvedCacheMetadataPath() {
+            if (!string.IsNullOrWhiteSpace(CacheMetadataPath))
+                return CacheMetadataPath;
+
+            if (IsSplitStoragePath())
+                return GetSplitStorageCacheMetadataPath();
+
+            if (string.IsNullOrWhiteSpace(DataPath))
+                return null;
+
+            return Path.ChangeExtension(DataPath, ".cachemeta.json");
+        }
+
+        private string GetSplitStorageCacheMetadataPath() {
+            string rootPath = GetSplitStorageRootPath();
+            if (string.IsNullOrWhiteSpace(rootPath))
+                return null;
+            return Path.Combine(rootPath, SplitStorageCacheMetadataFile);
         }
 
         protected override void Dispose(bool disposing) {
+            if (disposing) {
+                _rng?.Dispose();
+                _persistenceLock.Dispose();
+            }
+
             _debounceTimer?.Dispose();
             if (AutoSave) Save();
             base.Dispose(disposing);
@@ -579,6 +1345,9 @@ namespace SocketJack.Net.Database {
 
             LogFormat("[{0}] Import complete. {1} tables imported into database '{2}'.",
                 new[] { Name, totalTables.ToString(), dbName });
+
+            if (EnableCacheOptimizing)
+                _cacheOptimizer.InvalidateAll();
 
             // Auto-save after import
             if (AutoSave) ScheduleSave();

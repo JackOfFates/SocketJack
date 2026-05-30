@@ -7,12 +7,73 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 
 namespace SocketJack.Net {
+
+    /// <summary>
+    /// Stores SNI certificate bindings for servers that host multiple TLS domains on one listener.
+    /// </summary>
+    public sealed class SslCertificateBindingCollection {
+        private readonly Dictionary<string, X509Certificate> _bindings = new Dictionary<string, X509Certificate>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _sync = new object();
+
+        public int Count {
+            get {
+                lock (_sync)
+                    return _bindings.Count;
+            }
+        }
+
+        public void Add(string hostName, X509Certificate certificate) {
+            hostName = TcpServer.NormalizeSslHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                throw new ArgumentException("Host name is required.", nameof(hostName));
+            if (certificate == null)
+                throw new ArgumentNullException(nameof(certificate));
+
+            lock (_sync)
+                _bindings[hostName] = certificate;
+        }
+
+        public bool Remove(string hostName) {
+            hostName = TcpServer.NormalizeSslHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                return false;
+            lock (_sync)
+                return _bindings.Remove(hostName);
+        }
+
+        public void Clear() {
+            lock (_sync)
+                _bindings.Clear();
+        }
+
+        public X509Certificate Resolve(string hostName) {
+            hostName = TcpServer.NormalizeSslHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                return null;
+
+            lock (_sync) {
+                if (_bindings.TryGetValue(hostName, out X509Certificate exact))
+                    return exact;
+
+                int dot = hostName.IndexOf('.');
+                while (dot > 0 && dot < hostName.Length - 1) {
+                    string wildcard = "*" + hostName.Substring(dot);
+                    if (_bindings.TryGetValue(wildcard, out X509Certificate wildcardCertificate))
+                        return wildcardCertificate;
+                    dot = hostName.IndexOf('.', dot + 1);
+                }
+
+                return _bindings.TryGetValue("*", out X509Certificate fallback) ? fallback : null;
+            }
+        }
+    }
 
     /// <summary>
     /// Multithreaded TCP Server.
@@ -40,6 +101,17 @@ namespace SocketJack.Net {
         /// Server certificate for SSL connections.
         /// </summary>
         public X509Certificate SslCertificate { get; set; }
+
+        /// <summary>
+        /// Optional server-side certificate selector used for SNI-based HTTPS hosting.
+        /// </summary>
+        public Func<string, X509Certificate> SslCertificateSelector { get; set; }
+
+        /// <summary>
+        /// Host-name to certificate mappings used for SNI-based HTTPS hosting.
+        /// Exact host names and wildcard names such as <c>*.example.com</c> are supported.
+        /// </summary>
+        public SslCertificateBindingCollection SslCertificateBindings { get; } = new SslCertificateBindingCollection();
 
         public bool IsListening { get; set; } = false;
 
@@ -271,7 +343,7 @@ namespace SocketJack.Net {
 
         /// <summary>
         /// Registers a connection as a peer and synchronizes peer lists.
-        /// <see cref="Peers.AddOrUpdate"/> runs synchronously so the peer is
+        /// <c>Peers.AddOrUpdate</c> runs synchronously so the peer is
         /// immediately visible to message handlers; the network sync runs
         /// asynchronously.
         /// </summary>
@@ -370,6 +442,8 @@ namespace SocketJack.Net {
                 var newSocket = tryResult.Result;
                 if (newSocket.Connected) {
                     var newConnection = NewConnection(ref newSocket);
+                    if (newConnection == null)
+                        return;
                     LogFormat("[{0}] Client Connected.", new[] { Name + @"\" + newConnection.Identity.ID.ToUpper(), Port.ToString() });
                     ClientConnected?.Invoke(new ConnectedEventArgs(this, newConnection));
                 }
@@ -382,10 +456,11 @@ private NetworkConnection NewConnection(ref Socket handler) {
     newConnection._Stream = new NetworkStream(newConnection.Socket);
             try {
                 if (Options.UseSsl)
-                    newConnection.InitializeSslStream(SslCertificate, SslTargetHost);
+                    newConnection.InitializeSslStream(SslCertificate, SslTargetHost, GetSslCertificateSelector());
             } catch (Exception ex) {
                 InvokeOnError(newConnection, ex);
                 CloseConnection(newConnection, DisconnectionReason.Unknown);
+                return null;
             }
             // GUID collisions are practically impossible; assign directly
             // without sleeping to avoid unnecessary latency per connection.
@@ -403,6 +478,63 @@ private NetworkConnection NewConnection(ref Socket handler) {
             if (Options.UsePeerToPeer && !DeferPeerInitialization)
                 InitializePeer(newConnection);
             return newConnection;
+        }
+
+        private Func<string, X509Certificate> GetSslCertificateSelector() {
+            if (SslCertificateSelector == null && SslCertificateBindings.Count == 0)
+                return null;
+
+            return hostName => {
+                string normalized = NormalizeSslHostName(hostName);
+                X509Certificate selected = null;
+                if (SslCertificateSelector != null)
+                    selected = SslCertificateSelector(normalized);
+                return selected ?? SslCertificateBindings.Resolve(normalized) ?? SslCertificate;
+            };
+        }
+
+        public void BindSslCertificate(string hostName, X509Certificate certificate) {
+            SslCertificateBindings.Add(hostName, certificate);
+        }
+
+        public void BindSslCertificate(IEnumerable<string> hostNames, X509Certificate certificate) {
+            if (hostNames == null)
+                throw new ArgumentNullException(nameof(hostNames));
+            foreach (string hostName in hostNames)
+                SslCertificateBindings.Add(hostName, certificate);
+        }
+
+        public bool RemoveSslCertificateBinding(string hostName) {
+            return SslCertificateBindings.Remove(hostName);
+        }
+
+        public void ClearSslCertificateBindings() {
+            SslCertificateBindings.Clear();
+        }
+
+        internal static string NormalizeSslHostName(string hostName) {
+            if (string.IsNullOrWhiteSpace(hostName))
+                return null;
+
+            hostName = hostName.Trim().Replace("\r", "", StringComparison.Ordinal).Replace("\n", "", StringComparison.Ordinal);
+            if (hostName.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                hostName.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) {
+                if (Uri.TryCreate(hostName, UriKind.Absolute, out Uri uri))
+                    hostName = uri.Host;
+            }
+
+            if (hostName.StartsWith("[", StringComparison.Ordinal)) {
+                int close = hostName.IndexOf(']');
+                if (close > 0)
+                    hostName = hostName.Substring(1, close - 1);
+            } else {
+                int colon = hostName.LastIndexOf(':');
+                if (colon > 0 && hostName.IndexOf(':') == colon)
+                    hostName = hostName.Substring(0, colon);
+            }
+
+            hostName = hostName.Trim().TrimEnd('.');
+            return string.IsNullOrWhiteSpace(hostName) ? null : hostName.ToLowerInvariant();
         }
         private void InvokeDelayedListen() {
             if (DelayListen) {
@@ -477,17 +609,18 @@ private NetworkConnection NewConnection(ref Socket handler) {
         public bool Listen() {
             if (!IsListening) {
                 PendingConnections = 0;
-                Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                {
-                    var withBlock = Socket;
-                    withBlock.NoDelay = true;
-                    withBlock.ReceiveBufferSize = int.MaxValue;
-                    withBlock.SendBufferSize = int.MaxValue;
-                    withBlock.ReceiveTimeout = -1;
-                    withBlock.SendTimeout = -1;
-                }
-                Connection = new NetworkConnection(this, Socket);
                 try {
+                    ValidateSslServerConfiguration();
+                    Socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    {
+                        var withBlock = Socket;
+                        withBlock.NoDelay = true;
+                        withBlock.ReceiveBufferSize = int.MaxValue;
+                        withBlock.SendBufferSize = int.MaxValue;
+                        withBlock.ReceiveTimeout = -1;
+                        withBlock.SendTimeout = -1;
+                    }
+                    Connection = new NetworkConnection(this, Socket);
                     Bind(Port);
                     //if (!NIC.InterfaceDiscovered) {
                     //    Log("Waiting for Network Interface Card..");
@@ -508,11 +641,38 @@ private NetworkConnection NewConnection(ref Socket handler) {
                     return true;
                 } catch (Exception ex) {
                     InvokeOnError(Connection, ex);
+                    if (Socket != null) {
+                        MethodExtensions.TryInvoke(Socket.Close);
+                        Socket = null;
+                    }
                     return false;
                 }
             } else {
                 InvokeOnError(null, new Exception("Already listening."));
                 return false;
+            }
+        }
+
+        private void ValidateSslServerConfiguration() {
+            if (Options?.UseSsl != true)
+                return;
+
+            if (SslCertificate == null)
+                throw new InvalidOperationException("SSL is enabled for " + Name + " on port " + Port.ToString() + ", but no server certificate is configured.");
+
+            if (SslCertificate is not X509Certificate2 certificate)
+                return;
+
+            if (!certificate.HasPrivateKey)
+                throw new InvalidOperationException("SSL certificate for " + Name + " on port " + Port.ToString() + " does not include an accessible private key.");
+
+            try {
+                using RSA rsa = certificate.GetRSAPrivateKey();
+                using ECDsa ecdsa = certificate.GetECDsaPrivateKey();
+                if (rsa == null && ecdsa == null)
+                    throw new InvalidOperationException("SSL certificate private key is not RSA or ECDSA.");
+            } catch (Exception ex) when (ex is not InvalidOperationException) {
+                throw new InvalidOperationException("SSL certificate private key for " + Name + " on port " + Port.ToString() + " could not be opened by this process.", ex);
             }
         }
 
@@ -555,8 +715,6 @@ private NetworkConnection NewConnection(ref Socket handler) {
 				StoppedListening?.Invoke(this);
 #endif
 				Peers.Clear();
-				GC.Collect();
-				GC.WaitForPendingFinalizers();
 			} else {
 				InvokeOnError(null, new Exception("Not listening."));
 			}

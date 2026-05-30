@@ -3,7 +3,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Globalization;
 using System.Net.Mime;
 using System.Net.Sockets;
 using System.Reflection;
@@ -68,12 +70,39 @@ namespace SocketJack.Net {
         }
     }
 
+    public sealed class HttpDispatchResult {
+        public HttpContext Context { get; internal set; }
+        public HttpRequest Request => Context?.Request;
+        public HttpResponse Response => Context?.Response;
+        public int StatusCode => Context?.StatusCodeNumber ?? 500;
+        public string ReasonPhrase => Context?.ReasonPhrase ?? "Internal Server Error";
+        public bool Streamed { get; internal set; }
+        public byte[] BodyBytes { get; internal set; } = Array.Empty<byte>();
+    }
+
+    public sealed class HttpStreamDispatchCallbacks {
+        public Action<HttpResponse> OnStart { get; set; }
+        public Action<byte[], int, int> OnChunk { get; set; }
+        public Action OnEnd { get; set; }
+    }
     public class HttpServer : TcpServer {
 
         // Internal cache for processed HTML/string with variable replacement
         private readonly ConcurrentDictionary<string, (string html, DateTime lastWrite)> _routeFileCache = new();
         private readonly ConcurrentDictionary<string, string> _routeStringCache = new();
+        private readonly object _httpRoutePatternCacheLock = new object();
+        private readonly Dictionary<string, HttpRoutePatternCacheEntry> _httpRoutePatternCache = new Dictionary<string, HttpRoutePatternCacheEntry>(StringComparer.OrdinalIgnoreCase);
+        private long _httpRoutePatternCacheBytes;
+        private long _httpRoutePatternCacheSequence;
 
+        private sealed class HttpRoutePatternCacheEntry {
+            public string Key;
+            public string Hash;
+            public byte[] Body;
+            public int Size;
+            public int StableCount;
+            public long LastUsed;
+        }
         /// <summary>
         /// Maps a route to an HTML file with variable replacement (e.g., $Username) and caching.
         /// </summary>
@@ -213,14 +242,75 @@ namespace SocketJack.Net {
 
         private readonly Dictionary<string, string> _directoryMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _fileMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, Dictionary<string, RouteHandler>>> _hostRoutes = new Dictionary<string, Dictionary<string, Dictionary<string, RouteHandler>>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, string>> _hostDirectoryMappings = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, string>> _hostFileMappings = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HostProxyTarget> _hostProxyMappings = new Dictionary<string, HostProxyTarget>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _allowedHostNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        private enum RouteMatchMode {
+            ExactAndWildcard,
+            ExactOnly,
+            WildcardOnly
+        }
+
+        private sealed class HostProxyTarget {
+            public Uri BaseUri { get; }
+            public string Host { get; }
+            public int Port { get; }
+            public bool UseHttps { get; }
+            public string BasePath { get; }
+            public bool PreserveHostHeader { get; }
+
+            public HostProxyTarget(Uri baseUri, bool preserveHostHeader = false) {
+                BaseUri = baseUri ?? throw new ArgumentNullException(nameof(baseUri));
+                Host = baseUri.Host;
+                Port = baseUri.Port > 0 ? baseUri.Port : (baseUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80);
+                UseHttps = baseUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
+                BasePath = string.IsNullOrWhiteSpace(baseUri.AbsolutePath) || baseUri.AbsolutePath == "/" ? "" : baseUri.AbsolutePath.TrimEnd('/');
+                PreserveHostHeader = preserveHostHeader;
+            }
+        }
         /// <summary>
         /// Per-connection buffer for accumulating partial HTTP requests
         /// that span multiple TCP segments.
         /// </summary>
         private readonly ConcurrentDictionary<Guid, List<byte>> _requestBuffers = new ConcurrentDictionary<Guid, List<byte>>();
+        private readonly object _httpAccessLogLock = new object();
 
         private readonly Dictionary<string, RtmpPublishHandler> _rtmpPublishRoutes = new Dictionary<string, RtmpPublishHandler>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>
+        /// Restricts HTTP routing to the supplied host name. Leave empty to allow all hosts.
+        /// </summary>
+        public void AllowHost(string hostName) {
+            hostName = NormalizeHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                throw new ArgumentException("Host name is required.", nameof(hostName));
+
+            lock (_routesLock) {
+                _allowedHostNames.Add(hostName);
+            }
+        }
+
+        /// <summary>
+        /// Clears HTTP host restrictions and restores the default allow-all behavior.
+        /// </summary>
+        public void ClearAllowedHosts() {
+            lock (_routesLock) {
+                _allowedHostNames.Clear();
+            }
+        }
+
+        public bool IsHostAllowed(HttpRequest request) {
+            return IsHostAllowed(GetRequestHostName(request));
+        }
+
+        public bool IsHostAllowed(string hostName) {
+            hostName = NormalizeHostName(hostName);
+            lock (_routesLock) {
+                return _allowedHostNames.Count == 0 || (!string.IsNullOrWhiteSpace(hostName) && _allowedHostNames.Contains(hostName));
+            }
+        }
 
         /// <summary>
         /// Tracks connections running the RTMP protocol (e.g., OBS publishing via <c>rtmp://</c>).
@@ -276,7 +366,35 @@ namespace SocketJack.Net {
             return delta;
         }
 
-        public string IndexPageHtml { get; set; } = "<html><body><h1>SocketJack HttpServer</h1></body></html>";
+        public string IndexPageHtml { get; set; } = LoadDefaultIndexPageHtml();
+
+        public string DownloadPageHtml { get; set; } = null;
+
+        private static string LoadDefaultIndexPageHtml() {
+            const string fallback = "<html><body><h1>SocketJack HttpServer</h1></body></html>";
+            try {
+                if (SocketJack.HtmlPageResources.TryGetHtml("SocketJackHttpServerDefaultIndex.html", out string embedded))
+                    return embedded;
+
+                var baseDirectory = AppContext.BaseDirectory;
+                var candidates = new[] {
+                    Path.Combine(baseDirectory, "html", "SocketJackHttpServerDefaultIndex.html"),
+                    Path.Combine(baseDirectory, "SocketJackHttpServerDefaultIndex.html"),
+                    Path.Combine(Path.GetDirectoryName(typeof(HttpServer).Assembly.Location) ?? baseDirectory, "html", "SocketJackHttpServerDefaultIndex.html"),
+                    Path.Combine(Path.GetDirectoryName(typeof(HttpServer).Assembly.Location) ?? baseDirectory, "SocketJackHttpServerDefaultIndex.html"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "html", "SocketJackHttpServerDefaultIndex.html"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "SocketJackHttpServerDefaultIndex.html")
+                };
+
+                foreach (var candidate in candidates) {
+                    if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
+                        return File.ReadAllText(candidate, Encoding.UTF8);
+                }
+            } catch {
+            }
+
+            return fallback;
+        }
 
         /// <summary>
         /// Gets or sets the content served at <c>/robots.txt</c>. Set to <see langword="null"/> to
@@ -294,15 +412,30 @@ namespace SocketJack.Net {
         public bool AllowDirectoryListing { get; set; } = false;
 
         /// <summary>
+        /// Optional request gate. Return a non-empty message to reject the request before
+        /// routes, static files, streaming handlers, or upload handlers run.
+        /// </summary>
+        public Func<NetworkConnection, HttpRequest, string> RequestGate { get; set; }
+
+        /// <summary>
+        /// Shared per-IP bot filter and endpoint abuse monitor for this server.
+        /// </summary>
+        public EndpointSecurityMonitor EndpointSecurity { get; } = new EndpointSecurityMonitor();
+        /// <summary>
         /// Gets or sets the <c>Cache-Control</c> header value added to every HTTP response.
         /// When <see langword="null"/> (the default), no <c>Cache-Control</c> header is emitted.
         /// Example values: <c>"public, max-age=3600"</c>, <c>"no-cache"</c>,
         /// <c>"private, max-age=86400"</c>.
-        /// For static files served via <see cref="MapDirectory"/>, an <c>ETag</c> and
+        /// For static files served via <c>MapDirectory</c>, an <c>ETag</c> and
         /// <c>Last-Modified</c> header are also sent, and <c>If-None-Match</c> /
         /// <c>If-Modified-Since</c> conditional requests are honoured with <c>304 Not Modified</c>.
         /// </summary>
         public string CacheControl { get; set; } = null;
+
+        /// <summary>
+        /// Gets or sets whether a non-SSL server bound to port 80 should redirect requests to HTTPS.
+        /// </summary>
+        public bool EnablePort80HttpsRedirect { get; set; } = false;
 
         public void Map(string method, string path, RouteHandler handler) {
             if (string.IsNullOrWhiteSpace(method))
@@ -349,6 +482,73 @@ namespace SocketJack.Net {
             SetMappedRouteMetadata(method, path, handler, typeof(T));
         }
 
+        /// <summary>
+        /// Maps a route that only matches requests whose Host header matches <paramref name="hostName"/>.
+        /// Exact host names are supported, and wildcard entries such as <c>*.example.com</c> match subdomains.
+        /// </summary>
+        public void MapHost(string hostName, string method, string path, RouteHandler handler) {
+            hostName = NormalizeHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                throw new ArgumentException("Host name is required.", nameof(hostName));
+            if (string.IsNullOrWhiteSpace(method))
+                throw new ArgumentException("Method is required.", nameof(method));
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Path is required.", nameof(path));
+            if (handler == null)
+                throw new ArgumentNullException(nameof(handler));
+
+            lock (_routesLock) {
+                if (!_hostRoutes.TryGetValue(hostName, out var byMethod)) {
+                    byMethod = new Dictionary<string, Dictionary<string, RouteHandler>>(StringComparer.OrdinalIgnoreCase);
+                    _hostRoutes[hostName] = byMethod;
+                }
+                if (!byMethod.TryGetValue(method, out var byPath)) {
+                    byPath = new Dictionary<string, RouteHandler>(StringComparer.OrdinalIgnoreCase);
+                    byMethod[method] = byPath;
+                }
+                byPath[path] = handler;
+            }
+        }
+
+        /// <summary>
+        /// Maps a host-specific route whose handler receives a deserialized request body.
+        /// </summary>
+        public void MapHost<T>(string hostName, string method, string path, RouteHandler<T> handler) {
+            if (handler == null)
+                throw new ArgumentNullException(nameof(handler));
+
+            MapHost(hostName, method, path, (connection, request, cancellationToken) => {
+                T body = default;
+                if (request.BodyBytes != null && request.BodyBytes.Length > 0) {
+                    var wrapped = Options.Serializer.Deserialize(request.BodyBytes);
+                    if (wrapped != null) {
+                        var obj = wrapped.Unwrap(this as ISocket);
+                        if (obj is T typed)
+                            body = typed;
+                    }
+                }
+                return handler(connection, body, request, cancellationToken);
+            });
+        }
+
+        /// <summary>
+        /// Removes a previously mapped host-specific route.
+        /// </summary>
+        public bool RemoveHostRoute(string hostName, string method, string path) {
+            hostName = NormalizeHostName(hostName);
+            lock (_routesLock) {
+                if (!_hostRoutes.TryGetValue(hostName, out var byMethod))
+                    return false;
+                if (!byMethod.TryGetValue(method, out var byPath))
+                    return false;
+                var removed = byPath.Remove(path);
+                if (byPath.Count == 0)
+                    byMethod.Remove(method);
+                if (byMethod.Count == 0)
+                    _hostRoutes.Remove(hostName);
+                return removed;
+            }
+        }
         public bool RemoveRoute(string method, string path) {
             lock (_routesLock) {
                 if (!_routes.TryGetValue(method, out var byPath))
@@ -808,15 +1008,171 @@ namespace SocketJack.Net {
             return _fileMappings.Remove(NormalizePath(urlPath));
         }
 
-        private bool TryResolveDirectoryFile(string method, string path, string clientIp, string authHeader, out byte[] fileBytes, out string contentType, out HtAccessResult accessResult, out string authRealm, out Dictionary<string, string> extraHeaders, out DateTime? lastModifiedUtc) {
+        /// <summary>
+        /// Maps a local directory to a URL prefix for a specific Host header.
+        /// </summary>
+        public void MapHostDirectory(string hostName, string urlPrefix, string localDirectory) {
+            hostName = NormalizeHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                throw new ArgumentException("Host name is required.", nameof(hostName));
+            if (string.IsNullOrWhiteSpace(urlPrefix))
+                throw new ArgumentException("URL prefix is required.", nameof(urlPrefix));
+            if (string.IsNullOrWhiteSpace(localDirectory))
+                throw new ArgumentException("Local directory is required.", nameof(localDirectory));
+            if (!Directory.Exists(localDirectory))
+                throw new DirectoryNotFoundException("Directory not found: " + localDirectory);
+
+            var normalized = urlPrefix.TrimEnd('/');
+            if (string.IsNullOrEmpty(normalized))
+                normalized = "/";
+
+            lock (_routesLock) {
+                if (!_hostDirectoryMappings.TryGetValue(hostName, out var mappings)) {
+                    mappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    _hostDirectoryMappings[hostName] = mappings;
+                }
+                mappings[normalized] = Path.GetFullPath(localDirectory);
+            }
+        }
+
+        /// <summary>
+        /// Maps a local directory to a URL prefix for a specific Host header and configures a <c>.htaccess</c> file.
+        /// </summary>
+        public void MapHostDirectory(string hostName, string urlPrefix, string localDirectory, Action<HtAccessBuilder> configure) {
+            MapHostDirectory(hostName, urlPrefix, localDirectory);
+            if (configure != null) {
+                var builder = new HtAccessBuilder();
+                configure(builder);
+                builder.WriteTo(Path.GetFullPath(localDirectory));
+            }
+        }
+
+        /// <summary>
+        /// Removes a previously mapped host-specific directory route.
+        /// </summary>
+        public bool RemoveHostDirectoryMapping(string hostName, string urlPrefix) {
+            hostName = NormalizeHostName(hostName);
+            var normalized = urlPrefix.TrimEnd('/');
+            if (string.IsNullOrEmpty(normalized))
+                normalized = "/";
+            lock (_routesLock) {
+                if (!_hostDirectoryMappings.TryGetValue(hostName, out var mappings))
+                    return false;
+                var removed = mappings.Remove(normalized);
+                if (mappings.Count == 0)
+                    _hostDirectoryMappings.Remove(hostName);
+                return removed;
+            }
+        }
+
+        /// <summary>
+        /// Maps a URL path to a local file for a specific Host header.
+        /// </summary>
+        public void MapHostFile(string hostName, string urlPath, string localFilePath) {
+            hostName = NormalizeHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                throw new ArgumentException("Host name is required.", nameof(hostName));
+            if (string.IsNullOrWhiteSpace(urlPath))
+                throw new ArgumentException("URL path is required.", nameof(urlPath));
+            if (string.IsNullOrWhiteSpace(localFilePath))
+                throw new ArgumentException("Local file path is required.", nameof(localFilePath));
+
+            lock (_routesLock) {
+                if (!_hostFileMappings.TryGetValue(hostName, out var mappings)) {
+                    mappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    _hostFileMappings[hostName] = mappings;
+                }
+                mappings[NormalizePath(urlPath)] = Path.GetFullPath(localFilePath);
+            }
+        }
+
+        /// <summary>
+        /// Removes a previously mapped host-specific file route.
+        /// </summary>
+        public bool RemoveHostFileMapping(string hostName, string urlPath) {
+            hostName = NormalizeHostName(hostName);
+            lock (_routesLock) {
+                if (!_hostFileMappings.TryGetValue(hostName, out var mappings))
+                    return false;
+                var removed = mappings.Remove(NormalizePath(urlPath));
+                if (mappings.Count == 0)
+                    _hostFileMappings.Remove(hostName);
+                return removed;
+            }
+        }
+
+        /// <summary>
+        /// Proxies every request for <paramref name="hostName"/> to an existing HTTP or HTTPS server.
+        /// Use this to route a public subdomain to a local site, for example
+        /// <c>MapSubdomain("OtherWebsite.MyDomain.com", "http://127.0.0.1:7567")</c>.
+        /// </summary>
+        public void MapSubdomain(string hostName, string targetBaseUrl) {
+            ProxyHost(hostName, targetBaseUrl);
+        }
+
+        /// <summary>
+        /// Proxies every request for <paramref name="hostName"/> to an existing HTTP or HTTPS server.
+        /// </summary>
+        public void ProxyHost(string hostName, string targetBaseUrl) {
+            ProxyHost(hostName, targetBaseUrl, false);
+        }
+
+        /// <summary>
+        /// Proxies every request for <paramref name="hostName"/> and optionally preserves that Host header upstream.
+        /// </summary>
+        public void ProxyHost(string hostName, string targetBaseUrl, bool preserveHostHeader) {
+            hostName = NormalizeHostName(hostName);
+            if (string.IsNullOrWhiteSpace(hostName))
+                throw new ArgumentException("Host name is required.", nameof(hostName));
+            if (string.IsNullOrWhiteSpace(targetBaseUrl))
+                throw new ArgumentException("Target URL is required.", nameof(targetBaseUrl));
+
+            if (!Uri.TryCreate(targetBaseUrl, UriKind.Absolute, out var targetUri))
+                throw new ArgumentException("Target URL must be an absolute http:// or https:// URL.", nameof(targetBaseUrl));
+            if (!targetUri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) && !targetUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Target URL must use http:// or https://.", nameof(targetBaseUrl));
+
+            lock (_routesLock) {
+                _hostProxyMappings[hostName] = new HostProxyTarget(targetUri, preserveHostHeader);
+            }
+        }
+
+        /// <summary>
+        /// Proxies every request for <paramref name="hostName"/> to an existing server.
+        /// </summary>
+        public void ProxyHost(string hostName, string targetHost, int targetPort, bool useHttps = false) {
+            if (string.IsNullOrWhiteSpace(targetHost))
+                throw new ArgumentException("Target host is required.", nameof(targetHost));
+            if (targetPort <= 0 || targetPort > 65535)
+                throw new ArgumentOutOfRangeException(nameof(targetPort));
+            var scheme = useHttps ? "https" : "http";
+            ProxyHost(hostName, scheme + "://" + targetHost + ":" + targetPort);
+        }
+
+        /// <summary>
+        /// Removes a host/subdomain proxy mapping.
+        /// </summary>
+        public bool RemoveHostProxy(string hostName) {
+            hostName = NormalizeHostName(hostName);
+            lock (_routesLock) {
+                return _hostProxyMappings.Remove(hostName);
+            }
+        }
+        private bool TryResolveDirectoryFile(string method, string path, bool downloadDirectoryZip, string clientIp, string authHeader, out byte[] fileBytes, out string sourceFilePath, out string contentType, out string fileName, out HtAccessResult accessResult, out string authRealm, out Dictionary<string, string> extraHeaders, out DateTime? lastModifiedUtc) {
+            return TryResolveDirectoryFile(_directoryMappings, method, path, downloadDirectoryZip, clientIp, authHeader, out fileBytes, out sourceFilePath, out contentType, out fileName, out accessResult, out authRealm, out extraHeaders, out lastModifiedUtc);
+        }
+
+        private bool TryResolveDirectoryFile(Dictionary<string, string> directoryMappings, string method, string path, bool downloadDirectoryZip, string clientIp, string authHeader, out byte[] fileBytes, out string sourceFilePath, out string contentType, out string fileName, out HtAccessResult accessResult, out string authRealm, out Dictionary<string, string> extraHeaders, out DateTime? lastModifiedUtc) {
             fileBytes = null;
+            sourceFilePath = null;
             contentType = null;
+            fileName = null;
             accessResult = HtAccessResult.Allowed;
             authRealm = null;
             extraHeaders = null;
             lastModifiedUtc = null;
 
-            if (_directoryMappings.Count == 0)
+            if (directoryMappings == null || directoryMappings.Count == 0)
                 return false;
 
             if (method == null || !(method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)))
@@ -826,13 +1182,15 @@ namespace SocketJack.Net {
                 return false;
 
             // Block .htaccess from ever being served to clients.
-            var fileName = path.Substring(path.LastIndexOf('/') + 1);
-            if (fileName.Equals(".htaccess", StringComparison.OrdinalIgnoreCase))
+            var requestedFileName = path.Substring(path.LastIndexOf('/') + 1);
+            if (requestedFileName.Equals(".htaccess", StringComparison.OrdinalIgnoreCase)) {
+                RecordEndpointSecurityFilesystemEvent(clientIp, path, "static-file", ".htaccess probe");
                 return false;
+            }
 
-            foreach (var kv in _directoryMappings) {
+            foreach (var kv in directoryMappings) {
                 var prefix = kv.Key;
-                var localDir = kv.Value;
+                var localDir = Path.GetFullPath(kv.Value);
 
                 string relativePath = null;
                 if (prefix == "/") {
@@ -854,9 +1212,11 @@ namespace SocketJack.Net {
                     : Path.Combine(localDir, localRelative);
                 fullPath = Path.GetFullPath(fullPath);
 
-                // Security: ensure the resolved path is still within the mapped directory
-                if (!fullPath.StartsWith(localDir, StringComparison.OrdinalIgnoreCase))
+                // Security: ensure the resolved path is still within the mapped directory.
+                if (!IsPathInsideRoot(fullPath, localDir)) {
+                    RecordEndpointSecurityFilesystemEvent(clientIp, path, "static-file", "path escaped mapped directory");
                     return false;
+                }
 
                 // Evaluate .htaccess access rules before serving any content.
                 string resolvedFileName = Path.GetFileName(fullPath);
@@ -867,6 +1227,15 @@ namespace SocketJack.Net {
 
                 // If path points to a directory, try common index files
                 if (Directory.Exists(fullPath)) {
+                    bool directoryListingAllowed = IsDirectoryListingAllowed(fullPath);
+                    if (downloadDirectoryZip && directoryListingAllowed) {
+                        fileBytes = CreateDirectoryZipBytes(fullPath);
+                        contentType = "application/zip";
+                        fileName = MakeSafeDownloadFileName((new DirectoryInfo(fullPath)).Name, "directory") + ".zip";
+                        try { lastModifiedUtc = Directory.GetLastWriteTimeUtc(fullPath); } catch { }
+                        return true;
+                    }
+
                     var indexHtml = Path.Combine(fullPath, "index.html");
                     var indexHtm = Path.Combine(fullPath, "index.htm");
                     if (File.Exists(indexHtml))
@@ -875,9 +1244,10 @@ namespace SocketJack.Net {
                         fullPath = indexHtm;
                     else {
                         // Check if directory listing is allowed.
-                        if (IsDirectoryListingAllowed(fullPath)) {
+                        if (directoryListingAllowed) {
                             fileBytes = Encoding.UTF8.GetBytes(GenerateDirectoryListing(fullPath, path));
                             contentType = "text/html";
+                            fileName = null;
                             return true;
                         }
                         continue;
@@ -888,11 +1258,14 @@ namespace SocketJack.Net {
                     continue;
 
                 // Block .htaccess at the file level as well.
-                if (Path.GetFileName(fullPath).Equals(".htaccess", StringComparison.OrdinalIgnoreCase))
+                if (Path.GetFileName(fullPath).Equals(".htaccess", StringComparison.OrdinalIgnoreCase)) {
+                    RecordEndpointSecurityFilesystemEvent(clientIp, path, "static-file", ".htaccess probe");
                     return false;
+                }
 
-                fileBytes = File.ReadAllBytes(fullPath);
-                contentType = GetMimeType(Path.GetExtension(fullPath));
+                sourceFilePath = fullPath;
+                fileName = Path.GetFileName(fullPath);
+                contentType = GetMimeType(fullPath);
                 try { lastModifiedUtc = File.GetLastWriteTimeUtc(fullPath); } catch { }
                 return true;
             }
@@ -926,6 +1299,56 @@ namespace SocketJack.Net {
             return AllowDirectoryListing;
         }
 
+        private static bool IsDirectoryZipDownloadRequest(HttpRequest request) {
+            if (request == null || request.QueryParameters == null)
+                return false;
+
+            return (request.QueryParameters.TryGetValue("download", out string download) &&
+                    download.Equals("zip", StringComparison.OrdinalIgnoreCase)) ||
+                   (request.QueryParameters.TryGetValue("zip", out string zip) &&
+                    (zip.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                     zip.Equals("true", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private static byte[] CreateDirectoryZipBytes(string localDirectory) {
+            using (var memory = new MemoryStream()) {
+                using (var archive = new ZipArchive(memory, ZipArchiveMode.Create, leaveOpen: true)) {
+                    string root = Path.GetFullPath(localDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                    foreach (string filePath in Directory.EnumerateFiles(localDirectory, "*", SearchOption.AllDirectories)) {
+                        string name = Path.GetFileName(filePath);
+                        if (name.Equals(".htaccess", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string fullPath = Path.GetFullPath(filePath);
+                        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string relative = fullPath.Substring(root.Length).Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
+                        relative = NormalizeZipEntryName(relative);
+                        ZipArchiveEntry entry = archive.CreateEntry(relative, CompressionLevel.Fastest);
+                        using (Stream input = OpenSharedReadStream(fullPath))
+                        using (Stream output = entry.Open())
+                            input.CopyTo(output);
+                    }
+                }
+
+                return memory.ToArray();
+            }
+        }
+
+        private static string MakeSafeDownloadFileName(string value, string fallback) {
+            string name = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+            foreach (char c in Path.GetInvalidFileNameChars())
+                name = name.Replace(c, '_');
+            return string.IsNullOrWhiteSpace(name) ? fallback : name;
+        }
+
+        private static string NormalizeZipEntryName(string value) {
+            string[] parts = (value ?? "").Replace('\\', '/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            string normalized = string.Join("/", parts.Select(part => MakeSafeDownloadFileName(part, "file")));
+            return string.IsNullOrWhiteSpace(normalized) ? "file" : normalized;
+        }
+
         /// <summary>
         /// Generates an HTML page listing the contents of a directory.
         /// </summary>
@@ -938,6 +1361,10 @@ namespace SocketJack.Net {
             sb.Append("*{margin:0;padding:0;box-sizing:border-box}");
             sb.Append("body{font-family:'Segoe UI',system-ui,sans-serif;background:#111;color:#e8e8e8;padding:2rem}");
             sb.Append("h1{font-weight:300;margin-bottom:1rem;color:#0078d4}");
+            sb.Append(".tools{display:flex;align-items:center;gap:.75rem;margin:0 0 1rem;flex-wrap:wrap}");
+            sb.Append("button{border:1px solid rgba(0,120,212,.55);background:rgba(0,120,212,.16);color:#e8f4ff;border-radius:6px;padding:.52rem .8rem;cursor:pointer}");
+            sb.Append("button:disabled{opacity:.62;cursor:wait}");
+            sb.Append(".progress{color:#888;font-size:.9rem}");
             sb.Append("table{width:100%;border-collapse:collapse}");
             sb.Append("th,td{text-align:left;padding:.5rem .75rem;border-bottom:1px solid rgba(255,255,255,.08)}");
             sb.Append("th{color:#888;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em}");
@@ -947,6 +1374,7 @@ namespace SocketJack.Net {
             sb.Append(".date{color:#888}");
             sb.Append("</style></head><body>");
             sb.Append("<h1>Index of " + System.Net.WebUtility.HtmlEncode(urlPath) + "</h1>");
+            sb.Append("<div class=\"tools\"><button id=\"zipDownload\" type=\"button\">Download Directory (Zip)</button><span id=\"zipProgress\" class=\"progress\"></span></div>");
             sb.Append("<table><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody>");
 
             // Parent directory link
@@ -954,7 +1382,7 @@ namespace SocketJack.Net {
                 var parent = urlPath.TrimEnd('/');
                 var lastSlash = parent.LastIndexOf('/');
                 parent = lastSlash > 0 ? parent.Substring(0, lastSlash) : "/";
-                sb.Append("<tr><td><a href=\"" + parent + "\">? ..</a></td><td></td><td></td></tr>");
+                sb.Append("<tr><td><a href=\"" + parent + "\">..</a></td><td></td><td></td></tr>");
             }
 
             try {
@@ -963,8 +1391,8 @@ namespace SocketJack.Net {
                     var name = Path.GetFileName(dir);
                     var info = new DirectoryInfo(dir);
                     var href = urlPath.TrimEnd('/') + "/" + Uri.EscapeDataString(name) + "/";
-                    sb.Append("<tr><td><a href=\"" + href + "\">?? " + System.Net.WebUtility.HtmlEncode(name) + "/</a></td>");
-                    sb.Append("<td class=\"size\">—</td>");
+                    sb.Append("<tr><td><a href=\"" + href + "\">[DIR] " + System.Net.WebUtility.HtmlEncode(name) + "/</a></td>");
+                    sb.Append("<td class=\"size\">-</td>");
                     sb.Append("<td class=\"date\">" + info.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "</td></tr>");
                 }
                 // Files (skip .htaccess)
@@ -979,7 +1407,13 @@ namespace SocketJack.Net {
                 }
             } catch { }
 
-            sb.Append("</tbody></table></body></html>");
+            sb.Append("</tbody></table>");
+            sb.Append("<script>");
+            sb.Append("(function(){const b=document.getElementById('zipDownload'),p=document.getElementById('zipProgress');");
+            sb.Append("function fmt(n){if(!n)return'0 B';const u=['B','KB','MB','GB','TB'];let i=0,v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return(i?v.toFixed(v>=10?1:2):Math.round(v))+' '+u[i];}");
+            sb.Append("function name(r){const d=r.headers.get('Content-Disposition')||'';let m=d.match(/filename\\*=UTF-8''([^;]+)/i);if(m){try{return decodeURIComponent(m[1].replace(/^\\\"|\\\"$/g,''));}catch(e){}}m=d.match(/filename=\\\"([^\\\"]+)\\\"/i)||d.match(/filename=([^;]+)/i);return m?m[1].trim().replace(/^\\\"|\\\"$/g,''):'directory.zip';}");
+            sb.Append("b.addEventListener('click',async()=>{if(b.disabled)return;b.disabled=true;b.textContent='Preparing zip...';p.textContent='';try{const u=new URL(location.href);u.searchParams.set('download','zip');const r=await fetch(u.href);if(!r.ok)throw new Error('HTTP '+r.status);const total=Number(r.headers.get('Content-Length')||0);const reader=r.body&&r.body.getReader?r.body.getReader():null;let chunks=[],got=0;if(reader){while(true){const x=await reader.read();if(x.done)break;chunks.push(x.value);got+=x.value.byteLength||x.value.length||0;b.textContent=total?'Downloading '+Math.round(got/total*100)+'%':'Downloading '+fmt(got);}}else{chunks=[new Uint8Array(await r.arrayBuffer())];got=chunks[0].byteLength;}const blob=new Blob(chunks,{type:r.headers.get('Content-Type')||'application/zip'});const a=document.createElement('a');const href=URL.createObjectURL(blob);a.href=href;a.download=name(r);document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(href),1000);b.textContent='Download complete';p.textContent=fmt(got);}catch(e){b.textContent='Download failed';p.textContent=e&&e.message?e.message:String(e);}finally{setTimeout(()=>{b.disabled=false;b.textContent='Download Directory (Zip)';},900);}});");
+            sb.Append("})();</script></body></html>");
             return sb.ToString();
         }
 
@@ -990,12 +1424,29 @@ namespace SocketJack.Net {
             return (bytes / (1024.0 * 1024 * 1024)).ToString("N2") + " GB";
         }
 
-        private bool TryResolveFileMapping(string method, string path, out byte[] fileBytes, out string contentType, out DateTime? lastModifiedUtc) {
+        private static bool IsPathInsideRoot(string path, string root) {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(root))
+                return false;
+
+            string fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return fullPath.Equals(fullRoot, StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith(fullRoot + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool TryResolveFileMapping(string method, string path, out byte[] fileBytes, out string sourceFilePath, out string contentType, out string fileName, out DateTime? lastModifiedUtc) {
+            return TryResolveFileMapping(_fileMappings, method, path, out fileBytes, out sourceFilePath, out contentType, out fileName, out lastModifiedUtc);
+        }
+
+        private bool TryResolveFileMapping(Dictionary<string, string> fileMappings, string method, string path, out byte[] fileBytes, out string sourceFilePath, out string contentType, out string fileName, out DateTime? lastModifiedUtc) {
             fileBytes = null;
+            sourceFilePath = null;
             contentType = null;
+            fileName = null;
             lastModifiedUtc = null;
 
-            if (_fileMappings.Count == 0)
+            if (fileMappings == null || fileMappings.Count == 0)
                 return false;
 
             if (method == null || !(method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)))
@@ -1005,15 +1456,11 @@ namespace SocketJack.Net {
                 return false;
 
             var normalized = NormalizePath(path);
-            if (_fileMappings.TryGetValue(normalized, out var filePath)) {
+            if (fileMappings.TryGetValue(normalized, out var filePath)) {
                 if (File.Exists(filePath)) {
-                    using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan)) {
-                        using (var ms = new MemoryStream()) {
-                            fs.CopyTo(ms);
-                            fileBytes = ms.ToArray();
-                        }
-                    }
-                    contentType = GetMimeType(Path.GetExtension(filePath));
+                    sourceFilePath = Path.GetFullPath(filePath);
+                    fileName = Path.GetFileName(filePath);
+                    contentType = GetMimeType(filePath);
                     try { lastModifiedUtc = File.GetLastWriteTimeUtc(filePath); } catch { }
                     return true;
                 }
@@ -1021,17 +1468,23 @@ namespace SocketJack.Net {
             return false;
         }
 
-        private static string GetMimeType(string extension) {
+        public static string GetMimeType(string fileNameOrExtension) {
+            string extension = fileNameOrExtension;
+            if (!string.IsNullOrWhiteSpace(extension) && (!extension.StartsWith(".", StringComparison.Ordinal) || extension.IndexOfAny(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }) >= 0))
+                extension = Path.GetExtension(extension);
             if (string.IsNullOrEmpty(extension))
                 return "application/octet-stream";
             switch (extension.ToLowerInvariant()) {
                 case ".html":
                 case ".htm":  return "text/html";
                 case ".css":  return "text/css";
-                case ".js":   return "application/javascript";
+                case ".js":
+                case ".mjs":  return "application/javascript";
+                case ".map":  return "application/json";
                 case ".json": return "application/json";
                 case ".xml":  return "application/xml";
                 case ".txt":  return "text/plain";
+                case ".md":   return "text/markdown";
                 case ".csv":  return "text/csv";
                 case ".svg":  return "image/svg+xml";
                 case ".png":  return "image/png";
@@ -1040,6 +1493,7 @@ namespace SocketJack.Net {
                 case ".gif":  return "image/gif";
                 case ".ico":  return "image/x-icon";
                 case ".webp": return "image/webp";
+                case ".avif": return "image/avif";
                 case ".bmp":  return "image/bmp";
                 case ".woff": return "font/woff";
                 case ".woff2":return "font/woff2";
@@ -1048,8 +1502,21 @@ namespace SocketJack.Net {
                 case ".eot":  return "application/vnd.ms-fontobject";
                 case ".pdf":  return "application/pdf";
                 case ".zip":  return "application/zip";
+                case ".gz":   return "application/gzip";
+                case ".tar":  return "application/x-tar";
+                case ".7z":   return "application/x-7z-compressed";
+                case ".rar":  return "application/vnd.rar";
+                case ".doc":  return "application/msword";
+                case ".docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                case ".xls":  return "application/vnd.ms-excel";
+                case ".xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                case ".ppt":  return "application/vnd.ms-powerpoint";
+                case ".pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
                 case ".mp3":  return "audio/mpeg";
+                case ".m4a":  return "audio/mp4";
                 case ".mp4":  return "video/mp4";
+                case ".mov":  return "video/quicktime";
+                case ".mkv":  return "video/x-matroska";
                 case ".webm": return "video/webm";
                 case ".ogg":  return "audio/ogg";
                 case ".wav":  return "audio/wav";
@@ -1058,76 +1525,335 @@ namespace SocketJack.Net {
             }
         }
 
-        private object ResolveRouteObject(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
+        private static void ApplyServedFileHeaders(HttpResponse response, string contentType, string fileName) {
+            if (response == null)
+                return;
+            if (response.Headers == null)
+                response.Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(contentType)) {
+                response.ContentType = contentType;
+                if (!response.Headers.ContainsKey("Content-Type"))
+                    response.Headers["Content-Type"] = contentType;
+            }
+
+            if (!string.IsNullOrWhiteSpace(fileName) && !response.Headers.ContainsKey("Content-Disposition"))
+                response.Headers["Content-Disposition"] = BuildContentDispositionHeader(fileName);
+
+            response.DisableChunkedTransfer = true;
+        }
+
+        private static string BuildContentDispositionHeader(string fileName) {
+            string safeFileName = Path.GetFileName(fileName);
+            if (string.IsNullOrWhiteSpace(safeFileName))
+                safeFileName = "file";
+            return "inline; filename=\"" + EscapeHttpQuotedString(safeFileName) + "\"; filename*=UTF-8''" + Uri.EscapeDataString(safeFileName);
+        }
+
+        private static string EscapeHttpQuotedString(string value) {
+            return (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        private static string GetRequestHostName(HttpRequest request) {
+            if (request == null)
+                return null;
+            if (!string.IsNullOrWhiteSpace(request.HostName))
+                return request.HostName;
+            if (request.Headers != null && request.Headers.TryGetValue("Host", out var host))
+                return NormalizeHostName(host);
+            return null;
+        }
+
+        private static string NormalizeHostName(string hostName) {
+            if (string.IsNullOrWhiteSpace(hostName))
+                return null;
+
+            hostName = SanitizeRedirectHost(hostName).Trim();
+            if (hostName.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || hostName.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) {
+                if (Uri.TryCreate(hostName, UriKind.Absolute, out var uri))
+                    hostName = uri.Host;
+            }
+
+            if (hostName.StartsWith("[", StringComparison.Ordinal)) {
+                int close = hostName.IndexOf(']');
+                if (close > 0)
+                    hostName = hostName.Substring(1, close - 1);
+            } else {
+                int colon = hostName.LastIndexOf(':');
+                if (colon > 0 && hostName.IndexOf(':') == colon)
+                    hostName = hostName.Substring(0, colon);
+            }
+
+            hostName = hostName.Trim().TrimEnd('.');
+            return string.IsNullOrWhiteSpace(hostName) ? null : hostName.ToLowerInvariant();
+        }
+
+        private static T TryGetHostMapping<T>(Dictionary<string, T> mappings, string hostName) where T : class {
+            if (mappings == null || mappings.Count == 0)
+                return null;
+
+            hostName = NormalizeHostName(hostName);
+            if (!string.IsNullOrWhiteSpace(hostName)) {
+                if (mappings.TryGetValue(hostName, out var exact))
+                    return exact;
+
+                int dot = hostName.IndexOf('.');
+                while (dot > 0 && dot < hostName.Length - 1) {
+                    var wildcard = "*" + hostName.Substring(dot);
+                    if (mappings.TryGetValue(wildcard, out var wildcardMatch))
+                        return wildcardMatch;
+                    dot = hostName.IndexOf('.', dot + 1);
+                }
+            }
+
+            return mappings.TryGetValue("*", out var any) ? any : null;
+        }
+
+        private Dictionary<string, string> GetHostFileMappings(HttpRequest request) {
+            return TryGetHostMapping(_hostFileMappings, GetRequestHostName(request));
+        }
+
+        private Dictionary<string, string> GetHostDirectoryMappings(HttpRequest request) {
+            return TryGetHostMapping(_hostDirectoryMappings, GetRequestHostName(request));
+        }
+        private object ResolveRouteObject(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken, RouteMatchMode matchMode = RouteMatchMode.ExactAndWildcard) {
 
             if (request == null)
                 return null;
 
             string method = request.Method;
             string path = NormalizePath(request.Path);
+            string hostName = GetRequestHostName(request);
+            bool hasHostStaticMappings = GetHostFileMappings(request) != null || GetHostDirectoryMappings(request) != null;
 
-            // Wildcard route matching
-            if (method != null && path != null) {
-                if (_routes.TryGetValue(method, out var byPath)) {
-                    // Exact match
-                    if (byPath.TryGetValue(path, out var handler))
-                        return handler(connection, request, cancellationToken);
+            var hostRouteMap = TryGetHostMapping(_hostRoutes, hostName);
+            var hostHandler = FindRouteHandler(hostRouteMap, method, path, request, matchMode);
+            if (hostHandler != null)
+                return hostHandler(connection, request, cancellationToken);
 
-                    // Only check wildcards if no exact match exists
-                    bool exactExists = byPath.Keys.Any(k => k.Equals(path, StringComparison.OrdinalIgnoreCase));
-                    if (!exactExists) {
-                        foreach (var kv in byPath) {
-                            var routePath = kv.Key;
-                            if (routePath.EndsWith("/*")) {
-                                var basePath = routePath.Substring(0, routePath.Length - 2);
-                                if (path.StartsWith(basePath)) {
-                                    // Only match if path is longer than basePath and has a slash
-                                    if (path.Length > basePath.Length && path[basePath.Length] == '/') {
-                                        var variable = path.Substring(basePath.Length + 1);
-                                        // Restrict wildcard to only match one segment after basePath
-                                        if (!string.IsNullOrEmpty(variable) && variable.IndexOf('/') == -1) {
-                                            request.PathVariables = new List<string> { variable };
-                                            return kv.Value(connection, request, cancellationToken);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // HEAD should fall back to GET-mapped routes
-                if (method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) {
-                    if (_routes.TryGetValue("GET", out var getByPath)) {
-                        if (getByPath.TryGetValue(path, out var getHandler))
-                            return getHandler(connection, request, cancellationToken);
-                        bool exactExists = getByPath.Keys.Any(k => k.Equals(path, StringComparison.OrdinalIgnoreCase));
-                        if (!exactExists) {
-                            foreach (var kv in getByPath) {
-                                var routePath = kv.Key;
-                                if (routePath.EndsWith("/*")) {
-                                    var basePath = routePath.Substring(0, routePath.Length - 2);
-                                    if (path.StartsWith(basePath)) {
-                                        if (path.Length > basePath.Length && path[basePath.Length] == '/') {
-                                            var variable = path.Substring(basePath.Length + 1);
-                                            // Restrict wildcard to only match one segment after basePath
-                                            if (!string.IsNullOrEmpty(variable) && variable.IndexOf('/') == -1) {
-                                                request.PathVariables = new List<string> { variable };
-                                                return kv.Value(connection, request, cancellationToken);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            var handler = FindRouteHandler(_routes, method, path, request, matchMode);
+            if (handler != null)
+                return handler(connection, request, cancellationToken);
 
-            if (method != null && (method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase))) {
+            if (matchMode != RouteMatchMode.WildcardOnly && !hasHostStaticMappings && method != null && (method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase))) {
                 if (path == "/" || string.IsNullOrEmpty(path))
                     return IndexPageHtml;
+                if (path.Equals("/download", StringComparison.OrdinalIgnoreCase))
+                    return DownloadPageHtml ?? IndexPageHtml;
                 if (path == "/robots.txt" && Robots != null)
                     return Robots;
+            }
+
+            return null;
+        }
+
+        private bool TryResolveAndApplyRoute(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken, HttpContext context, RouteMatchMode matchMode) {
+            if (_hostRoutes.Count == 0 && _routes.Count == 0 && IndexPageHtml == null && Robots == null)
+                return false;
+
+            var routeObj = ResolveRouteObject(connection, request, cancellationToken, matchMode);
+            return TryApplyRouteResponse(context, request, routeObj);
+        }
+
+        private bool TryApplyRouteResponse(HttpContext context, HttpRequest request, object routeObj) {
+            if (routeObj == null)
+                return false;
+
+            // FileResponse allows route handlers to return binary data with an explicit content type.
+            if (routeObj is FileResponse fileResp) {
+                string responseFileName = !string.IsNullOrWhiteSpace(fileResp.FileName)
+                    ? fileResp.FileName
+                    : !string.IsNullOrWhiteSpace(fileResp.FilePath)
+                        ? Path.GetFileName(fileResp.FilePath)
+                        : null;
+                string contentType = !string.IsNullOrWhiteSpace(fileResp.ContentType)
+                    ? fileResp.ContentType
+                    : GetMimeType(!string.IsNullOrWhiteSpace(responseFileName) ? responseFileName : fileResp.FilePath);
+                ApplyServedFileHeaders(context.Response, contentType, responseFileName);
+                if (!string.IsNullOrWhiteSpace(fileResp.FilePath)) {
+                    context.Response.StreamFile = fileResp;
+                    try {
+                        var info = new FileInfo(fileResp.FilePath);
+                        context.Response.Headers["Content-Length"] = info.Length.ToString(CultureInfo.InvariantCulture);
+                        context.Response.Headers["Last-Modified"] = info.LastWriteTimeUtc.ToString("R", CultureInfo.InvariantCulture);
+                    } catch {
+                    }
+                } else {
+                    context.Response.BodyBytes = fileResp.Data ?? Array.Empty<byte>();
+                }
+                return true;
+            }
+
+            context.Response.Body = routeObj;
+
+            var isIndex = request.Method != null && (request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) && (request.Path == "/" || string.IsNullOrEmpty(request.Path)) && IndexPageHtml != null;
+
+            if (routeObj is string strBody) {
+                var trimmed = strBody.TrimStart();
+                if (isIndex || trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase)) {
+                    context.Response.ContentType = "text/html";
+                } else if (trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '[')) {
+                    context.Response.ContentType = "application/json";
+                } else {
+                    context.Response.ContentType = "text/plain";
+                }
+            } else {
+                // SocketJack returns wrapped object payloads as binary;
+                // mark them as json so our HttpClient will attempt to deserialize.
+                context.Response.ContentType = "application/json";
+            }
+
+            return true;
+        }
+
+        public async Task<HttpDispatchResult> DispatchMappedHttpRequestAsync(NetworkConnection connection, HttpRequest request, HttpStreamDispatchCallbacks streamCallbacks = null, CancellationToken cancellationToken = default) {
+            if (request == null)
+                throw new ArgumentNullException(nameof(request));
+
+            var context = new HttpContext {
+                Request = request,
+                Connection = connection,
+                cancellationToken = cancellationToken
+            };
+            request.Context = context;
+
+            if (!IsHostAllowed(request)) {
+                context.StatusCodeNumber = 421;
+                context.ReasonPhrase = "Misdirected Request";
+                context.Response.Body = "421 Misdirected Request";
+                context.Response.ContentType = "text/plain";
+                return FinalizeDispatchedHttpResponse(context, streamed: false);
+            }
+
+            string requestGateMessage = RequestGate?.Invoke(connection, request);
+            if (!string.IsNullOrWhiteSpace(requestGateMessage)) {
+                context.StatusCodeNumber = 403;
+                context.ReasonPhrase = "Forbidden";
+                context.Response.Body = requestGateMessage;
+                context.Response.ContentType = "text/plain";
+                return FinalizeDispatchedHttpResponse(context, streamed: false);
+            }
+
+            StreamRouteHandler streamHandler = ResolveStreamRoute(request);
+            if (streamHandler != null) {
+                var chunked = new ChunkedStream(
+                    context.Response,
+                    connection,
+                    streamCallbacks?.OnStart,
+                    streamCallbacks?.OnChunk,
+                    streamCallbacks?.OnEnd);
+                try {
+                    await streamHandler(connection, request, chunked, cancellationToken).ConfigureAwait(false);
+                } finally {
+                    chunked.Finish();
+                }
+                return FinalizeDispatchedHttpResponse(context, streamed: true);
+            }
+
+            bool handledByRoute = TryResolveAndApplyRoute(connection, request, cancellationToken, context, RouteMatchMode.ExactOnly);
+            if (!handledByRoute)
+                handledByRoute = TryResolveAndApplyRoute(connection, request, cancellationToken, context, RouteMatchMode.WildcardOnly);
+
+            if (!handledByRoute)
+                OnHttpRequest?.Invoke(connection, ref context, cancellationToken);
+
+            if (!handledByRoute && IsDefaultEmptyHttpResponse(context)) {
+                context.StatusCodeNumber = 404;
+                context.ReasonPhrase = "Not Found";
+                context.Response.Body = "404 Not Found: " + (request.Method ?? "GET") + " " + (request.Path ?? "/");
+                context.Response.ContentType = "text/plain";
+            }
+
+            EnsureErrorResponseBody(context);
+            if (context.Response.StreamFile != null && !string.IsNullOrWhiteSpace(context.Response.StreamFile.FilePath) && streamCallbacks != null) {
+                ApplyDefaultDispatchedResponseHeaders(context.Response);
+                bool isHead = string.Equals(context.Request?.Method, "HEAD", StringComparison.OrdinalIgnoreCase);
+                StreamFileToDispatchCallbacks(context.Request, context.Response, context.Response.StreamFile, streamCallbacks, isHead, cancellationToken);
+                return new HttpDispatchResult {
+                    Context = context,
+                    Streamed = true,
+                    BodyBytes = Array.Empty<byte>()
+                };
+            }
+
+            return FinalizeDispatchedHttpResponse(context, streamed: false);
+        }
+
+        private void ApplyDefaultDispatchedResponseHeaders(HttpResponse response) {
+            if (response == null || response.Headers == null)
+                return;
+            if (!response.Headers.ContainsKey("Server"))
+                response.Headers["Server"] = "SocketJack";
+            if (!response.Headers.ContainsKey("Access-Control-Allow-Origin") && !string.IsNullOrWhiteSpace(Options?.HttpDefaultCorsOrigin))
+                response.Headers["Access-Control-Allow-Origin"] = Options.HttpDefaultCorsOrigin;
+            if (!response.Headers.ContainsKey("Date"))
+                response.Headers["Date"] = DateTime.UtcNow.ToString("R");
+            if (!response.Headers.ContainsKey("Cache-Control") && CacheControl != null)
+                response.Headers["Cache-Control"] = CacheControl;
+        }
+
+
+        private HttpDispatchResult FinalizeDispatchedHttpResponse(HttpContext context, bool streamed) {
+            ApplyDefaultDispatchedResponseHeaders(context.Response);
+
+            if (!streamed) {
+                if (string.Equals(context.Request?.Method, "HEAD", StringComparison.OrdinalIgnoreCase)) {
+                    context.Response.BodyBytes = Array.Empty<byte>();
+                } else if (context.Response.StreamFile != null && !string.IsNullOrWhiteSpace(context.Response.StreamFile.FilePath)) {
+                    context.Response.BodyBytes = File.Exists(context.Response.StreamFile.FilePath)
+                        ? ReadFileBytesShared(context.Response.StreamFile.FilePath)
+                        : Array.Empty<byte>();
+                    context.Response.StreamFile = null;
+                }
+                context.Response.EnsureBodyBytes();
+                ApplyHttpRoutePatternCache(context.Request, context);
+            }
+            return new HttpDispatchResult {
+                Context = context,
+                Streamed = streamed,
+                BodyBytes = streamed ? Array.Empty<byte>() : (context.Response.BodyBytes ?? Array.Empty<byte>())
+            };
+        }
+        private RouteHandler FindRouteHandler(Dictionary<string, Dictionary<string, RouteHandler>> routes, string method, string path, HttpRequest request, RouteMatchMode matchMode = RouteMatchMode.ExactAndWildcard) {
+            if (routes == null || routes.Count == 0 || method == null || path == null)
+                return null;
+
+            var handler = FindRouteHandlerForMethod(routes, method, path, request, matchMode);
+            if (handler != null)
+                return handler;
+
+            if (method.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+                return FindRouteHandlerForMethod(routes, "GET", path, request, matchMode);
+
+            return null;
+        }
+
+        private RouteHandler FindRouteHandlerForMethod(Dictionary<string, Dictionary<string, RouteHandler>> routes, string method, string path, HttpRequest request, RouteMatchMode matchMode) {
+            if (!routes.TryGetValue(method, out var byPath))
+                return null;
+
+            if (matchMode != RouteMatchMode.WildcardOnly && byPath.TryGetValue(path, out var handler))
+                return handler;
+
+            if (matchMode == RouteMatchMode.ExactOnly)
+                return null;
+
+            foreach (var kv in byPath) {
+                var routePath = kv.Key;
+                if (!routePath.EndsWith("/*", StringComparison.Ordinal))
+                    continue;
+
+                var basePath = routePath.Substring(0, routePath.Length - 2);
+                if (!path.StartsWith(basePath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (path.Length <= basePath.Length || path[basePath.Length] != '/')
+                    continue;
+
+                var variable = path.Substring(basePath.Length + 1);
+                if (!string.IsNullOrEmpty(variable)) {
+                    request.PathVariables = new List<string> { variable };
+                    return kv.Value;
+                }
             }
 
             return null;
@@ -1197,12 +1923,221 @@ namespace SocketJack.Net {
             return session;
         }
 
+        internal EndpointSecurityDecision EvaluateEndpointSecurityHttpRequest(NetworkConnection connection, HttpRequest request) {
+            if (!IsEndpointSecurityEnabled())
+                return EndpointSecurityDecision.Allow();
+            return EndpointSecurity.EvaluateHttpRequest(connection, request, Options.EndpointSecurity);
+        }
+
+        internal EndpointSecurityDecision RecordEndpointSecurityHttpResult(NetworkConnection connection, HttpRequest request, int statusCode) {
+            if (!IsEndpointSecurityEnabled())
+                return EndpointSecurityDecision.Allow();
+            return EndpointSecurity.RecordHttpResult(connection, request, statusCode, Options.EndpointSecurity);
+        }
+
+        internal EndpointSecurityDecision RecordEndpointSecurityProtocolEvent(NetworkConnection connection, string protocol, int bytes, bool administrative, double baseSeverity, string reason) {
+            if (!IsEndpointSecurityEnabled())
+                return EndpointSecurityDecision.Allow();
+            return EndpointSecurity.RecordProtocolEvent(connection, protocol, bytes, administrative, baseSeverity, reason, Options.EndpointSecurity);
+        }
+
+        internal EndpointSecurityDecision RecordEndpointSecuritySocketJackFrame(NetworkConnection connection, int payloadLength) {
+            if (!IsEndpointSecurityEnabled())
+                return EndpointSecurityDecision.Allow();
+            return EndpointSecurity.RecordSocketJackFrame(connection, "SocketJack", payloadLength, Options.EndpointSecurity);
+        }
+
+        internal EndpointSecurityDecision RecordEndpointSecurityWebSocketFrame(NetworkConnection connection, int payloadLength) {
+            if (!IsEndpointSecurityEnabled())
+                return EndpointSecurityDecision.Allow();
+            return EndpointSecurity.RecordSocketJackFrame(connection, "WebSocket", payloadLength, Options.EndpointSecurity);
+        }
+
+        internal EndpointSecurityDecision RecordEndpointSecurityFilesystemEvent(string clientIp, string path, string operation, string reason) {
+            if (!IsEndpointSecurityEnabled())
+                return EndpointSecurityDecision.Allow(clientIp);
+            return EndpointSecurity.RecordFilesystemEvent(clientIp, path, operation, reason, Options.EndpointSecurity);
+        }
+
+        internal void ApplyEndpointSecurityDelay(EndpointSecurityDecision decision) {
+            if (decision == null || !decision.Allowed || decision.DelayMilliseconds <= 0)
+                return;
+            Thread.Sleep(Math.Min(Math.Max(0, decision.DelayMilliseconds), Math.Max(1, Options.EndpointSecurity.MaxThrottleMs)));
+        }
+
+        internal void CloseEndpointSecurityBlockedConnection(NetworkConnection connection, EndpointSecurityDecision decision) {
+            try { CloseConnection(connection, DisconnectionReason.LocalSocketClosed); } catch { }
+        }
+
+        internal static string EndpointSecurityStatusText(EndpointSecurityDecision decision) {
+            if (decision == null)
+                return "429 Too Many Requests";
+            int statusCode = decision.StatusCode > 0 ? decision.StatusCode : 429;
+            string reasonPhrase = string.IsNullOrWhiteSpace(decision.ReasonPhrase)
+                ? (statusCode == 403 ? "Forbidden" : "Too Many Requests")
+                : decision.ReasonPhrase;
+            return statusCode.ToString(CultureInfo.InvariantCulture) + " " + reasonPhrase;
+        }
+
+        private bool IsEndpointSecurityEnabled() {
+            return EndpointSecurity != null && Options != null && Options.EndpointSecurity != null && Options.EndpointSecurity.Enabled;
+        }
+
+        private void ApplyEndpointSecurityHttpDecision(HttpContext context, EndpointSecurityDecision decision) {
+            if (context == null || decision == null)
+                return;
+            int statusCode = decision.StatusCode > 0 ? decision.StatusCode : 429;
+            context.StatusCodeNumber = statusCode;
+            context.ReasonPhrase = string.IsNullOrWhiteSpace(decision.ReasonPhrase)
+                ? (statusCode == 403 ? "Forbidden" : "Too Many Requests")
+                : decision.ReasonPhrase;
+            context.Response.Body = string.IsNullOrWhiteSpace(decision.Message)
+                ? "Request blocked by SocketJack endpoint security."
+                : decision.Message;
+            context.Response.ContentType = "text/plain";
+            context.Response.Headers["X-SocketJack-Endpoint-Security"] = decision.IsDisabled ? "disabled" : "throttled";
+            if (decision.RetryAfterSeconds > 0)
+                context.Response.Headers["Retry-After"] = decision.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+        }
+        private void WriteHttpAccessLog(NetworkConnection connection, HttpRequest request, HttpContext context, EndpointSecurityDecision securityDecision, long responseBytes, bool streamed) {
+            if (Options == null || !Options.HttpAccessLogging)
+                return;
+
+            try {
+                string directory = string.IsNullOrWhiteSpace(Options.HttpAccessLogDirectory)
+                    ? @"C:\LmVsProxy\Logs"
+                    : Options.HttpAccessLogDirectory;
+                Directory.CreateDirectory(directory);
+
+                string dateFormat = string.IsNullOrWhiteSpace(Options.HttpAccessLogDateFormat)
+                    ? "yyyy-MM-dd"
+                    : Options.HttpAccessLogDateFormat;
+                string datePart;
+                try {
+                    datePart = DateTime.Now.ToString(dateFormat, CultureInfo.InvariantCulture);
+                } catch {
+                    datePart = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                }
+
+                string fileName = SanitizeHttpAccessLogFileName(datePart) + ".log";
+                string filePath = Path.Combine(directory, fileName);
+                string pathAndQuery = request?.Path ?? "";
+                if (!string.IsNullOrEmpty(request?.QueryString))
+                    pathAndQuery += "?" + request.QueryString;
+
+                var entry = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    ["timestamp"] = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture),
+                    ["remoteIp"] = GetRemoteIpForAccessLog(connection),
+                    ["remoteEndpoint"] = GetRemoteEndpointForAccessLog(connection),
+                    ["method"] = request?.Method ?? "",
+                    ["path"] = pathAndQuery,
+                    ["host"] = GetRequestHeaderForAccessLog(request, "Host"),
+                    ["status"] = (context?.StatusCodeNumber ?? 0).ToString(CultureInfo.InvariantCulture),
+                    ["reason"] = context?.ReasonPhrase ?? "",
+                    ["responseBytes"] = Math.Max(0L, responseBytes).ToString(CultureInfo.InvariantCulture),
+                    ["streamed"] = streamed ? "true" : "false",
+                    ["userAgent"] = GetRequestHeaderForAccessLog(request, "User-Agent"),
+                    ["referer"] = GetRequestHeaderForAccessLog(request, "Referer"),
+                    ["securityAllowed"] = securityDecision == null || securityDecision.Allowed ? "true" : "false",
+                    ["securityDisabled"] = securityDecision != null && securityDecision.IsDisabled ? "true" : "false",
+                    ["securityCategory"] = securityDecision?.Category ?? "",
+                    ["securityReason"] = securityDecision?.Reason ?? "",
+                    ["securityScore"] = (securityDecision?.Score ?? 0.0).ToString("0.###", CultureInfo.InvariantCulture),
+                    ["securityDelayMs"] = (securityDecision?.DelayMilliseconds ?? 0).ToString(CultureInfo.InvariantCulture)
+                };
+
+                string line = JsonSerializer.Serialize(entry);
+                lock (_httpAccessLogLock) {
+                    File.AppendAllText(filePath, line + Environment.NewLine, Encoding.UTF8);
+                }
+            } catch {
+            }
+        }
+
+        private static string SanitizeHttpAccessLogFileName(string fileName) {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+            var invalid = Path.GetInvalidFileNameChars();
+            var chars = fileName.Select(ch => invalid.Contains(ch) ? '-' : ch).ToArray();
+            string sanitized = new string(chars).Trim();
+            return string.IsNullOrWhiteSpace(sanitized) ? DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : sanitized;
+        }
+
+        private static string GetRequestHeaderForAccessLog(HttpRequest request, string name) {
+            try {
+                if (request?.Headers != null && request.Headers.TryGetValue(name, out string value))
+                    return value ?? "";
+            } catch {
+            }
+            return "";
+        }
+
+        private static string GetRemoteIpForAccessLog(NetworkConnection connection) {
+            try {
+                if (connection?.EndPoint?.Address != null)
+                    return connection.EndPoint.Address.ToString();
+            } catch {
+            }
+            try {
+                if (connection?.Socket?.RemoteEndPoint is System.Net.IPEndPoint ep && ep.Address != null)
+                    return ep.Address.ToString();
+            } catch {
+            }
+            return "";
+        }
+
+        private static string GetRemoteEndpointForAccessLog(NetworkConnection connection) {
+            try {
+                if (connection?.Socket?.RemoteEndPoint != null)
+                    return connection.Socket.RemoteEndPoint.ToString();
+            } catch {
+            }
+            try {
+                return connection?.EndPoint?.ToString() ?? "";
+            } catch {
+            }
+            return "";
+        }
+        private static bool IsDefaultEmptyHttpResponse(HttpContext context) {
+            if (context == null || context.StatusCodeNumber != 200)
+                return false;
+            return !HasHttpResponseBody(context.Response);
+        }
+
+        private static void EnsureErrorResponseBody(HttpContext context) {
+            if (context == null || context.StatusCodeNumber < 400)
+                return;
+            if (context.StatusCodeNumber == 204 || context.StatusCodeNumber == 304)
+                return;
+            HttpResponse response = context.Response;
+            if (response.RawResponseWritten || response.StreamFile != null || HasHttpResponseBody(response))
+                return;
+            response.Body = context.StatusCodeNumber.ToString(CultureInfo.InvariantCulture) + " " + (context.ReasonPhrase ?? "Error");
+            response.ContentType = "text/plain";
+        }
+
+        private static bool HasHttpResponseBody(HttpResponse response) {
+            if (response == null)
+                return false;
+            if (response.RawResponseWritten || response.StreamFile != null)
+                return true;
+            if (response.Body is string text && text.Length > 0)
+                return true;
+            byte[] body = response.BodyBytes;
+            return body != null && body.Length > 0;
+        }
+
         private static string NormalizePath(string path) {
             if (string.IsNullOrEmpty(path))
                 return path;
             var q = path.IndexOf('?');
             if (q >= 0)
                 path = path.Substring(0, q);
+            try {
+                if (Uri.TryCreate(path, UriKind.Absolute, out Uri absoluteUri))
+                    path = absoluteUri.AbsolutePath;
+            } catch { }
             // URL-decode the path portion so percent-encoded segments
             // (e.g. %20, %2B) match the plain-text route registration.
             try { path = Uri.UnescapeDataString(path); } catch { }
@@ -1231,6 +2166,58 @@ namespace SocketJack.Net {
             return -1;
         }
 
+        private static bool IsChunkedTransfer(List<byte> buffer, int hdrEnd) {
+            var headerText = Encoding.UTF8.GetString(buffer.GetRange(0, hdrEnd).ToArray());
+            foreach (var line in headerText.Split(new[] { "\r\n" }, StringSplitOptions.None)) {
+                if (line.StartsWith("Transfer-Encoding:", StringComparison.OrdinalIgnoreCase)
+                    && line.IndexOf("chunked", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool IsChunkedBodyComplete(List<byte> buffer, int bodyStart) {
+            int pos = bodyStart;
+            while (true) {
+                int lineEnd = FindCrlf(buffer, pos);
+                if (lineEnd < 0)
+                    return false;
+
+                string sizeLine = Encoding.ASCII.GetString(buffer.GetRange(pos, lineEnd - pos).ToArray());
+                int extensionIndex = sizeLine.IndexOf(';');
+                if (extensionIndex >= 0)
+                    sizeLine = sizeLine.Substring(0, extensionIndex);
+                if (!int.TryParse(sizeLine.Trim(), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int chunkSize))
+                    return false;
+
+                pos = lineEnd + 2;
+                if (chunkSize == 0) {
+                    while (true) {
+                        int trailerEnd = FindCrlf(buffer, pos);
+                        if (trailerEnd < 0)
+                            return false;
+                        if (trailerEnd == pos)
+                            return true;
+                        pos = trailerEnd + 2;
+                    }
+                }
+
+                if (buffer.Count < pos + chunkSize + 2)
+                    return false;
+                pos += chunkSize;
+                if (buffer[pos] != (byte)'\r' || buffer[pos + 1] != (byte)'\n')
+                    return false;
+                pos += 2;
+            }
+        }
+
+        private static int FindCrlf(List<byte> buffer, int start) {
+            for (int i = Math.Max(0, start); i < buffer.Count - 1; i++) {
+                if (buffer[i] == (byte)'\r' && buffer[i + 1] == (byte)'\n')
+                    return i;
+            }
+            return -1;
+        }
         private bool IsUploadStreamRoute(List<byte> buffer, int hdrEnd) {
             if (_uploadStreamRoutes.Count == 0) return false;
             int lineEnd = -1;
@@ -1275,16 +2262,305 @@ namespace SocketJack.Net {
         }
 
         /// <summary>
-        /// Minimum body size in bytes before the server switches to chunked transfer encoding.
-        /// Bodies smaller than this are sent with Content-Length in a single write.
+        /// Minimum body size in bytes before fixed-length HTTP responses are written in buffered chunks.
+        /// Bodies smaller than this are sent with Content-Length in a single body write.
         /// Default is 8 KB.
         /// </summary>
         public int ChunkedThreshold { get; set; } = 8192;
 
         /// <summary>
-        /// Size of each chunk when using chunked transfer encoding. Default is 4 KB.
+        /// Preferred body write size for large fixed-length responses. Default is 4 KB.
         /// </summary>
         public int ChunkedSize { get; set; } = 4096;
+
+        private void ApplyHttpRoutePatternCache(HttpRequest request, HttpContext context) {
+            if (request == null || context == null || context.Response == null || Options == null || !Options.EnablePatternCache)
+                return;
+
+            string method = request.Method ?? "GET";
+            if (!method.Equals("GET", StringComparison.OrdinalIgnoreCase) && !method.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var response = context.Response;
+            if (response.RawResponseWritten || response.StreamFile != null)
+                return;
+            if (context.StatusCodeNumber < 200 || context.StatusCodeNumber >= 300 || context.StatusCodeNumber == 204 || context.StatusCodeNumber == 206 || context.StatusCodeNumber == 304)
+                return;
+            if (request.Headers != null && request.Headers.ContainsKey("Range"))
+                return;
+            if (response.Headers != null && response.Headers.ContainsKey("ETag"))
+                return;
+            if (HttpResponseCacheControlHasNoStore(response))
+                return;
+
+            response.EnsureBodyBytes();
+            byte[] body = response.BodyBytes ?? Array.Empty<byte>();
+            if (body.Length == 0)
+                return;
+
+            string hash = SocketJackPatternCache.ComputeSha256Hex(body);
+            if (string.IsNullOrWhiteSpace(hash))
+                return;
+
+            string etag = "W/\"sjpc-" + hash.Substring(0, Math.Min(16, hash.Length)) + "\"";
+            string cacheKey = BuildHttpRoutePatternCacheKey(request);
+            bool stable;
+
+            lock (_httpRoutePatternCacheLock) {
+                if (!_httpRoutePatternCache.TryGetValue(cacheKey, out HttpRoutePatternCacheEntry entry) || !string.Equals(entry.Hash, hash, StringComparison.Ordinal)) {
+                    if (entry != null)
+                        RemoveHttpRoutePatternCacheBodyLocked(entry);
+                    entry = new HttpRoutePatternCacheEntry {
+                        Key = cacheKey,
+                        Hash = hash,
+                        StableCount = 1,
+                        LastUsed = ++_httpRoutePatternCacheSequence
+                    };
+                    _httpRoutePatternCache[cacheKey] = entry;
+                } else {
+                    entry.StableCount++;
+                    entry.LastUsed = ++_httpRoutePatternCacheSequence;
+                }
+
+                StoreHttpRoutePatternBodyLocked(entry, body);
+                stable = entry.StableCount >= Math.Max(1, Options.PatternCachePromotionThreshold);
+            }
+
+            if (response.Headers == null)
+                response.Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            response.Headers["ETag"] = etag;
+
+            if (!stable)
+                return;
+
+            if (!response.Headers.ContainsKey("Cache-Control"))
+                response.Headers["Cache-Control"] = "private, max-age=0, must-revalidate";
+
+            if (request.Headers != null && request.Headers.TryGetValue("If-None-Match", out string ifNoneMatch) && HttpEtagMatches(ifNoneMatch, etag)) {
+                context.StatusCodeNumber = 304;
+                context.ReasonPhrase = "Not Modified";
+                response.BodyBytes = Array.Empty<byte>();
+                response.Headers.Remove("Content-Length");
+                response.Headers.Remove("Content-Encoding");
+            }
+        }
+
+        private void StoreHttpRoutePatternBodyLocked(HttpRoutePatternCacheEntry entry, byte[] body) {
+            if (entry == null)
+                return;
+
+            int size = body?.Length ?? 0;
+            int minBytes = Math.Max(1, Options.PatternCacheMinimumBytes);
+            int maxBytes = Math.Max(1, Options.PatternCacheMaximumBytes);
+            if (size < minBytes || size > maxBytes) {
+                RemoveHttpRoutePatternCacheBodyLocked(entry);
+                return;
+            }
+
+            RemoveHttpRoutePatternCacheBodyLocked(entry);
+            entry.Body = new byte[size];
+            Buffer.BlockCopy(body, 0, entry.Body, 0, size);
+            entry.Size = size;
+            _httpRoutePatternCacheBytes += size;
+            EvictHttpRoutePatternBodiesLocked(maxBytes);
+        }
+
+        private void RemoveHttpRoutePatternCacheBodyLocked(HttpRoutePatternCacheEntry entry) {
+            if (entry == null || entry.Body == null)
+                return;
+            _httpRoutePatternCacheBytes -= entry.Size;
+            if (_httpRoutePatternCacheBytes < 0)
+                _httpRoutePatternCacheBytes = 0;
+            entry.Body = null;
+            entry.Size = 0;
+        }
+
+        private void EvictHttpRoutePatternBodiesLocked(int maxBytes) {
+            while (_httpRoutePatternCacheBytes > maxBytes) {
+                var victim = _httpRoutePatternCache.Values
+                    .Where(entry => entry.Body != null)
+                    .OrderBy(entry => entry.LastUsed)
+                    .FirstOrDefault();
+                if (victim == null)
+                    break;
+                RemoveHttpRoutePatternCacheBodyLocked(victim);
+            }
+        }
+
+        private static bool HttpResponseCacheControlHasNoStore(HttpResponse response) {
+            if (response?.Headers == null || !response.Headers.TryGetValue("Cache-Control", out string cacheControl) || string.IsNullOrWhiteSpace(cacheControl))
+                return false;
+            return cacheControl.IndexOf("no-store", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool HttpEtagMatches(string headerValue, string etag) {
+            if (string.IsNullOrWhiteSpace(headerValue) || string.IsNullOrWhiteSpace(etag))
+                return false;
+            foreach (string rawPart in headerValue.Split(',')) {
+                string part = rawPart.Trim();
+                if (part == "*")
+                    return true;
+                if (string.Equals(part, etag, StringComparison.Ordinal))
+                    return true;
+                if (string.Equals(NormalizeWeakEtag(part), NormalizeWeakEtag(etag), StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        private static string NormalizeWeakEtag(string etag) {
+            if (string.IsNullOrWhiteSpace(etag))
+                return string.Empty;
+            etag = etag.Trim();
+            return etag.StartsWith("W/", StringComparison.OrdinalIgnoreCase) ? etag.Substring(2).Trim() : etag;
+        }
+
+        private static string BuildHttpRoutePatternCacheKey(HttpRequest request) {
+            string method = (request?.Method ?? "GET").ToUpperInvariant();
+            string host = request?.HostName ?? request?.Host ?? string.Empty;
+            string path = NormalizePath(request?.Path ?? "/") ?? "/";
+            string query = request?.QueryString ?? string.Empty;
+            return method + "|" + host + "|" + path + "?" + query;
+        }
+        private void ApplyHttpResponseCompression(HttpRequest request, HttpResponse response) {
+            if (request == null || response == null || !Options.UseHttpCompression)
+                return;
+
+            response.EnsureBodyBytes();
+            byte[] body = response.BodyBytes;
+            if (!ShouldCompressHttpResponse(request, response, body))
+                return;
+
+            string encoding = SelectHttpCompressionEncoding(request);
+            if (string.IsNullOrWhiteSpace(encoding))
+                return;
+
+            byte[] compressed = CompressHttpBody(body, encoding);
+            if (compressed == null || compressed.Length <= 0 || compressed.Length >= body.Length)
+                return;
+
+            response.BodyBytes = compressed;
+            response.Headers["Content-Encoding"] = encoding;
+            response.Headers["Vary"] = AppendHeaderToken(response.Headers.TryGetValue("Vary", out string vary) ? vary : null, "Accept-Encoding");
+            response.Headers.Remove("Content-MD5");
+            response.Headers.Remove("Content-Length");
+        }
+
+        private bool ShouldCompressHttpResponse(HttpRequest request, HttpResponse response, byte[] body) {
+            if (body == null || body.Length < Math.Max(1, Options.HttpCompressionMinimumBytes))
+                return false;
+            if (response.StatusCodeNumber < 200 || response.StatusCodeNumber == 204 || response.StatusCodeNumber == 304)
+                return false;
+            if (request.Method != null && request.Method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (response.Headers != null && response.Headers.ContainsKey("Content-Encoding"))
+                return false;
+
+            string contentType = response.ContentType ?? "";
+            if (response.Headers != null && response.Headers.TryGetValue("Content-Type", out string headerContentType))
+                contentType = headerContentType;
+            return IsCompressibleContentType(contentType, response.Path);
+        }
+
+        private static string SelectHttpCompressionEncoding(HttpRequest request) {
+            if (request?.Headers == null || !request.Headers.TryGetValue("Accept-Encoding", out string acceptEncoding))
+                return null;
+
+            if (AcceptsHttpEncoding(acceptEncoding, "gzip"))
+                return "gzip";
+            if (AcceptsHttpEncoding(acceptEncoding, "deflate"))
+                return "deflate";
+            return null;
+        }
+
+        private static bool AcceptsHttpEncoding(string acceptEncoding, string encoding) {
+            if (string.IsNullOrWhiteSpace(acceptEncoding) || string.IsNullOrWhiteSpace(encoding))
+                return false;
+
+            foreach (string part in acceptEncoding.Split(',')) {
+                string value = part.Trim();
+                if (value.Length == 0)
+                    continue;
+                string[] pieces = value.Split(';');
+                string name = pieces[0].Trim();
+                if (!name.Equals(encoding, StringComparison.OrdinalIgnoreCase) && name != "*")
+                    continue;
+
+                double q = 1;
+                for (int i = 1; i < pieces.Length; i++) {
+                    string parameter = pieces[i].Trim();
+                    if (parameter.StartsWith("q=", StringComparison.OrdinalIgnoreCase) &&
+                        double.TryParse(parameter.Substring(2), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed)) {
+                        q = parsed;
+                    }
+                }
+                return q > 0;
+            }
+            return false;
+        }
+
+        private static byte[] CompressHttpBody(byte[] body, string encoding) {
+            try {
+                using (var output = new MemoryStream()) {
+                    Stream compressor = encoding.Equals("deflate", StringComparison.OrdinalIgnoreCase)
+                        ? (Stream)new DeflateStream(output, CompressionLevel.Fastest, leaveOpen: true)
+                        : new GZipStream(output, CompressionLevel.Fastest, leaveOpen: true);
+                    using (compressor) {
+                        compressor.Write(body, 0, body.Length);
+                    }
+                    return output.ToArray();
+                }
+            } catch {
+                return null;
+            }
+        }
+
+        private static bool IsCompressibleContentType(string contentType, string path) {
+            contentType = (contentType ?? "").ToLowerInvariant();
+            int semicolon = contentType.IndexOf(';');
+            if (semicolon >= 0)
+                contentType = contentType.Substring(0, semicolon).Trim();
+
+            if (contentType.StartsWith("text/", StringComparison.Ordinal))
+                return true;
+            if (contentType == "application/json" ||
+                contentType == "application/javascript" ||
+                contentType == "application/xml" ||
+                contentType == "application/xhtml+xml" ||
+                contentType == "application/wasm" ||
+                contentType.EndsWith("+json", StringComparison.Ordinal) ||
+                contentType.EndsWith("+xml", StringComparison.Ordinal))
+                return true;
+
+            string extension = Path.GetExtension(path ?? "").ToLowerInvariant();
+            switch (extension) {
+                case ".html":
+                case ".htm":
+                case ".css":
+                case ".js":
+                case ".json":
+                case ".xml":
+                case ".svg":
+                case ".txt":
+                case ".csv":
+                case ".wasm":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string AppendHeaderToken(string headerValue, string token) {
+            if (string.IsNullOrWhiteSpace(token))
+                return headerValue ?? "";
+            if (string.IsNullOrWhiteSpace(headerValue))
+                return token;
+            foreach (string part in headerValue.Split(',')) {
+                if (part.Trim().Equals(token, StringComparison.OrdinalIgnoreCase))
+                    return headerValue;
+            }
+            return headerValue + ", " + token;
+        }
 
         private void Disposing() {
             OnDisposing -= Disposing;
@@ -1411,6 +2687,182 @@ namespace SocketJack.Net {
             }
         }
 
+        private bool TryApplyPort80HttpsRedirect(HttpContext context) {
+            if (context == null || context.Request == null)
+                return false;
+            if (Options?.UseSsl == true)
+                return false;
+            if (!EnablePort80HttpsRedirect)
+                return false;
+
+            int boundPort = Port;
+            try {
+                if (boundPort == 0 && Socket?.LocalEndPoint is System.Net.IPEndPoint endpoint)
+                    boundPort = endpoint.Port;
+            } catch { }
+
+            if (boundPort != 80)
+                return false;
+
+            string location = BuildHttpsRedirectLocation(context.Request);
+            context.StatusCodeNumber = 308;
+            context.ReasonPhrase = "Permanent Redirect";
+            context.Response.Body = "Permanent Redirect";
+            context.Response.ContentType = "text/plain";
+            context.Response.Headers["Location"] = location;
+            context.Response.Headers["Cache-Control"] = "no-store";
+            return true;
+        }
+
+        private static string BuildHttpsRedirectLocation(HttpRequest request) {
+            string host = "";
+            if (request?.Headers != null)
+                request.Headers.TryGetValue("Host", out host);
+
+            host = SanitizeRedirectHost(host);
+            if (string.IsNullOrWhiteSpace(host))
+                host = "localhost";
+
+            host = StripHttpDefaultPort(host);
+            string path = request?.Path;
+            if (string.IsNullOrWhiteSpace(path))
+                path = "/";
+            else if (!path.StartsWith("/", StringComparison.Ordinal))
+                path = "/" + path;
+
+            string query = string.IsNullOrEmpty(request?.QueryString) ? "" : "?" + request.QueryString;
+            return "https://" + host + path + query;
+        }
+
+        private static string SanitizeRedirectHost(string host) {
+            host = (host ?? "").Trim();
+            int cr = host.IndexOf('\r');
+            int lf = host.IndexOf('\n');
+            int cut = -1;
+            if (cr >= 0)
+                cut = cr;
+            if (lf >= 0 && (cut < 0 || lf < cut))
+                cut = lf;
+            return cut >= 0 ? host.Substring(0, cut).Trim() : host;
+        }
+
+        private static string StripHttpDefaultPort(string host) {
+            if (string.IsNullOrWhiteSpace(host))
+                return host;
+
+            if (host.StartsWith("[", StringComparison.Ordinal)) {
+                int close = host.IndexOf(']');
+                if (close > 0 && host.Length == close + 4 && host.Substring(close + 1).Equals(":80", StringComparison.OrdinalIgnoreCase))
+                    return host.Substring(0, close + 1);
+                return host;
+            }
+
+            int colon = host.LastIndexOf(':');
+            if (colon > 0 && host.IndexOf(':') == colon && host.Substring(colon).Equals(":80", StringComparison.OrdinalIgnoreCase))
+                return host.Substring(0, colon);
+            return host;
+        }
+        private bool TryProxyHostRequest(HttpContext context, NetworkConnection connection, HttpRequest request) {
+            var target = TryGetHostMapping(_hostProxyMappings, GetRequestHostName(request));
+            if (target == null) return false;
+            if (HasMappedRouteForRequest(request)) return false;
+            try {
+                using (var upstream = new System.Net.Sockets.TcpClient()) {
+                    upstream.NoDelay = true;
+                    upstream.ReceiveTimeout = 30000;
+                    upstream.SendTimeout = 30000;
+                    var connectTask = upstream.ConnectAsync(target.Host, target.Port);
+                    if (!connectTask.Wait(TimeSpan.FromSeconds(15))) throw new TimeoutException("Proxy target connection timed out.");
+                    connectTask.GetAwaiter().GetResult();
+                    Stream upstreamStream = upstream.GetStream();
+                    if (target.UseHttps) {
+                        var ssl = new System.Net.Security.SslStream(upstreamStream, false, (sender, cert, chain, errors) => true);
+                        ssl.AuthenticateAsClient(target.Host);
+                        upstreamStream = ssl;
+                    }
+                    var bodyBytes = request.BodyBytes ?? Array.Empty<byte>();
+                    var sb = new StringBuilder();
+                    sb.AppendFormat("{0} {1} {2}\r\n", request.Method ?? "GET", BuildProxyRequestTarget(target, request), string.IsNullOrWhiteSpace(request.Version) ? "HTTP/1.1" : request.Version);
+                    var originalHost = request.Headers != null && request.Headers.TryGetValue("Host", out var hostHeader) ? hostHeader : request.Host;
+                    sb.Append("Host: " + BuildProxyHostHeader(target, originalHost) + "\r\n");
+                    if (request.Headers != null) {
+                        foreach (var header in request.Headers) {
+                            if (!ShouldSkipProxyRequestHeader(header.Key)) sb.Append(header.Key + ": " + header.Value + "\r\n");
+                        }
+                    }
+                    if (!string.IsNullOrWhiteSpace(originalHost)) sb.Append("X-Forwarded-Host: " + SanitizeRedirectHost(originalHost) + "\r\n");
+                    try { sb.Append("X-Forwarded-For: " + connection?.EndPoint?.Address?.ToString() + "\r\n"); } catch { }
+                    sb.Append("X-Forwarded-Proto: " + (Options?.UseSsl == true ? "https" : "http") + "\r\n");
+                    if (bodyBytes.Length > 0) sb.Append("Content-Length: " + bodyBytes.Length + "\r\n");
+                    sb.Append("Connection: close\r\n\r\n");
+                    var headerBytes = Encoding.UTF8.GetBytes(sb.ToString());
+                    upstreamStream.Write(headerBytes, 0, headerBytes.Length);
+                    if (bodyBytes.Length > 0) upstreamStream.Write(bodyBytes, 0, bodyBytes.Length);
+                    upstreamStream.Flush();
+                    var responseStream = connection.Stream;
+                    var buffer = new byte[81920];
+                    int read;
+                    while ((read = upstreamStream.Read(buffer, 0, buffer.Length)) > 0) {
+                        responseStream.Write(buffer, 0, read);
+                        TrackHttpBytesSent(connection, read);
+                    }
+                    responseStream.Flush();
+                }
+                context.Response.RawResponseWritten = true;
+                return true;
+            } catch (Exception ex) {
+                context.StatusCodeNumber = 502;
+                context.ReasonPhrase = "Bad Gateway";
+                context.Response.ContentType = "text/plain";
+                context.Response.Body = "Proxy target failed: " + ex.Message;
+                return true;
+            }
+        }
+
+        private static string BuildProxyRequestTarget(HostProxyTarget target, HttpRequest request) {
+            var path = string.IsNullOrWhiteSpace(request?.Path) ? "/" : request.Path;
+            if (!path.StartsWith("/", StringComparison.Ordinal)) path = "/" + path;
+            if (!string.IsNullOrWhiteSpace(target.BasePath)) path = path == "/" ? target.BasePath + "/" : target.BasePath + path;
+            if (!string.IsNullOrEmpty(request?.QueryString)) path += "?" + request.QueryString;
+            return path;
+        }
+
+        private static string BuildProxyHostHeader(HostProxyTarget target, string originalHost = null) {
+            if (target.PreserveHostHeader && !string.IsNullOrWhiteSpace(originalHost))
+                return SanitizeRedirectHost(originalHost);
+
+            bool defaultPort = (!target.UseHttps && target.Port == 80) || (target.UseHttps && target.Port == 443);
+            return defaultPort ? target.Host : target.Host + ":" + target.Port;
+        }
+
+        private bool HasMappedRouteForRequest(HttpRequest request) {
+            if (request == null)
+                return false;
+
+            string hostName = GetRequestHostName(request);
+            string method = request.Method;
+            string path = NormalizePath(request.Path);
+            if (string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(path))
+                return false;
+
+            lock (_routesLock) {
+                var hostRouteMap = TryGetHostMapping(_hostRoutes, hostName);
+                if (FindRouteHandler(hostRouteMap, method, path, request) != null)
+                    return true;
+
+                return FindRouteHandler(_routes, method, path, request) != null;
+            }
+        }
+        private static bool ShouldSkipProxyRequestHeader(string headerName) {
+            if (string.IsNullOrWhiteSpace(headerName)) return true;
+            return headerName.Equals("Host", StringComparison.OrdinalIgnoreCase)
+                || headerName.Equals("Connection", StringComparison.OrdinalIgnoreCase)
+                || headerName.Equals("Keep-Alive", StringComparison.OrdinalIgnoreCase)
+                || headerName.Equals("Proxy-Connection", StringComparison.OrdinalIgnoreCase)
+                || headerName.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase)
+                || headerName.Equals("Content-Length", StringComparison.OrdinalIgnoreCase);
+        }
+
         internal void GetRequestAsync(ref IReceivedEventArgs e) {
             try {
                 if (e == null || e.Obj == null || e.Connection == null)
@@ -1466,25 +2918,10 @@ namespace SocketJack.Net {
                         }
                     } else if (e.Obj is byte[] || e.Obj is List<byte> || e.Obj is IEnumerable<byte> || e.Obj is ArraySegment<byte>) {
                         var bytes = TryGetRequestBytes(e.Obj);
-                        if (bytes == null || bytes.Length < 5)
+                        if (bytes == null || bytes.Length == 0)
                             return;
                         // Fast check for common methods in ASCII
-                        if (!(bytes[0] == (byte)'G' || bytes[0] == (byte)'P' || bytes[0] == (byte)'H' || bytes[0] == (byte)'D' || bytes[0] == (byte)'O' || bytes[0] == (byte)'T'))
-                            return;
-
-                        // Additional guard: require an HTTP header terminator near the start.
-                        // This filters out SocketJack-framed payloads that may start with arbitrary bytes.
-                        var scanLimit = bytes.Length;
-                        if (scanLimit > 4096)
-                            scanLimit = 4096;
-                        var foundTerminator = false;
-                        for (int i = 0; i < scanLimit - 3; i++) {
-                            if (bytes[i] == (byte)'\r' && bytes[i + 1] == (byte)'\n' && bytes[i + 2] == (byte)'\r' && bytes[i + 3] == (byte)'\n') {
-                                foundTerminator = true;
-                                break;
-                            }
-                        }
-                        if (!foundTerminator)
+                        if (!LooksLikeHttpRequestPrefix(bytes, bytes.Length))
                             return;
                     } else {
                         // Not a raw HTTP payload.
@@ -1514,9 +2951,12 @@ namespace SocketJack.Net {
                     // an upload-stream route matches (those start processing with
                     // partial body data and receive the rest incrementally).
                     long contentLength = ExtractContentLength(buffer, hdrEnd);
+                    bool isUploadStreamRoute = IsUploadStreamRoute(buffer, hdrEnd);
                     if (contentLength > 0 && buffer.Count < hdrEnd + contentLength) {
-                        if (!IsUploadStreamRoute(buffer, hdrEnd))
+                        if (!isUploadStreamRoute)
                             return;
+                    } else if (contentLength <= 0 && IsChunkedTransfer(buffer, hdrEnd) && !isUploadStreamRoute && !IsChunkedBodyComplete(buffer, hdrEnd)) {
+                        return;
                     }
 
                     rawRequestBytes = buffer.ToArray();
@@ -1528,6 +2968,21 @@ namespace SocketJack.Net {
                 Interlocked.Add(ref _httpTotalBytesReceived, rawRequestBytes.Length);
 
                 var request = ParseHttpRequest(rawRequestBytes);
+                var context = new HttpContext {
+                    Request = request,
+                    // Use the connection that produced the request (from event args)
+                    Connection = e.Connection,
+                    cancellationToken = default
+                };
+                request.Context = context;
+
+                var ct = default(CancellationToken);
+                var endpointSecurityDecision = EvaluateEndpointSecurityHttpRequest(e.Connection, request);
+                if (!endpointSecurityDecision.Allowed) {
+                    ApplyEndpointSecurityHttpDecision(context, endpointSecurityDecision);
+                    goto WriteHttpResponse;
+                }
+                ApplyEndpointSecurityDelay(endpointSecurityDecision);
 
                 // If any callbacks registered for deserialized types, attempt to deserialize body and invoke
                 if (request.BodyBytes != null && request.BodyBytes.Length > 0) {
@@ -1550,15 +3005,27 @@ namespace SocketJack.Net {
                     }
                 }
 
-                var context = new HttpContext {
-                    Request = request,
-                    // Use the connection that produced the request (from event args)
-                    Connection = e.Connection,
-                    cancellationToken = default
-                };
-                request.Context = context;
+                if (!IsHostAllowed(request)) {
+                    context.StatusCodeNumber = 421;
+                    context.ReasonPhrase = "Misdirected Request";
+                    context.Response.Body = "421 Misdirected Request";
+                    context.Response.ContentType = "text/plain";
+                    goto WriteHttpResponse;
+                }
 
-                var ct = default(CancellationToken);
+                string requestGateMessage = RequestGate?.Invoke(e.Connection, request);
+                if (!string.IsNullOrWhiteSpace(requestGateMessage)) {
+                    context.StatusCodeNumber = 403;
+                    context.ReasonPhrase = "Forbidden";
+                    context.Response.Body = requestGateMessage;
+                    context.Response.ContentType = "text/plain";
+                    goto WriteHttpResponse;
+                }
+
+                if (TryApplyPort80HttpsRedirect(context))
+                    goto WriteHttpResponse;
+                if (TryProxyHostRequest(context, e.Connection, request))
+                    goto WriteHttpResponse;
 
                 // Check for streaming routes first — these keep the connection open
                 var streamHandler = ResolveStreamRoute(request);
@@ -1574,6 +3041,7 @@ namespace SocketJack.Net {
                             InvokeOnError(conn, ex);
                         } finally {
                             chunked.Finish();
+                            WriteHttpAccessLog(conn, request, context, endpointSecurityDecision, 0, true);
                             _activeStreamConnections.TryRemove(conn.ID, out _);
                         }
                     }, TaskCreationOptions.LongRunning);
@@ -1642,6 +3110,8 @@ namespace SocketJack.Net {
                                     }
                                 } catch { }
 
+                                WriteHttpAccessLog(conn, request, context, endpointSecurityDecision, 2, false);
+
                                 // Graceful connection close
                                 try { self.CloseConnection(conn, DisconnectionReason.LocalSocketClosed); } catch { }
                             }
@@ -1650,46 +3120,29 @@ namespace SocketJack.Net {
                     }
                 }
 
-                var handledByRoute = false;
-                if (_routes.Count > 0 || IndexPageHtml != null || Robots != null) {
-                    var routeObj = ResolveRouteObject(e.Connection, request, ct);
-                    if (routeObj != null) {
-                        // FileResponse allows route handlers to return binary data with an explicit content type.
-                        if (routeObj is FileResponse fileResp) {
-                            handledByRoute = true;
-                            context.Response.BodyBytes = fileResp.Data;
-                            context.Response.ContentType = fileResp.ContentType ?? "application/octet-stream";
-                        } else {
-                            handledByRoute = true;
-                            context.Response.Body = routeObj;
-
-                            var isIndex = request.Method != null && (request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) && (request.Path == "/" || string.IsNullOrEmpty(request.Path)) && IndexPageHtml != null;
-
-                            if (routeObj is string strBody) {
-                                var trimmed = strBody.TrimStart();
-                                if (isIndex || trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase)) {
-                                    context.Response.ContentType = "text/html";
-                                } else if (trimmed.Length > 0 && (trimmed[0] == '{' || trimmed[0] == '[')) {
-                                    context.Response.ContentType = "application/json";
-                                } else {
-                                    context.Response.ContentType = "text/plain";
-                                }
-                            } else {
-                                // SocketJack returns wrapped object payloads as binary;
-                                // mark them as json so our HttpClient will attempt to deserialize.
-                                context.Response.ContentType = "application/json";
-                            }
-                        }
-                    }
-                }
+                // Exact routes should win first, but wildcard page fallbacks should not
+                // hide mapped files under a more specific static prefix.
+                var handledByRoute = TryResolveAndApplyRoute(e.Connection, request, ct, context, RouteMatchMode.ExactOnly);
 
                 // Check file mappings (URL-to-file routes)
                 if (!handledByRoute) {
                     var fileNormalizedPath = NormalizePath(request.Path);
-                    if (TryResolveFileMapping(request.Method, fileNormalizedPath, out var fileMapBytes, out var fileMapMime, out var fileMapLastMod)) {
+                    var hostFileMappings = GetHostFileMappings(request);
+                    if ((hostFileMappings != null && TryResolveFileMapping(hostFileMappings, request.Method, fileNormalizedPath, out var fileMapBytes, out var fileMapPath, out var fileMapMime, out var fileMapName, out var fileMapLastMod))
+                        || TryResolveFileMapping(request.Method, fileNormalizedPath, out fileMapBytes, out fileMapPath, out fileMapMime, out fileMapName, out fileMapLastMod)) {
                         handledByRoute = true;
-                        context.Response.BodyBytes = fileMapBytes;
-                        context.Response.ContentType = fileMapMime;
+                        ApplyServedFileHeaders(context.Response, fileMapMime, fileMapName);
+                        if (fileMapLastMod.HasValue)
+                            context.Response.Headers["Last-Modified"] = fileMapLastMod.Value.ToString("R");
+                        if (!string.IsNullOrWhiteSpace(fileMapPath)) {
+                            context.Response.StreamFile = new FileResponse {
+                                FilePath = fileMapPath,
+                                ContentType = fileMapMime,
+                                FileName = fileMapName
+                            };
+                        } else {
+                            context.Response.BodyBytes = fileMapBytes;
+                        }
                     }
                 }
 
@@ -1700,7 +3153,10 @@ namespace SocketJack.Net {
                     string authHeader = null;
                     try { clientIp = e.Connection?.EndPoint?.Address?.ToString(); } catch { }
                     try { if (request?.Headers != null) request.Headers.TryGetValue("Authorization", out authHeader); } catch { }
-                    if (TryResolveDirectoryFile(request.Method, normalizedPath, clientIp, authHeader, out var fileBytes, out var fileMime, out var htAccessResult, out var htAuthRealm, out var htExtraHeaders, out var fileLastModified)) {
+                    var hostDirectoryMappings = GetHostDirectoryMappings(request);
+                    bool downloadDirectoryZip = IsDirectoryZipDownloadRequest(request);
+                    if ((hostDirectoryMappings != null && TryResolveDirectoryFile(hostDirectoryMappings, request.Method, normalizedPath, downloadDirectoryZip, clientIp, authHeader, out var fileBytes, out var servedFilePath, out var fileMime, out var servedFileName, out var htAccessResult, out var htAuthRealm, out var htExtraHeaders, out var fileLastModified))
+                        || TryResolveDirectoryFile(request.Method, normalizedPath, downloadDirectoryZip, clientIp, authHeader, out fileBytes, out servedFilePath, out fileMime, out servedFileName, out htAccessResult, out htAuthRealm, out htExtraHeaders, out fileLastModified)) {
                         if (htAccessResult == HtAccessResult.Denied) {
                             context.StatusCodeNumber = 403;
                             context.ReasonPhrase = "Forbidden";
@@ -1720,16 +3176,13 @@ namespace SocketJack.Net {
                             handledByRoute = true;
 
                             // Compute ETag and Last-Modified for cache validation
-                            string etag = null;
-                            if (fileBytes != null && fileBytes.Length > 0) {
-                                using (var sha = System.Security.Cryptography.SHA256.Create()) {
-                                    var hash = sha.ComputeHash(fileBytes);
-                                    etag = "\"" + BitConverter.ToString(hash).Replace("-", "").Substring(0, 16).ToLowerInvariant() + "\"";
-                                }
-                            }
+                            string etag = !string.IsNullOrWhiteSpace(servedFilePath)
+                                ? BuildStaticFileEtag(servedFilePath)
+                                : BuildBodyEtag(fileBytes);
 
                             if (context.Response.Headers == null)
                                 context.Response.Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            ApplyServedFileHeaders(context.Response, fileMime, servedFileName);
 
                             if (etag != null)
                                 context.Response.Headers["ETag"] = etag;
@@ -1754,6 +3207,13 @@ namespace SocketJack.Net {
                                 context.ReasonPhrase = "Not Modified";
                                 context.Response.BodyBytes = Array.Empty<byte>();
                                 context.Response.ContentType = fileMime;
+                            } else if (!string.IsNullOrWhiteSpace(servedFilePath)) {
+                                context.Response.StreamFile = new FileResponse {
+                                    FilePath = servedFilePath,
+                                    ContentType = fileMime,
+                                    FileName = servedFileName
+                                };
+                                context.Response.ContentType = fileMime;
                             } else {
                                 context.Response.BodyBytes = fileBytes;
                                 context.Response.ContentType = fileMime;
@@ -1769,20 +3229,28 @@ namespace SocketJack.Net {
                 }
 
                 if (!handledByRoute) {
+                    handledByRoute = TryResolveAndApplyRoute(e.Connection, request, ct, context, RouteMatchMode.WildcardOnly);
+                }
+
+                if (!handledByRoute) {
                     OnHttpRequest?.Invoke(e.Connection, ref context, ct);
                 }
 
-                // Return 404 for unmatched routes that were not handled by OnHttpRequest
-                //if (!handledByRoute && (context.Response.Body == null || (context.Response.Body is string sb && sb.Length == 0))) {
-                //    context.Response.StatusCodeNumber = 404;
-                //    context.Response.ReasonPhrase = "Not Found";
-                //}
+                if (!handledByRoute && IsDefaultEmptyHttpResponse(context)) {
+                    context.StatusCodeNumber = 404;
+                    context.ReasonPhrase = "Not Found";
+                    context.Response.Body = "404 Not Found: " + (request.Method ?? "GET") + " " + (request.Path ?? "/");
+                    context.Response.ContentType = "text/plain";
+                }
 
+WriteHttpResponse:
+                EnsureErrorResponseBody(context);
+                RecordEndpointSecurityHttpResult(e.Connection, request, context.StatusCodeNumber);
                 if (context.Response != null && context.Response.Headers != null) {
                     if (!context.Response.Headers.ContainsKey("Server"))
                         context.Response.Headers["Server"] = "SocketJack";
-                    if (!context.Response.Headers.ContainsKey("Access-Control-Allow-Origin"))
-                        context.Response.Headers["Access-Control-Allow-Origin"] = "*";
+                    if (!context.Response.Headers.ContainsKey("Access-Control-Allow-Origin") && !string.IsNullOrWhiteSpace(Options?.HttpDefaultCorsOrigin))
+                        context.Response.Headers["Access-Control-Allow-Origin"] = Options.HttpDefaultCorsOrigin;
                     if (!context.Response.Headers.ContainsKey("Date"))
                         context.Response.Headers["Date"] = DateTime.UtcNow.ToString("R");
                     if (!context.Response.Headers.ContainsKey("Connection"))
@@ -1799,9 +3267,37 @@ namespace SocketJack.Net {
                 // can dispose the socket between property accesses.
                 var responseStream = e.Connection.Stream;
                 if (responseStream != null && !e.Connection.Closed && !e.Connection.Closing) {
-                    context.Response.EnsureBodyBytes();
-                    int bodyLen = context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0;
+                    if (context.Response.RawResponseWritten) {
+                        WriteHttpAccessLog(e.Connection, request, context, endpointSecurityDecision, 0, false);
+                        goto CloseHttpConnection;
+                    }
 
+                    bool isHead = request.Method != null && request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+                    if (context.Response.StreamFile != null) {
+                        long streamedBodyLen = TryGetStreamFileLength(context.Response.StreamFile);
+                        WriteHttpAccessLog(e.Connection, request, context, endpointSecurityDecision, streamedBodyLen, true);
+                        if (Options.Logging) {
+                            try {
+                                var ua = request.Headers != null && request.Headers.ContainsKey("User-Agent") ? request.Headers["User-Agent"] : "";
+                                var ep = e.Connection.Socket?.RemoteEndPoint?.ToString() ?? "";
+                                Log(request.Method + " " + request.Path + " > " + context.StatusCodeNumber + " (" + streamedBodyLen.ToString(CultureInfo.InvariantCulture) + " bytes streamed) UA: " + ua + " - " + ep);
+                            } catch { }
+                        }
+                        try {
+                            WriteStreamedFileResponse(responseStream, context.Response, context.Response.StreamFile, e.Connection, isHead, request);
+                        } catch (ObjectDisposedException) {
+                        } catch (IOException) { }
+                        goto CloseHttpConnection;
+                    }
+
+                    context.Response.EnsureBodyBytes();
+                    ApplyHttpRoutePatternCache(request, context);
+                    ApplyHttpResponseCompression(request, context.Response);
+                    int bodyLen = context.Response.BodyBytes != null ? context.Response.BodyBytes.Length : 0;
+                    if (context.Response.DisableChunkedTransfer && context.Response.Headers != null)
+                        context.Response.Headers["Content-Length"] = bodyLen.ToString();
+
+                    WriteHttpAccessLog(e.Connection, request, context, endpointSecurityDecision, bodyLen, false);
                     if (Options.Logging) {
                         try {
                             var ua = request.Headers != null && request.Headers.ContainsKey("User-Agent") ? request.Headers["User-Agent"] : "";
@@ -1809,7 +3305,6 @@ namespace SocketJack.Net {
                             Log(request.Method + " " + request.Path + " > " + context.StatusCodeNumber + " (" + bodyLen + " bytes) UA: " + ua + " - " + ep);
                         } catch { }
                     }
-                    bool isHead = request.Method != null && request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
 
                     try {
                         if (isHead) {
@@ -1819,26 +3314,15 @@ namespace SocketJack.Net {
                                 TrackHttpBytesSent(e.Connection, hdr.Length);
                             }
                             responseStream.Flush();
-                        } else if (bodyLen > ChunkedThreshold) {
-                            context.Response.WriteChunkedTo(responseStream, ChunkedSize, e.Connection);
                         } else {
                             var (hdr, body) = context.Response.ToBytesWithHeader();
-                            int written = 0;
-                            if (hdr != null && hdr.Length > 0) {
-                                responseStream.Write(hdr, 0, hdr.Length);
-                                written += hdr.Length;
-                            }
-                            if (body != null && body.Length > 0) {
-                                responseStream.Write(body, 0, body.Length);
-                                written += body.Length;
-                            }
-                            responseStream.Flush();
-                            TrackHttpBytesSent(e.Connection, written);
+                            WriteFixedLengthResponse(responseStream, hdr, body, e.Connection, bodyLen > ChunkedThreshold ? Math.Max(ChunkedSize, 64 * 1024) : bodyLen);
                         }
                     } catch (ObjectDisposedException) {
                     } catch (IOException) { }
                 }
 
+CloseHttpConnection:
                 // Graceful HTTP close sequence:
                 // 1. Set linger so the OS waits for the send buffer to drain on Close().
                 // 2. Shut down the send direction first — this queues a FIN *after*
@@ -1882,6 +3366,230 @@ namespace SocketJack.Net {
             }
         }
 
+        private static void WriteFixedLengthResponse(Stream responseStream, byte[] header, byte[] body, NetworkConnection connection, int bodyChunkSize) {
+            int written = 0;
+            if (header != null && header.Length > 0) {
+                responseStream.Write(header, 0, header.Length);
+                written += header.Length;
+            }
+
+            if (body != null && body.Length > 0) {
+                int chunkSize = bodyChunkSize > 0 ? bodyChunkSize : body.Length;
+                for (int offset = 0; offset < body.Length; offset += chunkSize) {
+                    int count = Math.Min(chunkSize, body.Length - offset);
+                    responseStream.Write(body, offset, count);
+                    written += count;
+                }
+            }
+
+            responseStream.Flush();
+            TrackHttpBytesSent(connection, written);
+        }
+
+        private const int StreamedFileBufferSize = 1024 * 1024;
+
+        private static FileStream OpenSharedReadStream(string filePath) {
+            return new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, StreamedFileBufferSize, FileOptions.SequentialScan);
+        }
+
+        private static byte[] ReadFileBytesShared(string filePath) {
+            using (var fileStream = OpenSharedReadStream(filePath))
+            using (var memory = new MemoryStream()) {
+                fileStream.CopyTo(memory);
+                return memory.ToArray();
+            }
+        }
+
+        private sealed class StreamFileRange {
+            public bool NotSatisfiable { get; set; }
+            public long Start { get; set; }
+            public long End { get; set; }
+            public long Length { get; set; }
+            public long TotalLength { get; set; }
+        }
+
+        private static void StreamFileToDispatchCallbacks(HttpRequest request, HttpResponse response, FileResponse fileResponse, HttpStreamDispatchCallbacks callbacks, bool headersOnly, CancellationToken cancellationToken) {
+            if (response == null || fileResponse == null || callbacks == null || string.IsNullOrWhiteSpace(fileResponse.FilePath))
+                return;
+
+            using (var fileStream = OpenSharedReadStream(fileResponse.FilePath)) {
+                StreamFileRange range = ConfigureStreamFileHeaders(request, response, fileResponse, fileStream);
+                response.BodyBytes = Array.Empty<byte>();
+
+                callbacks.OnStart?.Invoke(response);
+                try {
+                    if (!headersOnly && !range.NotSatisfiable && range.Length > 0) {
+                        fileStream.Position = range.Start;
+                        byte[] buffer = new byte[StreamedFileBufferSize];
+                        long remaining = range.Length;
+                        while (remaining > 0) {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            int bytesRead = fileStream.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                            if (bytesRead <= 0)
+                                break;
+                            callbacks.OnChunk?.Invoke(buffer, 0, bytesRead);
+                            remaining -= bytesRead;
+                        }
+                    }
+                } finally {
+                    callbacks.OnEnd?.Invoke();
+                }
+            }
+        }
+
+        private static StreamFileRange ConfigureStreamFileHeaders(HttpRequest request, HttpResponse response, FileResponse fileResponse, FileStream fileStream) {
+            if (response.Headers == null)
+                response.Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            long totalLength = fileStream.Length;
+            response.Headers["Accept-Ranges"] = "bytes";
+            if (!response.Headers.ContainsKey("Last-Modified")) {
+                try { response.Headers["Last-Modified"] = File.GetLastWriteTimeUtc(fileResponse.FilePath).ToString("R", CultureInfo.InvariantCulture); } catch { }
+            }
+
+            if (request != null && request.Headers != null && request.Headers.TryGetValue("Range", out string rangeHeader) && !string.IsNullOrWhiteSpace(rangeHeader)) {
+                if (TryParseSingleByteRange(rangeHeader, totalLength, out long start, out long end)) {
+                    long length = end - start + 1;
+                    response.StatusCodeNumber = 206;
+                    response.ReasonPhrase = "Partial Content";
+                    response.Headers["Content-Range"] = "bytes " + start.ToString(CultureInfo.InvariantCulture) + "-" + end.ToString(CultureInfo.InvariantCulture) + "/" + totalLength.ToString(CultureInfo.InvariantCulture);
+                    response.Headers["Content-Length"] = length.ToString(CultureInfo.InvariantCulture);
+                    return new StreamFileRange { Start = start, End = end, Length = length, TotalLength = totalLength };
+                }
+
+                response.StatusCodeNumber = 416;
+                response.ReasonPhrase = "Range Not Satisfiable";
+                response.Headers["Content-Range"] = "bytes */" + totalLength.ToString(CultureInfo.InvariantCulture);
+                response.Headers["Content-Length"] = "0";
+                return new StreamFileRange { NotSatisfiable = true, Start = 0, End = -1, Length = 0, TotalLength = totalLength };
+            }
+
+            response.Headers["Content-Length"] = totalLength.ToString(CultureInfo.InvariantCulture);
+            return new StreamFileRange { Start = 0, End = totalLength > 0 ? totalLength - 1 : -1, Length = totalLength, TotalLength = totalLength };
+        }
+
+        private static bool TryParseSingleByteRange(string rangeHeader, long totalLength, out long start, out long end) {
+            start = 0;
+            end = totalLength > 0 ? totalLength - 1 : -1;
+
+            if (string.IsNullOrWhiteSpace(rangeHeader) || !rangeHeader.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string spec = rangeHeader.Substring("bytes=".Length).Trim();
+            if (spec.Length == 0 || spec.Contains(",", StringComparison.Ordinal))
+                return false;
+
+            int dash = spec.IndexOf('-');
+            if (dash < 0)
+                return false;
+
+            string left = spec.Substring(0, dash).Trim();
+            string right = spec.Substring(dash + 1).Trim();
+            if (left.Length == 0) {
+                if (!long.TryParse(right, NumberStyles.None, CultureInfo.InvariantCulture, out long suffixLength) || suffixLength <= 0 || totalLength <= 0)
+                    return false;
+                start = suffixLength >= totalLength ? 0 : totalLength - suffixLength;
+                end = totalLength - 1;
+                return true;
+            }
+
+            if (!long.TryParse(left, NumberStyles.None, CultureInfo.InvariantCulture, out start) || start < 0)
+                return false;
+
+            if (right.Length == 0) {
+                end = totalLength - 1;
+            } else if (!long.TryParse(right, NumberStyles.None, CultureInfo.InvariantCulture, out end) || end < start) {
+                return false;
+            }
+
+            if (totalLength <= 0 || start >= totalLength)
+                return false;
+            if (end >= totalLength)
+                end = totalLength - 1;
+            return true;
+        }
+        private static string BuildBodyEtag(byte[] bytes) {
+            if (bytes == null || bytes.Length == 0)
+                return null;
+
+            using (var sha = System.Security.Cryptography.SHA256.Create()) {
+                var hash = sha.ComputeHash(bytes);
+                return "\"" + BitConverter.ToString(hash).Replace("-", "").Substring(0, 16).ToLowerInvariant() + "\"";
+            }
+        }
+
+        private static string BuildStaticFileEtag(string filePath) {
+            try {
+                if (string.IsNullOrWhiteSpace(filePath))
+                    return null;
+                var info = new FileInfo(filePath);
+                if (!info.Exists)
+                    return null;
+                return "\"" + info.Length.ToString("x", CultureInfo.InvariantCulture) + "-" + info.LastWriteTimeUtc.Ticks.ToString("x", CultureInfo.InvariantCulture) + "\"";
+            } catch {
+                return null;
+            }
+        }
+        private static long TryGetStreamFileLength(FileResponse fileResponse) {
+            try {
+                if (fileResponse == null || string.IsNullOrWhiteSpace(fileResponse.FilePath))
+                    return 0;
+                return new FileInfo(fileResponse.FilePath).Length;
+            } catch {
+                return 0;
+            }
+        }
+
+        private static void WriteStreamedFileResponse(Stream responseStream, HttpResponse response, FileResponse fileResponse, NetworkConnection connection, bool headersOnly, HttpRequest request) {
+            if (responseStream == null || response == null || fileResponse == null || string.IsNullOrWhiteSpace(fileResponse.FilePath))
+                return;
+
+            using var fileStream = OpenSharedReadStream(fileResponse.FilePath);
+            StreamFileRange range = ConfigureStreamFileHeaders(request, response, fileResponse, fileStream);
+            response.BodyBytes = Array.Empty<byte>();
+
+            var (header, _) = response.ToBytesWithHeader();
+            if (header != null && header.Length > 0) {
+                responseStream.Write(header, 0, header.Length);
+                TrackHttpBytesSent(connection, header.Length);
+            }
+
+            if (!headersOnly && !range.NotSatisfiable && range.Length > 0) {
+                fileStream.Position = range.Start;
+                byte[] buffer = new byte[StreamedFileBufferSize];
+                long remaining = range.Length;
+                while (remaining > 0) {
+                    int bytesRead = fileStream.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                    if (bytesRead <= 0)
+                        break;
+                    responseStream.Write(buffer, 0, bytesRead);
+                    TrackHttpBytesSent(connection, bytesRead);
+                    remaining -= bytesRead;
+                }
+            }
+
+            responseStream.Flush();
+        }
+        private static bool LooksLikeHttpRequestPrefix(byte[] bytes, int length) {
+            if (bytes == null || length <= 0)
+                return false;
+
+            string prefix = Encoding.ASCII.GetString(bytes, 0, Math.Min(length, 8));
+            return LooksLikeHttpMethod(prefix, "GET ")
+                || LooksLikeHttpMethod(prefix, "POST ")
+                || LooksLikeHttpMethod(prefix, "PUT ")
+                || LooksLikeHttpMethod(prefix, "DELETE ")
+                || LooksLikeHttpMethod(prefix, "HEAD ")
+                || LooksLikeHttpMethod(prefix, "OPTIONS ")
+                || LooksLikeHttpMethod(prefix, "PATCH ")
+                || LooksLikeHttpMethod(prefix, "TRACE ")
+                || LooksLikeHttpMethod(prefix, "CONNECT ");
+        }
+
+        private static bool LooksLikeHttpMethod(string prefix, string method) {
+            return prefix.StartsWith(method, StringComparison.Ordinal)
+                || method.StartsWith(prefix, StringComparison.Ordinal);
+        }
         private static byte[] TryGetRequestBytes(object obj) {
             if (obj == null)
                 return null;
@@ -1971,6 +3679,11 @@ namespace SocketJack.Net {
                         var headerValue = line.Substring(separatorIndex + 1).Trim();
                         request.Headers[headerName] = headerValue;
                     }
+                }
+
+                if (request.Headers.TryGetValue("Host", out var requestHost)) {
+                    request.Host = SanitizeRedirectHost(requestHost);
+                    request.HostName = NormalizeHostName(requestHost);
                 }
 
                 // Determine body
@@ -2100,7 +3813,7 @@ namespace SocketJack.Net {
                 Context = this,
                 Path = Request.Path,
                 Version = Request.Version,
-                Headers = new Dictionary<string, string>(),
+                Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 ContentType = ContentType
             };
         }
@@ -2111,6 +3824,10 @@ namespace SocketJack.Net {
         public string Method { get; set; }
         public string Path { get; set; }
         public string Version { get; set; }
+        /// <summary>Raw Host header value, sanitized for control characters.</summary>
+        public string Host { get; set; }
+        /// <summary>Normalized host name without port, suitable for host/subdomain routing.</summary>
+        public string HostName { get; set; }
         /// <summary>
         /// The raw query string from the request URL (everything after the <c>?</c>),
         /// or <see langword="null"/> if no query string was present.
@@ -2142,9 +3859,22 @@ namespace SocketJack.Net {
                 _ContentLength = 0;
             } else {
                 BodyBytes = bodyBytes;
-                Body = Encoding.UTF8.GetString(bodyBytes);
+                Body = IsTextBody() ? Encoding.UTF8.GetString(bodyBytes) : null;
                 _ContentLength = bodyBytes.LongLength;
             }
+        }
+
+        private bool IsTextBody() {
+            if (Headers == null || !Headers.TryGetValue("Content-Type", out string contentType) || string.IsNullOrWhiteSpace(contentType))
+                return true;
+
+            contentType = contentType.Split(';')[0].Trim().ToLowerInvariant();
+            return contentType.StartsWith("text/", StringComparison.Ordinal)
+                || contentType == "application/json"
+                || contentType == "application/xml"
+                || contentType == "application/x-www-form-urlencoded"
+                || contentType.EndsWith("+json", StringComparison.Ordinal)
+                || contentType.EndsWith("+xml", StringComparison.Ordinal);
         }
     }
 
@@ -2205,8 +3935,30 @@ namespace SocketJack.Net {
             }
             set {
                 _BodyBytes = value;
+                _Body = string.Empty;
             }
         }
+
+        /// <summary>
+        /// Sends large responses with a fixed Content-Length instead of chunked transfer encoding.
+        /// </summary>
+        public bool DisableChunkedTransfer { get; set; }
+
+        /// <summary>
+        /// Adds latency-oriented streaming headers for routes that should render chunks immediately.
+        /// </summary>
+        public bool LowLatencyStreaming { get; set; }
+
+        /// <summary>
+        /// Set by advanced handlers that write a complete HTTP response directly to
+        /// the connection stream and want the normal response writer to stand down.
+        /// </summary>
+        public bool RawResponseWritten { get; set; }
+
+        /// <summary>
+        /// Optional file response streamed directly from disk without buffering the full body in memory.
+        /// </summary>
+        public FileResponse StreamFile { get; set; }
 
         /// <summary>
         /// Builds the full HTTP status line (e.g. <c>HTTP/1.1 200 OK</c>),
@@ -2246,7 +3998,8 @@ namespace SocketJack.Net {
             foreach (var h in Headers) {
                 sb.Append(h.Key + ": " + h.Value + "\r\n");
             }
-            sb.Append($"Content-Length: {_BodyBytes.Length}\r\n");
+            if (!Headers.ContainsKey("Content-Length"))
+                sb.Append($"Content-Length: {_BodyBytes.Length}\r\n");
             sb.Append("Connection: close\r\n");
             sb.Append("\r\n");
 
@@ -2268,7 +4021,8 @@ namespace SocketJack.Net {
             foreach (var h in Headers) {
                 headerSb.Append(h.Key + ": " + h.Value + "\r\n");
             }
-            headerSb.Append($"Content-Length: {_BodyBytes.Length}\r\n");
+            if (!Headers.ContainsKey("Content-Length"))
+                headerSb.Append($"Content-Length: {_BodyBytes.Length}\r\n");
             headerSb.Append("Connection: close\r\n");
             headerSb.Append("\r\n");
 
@@ -2290,7 +4044,8 @@ namespace SocketJack.Net {
             foreach (var h in Headers) {
                 headerSb.Append(h.Key + ": " + h.Value + "\r\n");
             }
-            headerSb.Append($"Content-Length: {_BodyBytes.Length}\r\n");
+            if (!Headers.ContainsKey("Content-Length"))
+                headerSb.Append($"Content-Length: {_BodyBytes.Length}\r\n");
             headerSb.Append("Connection: close\r\n");
             headerSb.Append("\r\n");
 
@@ -2382,13 +4137,35 @@ namespace SocketJack.Net {
     public class FileResponse {
         /// <summary>The raw response body bytes.</summary>
         public byte[] Data { get; set; }
-        /// <summary>The MIME content type (e.g., <c>"image/png"</c>).</summary>
+        /// <summary>The MIME content type (e.g., <c>"image/png"</c>). If omitted, the server detects it from <see cref="FileName"/>.</summary>
         public string ContentType { get; set; }
+        /// <summary>The file name advertised in the Content-Disposition response header.</summary>
+        public string FileName { get; set; }
+        /// <summary>Optional source file path streamed directly to the response.</summary>
+        public string FilePath { get; set; }
 
         public FileResponse() { }
         public FileResponse(byte[] data, string contentType) {
             Data = data;
             ContentType = contentType;
+        }
+
+        public FileResponse(byte[] data, string contentType, string fileName) {
+            Data = data;
+            ContentType = contentType;
+            FileName = fileName;
+        }
+
+        public static FileResponse FromFile(string filePath) {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException("File path is required.", nameof(filePath));
+
+            string fullPath = Path.GetFullPath(filePath);
+            return new FileResponse {
+                FilePath = fullPath,
+                ContentType = HttpServer.GetMimeType(fullPath),
+                FileName = Path.GetFileName(fullPath)
+            };
         }
     }
 
@@ -2401,9 +4178,13 @@ namespace SocketJack.Net {
     public class ChunkedStream {
         private readonly Stream _stream;
         private readonly NetworkConnection _connection;
+        private readonly object _writeLock = new object();
         private bool _headerSent;
         private bool _finished;
         private readonly HttpResponse _response;
+        private readonly Action<HttpResponse> _onStart;
+        private readonly Action<byte[], int, int> _onChunk;
+        private readonly Action _onEnd;
         private static readonly byte[] Crlf = new byte[] { (byte)'\r', (byte)'\n' };
 
         internal ChunkedStream(Stream stream, HttpResponse response, NetworkConnection connection = null) {
@@ -2412,6 +4193,13 @@ namespace SocketJack.Net {
             _connection = connection;
         }
 
+        internal ChunkedStream(HttpResponse response, NetworkConnection connection, Action<HttpResponse> onStart, Action<byte[], int, int> onChunk, Action onEnd) {
+            _response = response;
+            _connection = connection;
+            _onStart = onStart;
+            _onChunk = onChunk;
+            _onEnd = onEnd;
+        }
         /// <summary>
         /// Gets or sets the Content-Type header for the chunked response.
         /// Must be set before the first call to <see cref="Write(string)"/>,
@@ -2428,9 +4216,42 @@ namespace SocketJack.Net {
             }
         }
 
+        /// <summary>
+        /// Enables low-latency streaming headers for this response.
+        /// </summary>
+        public bool LowLatencyMode {
+            get { return _response?.LowLatencyStreaming ?? false; }
+            set { if (_response != null) _response.LowLatencyStreaming = value; }
+        }
+
+        /// <summary>
+        /// Sets a response header before the first chunk is written.
+        /// </summary>
+        public void SetHeader(string name, string value) {
+            if (string.IsNullOrWhiteSpace(name) || _response == null || _headerSent) return;
+            if (value == null)
+                _response.Headers.Remove(name);
+            else
+                _response.Headers[name] = value;
+        }
+
         private void EnsureHeader() {
             if (_headerSent) return;
             _headerSent = true;
+
+            if (_response.LowLatencyStreaming) {
+                if (!_response.Headers.ContainsKey("X-Accel-Buffering"))
+                    _response.Headers["X-Accel-Buffering"] = "no";
+                if (!_response.Headers.ContainsKey("Pragma"))
+                    _response.Headers["Pragma"] = "no-cache";
+                if (!_response.Headers.ContainsKey("Cache-Control"))
+                    _response.Headers["Cache-Control"] = "no-cache, no-store, no-transform";
+            }
+
+            if (_stream == null && _onStart != null) {
+                _onStart(_response);
+                return;
+            }
 
             var sb = new StringBuilder();
             sb.Append(_response.StatusLine + "\r\n");
@@ -2443,12 +4264,16 @@ namespace SocketJack.Net {
                 sb.Append("Server: SocketJack\r\n");
             sb.Append("Transfer-Encoding: chunked\r\n");
             sb.Append("Connection: keep-alive\r\n");
-            sb.Append("Cache-Control: no-cache, no-store\r\n");
-            sb.Append("X-Content-Type-Options: nosniff\r\n");
-            if (!_response.Headers.ContainsKey("Access-Control-Allow-Origin"))
-                sb.Append("Access-Control-Allow-Origin: *\r\n");
+            if (!_response.Headers.ContainsKey("Cache-Control"))
+                sb.Append("Cache-Control: no-cache, no-store\r\n");
+            if (!_response.Headers.ContainsKey("X-Content-Type-Options"))
+                sb.Append("X-Content-Type-Options: nosniff\r\n");
+            if (!_response.Headers.ContainsKey("Access-Control-Allow-Origin")) {
+                string defaultCorsOrigin = _response?.Context?.Connection?.Parent?.Options?.HttpDefaultCorsOrigin;
+                if (!string.IsNullOrWhiteSpace(defaultCorsOrigin))
+                    sb.Append("Access-Control-Allow-Origin: " + defaultCorsOrigin + "\r\n");
+            }
             sb.Append("\r\n");
-
             var headerBytes = Encoding.UTF8.GetBytes(sb.ToString());
             _stream.Write(headerBytes, 0, headerBytes.Length);
             _stream.Flush();
@@ -2459,43 +4284,63 @@ namespace SocketJack.Net {
         /// Sends a single line of text (with trailing newline) as one HTTP chunk.
         /// </summary>
         public void WriteLine(string text) {
-            if (_finished) return;
-            EnsureHeader();
-            var data = Encoding.UTF8.GetBytes(text + "\n");
-            WriteChunk(data);
+            lock (_writeLock) {
+                if (_finished) return;
+                EnsureHeader();
+                var data = Encoding.UTF8.GetBytes(text + "\n");
+                WriteChunk(data);
+            }
         }
 
         /// <summary>
         /// Sends text as one HTTP chunk without appending a newline.
         /// </summary>
         public void Write(string text) {
-            if (_finished) return;
-            EnsureHeader();
-            var data = Encoding.UTF8.GetBytes(text);
-            WriteChunk(data);
+            lock (_writeLock) {
+                if (_finished) return;
+                EnsureHeader();
+                var data = Encoding.UTF8.GetBytes(text);
+                WriteChunk(data);
+            }
         }
 
         /// <summary>
         /// Sends arbitrary bytes as one HTTP chunk.
         /// </summary>
         public void Write(byte[] data, int offset, int count) {
-            if (_finished) return;
-            EnsureHeader();
-            var sizeHex = Encoding.UTF8.GetBytes(count.ToString("X") + "\r\n");
-            _stream.Write(sizeHex, 0, sizeHex.Length);
-            _stream.Write(data, offset, count);
-            _stream.Write(Crlf, 0, 2);
-            _stream.Flush();
-            HttpServer.TrackHttpBytesSent(_connection, sizeHex.Length + count + 2);
+            lock (_writeLock) {
+                if (_finished) return;
+                EnsureHeader();
+                if (_onChunk != null) {
+                    _onChunk(data, offset, count);
+                    return;
+                }
+                var packet = BuildChunkPacket(data, offset, count);
+                _stream.Write(packet, 0, packet.Length);
+                _stream.Flush();
+                HttpServer.TrackHttpBytesSent(_connection, packet.Length);
+            }
         }
 
         private void WriteChunk(byte[] data) {
-            var sizeHex = Encoding.UTF8.GetBytes(data.Length.ToString("X") + "\r\n");
-            _stream.Write(sizeHex, 0, sizeHex.Length);
-            _stream.Write(data, 0, data.Length);
-            _stream.Write(Crlf, 0, 2);
+            if (_onChunk != null) {
+                _onChunk(data, 0, data.Length);
+                return;
+            }
+            var packet = BuildChunkPacket(data, 0, data.Length);
+            _stream.Write(packet, 0, packet.Length);
             _stream.Flush();
-            HttpServer.TrackHttpBytesSent(_connection, sizeHex.Length + data.Length + 2);
+            HttpServer.TrackHttpBytesSent(_connection, packet.Length);
+        }
+
+        private static byte[] BuildChunkPacket(byte[] data, int offset, int count) {
+            var sizeHex = Encoding.UTF8.GetBytes(count.ToString("X") + "\r\n");
+            var packet = new byte[sizeHex.Length + count + Crlf.Length];
+            Buffer.BlockCopy(sizeHex, 0, packet, 0, sizeHex.Length);
+            if (count > 0)
+                Buffer.BlockCopy(data, offset, packet, sizeHex.Length, count);
+            Buffer.BlockCopy(Crlf, 0, packet, sizeHex.Length + count, Crlf.Length);
+            return packet;
         }
 
         /// <summary>
@@ -2503,16 +4348,22 @@ namespace SocketJack.Net {
         /// stream route handler returns.
         /// </summary>
         public void Finish() {
-            if (_finished) return;
-            _finished = true;
-            EnsureHeader();
-            var terminator = Encoding.UTF8.GetBytes("0\r\n\r\n");
-            try {
-                _stream.Write(terminator, 0, terminator.Length);
-                _stream.Flush();
-                HttpServer.TrackHttpBytesSent(_connection, terminator.Length);
-            } catch {
-                // stream may already be closed
+            lock (_writeLock) {
+                if (_finished) return;
+                _finished = true;
+                EnsureHeader();
+                if (_onEnd != null) {
+                    try { _onEnd(); } catch { }
+                    return;
+                }
+                var terminator = Encoding.UTF8.GetBytes("0\r\n\r\n");
+                try {
+                    _stream.Write(terminator, 0, terminator.Length);
+                    _stream.Flush();
+                    HttpServer.TrackHttpBytesSent(_connection, terminator.Length);
+                } catch {
+                    // stream may already be closed
+                }
             }
         }
     }
@@ -2598,3 +4449,4 @@ namespace SocketJack.Net {
         }
     }
 }
+

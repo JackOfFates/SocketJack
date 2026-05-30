@@ -1,0 +1,300 @@
+<UserControl
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="d" x:Class="LlmRuntime.Wpf.HuggingFaceModelDownloaderControl"
+             d:DesignHeight="768.76" d:DesignWidth="1679.816">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="BrowserBackgroundBrush" Color="#101216" />
+        <SolidColorBrush x:Key="BrowserPanelBrush" Color="#161B22" />
+        <SolidColorBrush x:Key="BrowserPanelAltBrush" Color="#111821" />
+        <SolidColorBrush x:Key="BrowserBorderBrush" Color="#2D3440" />
+        <SolidColorBrush x:Key="BrowserTextBrush" Color="#F2F4F8" />
+        <SolidColorBrush x:Key="BrowserSubtleTextBrush" Color="#AAB4C3" />
+        <SolidColorBrush x:Key="BrowserAccentBrush" Color="#FF5C7A" />
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource BrowserTextBrush}" />
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Background" Value="#1D2630" />
+            <Setter Property="Foreground" Value="{StaticResource BrowserTextBrush}" />
+            <Setter Property="BorderBrush" Value="#3B4654" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#0E141B" />
+            <Setter Property="Foreground" Value="{StaticResource BrowserTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrowserBorderBrush}" />
+            <Setter Property="Padding" Value="10,2" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource BrowserTextBrush}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="ProgressBar">
+            <Setter Property="Height" Value="8" />
+            <Setter Property="Minimum" Value="0" />
+            <Setter Property="Maximum" Value="100" />
+            <Setter Property="Foreground" Value="{StaticResource BrowserAccentBrush}" />
+            <Setter Property="Background" Value="#0E141B" />
+            <Setter Property="BorderBrush" Value="{StaticResource BrowserBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <DataTemplate x:Key="DownloadQueueItemTemplate">
+            <Border Margin="0,0,0,8"
+                    Padding="10"
+                    Background="{Binding StatusBackground}"
+                    BorderBrush="{Binding StatusBorder}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,10,0">
+                        <TextBlock Text="{Binding FileName}"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding FileName}" />
+                        <TextBlock Text="{Binding Detail}"
+                                   Foreground="{StaticResource BrowserSubtleTextBrush}"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Margin="0,4,0,0" />
+                    </StackPanel>
+
+                    <Button Grid.Row="0"
+                            Grid.Column="1"
+                            Content="Cancel"
+                            Click="CancelDownloadItemButton_Click"
+                            CommandParameter="{Binding Id}"
+                            MinHeight="24"
+                            Padding="8,2"
+                            Visibility="{Binding CancelVisibility}"
+                            AutomationProperties.Name="Cancel this model download" />
+
+                    <ProgressBar Grid.Row="1"
+                                 Grid.ColumnSpan="2"
+                                 Value="{Binding Percent}"
+                                 Visibility="{Binding ProgressVisibility}"
+                                 Margin="0,9,0,0" />
+
+                    <DockPanel Grid.Row="2"
+                               Grid.ColumnSpan="2"
+                               LastChildFill="True"
+                               Margin="0,7,0,0">
+                        <TextBlock DockPanel.Dock="Right"
+                                   Text="{Binding PercentText}"
+                                   Foreground="{Binding StatusForeground}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   Margin="8,0,0,0" />
+                        <TextBlock Text="{Binding Status}"
+                                   Foreground="{Binding StatusForeground}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource BrowserBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="44" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="34" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" LastChildFill="True" Margin="8,6">
+            <Button x:Name="BackButton" Width="34" Margin="0,0,6,0" Click="BackButton_Click" Content="Back" AutomationProperties.Name="Back" AutomationProperties.HelpText="Navigate back in the Hugging Face browser." />
+            <Button x:Name="ForwardButton" Width="54" Margin="0,0,6,0" Click="ForwardButton_Click" Content="Forward" AutomationProperties.Name="Forward" AutomationProperties.HelpText="Navigate forward in the Hugging Face browser." />
+            <Button x:Name="RefreshButton" Width="54" Margin="0,0,8,0" Click="RefreshButton_Click" Content="Refresh" AutomationProperties.Name="Refresh" AutomationProperties.HelpText="Reload the current Hugging Face page." />
+            <Button x:Name="HomeButton" Width="52" DockPanel.Dock="Right" Margin="8,0,0,0" Click="HomeButton_Click" Content="Home" AutomationProperties.Name="Home" AutomationProperties.HelpText="Open GGUF model search on Hugging Face." />
+            <TextBox x:Name="AddressBox"
+                     AutomationProperties.Name="Hugging Face address"
+                     AutomationProperties.HelpText="Type a Hugging Face URL and press Enter."
+                     VerticalContentAlignment="Center"
+                     KeyDown="AddressBox_KeyDown"
+                     Background="#181C22"
+                     Foreground="#F2F4F8"
+                     BorderBrush="#2D3440"
+                     Padding="10,0" />
+        </DockPanel>
+
+        <Grid Grid.Row="1" Margin="8,0,8,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="340" />
+            </Grid.ColumnDefinitions>
+
+            <Border x:Name="BrowserHost"
+                    Background="{StaticResource BrowserPanelBrush}"
+                    BorderBrush="{StaticResource BrowserBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    ClipToBounds="True">
+                <wv2:WebView2 x:Name="Browser" AutomationProperties.Name="Hugging Face model browser" />
+            </Border>
+
+            <Border x:Name="ExternalBrowserFallbackPanel"
+                    Visibility="Collapsed"
+                    Background="{StaticResource BrowserPanelBrush}"
+                    BorderBrush="{StaticResource BrowserBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="24">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="1" MaxWidth="560" HorizontalAlignment="Center">
+                        <TextBlock Text="Linux Browser Mode"
+                                   FontSize="24"
+                                   FontWeight="SemiBold"
+                                   TextAlignment="Center"
+                                   Margin="0,0,0,8" />
+                        <TextBlock Text="The embedded browser is unavailable in this Linux/Wine session. Open Hugging Face in the Linux browser, paste a model URL above, then queue the best downloadable file from that repository."
+                                   Foreground="{StaticResource BrowserSubtleTextBrush}"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   Margin="0,0,0,18" />
+                        <UniformGrid Columns="2">
+                            <Button x:Name="OpenExternalBrowserButton"
+                                    Margin="0,0,6,0"
+                                    Click="OpenExternalBrowserButton_Click"
+                                    Content="Open Hugging Face"
+                                    AutomationProperties.Name="Open Hugging Face in Linux browser" />
+                            <Button x:Name="QueueBestFromAddressButton"
+                                    Margin="6,0,0,0"
+                                    Click="QueueBestFromAddressButton_Click"
+                                    Content="Queue Best Download"
+                                    AutomationProperties.Name="Scan the pasted Hugging Face model URL and queue the best download" />
+                        </UniformGrid>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1"
+                    Margin="10,0,0,0"
+                    Padding="12"
+                    Background="{StaticResource BrowserPanelBrush}"
+                    BorderBrush="{StaticResource BrowserBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,10">
+                        <TextBlock x:Name="QueueSummaryText"
+                                   DockPanel.Dock="Right"
+                                   Text="Idle"
+                                   Foreground="{StaticResource BrowserSubtleTextBrush}"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   Margin="10,0,0,0" />
+                        <StackPanel>
+                            <TextBlock Text="Downloads" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Queued model files and bundles"
+                                       Foreground="{StaticResource BrowserSubtleTextBrush}"
+                                       FontSize="11"
+                                       Margin="0,2,0,0" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <CheckBox x:Name="LoadAfterDownloadCheckBox"
+                              Grid.Row="1"
+                              Content="Load after download"
+                              AutomationProperties.Name="Load after download"
+                              ToolTip="Automatically load the downloaded GGUF model into LlmRuntime when the download finishes."
+                              IsChecked="False"
+                              Margin="0,0,0,10" />
+
+                    <StackPanel Grid.Row="2" Margin="0,0,0,10">
+                        <ProgressBar x:Name="DownloadProgressBar"
+                                     AutomationProperties.Name="Download progress" />
+                        <TextBlock x:Name="HealthText"
+                                   Foreground="{StaticResource BrowserSubtleTextBrush}"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Margin="0,8,0,0"
+                                   Text="Local model health appears here after a download."
+                                   AutomationProperties.Name="Local model health" />
+                    </StackPanel>
+
+                    <ListBox x:Name="DownloadQueueListBox"
+                             Grid.Row="3"
+                             AutomationProperties.Name="Download queue"
+                             ItemTemplate="{StaticResource DownloadQueueItemTemplate}"
+                             Background="#0E141B"
+                             BorderBrush="{StaticResource BrowserBorderBrush}"
+                             Foreground="{StaticResource BrowserTextBrush}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+                    <StackPanel Grid.Row="4" Margin="0,10,0,0">
+                        <UniformGrid Columns="2">
+                            <Button x:Name="PauseButton" Margin="0,0,6,6" Click="PauseButton_Click" Content="Pause" IsEnabled="False" AutomationProperties.Name="Pause download" />
+                            <Button x:Name="ResumeButton" Margin="0,0,0,6" Click="ResumeButton_Click" Content="Resume" IsEnabled="False" AutomationProperties.Name="Resume download" />
+                            <Button x:Name="RetryButton" Margin="0,0,6,6" Click="RetryButton_Click" Content="Retry" IsEnabled="False" AutomationProperties.Name="Retry download" />
+                            <Button x:Name="CleanupButton" Margin="0,0,0,6" Click="CleanupButton_Click" Content="Cleanup" AutomationProperties.Name="Cleanup partial downloads" />
+                        </UniformGrid>
+                        <Button x:Name="CancelButton"
+                                Click="CancelButton_Click"
+                                Content="Cancel All"
+                                IsEnabled="False"
+                                AutomationProperties.Name="Cancel all downloads" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Margin="8,6,8,8"
+                Padding="10,0"
+                Background="{StaticResource BrowserPanelAltBrush}"
+                BorderBrush="{StaticResource BrowserBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+            <DockPanel LastChildFill="True">
+                <TextBlock Text="Status"
+                           DockPanel.Dock="Left"
+                           Foreground="{StaticResource BrowserSubtleTextBrush}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Margin="0,0,10,0" />
+                <TextBlock x:Name="StatusText"
+                           Foreground="{StaticResource BrowserTextBrush}"
+                           Text="Ready"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center"
+                           AutomationProperties.Name="Download status" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

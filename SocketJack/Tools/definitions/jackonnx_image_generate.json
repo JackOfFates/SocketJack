@@ -1,0 +1,63 @@
+{
+  "id": "jackonnx_image_generate",
+  "name": "jackonnx_image_generate",
+  "description": "Generate an image with JackONNX and return the artifact to the LlmRuntime session.",
+  "visibility": "proprietary",
+  "sourceType": "builtInSocketJack",
+  "source": "jackonnx.image.generate",
+  "httpHeaders": {},
+  "environmentVariables": {},
+  "version": "0.1.0",
+  "vendor": "JackOfFates",
+  "licenseNotes": "",
+  "tags": [
+    "generation",
+    "jackonnx",
+    "media",
+    "onnx"
+  ],
+  "requiredSecrets": [],
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string"
+      },
+      "negativePrompt": {
+        "type": "string"
+      },
+      "modelId": {
+        "type": "string"
+      },
+      "width": {
+        "type": "integer",
+        "minimum": 64
+      },
+      "height": {
+        "type": "integer",
+        "minimum": 64
+      },
+      "steps": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "guidanceScale": {
+        "type": "number",
+        "minimum": 0.1
+      },
+      "seed": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "resultSchema": null,
+  "approvalMode": "askEveryTime",
+  "permissions": "fileSystemWrite",
+  "timeoutSeconds": 3600,
+  "allowedProjects": [],
+  "createdAtUtc": "2026-05-18T03:30:06.3173302+00:00",
+  "updatedAtUtc": "2026-05-18T10:34:39.2256874+00:00"
+}

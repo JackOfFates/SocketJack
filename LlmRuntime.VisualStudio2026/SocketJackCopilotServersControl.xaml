@@ -1,0 +1,206 @@
+<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:styles="clr-namespace:Microsoft.VisualStudio.Shell;assembly=Microsoft.VisualStudio.Shell.15.0"
+              xmlns:colors="clr-namespace:Microsoft.VisualStudio.PlatformUI;assembly=Microsoft.VisualStudio.Shell.15.0">
+  <Border Background="{DynamicResource {x:Static colors:EnvironmentColors.ToolWindowBackgroundBrushKey}}"
+          TextElement.Foreground="{DynamicResource {x:Static colors:EnvironmentColors.ToolWindowTextBrushKey}}"
+          Padding="10">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,8">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button Content="Refresh"
+                  MinWidth="72"
+                  Margin="4,0,0,0"
+                  Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                  Command="{Binding RefreshCommand}" />
+          <Button Content="Models"
+                  MinWidth="72"
+                  Margin="4,0,0,0"
+                  Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                  Command="{Binding LoadModelsCommand}" />
+          <Button Content="Test"
+                  MinWidth="64"
+                  Margin="4,0,0,0"
+                  Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                  Command="{Binding TestConnectionCommand}" />
+          <Button Content="Configure"
+                  MinWidth="88"
+                  Margin="4,0,0,0"
+                  Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                  Command="{Binding ConfigureCommand}" />
+        </StackPanel>
+        <TextBox MinWidth="180"
+                 MinHeight="26"
+                 Margin="0,0,8,0"
+                 Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                 Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+      </DockPanel>
+
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="2*" MinWidth="220" />
+          <ColumnDefinition Width="8" />
+          <ColumnDefinition Width="3*" MinWidth="260" />
+        </Grid.ColumnDefinitions>
+
+        <Grid Grid.Column="0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <ListBox Grid.Row="0"
+                   MinHeight="260"
+                   Background="#303030"
+                   BorderBrush="#585858"
+                   Foreground="#E8E8E8"
+                   ItemsSource="{Binding Servers}"
+                   SelectedValue="{Binding SelectedServerId, Mode=TwoWay}"
+                   SelectedValuePath="Id"
+                   DisplayMemberPath="DisplayText">
+            <ListBox.ItemContainerStyle>
+              <Style TargetType="{x:Type ListBoxItem}">
+                <Setter Property="Background" Value="#303030" />
+                <Setter Property="Foreground" Value="#E8E8E8" />
+                <Setter Property="Padding" Value="4,2" />
+              </Style>
+            </ListBox.ItemContainerStyle>
+          </ListBox>
+          <TextBlock Grid.Row="1"
+                     Margin="0,8,0,0"
+                     Text="{Binding ServerDetails}"
+                     TextWrapping="Wrap" />
+        </Grid>
+
+        <Grid Grid.Column="2">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <ComboBox Grid.Row="0"
+                    MinHeight="26"
+                    Background="#303030"
+                    BorderBrush="#585858"
+                    Foreground="#E8E8E8"
+                    ItemsSource="{Binding Models}"
+                    SelectedValue="{Binding SelectedModelId, Mode=TwoWay}"
+                    SelectedValuePath="Id"
+                    DisplayMemberPath="DisplayText" />
+          <ListBox Grid.Row="1"
+                   Margin="0,8,0,0"
+                   MinHeight="220"
+                   Background="#303030"
+                   BorderBrush="#585858"
+                   Foreground="#E8E8E8"
+                   ItemsSource="{Binding Models}"
+                   SelectedValue="{Binding SelectedModelId, Mode=TwoWay}"
+                   SelectedValuePath="Id"
+                   DisplayMemberPath="DisplayText">
+            <ListBox.ItemContainerStyle>
+              <Style TargetType="{x:Type ListBoxItem}">
+                <Setter Property="Background" Value="#303030" />
+                <Setter Property="Foreground" Value="#E8E8E8" />
+                <Setter Property="Padding" Value="4,2" />
+              </Style>
+            </ListBox.ItemContainerStyle>
+          </ListBox>
+          <TextBlock Grid.Row="2"
+                     Margin="0,8,0,0"
+                     Text="{Binding ModelDetails}"
+                     TextWrapping="Wrap" />
+        </Grid>
+      </Grid>
+
+      <TextBlock Grid.Row="2"
+                 Margin="0,10,0,0"
+                 Text="{Binding Status}"
+                 TextWrapping="Wrap" />
+
+      <Grid Grid.RowSpan="3" Background="#DD202020">
+        <Grid.Style>
+          <Style TargetType="{x:Type Grid}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding IsSignInOverlayVisible}" Value="True">
+                <Setter Property="Visibility" Value="Visible" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Grid.Style>
+        <Border Width="360"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="#303030"
+                BorderBrush="#585858"
+                BorderThickness="1"
+                Padding="16">
+          <StackPanel>
+            <TextBlock Text="SocketJack.com Sign-in"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,10" />
+            <TextBlock Text="Sign in to load SocketJack Copilot servers and configure Visual Studio Copilot."
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,12" />
+            <Button Content="Sign in with browser"
+                    MinWidth="144"
+                    HorizontalAlignment="Left"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding BrowserSignInCommand}" />
+            <Button Content="That didn't work, let me log in here."
+                    MinWidth="220"
+                    HorizontalAlignment="Left"
+                    Margin="0,8,0,12"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding ShowInlineSignInCommand}" />
+            <StackPanel>
+              <StackPanel.Style>
+                <Style TargetType="{x:Type StackPanel}">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsInlineSignInVisible}" Value="True">
+                      <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </StackPanel.Style>
+              <TextBlock Text="User name" />
+              <TextBox MinHeight="26"
+                       Margin="0,4,0,10"
+                       Text="{Binding SignInUserName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                       Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+              <TextBlock Text="Password" />
+              <TextBox MinHeight="26"
+                       Margin="0,4,0,10"
+                       Text="{Binding SignInPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                       FontFamily="Wingdings"
+                       Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+              <CheckBox Content="Remember this sign-in"
+                        Margin="0,0,0,12"
+                        IsChecked="{Binding RememberSignIn, Mode=TwoWay}" />
+              <Button Content="Sign in here"
+                      MinWidth="96"
+                      HorizontalAlignment="Left"
+                      Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                      Command="{Binding SignInCommand}" />
+            </StackPanel>
+            <TextBlock Text="{Binding SignInError}"
+                       Foreground="#FFB4A9"
+                       TextWrapping="Wrap"
+                       Margin="0,12,0,0" />
+            <TextBlock Text="{Binding AuthStatus}"
+                       Foreground="#CFCFCF"
+                       TextWrapping="Wrap"
+                       Margin="0,8,0,0" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Grid>
+  </Border>
+</DataTemplate>

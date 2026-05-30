@@ -6,12 +6,16 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -222,6 +226,15 @@ namespace SocketJack.Net {
                 // standard TcpServer.
                 if ((assigned == _socketJackHandler || assigned == _webSocketHandler) && !(e.Obj is List<byte>))
                     return;
+                if (assigned != _socketJackHandler && assigned != _webSocketHandler && assigned != _httpHandler && assigned != _rtmpDelegateHandler) {
+                    byte[] assignedBytes = TryGetRawBytes(e.Obj);
+                    var assignedDecision = RecordEndpointSecurityProtocolEvent(e.Connection, assigned.Name, assignedBytes?.Length ?? 0, IsAdministrativeProtocol(assigned), 0.25, "protocol receive");
+                    if (!assignedDecision.Allowed) {
+                        CloseEndpointSecurityBlockedConnection(e.Connection, assignedDecision);
+                        return;
+                    }
+                    ApplyEndpointSecurityDelay(assignedDecision);
+                }
                 assigned.ProcessReceive(this, e.Connection, ref e);
                 return;
             }
@@ -234,6 +247,12 @@ namespace SocketJack.Net {
             // Check custom handlers first (in registration order).
             for (int i = 0; i < _handlers.Count; i++) {
                 if (_handlers[i].CanHandle(probe)) {
+                    var customDecision = RecordEndpointSecurityProtocolEvent(e.Connection, _handlers[i].Name, probe.Length, IsAdministrativeProtocol(_handlers[i]), 0.5, "protocol probe");
+                    if (!customDecision.Allowed) {
+                        CloseEndpointSecurityBlockedConnection(e.Connection, customDecision);
+                        return;
+                    }
+                    ApplyEndpointSecurityDelay(customDecision);
                     _connectionHandlers.TryAdd(connId, _handlers[i]);
                     _handlers[i].ProcessReceive(this, e.Connection, ref e);
                     return;
@@ -275,9 +294,18 @@ namespace SocketJack.Net {
                 && probe[0] == 0x03
                 && probe[5] == 0 && probe[6] == 0 && probe[7] == 0 && probe[8] == 0) {
                 _connectionHandlers.TryAdd(connId, _rtmpDelegateHandler);
+                e.Connection._Protocol = TcpProtocol.Rtmp;
+                e.Connection.SuppressConnectionTest = true;
                 GetRequestAsync(ref e);
                 return;
             }
+
+            var unknownDecision = RecordEndpointSecurityProtocolEvent(e.Connection, "unknown-protocol", probe.Length, false, 12.0, "unrecognized protocol probe");
+            if (!unknownDecision.Allowed) {
+                CloseEndpointSecurityBlockedConnection(e.Connection, unknownDecision);
+                return;
+            }
+            ApplyEndpointSecurityDelay(unknownDecision);
 
             // No handler matched — data flows through to other OnReceive subscribers.
         }
@@ -289,6 +317,14 @@ namespace SocketJack.Net {
             }
         }
 
+        private static bool IsAdministrativeProtocol(IProtocolHandler handler) {
+            string name = handler?.Name ?? "";
+            return name.Equals("TDS", StringComparison.OrdinalIgnoreCase)
+                || name.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("sql", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("database", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         #endregion
 
         #region Helpers
@@ -296,7 +332,7 @@ namespace SocketJack.Net {
         /// <summary>
         /// Overrides peer synchronization so that only connections confirmed as
         /// SocketJack receive broadcast peer updates.  Without this filter,
-        /// <see cref="ConnectedClientExtensions.SendBroadcast"/> pushes
+        /// <c>SendBroadcast</c> pushes
         /// SocketJack-framed bytes into every connection's send queue —
         /// including HTTP connections — corrupting their response stream.
         /// </summary>
@@ -341,7 +377,6 @@ namespace SocketJack.Net {
         public override void SendBroadcast(NetworkConnection[] ClientArray, object Obj, NetworkConnection Except = null) {
             if (ClientArray == null) return;
 
-            byte[] sjBytes = null;
             byte[] wsBytes = null;
 
             foreach (var conn in ClientArray) {
@@ -353,16 +388,7 @@ namespace SocketJack.Net {
                     continue;
                 if (_connectionHandlers.TryGetValue(conn.ID, out var handler)) {
                     if (handler == _socketJackHandler) {
-                        if (sjBytes == null) {
-                            var wrapped = new Wrapper(Obj, this);
-                            var raw = Options.Serializer.Serialize(wrapped);
-                            byte[] processed = Options.UseCompression ? Options.CompressionAlgorithm.Compress(raw) : raw;
-                            sjBytes = processed.Terminate();
-                        }
-                        lock (conn.SendQueueRaw) {
-                            conn.SendQueueRaw.AddRange(sjBytes);
-                        }
-                        try { conn._SendSignal.Release(); } catch (ObjectDisposedException) { }
+                        conn.TryEnqueueSendBytes(BuildSocketJackPatternFrame(conn, Obj));
                     } else if (handler == _webSocketHandler) {
                         if (wsBytes == null) {
                             byte[] payload = Options.Serializer.Serialize(new Wrapper(Obj, this));
@@ -390,7 +416,6 @@ namespace SocketJack.Net {
 
         private void SendBroadcastToSocketJackOnly(object Obj, NetworkConnection Except) {
             // Pre-serialize once per protocol type to avoid redundant work per client.
-            byte[] sjBytes = null;   // SocketJack framed bytes (serialize + terminate)
             byte[] wsBytes = null;   // WebSocket framed bytes (serialize + frame header)
 
             foreach (var kvp in Clients) {
@@ -403,16 +428,7 @@ namespace SocketJack.Net {
                     continue;
                 if (_connectionHandlers.TryGetValue(conn.ID, out var handler)) {
                     if (handler == _socketJackHandler) {
-                        if (sjBytes == null) {
-                            var wrapped = new Wrapper(Obj, this);
-                            var raw = Options.Serializer.Serialize(wrapped);
-                            byte[] processed = Options.UseCompression ? Options.CompressionAlgorithm.Compress(raw) : raw;
-                            sjBytes = processed.Terminate();
-                        }
-                        lock (conn.SendQueueRaw) {
-                            conn.SendQueueRaw.AddRange(sjBytes);
-                        }
-                        try { conn._SendSignal.Release(); } catch (ObjectDisposedException) { }
+                        conn.TryEnqueueSendBytes(BuildSocketJackPatternFrame(conn, Obj));
                     } else if (handler == _webSocketHandler) {
                         if (wsBytes == null) {
                             byte[] payload = Options.Serializer.Serialize(new Wrapper(Obj, this));
@@ -436,6 +452,14 @@ namespace SocketJack.Net {
                     }
                 }
             }
+        }
+
+        private byte[] BuildSocketJackPatternFrame(NetworkConnection connection, object obj) {
+            var wrapped = new Wrapper(obj, this);
+            var raw = Options.Serializer.Serialize(wrapped);
+            raw = connection.PatternCache.PrepareSend(raw, Options);
+            byte[] processed = Options.UseCompression ? Options.CompressionAlgorithm.Compress(raw) : raw;
+            return processed.Terminate();
         }
 
         /// <summary>
@@ -608,9 +632,14 @@ namespace SocketJack.Net {
                     && data[5] == 0 && data[6] == 0 && data[7] == 0 && data[8] == 0;
             }
             public void ProcessReceive(MutableTcpServer server, NetworkConnection connection, ref IReceivedEventArgs e) {
+                connection._Protocol = TcpProtocol.Rtmp;
+                connection.SuppressConnectionTest = true;
                 server.GetRequestAsync(ref e);
             }
-            public void OnDisconnected(MutableTcpServer server, NetworkConnection connection) { }
+            public void OnDisconnected(MutableTcpServer server, NetworkConnection connection) {
+                if (connection != null)
+                    connection.SuppressConnectionTest = false;
+            }
         }
     }
 
@@ -706,12 +735,26 @@ namespace SocketJack.Net {
                 buffer.CopyTo(15, payload, 0, payloadLength);
                 buffer.RemoveRange(0, totalFrameSize);
 
+                var securityDecision = target.RecordEndpointSecuritySocketJackFrame(sender, payloadLength);
+                if (!securityDecision.Allowed) {
+                    target.CloseEndpointSecurityBlockedConnection(sender, securityDecision);
+                    return;
+                }
+                target.ApplyEndpointSecurityDelay(securityDecision);
+
+
                 // Deserialize and dispatch through the normal SocketJack pipeline.
                 Task.Run(() => {
                     try {
                         byte[] bytes = payload;
                         if (target.Options.UseCompression) {
                             bytes = target.Options.CompressionAlgorithm.Decompress(bytes);
+                        }
+                        if (sender != null && sender.PatternCache != null) {
+                            if (!sender.PatternCache.TryResolveReceived(bytes, target.Options, out bytes, out string cacheError)) {
+                                target.InvokeOnError(sender, new Exception(cacheError));
+                                return;
+                            }
                         }
                         Wrapper wrapper = target.Options.Serializer.Deserialize(bytes);
                         if (wrapper == null) return;
@@ -734,6 +777,517 @@ namespace SocketJack.Net {
         }
     }
 
+    public class WebChatApiWebSocketProtocolHandler : IProtocolHandler {
+        public string Name => "WebChatApiWebSocket";
+
+        private const string WebSocketMagicGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        private const int OpcodeText = 0x1;
+        private const int OpcodeBinary = 0x2;
+        private const int OpcodeClose = 0x8;
+        private const int OpcodePing = 0x9;
+        private const int OpcodePong = 0xA;
+
+        private readonly string _path;
+        private readonly ConcurrentDictionary<Guid, State> _states = new ConcurrentDictionary<Guid, State>();
+
+        public WebChatApiWebSocketProtocolHandler(string path = "/api/web-chat/ws") {
+            _path = NormalizeWebSocketPath(path);
+        }
+
+        public bool CanHandle(byte[] data) {
+            if (data == null || data.Length < 20)
+                return false;
+            if (data[0] != (byte)'G' || data[1] != (byte)'E' || data[2] != (byte)'T' || data[3] != (byte)' ')
+                return false;
+
+            string text = Encoding.UTF8.GetString(data, 0, Math.Min(data.Length, 4096));
+            if (text.IndexOf("Upgrade:", StringComparison.OrdinalIgnoreCase) < 0 ||
+                text.IndexOf("websocket", StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+
+            string path = GetRequestPath(text);
+            return string.Equals(path, _path, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public void ProcessReceive(MutableTcpServer server, NetworkConnection connection, ref IReceivedEventArgs e) {
+            byte[] incoming = MutableTcpServer.TryGetRawBytes(e.Obj);
+            if (incoming == null || incoming.Length == 0)
+                return;
+
+            var state = _states.GetOrAdd(connection.ID, _ => new State());
+            lock (state) {
+                state.Buffer.AddRange(incoming);
+                if (!state.HandshakeComplete)
+                    TryCompleteHandshake(server, connection, state);
+                else
+                    ProcessFrames(server, connection, state);
+            }
+        }
+
+        public void OnDisconnected(MutableTcpServer server, NetworkConnection connection) {
+            if (connection == null)
+                return;
+            if (_states.TryRemove(connection.ID, out State state)) {
+                foreach (CancellationTokenSource cts in state.Requests.Values) {
+                    try { cts.Cancel(); } catch { }
+                    try { cts.Dispose(); } catch { }
+                }
+            }
+        }
+
+        private static string NormalizeWebSocketPath(string path) {
+            if (string.IsNullOrWhiteSpace(path))
+                return "/";
+            path = path.Trim();
+            return path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
+        }
+
+        private static string GetRequestPath(string requestText) {
+            string firstLine = requestText.Split(new[] { "\r\n" }, StringSplitOptions.None).FirstOrDefault() ?? "";
+            string[] parts = firstLine.Split(' ');
+            if (parts.Length < 2)
+                return "";
+            string target = parts[1];
+            int query = target.IndexOf('?');
+            return query >= 0 ? target.Substring(0, query) : target;
+        }
+
+        private static void TryCompleteHandshake(MutableTcpServer server, NetworkConnection connection, State state) {
+            int hdrEnd = FindHeaderEnd(state.Buffer);
+            if (hdrEnd < 0)
+                return;
+
+            string request = Encoding.UTF8.GetString(state.Buffer.ToArray(), 0, hdrEnd);
+            try {
+                var parsedRequest = HttpServer.ParseHttpRequest(Encoding.UTF8.GetBytes(request));
+                var securityDecision = server.EvaluateEndpointSecurityHttpRequest(connection, parsedRequest);
+                if (!securityDecision.Allowed) {
+                    SendHttpResponse(connection, HttpServer.EndpointSecurityStatusText(securityDecision), securityDecision.Message);
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+                server.ApplyEndpointSecurityDelay(securityDecision);
+                if (!server.IsHostAllowed(parsedRequest)) {
+                    SendHttpResponse(connection, "421 Misdirected Request", "421 Misdirected Request");
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+            } catch {
+                try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                return;
+            }
+
+            string secKey = "";
+            foreach (string line in request.Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries)) {
+                if (line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase)) {
+                    secKey = line.Substring(line.IndexOf(':') + 1).Trim();
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(secKey)) {
+                try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                return;
+            }
+
+            string acceptKey;
+            using (SHA1 sha1 = SHA1.Create()) {
+                byte[] hash = sha1.ComputeHash(Encoding.UTF8.GetBytes(secKey + WebSocketMagicGuid));
+                acceptKey = Convert.ToBase64String(hash);
+            }
+
+            byte[] responseBytes = Encoding.UTF8.GetBytes(
+                "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: websocket\r\n" +
+                "Connection: Upgrade\r\n" +
+                "Sec-WebSocket-Accept: " + acceptKey + "\r\n" +
+                "\r\n");
+            try {
+                Stream stream = connection.Stream;
+                stream.Write(responseBytes, 0, responseBytes.Length);
+                stream.Flush();
+            } catch (Exception ex) {
+                server.InvokeOnError(connection, ex);
+                return;
+            }
+
+            state.HandshakeComplete = true;
+            state.Buffer.RemoveRange(0, hdrEnd);
+            SendJson(connection, state, new JsonObject {
+                ["type"] = "ready",
+                ["ok"] = true,
+                ["transport"] = "websocket",
+                ["secure"] = connection.SSL,
+                ["sentUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+            });
+
+            if (state.Buffer.Count > 0)
+                ProcessFrames(server, connection, state);
+        }
+
+        private static int FindHeaderEnd(List<byte> buffer) {
+            for (int i = 0; i <= buffer.Count - 4; i++) {
+                if (buffer[i] == (byte)'\r' && buffer[i + 1] == (byte)'\n' &&
+                    buffer[i + 2] == (byte)'\r' && buffer[i + 3] == (byte)'\n')
+                    return i + 4;
+            }
+            return -1;
+        }
+
+        private static void ProcessFrames(MutableTcpServer server, NetworkConnection connection, State state) {
+            while (state.Buffer.Count >= 2) {
+                int offset = 0;
+                byte b0 = state.Buffer[offset++];
+                byte b1 = state.Buffer[offset++];
+                int opcode = b0 & 0x0F;
+                bool masked = (b1 & 0x80) != 0;
+                long payloadLen = b1 & 0x7F;
+
+                if (payloadLen == 126) {
+                    if (state.Buffer.Count < offset + 2) return;
+                    payloadLen = (state.Buffer[offset] << 8) | state.Buffer[offset + 1];
+                    offset += 2;
+                } else if (payloadLen == 127) {
+                    if (state.Buffer.Count < offset + 8) return;
+                    payloadLen = 0;
+                    for (int i = 0; i < 8; i++)
+                        payloadLen = (payloadLen << 8) | state.Buffer[offset + i];
+                    offset += 8;
+                }
+
+                if (payloadLen > int.MaxValue) {
+                    SendCloseFrame(connection);
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+
+                byte[] maskKey = null;
+                if (masked) {
+                    if (state.Buffer.Count < offset + 4) return;
+                    maskKey = new byte[4];
+                    for (int i = 0; i < 4; i++)
+                        maskKey[i] = state.Buffer[offset + i];
+                    offset += 4;
+                }
+
+                if (state.Buffer.Count < offset + payloadLen)
+                    return;
+
+                int count = (int)payloadLen;
+                byte[] payload = new byte[count];
+                state.Buffer.CopyTo(offset, payload, 0, count);
+                state.Buffer.RemoveRange(0, offset + count);
+                if (masked && maskKey != null) {
+                    for (int i = 0; i < count; i++)
+                        payload[i] ^= maskKey[i % 4];
+                }
+
+                var securityDecision = server.RecordEndpointSecurityWebSocketFrame(connection, count);
+                if (!securityDecision.Allowed) {
+                    SendCloseFrame(connection);
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+                server.ApplyEndpointSecurityDelay(securityDecision);
+
+                switch (opcode) {
+                    case OpcodeText:
+                        HandleText(server, connection, state, Encoding.UTF8.GetString(payload));
+                        break;
+                    case OpcodeBinary:
+                        break;
+                    case OpcodeClose:
+                        SendCloseFrame(connection);
+                        try { connection.Close(server, DisconnectionReason.RemoteSocketClosed); } catch { }
+                        return;
+                    case OpcodePing:
+                        SendFrame(connection, state, payload, useBinary: false, opcode: OpcodePong);
+                        break;
+                    case OpcodePong:
+                        break;
+                }
+            }
+        }
+
+        private static void HandleText(MutableTcpServer server, NetworkConnection connection, State state, string text) {
+            JsonObject message;
+            try {
+                message = JsonNode.Parse(text)?.AsObject();
+            } catch {
+                return;
+            }
+            if (message == null)
+                return;
+
+            string type = JsonText(message, "type", "");
+            if (type.Equals("ping", StringComparison.OrdinalIgnoreCase)) {
+                SendJson(connection, state, new JsonObject {
+                    ["type"] = "pong",
+                    ["sentUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+                });
+                return;
+            }
+
+            string id = JsonText(message, "id", JsonText(message, "requestId", ""));
+            if (type.Equals("cancel", StringComparison.OrdinalIgnoreCase)) {
+                if (!string.IsNullOrWhiteSpace(id) && state.Requests.TryRemove(id, out CancellationTokenSource cts)) {
+                    try { cts.Cancel(); } catch { }
+                    try { cts.Dispose(); } catch { }
+                }
+                return;
+            }
+
+            if (!type.Equals("request", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(id))
+                return;
+
+            var requestCts = new CancellationTokenSource();
+            state.Requests[id] = requestCts;
+            Task.Run(async () => {
+                try {
+                    await HandleRequestAsync(server, connection, state, id, message, requestCts.Token).ConfigureAwait(false);
+                } catch (OperationCanceledException) {
+                    SendJson(connection, state, new JsonObject {
+                        ["type"] = "error",
+                        ["id"] = id,
+                        ["error"] = "Request canceled."
+                    });
+                } catch (Exception ex) {
+                    SendJson(connection, state, new JsonObject {
+                        ["type"] = "error",
+                        ["id"] = id,
+                        ["error"] = ex.Message
+                    });
+                } finally {
+                    state.Requests.TryRemove(id, out _);
+                    requestCts.Dispose();
+                }
+            });
+        }
+
+        private static async Task HandleRequestAsync(MutableTcpServer server, NetworkConnection connection, State state, string id, JsonObject message, CancellationToken cancellationToken) {
+            bool responseStarted = false;
+            var request = BuildHttpRequest(message);
+            var callbacks = new HttpStreamDispatchCallbacks {
+                OnStart = response => {
+                    responseStarted = true;
+                    SendResponseStart(connection, state, id, response);
+                },
+                OnChunk = (buffer, offset, count) => {
+                    if (!responseStarted) {
+                        responseStarted = true;
+                        SendResponseStart(connection, state, id, request.Context.Response);
+                    }
+                    SendBinaryChunk(connection, state, id, buffer, offset, count);
+                },
+                OnEnd = () => SendResponseEnd(connection, state, id, request.Context)
+            };
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            HttpDispatchResult result = await server.DispatchMappedHttpRequestAsync(connection, request, callbacks, cancellationToken).ConfigureAwait(false);
+            stopwatch.Stop();
+            if (result.Streamed)
+                return;
+
+            SendResponseStart(connection, state, id, result.Response);
+            byte[] body = result.BodyBytes ?? Array.Empty<byte>();
+            if (body.Length > 0)
+                SendBinaryChunk(connection, state, id, body, 0, body.Length);
+            SendResponseEnd(connection, state, id, result.Context, (int)Math.Min(int.MaxValue, stopwatch.ElapsedMilliseconds));
+        }
+
+        private static HttpRequest BuildHttpRequest(JsonObject message) {
+            string method = JsonText(message, "method", "GET").ToUpperInvariant();
+            string path = NormalizeRequestPath(JsonText(message, "path", "/"));
+            string queryString = JsonText(message, "queryString", "");
+            int queryIndex = path.IndexOf('?');
+            if (queryIndex >= 0) {
+                if (string.IsNullOrWhiteSpace(queryString))
+                    queryString = path.Substring(queryIndex + 1);
+                path = path.Substring(0, queryIndex);
+            }
+
+            byte[] body = DecodeBody(message);
+            JsonObject headers = JsonObjectProperty(message, "headers");
+            var headerBuilder = new StringBuilder();
+            headerBuilder.Append(method).Append(' ').Append(path);
+            if (!string.IsNullOrEmpty(queryString))
+                headerBuilder.Append('?').Append(queryString);
+            headerBuilder.Append(" HTTP/1.1\r\n");
+            bool hasHost = false;
+            bool hasContentLength = false;
+            if (headers != null) {
+                foreach (KeyValuePair<string, JsonNode> kv in headers) {
+                    string name = kv.Key ?? "";
+                    if (string.IsNullOrWhiteSpace(name) || ShouldSkipEnvelopeHeader(name))
+                        continue;
+                    string value = kv.Value?.ToString() ?? "";
+                    if (name.Equals("Host", StringComparison.OrdinalIgnoreCase))
+                        hasHost = true;
+                    if (name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                        hasContentLength = true;
+                    headerBuilder.Append(name).Append(": ").Append(value.Replace("\r", "").Replace("\n", "")).Append("\r\n");
+                }
+            }
+            if (!hasHost)
+                headerBuilder.Append("Host: localhost\r\n");
+            if (!hasContentLength)
+                headerBuilder.Append("Content-Length: ").Append(body.Length.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
+            headerBuilder.Append("\r\n");
+
+            byte[] headerBytes = Encoding.UTF8.GetBytes(headerBuilder.ToString());
+            byte[] raw = new byte[headerBytes.Length + body.Length];
+            Buffer.BlockCopy(headerBytes, 0, raw, 0, headerBytes.Length);
+            if (body.Length > 0)
+                Buffer.BlockCopy(body, 0, raw, headerBytes.Length, body.Length);
+            return HttpServer.ParseHttpRequest(raw);
+        }
+
+        private static string NormalizeRequestPath(string path) {
+            if (string.IsNullOrWhiteSpace(path))
+                return "/";
+            path = path.Trim();
+            return path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
+        }
+
+        private static bool ShouldSkipEnvelopeHeader(string name) {
+            return name.Equals("Connection", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Upgrade", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Keep-Alive", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Proxy-Connection", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static byte[] DecodeBody(JsonObject message) {
+            string bodyBase64 = JsonText(message, "bodyBase64", "");
+            if (!string.IsNullOrWhiteSpace(bodyBase64)) {
+                try { return Convert.FromBase64String(bodyBase64); } catch { }
+            }
+            string bodyText = JsonText(message, "bodyText", "");
+            return string.IsNullOrEmpty(bodyText) ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(bodyText);
+        }
+
+        private static void SendResponseStart(NetworkConnection connection, State state, string id, HttpResponse response) {
+            var headers = new JsonObject();
+            if (response?.Headers != null) {
+                foreach (KeyValuePair<string, string> header in response.Headers)
+                    headers[header.Key] = header.Value;
+            }
+            SendJson(connection, state, new JsonObject {
+                ["type"] = "response-start",
+                ["id"] = id,
+                ["statusCode"] = response?.StatusCodeNumber ?? 200,
+                ["reasonPhrase"] = response?.ReasonPhrase ?? "OK",
+                ["contentType"] = response?.ContentType ?? "application/octet-stream",
+                ["headers"] = headers
+            });
+        }
+
+        private static void SendResponseEnd(NetworkConnection connection, State state, string id, HttpContext context, int durationMs = 0) {
+            SendJson(connection, state, new JsonObject {
+                ["type"] = "response-end",
+                ["id"] = id,
+                ["statusCode"] = context?.StatusCodeNumber ?? 200,
+                ["durationMs"] = durationMs
+            });
+        }
+
+        private static void SendBinaryChunk(NetworkConnection connection, State state, string id, byte[] buffer, int offset, int count) {
+            if (buffer == null || count <= 0)
+                return;
+            byte[] idBytes = Encoding.ASCII.GetBytes(FixedRequestId(id));
+            byte[] payload = new byte[32 + count];
+            Buffer.BlockCopy(idBytes, 0, payload, 0, 32);
+            Buffer.BlockCopy(buffer, offset, payload, 32, count);
+            SendFrame(connection, state, payload, useBinary: true, opcode: OpcodeBinary);
+        }
+
+        private static string FixedRequestId(string id) {
+            id = (id ?? "").Trim();
+            if (id.Length > 32)
+                return id.Substring(0, 32);
+            return id.PadRight(32, ' ');
+        }
+
+        private static void SendJson(NetworkConnection connection, State state, JsonObject payload) {
+            byte[] bytes = Encoding.UTF8.GetBytes(payload.ToJsonString());
+            SendFrame(connection, state, bytes, useBinary: false, opcode: OpcodeText);
+        }
+
+        private static void SendFrame(NetworkConnection connection, State state, byte[] payload, bool useBinary, int opcode) {
+            try {
+                byte[] frame = opcode == OpcodeText || opcode == OpcodeBinary
+                    ? WebSocketFrameHelper.BuildFrame(payload ?? Array.Empty<byte>(), useBinary)
+                    : BuildControlFrame(opcode, payload ?? Array.Empty<byte>());
+                Stream stream = connection.Stream;
+                if (stream == null)
+                    return;
+                lock (state.SendLock) {
+                    stream.Write(frame, 0, frame.Length);
+                    stream.Flush();
+                }
+            } catch { }
+        }
+
+        private static byte[] BuildControlFrame(int opcode, byte[] payload) {
+            payload ??= Array.Empty<byte>();
+            if (payload.Length > 125)
+                payload = payload.Take(125).ToArray();
+            byte[] frame = new byte[2 + payload.Length];
+            frame[0] = (byte)(0x80 | opcode);
+            frame[1] = (byte)payload.Length;
+            if (payload.Length > 0)
+                Buffer.BlockCopy(payload, 0, frame, 2, payload.Length);
+            return frame;
+        }
+
+        private static void SendCloseFrame(NetworkConnection connection) {
+            try {
+                Stream stream = connection.Stream;
+                if (stream == null)
+                    return;
+                byte[] close = new byte[] { 0x88, 0x00 };
+                stream.Write(close, 0, close.Length);
+                stream.Flush();
+            } catch { }
+        }
+
+        private static void SendHttpResponse(NetworkConnection connection, string status, string body) {
+            try {
+                byte[] bodyBytes = Encoding.UTF8.GetBytes(body ?? "");
+                byte[] headerBytes = Encoding.UTF8.GetBytes(
+                    "HTTP/1.1 " + status + "\r\n" +
+                    "Content-Type: text/plain\r\n" +
+                    "Content-Length: " + bodyBytes.Length.ToString(CultureInfo.InvariantCulture) + "\r\n" +
+                    "Connection: close\r\n\r\n");
+                Stream stream = connection.Stream;
+                if (stream == null)
+                    return;
+                stream.Write(headerBytes, 0, headerBytes.Length);
+                if (bodyBytes.Length > 0)
+                    stream.Write(bodyBytes, 0, bodyBytes.Length);
+                stream.Flush();
+            } catch { }
+        }
+
+        private static string JsonText(JsonObject obj, string name, string fallback) {
+            if (obj == null || string.IsNullOrWhiteSpace(name) || !obj.TryGetPropertyValue(name, out JsonNode node) || node == null)
+                return fallback;
+            return node.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : node.ToString();
+        }
+
+        private static JsonObject JsonObjectProperty(JsonObject obj, string name) {
+            if (obj == null || !obj.TryGetPropertyValue(name, out JsonNode node) || node == null)
+                return null;
+            return node as JsonObject;
+        }
+
+        private sealed class State {
+            public bool HandshakeComplete;
+            public List<byte> Buffer = new List<byte>();
+            public object SendLock = new object();
+            public ConcurrentDictionary<string, CancellationTokenSource> Requests = new ConcurrentDictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
     /// <summary>
     /// Detects WebSocket upgrade requests and manages WebSocket (RFC 6455)
     /// connections inside a <see cref="MutableTcpServer"/>. After completing
@@ -816,8 +1370,25 @@ namespace SocketJack.Net {
                 return;
 
             string request = Encoding.UTF8.GetString(state.Buffer.ToArray(), 0, hdrEnd);
+            try {
+                var parsedRequest = HttpServer.ParseHttpRequest(Encoding.UTF8.GetBytes(request));
+                var securityDecision = server.EvaluateEndpointSecurityHttpRequest(connection, parsedRequest);
+                if (!securityDecision.Allowed) {
+                    SendHttpResponse(connection, HttpServer.EndpointSecurityStatusText(securityDecision), securityDecision.Message);
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+                server.ApplyEndpointSecurityDelay(securityDecision);
+                if (!server.IsHostAllowed(parsedRequest)) {
+                    SendHttpResponse(connection, "421 Misdirected Request", "421 Misdirected Request");
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+            } catch {
+                try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                return;
+            }
 
-            // Extract Sec-WebSocket-Key header value.
             string secKey = null;
             foreach (var line in request.Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries)) {
                 if (line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase)) {
@@ -831,14 +1402,12 @@ namespace SocketJack.Net {
                 return;
             }
 
-            // Compute the Sec-WebSocket-Accept value per RFC 6455.
             string acceptKey;
             using (var sha1 = SHA1.Create()) {
                 byte[] hash = sha1.ComputeHash(Encoding.UTF8.GetBytes(secKey + WebSocketMagicGuid));
                 acceptKey = Convert.ToBase64String(hash);
             }
 
-            // Send 101 Switching Protocols response.
             string response =
                 "HTTP/1.1 101 Switching Protocols\r\n" +
                 "Upgrade: websocket\r\n" +
@@ -858,23 +1427,36 @@ namespace SocketJack.Net {
             }
 
             state.HandshakeComplete = true;
-
-            // Remove consumed header bytes; any remaining bytes are frame data.
             state.Buffer.RemoveRange(0, hdrEnd);
 
-            // Initialize peer if P2P is enabled.
             if (server.Options.UsePeerToPeer) {
                 server.InitializePeer(connection);
             }
 
             server.InvokeWebSocketClientConnected(connection);
 
-            // Process any trailing frame data that arrived with the upgrade request.
             if (state.Buffer.Count > 0) {
                 ProcessFrames(server, connection, state);
             }
         }
 
+        private static void SendHttpResponse(NetworkConnection connection, string status, string body) {
+            try {
+                var bodyBytes = Encoding.UTF8.GetBytes(body ?? "");
+                var headerBytes = Encoding.UTF8.GetBytes(
+                    "HTTP/1.1 " + status + "\r\n" +
+                    "Content-Type: text/plain\r\n" +
+                    "Content-Length: " + bodyBytes.Length + "\r\n" +
+                    "Connection: close\r\n\r\n");
+                var stream = connection.Stream;
+                if (stream != null) {
+                    stream.Write(headerBytes, 0, headerBytes.Length);
+                    if (bodyBytes.Length > 0)
+                        stream.Write(bodyBytes, 0, bodyBytes.Length);
+                    stream.Flush();
+                }
+            } catch { }
+        }
         #endregion
 
         #region Frame Processing
@@ -901,17 +1483,22 @@ namespace SocketJack.Net {
                     offset += 8;
                 }
 
+                if (payloadLen > int.MaxValue) {
+                    SendCloseFrame(connection);
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+
                 if (masked) {
                     if (state.Buffer.Count < offset + 4) return;
-                    offset += 4; // mask key is 4 bytes — read below
+                    offset += 4;
                 }
 
                 if (state.Buffer.Count < offset + payloadLen)
-                    return; // incomplete frame, wait for more data
+                    return;
 
                 int intPayloadLen = (int)payloadLen;
 
-                // Read mask key (positioned just before payload).
                 byte[] maskKey = null;
                 if (masked) {
                     int maskOffset = offset - 4;
@@ -924,11 +1511,18 @@ namespace SocketJack.Net {
                 state.Buffer.CopyTo(offset, payload, 0, intPayloadLen);
                 state.Buffer.RemoveRange(0, offset + intPayloadLen);
 
-                // Unmask payload.
                 if (masked && maskKey != null) {
                     for (int i = 0; i < intPayloadLen; i++)
                         payload[i] ^= maskKey[i % 4];
                 }
+
+                var securityDecision = server.RecordEndpointSecurityWebSocketFrame(connection, intPayloadLen);
+                if (!securityDecision.Allowed) {
+                    SendCloseFrame(connection);
+                    try { connection.Close(server, DisconnectionReason.LocalSocketClosed); } catch { }
+                    return;
+                }
+                server.ApplyEndpointSecurityDelay(securityDecision);
 
                 switch (opcode) {
                     case OpcodeText:
@@ -981,10 +1575,6 @@ namespace SocketJack.Net {
 
         #region Sending
 
-        /// <summary>
-        /// Serializes <paramref name="obj"/> and sends it as a WebSocket frame
-        /// directly on <paramref name="connection"/>'s stream.
-        /// </summary>
         internal void SendObject(MutableTcpServer server, NetworkConnection connection, object obj) {
             if (connection == null || connection.Closed || connection.Socket == null || !connection.Socket.Connected)
                 return;
@@ -1027,7 +1617,6 @@ namespace SocketJack.Net {
             try {
                 var stream = connection.Stream;
                 if (stream != null) {
-                    // Pong frame: FIN + opcode 0xA, then length + payload.
                     int headerLen;
                     byte[] frame;
                     if (payload.Length <= 125) {
@@ -1050,10 +1639,6 @@ namespace SocketJack.Net {
             } catch { }
         }
 
-        /// <summary>
-        /// Sends JavaScript class constructors for all whitelisted types so that
-        /// browser clients can create typed objects for the SocketJack protocol.
-        /// </summary>
         private static void SendConstructors(MutableTcpServer server, NetworkConnection connection) {
             var script = new SocketJack.Net.WebSockets.WebSocketServer.JSContructors(WebSocketFrameHelper.GenerateJSConstructors(server.Options.Whitelist));
             try {
@@ -1070,7 +1655,6 @@ namespace SocketJack.Net {
         }
 
         #endregion
-
         private class WebSocketState {
             public bool HandshakeComplete;
             public List<byte> Buffer = new List<byte>();
@@ -1231,6 +1815,24 @@ namespace SocketJack.Net {
             return _server.RemoveRoute(method, path);
         }
 
+        /// <inheritdoc cref="HttpServer.MapHost(string, string, string, HttpServer.RouteHandler)"/>
+        public void MapHost(string hostName, string method, string path, RouteHandler handler) {
+            EnsureServer();
+            _server.MapHost(hostName, method, path, (HttpServer.RouteHandler)((conn, req, ct) => handler(conn, req, ct)));
+        }
+
+        /// <inheritdoc cref="HttpServer.MapHost{T}(string, string, string, HttpServer.RouteHandler{T})"/>
+        public void MapHost<T>(string hostName, string method, string path, RouteHandler<T> handler) {
+            EnsureServer();
+            _server.MapHost<T>(hostName, method, path, (HttpServer.RouteHandler<T>)((conn, body, req, ct) => handler(conn, body, req, ct)));
+        }
+
+        /// <inheritdoc cref="HttpServer.RemoveHostRoute"/>
+        public bool RemoveHostRoute(string hostName, string method, string path) {
+            EnsureServer();
+            return _server.RemoveHostRoute(hostName, method, path);
+        }
+
         /// <inheritdoc cref="HttpServer.MapStream"/>
         public void MapStream(string method, string path, StreamRouteHandler handler) {
             EnsureServer();
@@ -1249,7 +1851,9 @@ namespace SocketJack.Net {
             return _server.RemoveUploadStreamRoute(method, path);
         }
 
-        /// <inheritdoc cref="HttpServer.MapDirectory"/>
+        /// <summary>
+        /// Maps a local directory to a URL prefix.
+        /// </summary>
         public void MapDirectory(string urlPrefix, string localDirectory) {
             EnsureServer();
             _server.MapDirectory(urlPrefix, localDirectory);
@@ -1280,6 +1884,66 @@ namespace SocketJack.Net {
         public bool RemoveFileMapping(string urlPath) {
             EnsureServer();
             return _server.RemoveFileMapping(urlPath);
+        }
+
+        /// <inheritdoc cref="HttpServer.MapHostDirectory(string, string, string)"/>
+        public void MapHostDirectory(string hostName, string urlPrefix, string localDirectory) {
+            EnsureServer();
+            _server.MapHostDirectory(hostName, urlPrefix, localDirectory);
+        }
+
+        /// <inheritdoc cref="HttpServer.MapHostDirectory(string, string, string, Action{HtAccessBuilder})"/>
+        public void MapHostDirectory(string hostName, string urlPrefix, string localDirectory, Action<HtAccessBuilder> configure) {
+            EnsureServer();
+            _server.MapHostDirectory(hostName, urlPrefix, localDirectory, configure);
+        }
+
+        /// <inheritdoc cref="HttpServer.RemoveHostDirectoryMapping"/>
+        public bool RemoveHostDirectoryMapping(string hostName, string urlPrefix) {
+            EnsureServer();
+            return _server.RemoveHostDirectoryMapping(hostName, urlPrefix);
+        }
+
+        /// <inheritdoc cref="HttpServer.MapHostFile"/>
+        public void MapHostFile(string hostName, string urlPath, string localFilePath) {
+            EnsureServer();
+            _server.MapHostFile(hostName, urlPath, localFilePath);
+        }
+
+        /// <inheritdoc cref="HttpServer.RemoveHostFileMapping"/>
+        public bool RemoveHostFileMapping(string hostName, string urlPath) {
+            EnsureServer();
+            return _server.RemoveHostFileMapping(hostName, urlPath);
+        }
+
+        /// <inheritdoc cref="HttpServer.MapSubdomain"/>
+        public void MapSubdomain(string hostName, string targetBaseUrl) {
+            EnsureServer();
+            _server.MapSubdomain(hostName, targetBaseUrl);
+        }
+
+        /// <inheritdoc cref="HttpServer.ProxyHost(string, string)"/>
+        public void ProxyHost(string hostName, string targetBaseUrl) {
+            EnsureServer();
+            _server.ProxyHost(hostName, targetBaseUrl);
+        }
+
+        /// <inheritdoc cref="HttpServer.ProxyHost(string, string, bool)"/>
+        public void ProxyHost(string hostName, string targetBaseUrl, bool preserveHostHeader) {
+            EnsureServer();
+            _server.ProxyHost(hostName, targetBaseUrl, preserveHostHeader);
+        }
+
+        /// <inheritdoc cref="HttpServer.ProxyHost(string, string, int, bool)"/>
+        public void ProxyHost(string hostName, string targetHost, int targetPort, bool useHttps = false) {
+            EnsureServer();
+            _server.ProxyHost(hostName, targetHost, targetPort, useHttps);
+        }
+
+        /// <inheritdoc cref="HttpServer.RemoveHostProxy"/>
+        public bool RemoveHostProxy(string hostName) {
+            EnsureServer();
+            return _server.RemoveHostProxy(hostName);
         }
 
         #endregion

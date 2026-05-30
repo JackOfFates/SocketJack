@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "JackLLMUpdater": {
+      "commandName": "Project",
+      "commandLineArgs": "--diff"
+    }
+  }
+}

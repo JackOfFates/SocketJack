@@ -168,7 +168,9 @@ namespace SocketJack.Net {
         /// <summary>WebSocket (RFC 6455) protocol.</summary>
         WebSocket,
         /// <summary>TDS (Tabular Data Stream) protocol used by MSSQL.</summary>
-        Tds
+        Tds,
+        /// <summary>RTMP live media publishing protocol.</summary>
+        Rtmp
     }
 
     public class ConnectedEventArgs {

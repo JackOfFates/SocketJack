@@ -9,6 +9,9 @@
 *.user
 *.userosscache
 *.sln.docstates
+.env
+.env.*
+!.env.example
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -365,3 +368,38 @@ FodyWeavers.xsd
 /.gitignore
 /Tests/TestControls/MultiTest.xaml
 /SocketJack.Tests
+
+# Local secrets
+.env
+.env.*
+!.env.example
+*.pfx
+*.snk
+
+# Runtime/session logs can contain tokens, admin passwords, or SSH output.
+log_sess*.txt
+**/log_sess*.txt
+**/[Ll]og*.txt
+**/*[Ll]og*.txt
+**/*[Ll]ogs*.txt
+**/*activitylog*.xml
+**/[Aa]udit/*.jsonl
+
+# Local LLM model payloads and generated runtimes
+[Mm]odels/
+**/[Mm]odels/
+*.gguf
+*.gguf.partial
+*.safetensors
+*.safetensors.partial
+*.onnx
+*.onnx.partial
+/tools/DirectML/
+
+# Local tool payloads and backup artifacts
+[Tt]ools/.secrets/
+**/[Tt]ools/.secrets/
+**/[Tt]ools/bin/
+**/[Tt]ools/**/*.exe
+**/[Tt]ools/**/*.dll
+/.vsix-bridge-backups/

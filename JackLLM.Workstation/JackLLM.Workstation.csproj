@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>JackLLM.Workstation</AssemblyName>
+    <RootNamespace>JackLLM.Workstation</RootNamespace>
+    <AssemblyTitle>JackLLM Workstation</AssemblyTitle>
+    <Product>JackLLM Workstation</Product>
+    <Version>2026.0</Version>
+    <AssemblyVersion>2026.0.0.0</AssemblyVersion>
+    <FileVersion>2026.0.0.0</FileVersion>
+    <InformationalVersion>2026</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JackONNX\JackONNX.csproj" />
+    <ProjectReference Include="..\LlmRuntime\LlmRuntime.csproj" />
+    <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
+    <ProjectReference Include="..\SocketJack.LlmCore\SocketJack.LlmCore.csproj" />
+    <ProjectReference Include="..\SocketJack.Stripe\SocketJack.Stripe.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\tools\linux\install-jackllm-cuda-pytorch.sh" Link="install\linux\install-jackllm-cuda-pytorch.sh" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+</Project>

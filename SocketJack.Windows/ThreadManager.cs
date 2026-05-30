@@ -13,6 +13,11 @@ namespace SocketJack {
     /// Manages all Tcp Client and Server threads.
     /// </summary>
     public class ThreadManager : IDisposable {
+        static ThreadManager() {
+            RegisterShutdownHooks();
+        }
+
+        private static int ShutdownInProgress;
 
         #region Properties
 
@@ -46,13 +51,14 @@ namespace SocketJack {
         private static bool _Alive = false;
 
         protected internal static void StartCounters(bool Start) {
+            if (!Start)
+                return;
+
             if (CounterThread == null || CounterThread.ThreadState == System.Threading.ThreadState.Stopped) {
-                CounterThread = new Thread(CounterLoop) { Name = "ByteCounterThread" };
+                CounterThread = new Thread(CounterLoop) { Name = "ByteCounterThread", IsBackground = true };
             }
-            if (Start) {
-                if (!CounterThread.IsAlive)
-                    CounterThread.Start();
-            }
+            if (!CounterThread.IsAlive)
+                CounterThread.Start();
         }
 
         /// <summary>
@@ -69,9 +75,18 @@ namespace SocketJack {
         /// Must be called on application shutdown to ensure all threads are closed.
         /// </summary>
         public static void Shutdown() {
-            Alive = false;
-            TcpClients.Values.ToList().ForEach(DisposeDelegate);
-            TcpServers.Values.ToList().ForEach(DisposeDelegate);
+            if (Interlocked.Exchange(ref ShutdownInProgress, 1) == 1)
+                return;
+
+            try {
+                Alive = false;
+                TcpClients.Values.ToArray().ToList().ForEach(DisposeDelegate);
+                TcpServers.Values.ToArray().ToList().ForEach(DisposeDelegate);
+                TcpClients.Clear();
+                TcpServers.Clear();
+            } finally {
+                Interlocked.Exchange(ref ShutdownInProgress, 0);
+            }
         }
 
         protected virtual void Dispose(bool disposing) {
@@ -89,8 +104,20 @@ namespace SocketJack {
         }
 
         private static void DisposeDelegate(ISocket Instance) {
-            if (Instance != null && !Instance.isDisposed)
-                Instance.Dispose();
+            try {
+                if (Instance != null && !Instance.isDisposed)
+                    Instance.Dispose();
+            } catch {
+            }
+        }
+
+        private static void RegisterShutdownHooks() {
+            AppDomain.CurrentDomain.ProcessExit += ShutdownOnProcessExit;
+            AppDomain.CurrentDomain.DomainUnload += ShutdownOnProcessExit;
+        }
+
+        private static void ShutdownOnProcessExit(object sender, EventArgs e) {
+            Shutdown();
         }
 
         #endregion

@@ -17,6 +17,7 @@ namespace SocketJack.Net {
         private readonly string _remoteHost;
         private readonly int _remotePort;
         private readonly int _localPort;
+        private readonly IPAddress _listenAddress;
         private System.Net.Sockets.TcpListener _listener;
         private readonly List<ForwardingSession> _sessions = new List<ForwardingSession>();
         private bool _isRunning = false;
@@ -37,6 +38,21 @@ namespace SocketJack.Net {
             _remoteHost = remoteHost;
             _remotePort = remotePort;
             _localPort = localPort;
+            _listenAddress = IPAddress.Loopback;
+        }
+
+        /// <summary>
+        /// Creates a new TcpDuplicator that listens on the given local address and forwards to a remote server.
+        /// </summary>
+        /// <param name="remoteHost">The remote host to forward connections to.</param>
+        /// <param name="remotePort">The remote port to forward connections to.</param>
+        /// <param name="localPort">The local port to listen on.</param>
+        /// <param name="listenAddress">The local address to bind. Defaults to loopback when null.</param>
+        public TcpDuplicator(string remoteHost, int remotePort, int localPort, IPAddress listenAddress) {
+            _remoteHost = remoteHost;
+            _remotePort = remotePort;
+            _localPort = localPort;
+            _listenAddress = listenAddress ?? IPAddress.Loopback;
         }
 
         #endregion
@@ -60,7 +76,7 @@ namespace SocketJack.Net {
 
             try
             {
-                _listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, _localPort);
+                _listener = new System.Net.Sockets.TcpListener(_listenAddress, _localPort);
                 _listener.Start();
                 _cts = new CancellationTokenSource();
                 _isRunning = true;
@@ -106,15 +122,17 @@ namespace SocketJack.Net {
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     System.Net.Sockets.TcpClient localClient = await _listener.AcceptTcpClientAsync();
+                    ConfigureStreamingSocket(localClient, GetForwardingLoad());
 
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             System.Net.Sockets.TcpClient remoteClient = new System.Net.Sockets.TcpClient();
+                            ConfigureStreamingSocket(remoteClient, GetForwardingLoad());
                             await remoteClient.ConnectAsync(_remoteHost, _remotePort);
 
-                            var session = new ForwardingSession(localClient, remoteClient, OnSessionClosed);
+                            var session = new ForwardingSession(localClient, remoteClient, OnSessionClosed, GetForwardingLoad);
                             lock (_sessions)
                             {
                                 _sessions.Add(session);
@@ -138,12 +156,25 @@ namespace SocketJack.Net {
             }
         }
 
+        private int GetForwardingLoad()
+        {
+            lock (_sessions)
+            {
+                return _sessions.Count + 1;
+            }
+        }
+
         private void OnSessionClosed(ForwardingSession session)
         {
             lock (_sessions)
             {
                 _sessions.Remove(session);
             }
+        }
+
+        private static void ConfigureStreamingSocket(System.Net.Sockets.TcpClient client, int activeOrQueuedSessions)
+        {
+            TcpForwardingBufferProfile.ConfigureStreamingSocket(client, activeOrQueuedSessions);
         }
 
         public void Dispose()
@@ -168,13 +199,15 @@ namespace SocketJack.Net {
             private readonly System.Net.Sockets.TcpClient _localClient;
             private readonly System.Net.Sockets.TcpClient _remoteClient;
             private readonly Action<ForwardingSession> _onClose;
+            private readonly Func<int> _getForwardingLoad;
             private bool _isClosed = false;
 
-            public ForwardingSession(System.Net.Sockets.TcpClient localClient, System.Net.Sockets.TcpClient remoteClient, Action<ForwardingSession> onClose)
+            public ForwardingSession(System.Net.Sockets.TcpClient localClient, System.Net.Sockets.TcpClient remoteClient, Action<ForwardingSession> onClose, Func<int> getForwardingLoad)
             {
                 _localClient = localClient;
                 _remoteClient = remoteClient;
                 _onClose = onClose;
+                _getForwardingLoad = getForwardingLoad;
             }
 
             public void Start()
@@ -195,11 +228,18 @@ namespace SocketJack.Net {
 
             private async Task ForwardAsync(System.Net.Sockets.NetworkStream from, System.Net.Sockets.NetworkStream to)
             {
-                var buffer = new byte[65536];
+                byte[] buffer = TcpForwardingBufferProfile.RentCopyBuffer(_getForwardingLoad());
                 try
                 {
                     while (!_isClosed)
                     {
+                        int desiredSize = TcpForwardingBufferProfile.GetCopyBufferSize(_getForwardingLoad());
+                        if (buffer.Length < desiredSize)
+                        {
+                            TcpForwardingBufferProfile.ReturnCopyBuffer(buffer);
+                            buffer = TcpForwardingBufferProfile.RentCopyBuffer(_getForwardingLoad());
+                        }
+
                         int bytesRead = await from.ReadAsync(buffer, 0, buffer.Length);
                         if (bytesRead <= 0)
                             break;
@@ -213,6 +253,7 @@ namespace SocketJack.Net {
                 }
                 finally
                 {
+                    TcpForwardingBufferProfile.ReturnCopyBuffer(buffer);
                     Close();
                 }
             }

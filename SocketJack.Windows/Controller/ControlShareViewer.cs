@@ -11,6 +11,10 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Image = System.Windows.Controls.Image;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
+using Point = System.Windows.Point;
 
 namespace SocketJack.WPF {
     namespace Controller {
@@ -31,6 +35,8 @@ namespace SocketJack.WPF {
 
             private double _bitmapLogicalWidth;
             private double _bitmapLogicalHeight;
+            private WriteableBitmap _compositeBitmap;
+            private int _lastFrameSequence;
 
             private DateTime _nextMoveSendAt = DateTime.MinValue;
             private DateTime _lastFrameReceivedUtc = DateTime.MinValue;
@@ -235,7 +241,8 @@ namespace SocketJack.WPF {
                 _lastFrameReceivedUtc = DateTime.UtcNow;
 
                 var msg = e.Object;
-                if (msg.JpegBytes == null || msg.JpegBytes.Length == 0)
+                var frameBytes = GetFrameBytes(msg);
+                if (frameBytes == null || frameBytes.Length == 0)
                     return;
 
                 // Remember sender + control id so we can send input back.
@@ -249,31 +256,107 @@ namespace SocketJack.WPF {
                 if (msg.Height > 0)
                     _frameHeight = msg.Height;
 
-                // Decode the JPEG on the UI thread so the BitmapImage is created in the
-                // correct DPI-awareness context.  Background-thread decoding can cause
-                // WPF to fall back to the system DPI, which halves the image's natural
-                // size on high-DPI displays.
-                var jpegBytes = msg.JpegBytes;
+                var isDelta = msg.IsDelta &&
+                              msg.DirtyWidth > 0 &&
+                              msg.DirtyHeight > 0 &&
+                              msg.DirtyX >= 0 &&
+                              msg.DirtyY >= 0;
                 _image.Dispatcher.BeginInvoke(() =>
                 {
                     try {
-                        var bmp = new BitmapImage();
-                        bmp.BeginInit();
-                        bmp.CacheOption = BitmapCacheOption.OnLoad;
-                        bmp.StreamSource = new MemoryStream(jpegBytes);
-                        bmp.EndInit();
-                        bmp.Freeze();
+                        if (isDelta && msg.Sequence > 0 && _lastFrameSequence > 0 && msg.Sequence <= _lastFrameSequence)
+                            return;
 
-                        _bitmapPixelWidth = bmp.PixelWidth;
-                        _bitmapPixelHeight = bmp.PixelHeight;
-                        _bitmapLogicalWidth = bmp.Width;
-                        _bitmapLogicalHeight = bmp.Height;
-
-                        _image.Source = bmp;
+                        if (isDelta)
+                            ApplyDeltaFrame(msg, frameBytes);
+                        else
+                            ApplyKeyFrame(msg, frameBytes);
                     }
                     catch {
                     }
                 });
+            }
+
+            private static byte[] GetFrameBytes(ControlShareFrame frame) {
+                if (frame == null)
+                    return null;
+                if (frame.IsDelta && frame.DeltaJpegBytes != null && frame.DeltaJpegBytes.Length > 0)
+                    return frame.DeltaJpegBytes;
+                return frame.JpegBytes;
+            }
+
+            private void ApplyKeyFrame(ControlShareFrame msg, byte[] jpegBytes) {
+                var bmp = DecodeJpeg(jpegBytes);
+                var composite = new WriteableBitmap(bmp);
+
+                _compositeBitmap = composite;
+                UpdateBitmapMetrics(composite);
+                _image.Source = composite;
+                CommitFrameSequence(msg);
+            }
+
+            private void ApplyDeltaFrame(ControlShareFrame msg, byte[] jpegBytes) {
+                if (_compositeBitmap == null)
+                    return;
+                if (msg.BaseSequence > 0 && _lastFrameSequence != msg.BaseSequence)
+                    return;
+
+                int fullWidth = msg.PixelWidth > 0 ? msg.PixelWidth : _compositeBitmap.PixelWidth;
+                int fullHeight = msg.PixelHeight > 0 ? msg.PixelHeight : _compositeBitmap.PixelHeight;
+                if (fullWidth != _compositeBitmap.PixelWidth || fullHeight != _compositeBitmap.PixelHeight)
+                    return;
+
+                if (msg.DirtyX < 0 || msg.DirtyY < 0 ||
+                    msg.DirtyX >= _compositeBitmap.PixelWidth ||
+                    msg.DirtyY >= _compositeBitmap.PixelHeight)
+                    return;
+
+                var patch = DecodeJpeg(jpegBytes);
+                BitmapSource patchSource = patch.Format == PixelFormats.Pbgra32
+                    ? patch
+                    : new FormatConvertedBitmap(patch, PixelFormats.Pbgra32, null, 0);
+
+                int writeWidth = Math.Min(msg.DirtyWidth, patchSource.PixelWidth);
+                int writeHeight = Math.Min(msg.DirtyHeight, patchSource.PixelHeight);
+                writeWidth = Math.Min(writeWidth, _compositeBitmap.PixelWidth - msg.DirtyX);
+                writeHeight = Math.Min(writeHeight, _compositeBitmap.PixelHeight - msg.DirtyY);
+                if (writeWidth <= 0 || writeHeight <= 0)
+                    return;
+
+                int stride = writeWidth * 4;
+                var pixels = new byte[stride * writeHeight];
+                patchSource.CopyPixels(new Int32Rect(0, 0, writeWidth, writeHeight), pixels, stride, 0);
+                _compositeBitmap.WritePixels(new Int32Rect(msg.DirtyX, msg.DirtyY, writeWidth, writeHeight), pixels, stride, 0);
+
+                UpdateBitmapMetrics(_compositeBitmap);
+                CommitFrameSequence(msg);
+            }
+
+            private static BitmapImage DecodeJpeg(byte[] jpegBytes) {
+                // Decode the JPEG on the UI thread so the BitmapImage is created in the
+                // correct DPI-awareness context. Background-thread decoding can cause
+                // WPF to fall back to the system DPI, which halves the image's natural
+                // size on high-DPI displays.
+                using var stream = new MemoryStream(jpegBytes);
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.StreamSource = stream;
+                bmp.EndInit();
+                bmp.Freeze();
+                return bmp;
+            }
+
+            private void UpdateBitmapMetrics(BitmapSource source) {
+                _bitmapPixelWidth = source.PixelWidth;
+                _bitmapPixelHeight = source.PixelHeight;
+                _bitmapLogicalWidth = source.Width;
+                _bitmapLogicalHeight = source.Height;
+            }
+
+            private void CommitFrameSequence(ControlShareFrame msg) {
+                if (msg.Sequence > 0)
+                    _lastFrameSequence = msg.Sequence;
             }
 
             private bool TryGetRenderedBitmapMetrics(out double drawW, out double drawH, out double offsetX, out double offsetY) {

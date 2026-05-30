@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows7.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <AssemblyTitle>JackLLMCompanion</AssemblyTitle>
+    <Product>JackLLM Companion</Product>
+    <StartupObject>JackLLMCompanion.App</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
+    <ProjectReference Include="..\SocketJack.Windows\SocketJack.WPF.csproj" Aliases="SocketJackWpfRemote" />
+  </ItemGroup>
+</Project>

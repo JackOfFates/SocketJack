@@ -7,6 +7,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using ComboBox = System.Windows.Controls.ComboBox;
+using Image = System.Windows.Controls.Image;
 
 namespace SocketJack.WPF {
     namespace Controller {
@@ -60,7 +62,7 @@ namespace SocketJack.WPF {
             }
 
             /// <summary>
-            /// Finds an open <see cref="Window"/> whose <see cref="Window.Name"/> matches <paramref name="windowName"/>.
+            /// Finds an open <see cref="Window"/> whose <c>Name</c> matches <paramref name="windowName"/>.
             /// Returns <c>null</c> if no matching window is found.
             /// </summary>
             public static Window ToWindow(this string windowName) {
@@ -84,7 +86,7 @@ namespace SocketJack.WPF {
             /// <summary>
             /// Populates a <see cref="ComboBox"/> with all currently open windows,
             /// displaying each window's title (or type name as fallback).
-            /// Subscribe to <see cref="ComboBox.SelectionChanged"/> to retrieve the selected <see cref="Window"/>.
+            /// Subscribe to the combo box <c>SelectionChanged</c> event to retrieve the selected <see cref="Window"/>.
             /// </summary>
             public static void PopulateWindowSelector(this ComboBox comboBox) {
                 if (comboBox == null) return;

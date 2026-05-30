@@ -312,6 +312,11 @@ namespace SocketJack.Net {
             return await Connect(Host, Port);
         }
         private IPAddress[] ResolveAllIPv4FromHostEntry(string Host) {
+            if (IPAddress.TryParse(Host, out IPAddress literalAddress) &&
+                literalAddress.AddressFamily == AddressFamily.InterNetwork) {
+                return new[] { literalAddress };
+            }
+
             IPHostEntry hostEntry = null;
             MethodExtensions.TryInvoke(() => hostEntry = Dns.GetHostEntry(Host));
             if(hostEntry == null ) {
@@ -642,8 +647,6 @@ namespace SocketJack.Net {
                 _Connected = false;
                 StopPingLoop();
                 CloseConnection(Connection, DisconnectionReason.LocalSocketClosed);
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
             }
         }
 

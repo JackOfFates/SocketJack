@@ -506,6 +506,12 @@ namespace SocketJack.Net {
 
             var wrapped = new Wrapper(Obj, this);
             byte[] bytes = Options.Serializer.Serialize(wrapped);
+            if (UdpConn != null) {
+                bytes = UdpConn.PatternCache.PrepareSend(bytes, Options, frame => {
+                    byte[] candidate = Options.UseCompression ? Options.CompressionAlgorithm.Compress(frame) : frame;
+                    return candidate.Length <= Options.MaxDatagramSize;
+                });
+            }
             byte[] processedBytes = Options.UseCompression ? Options.CompressionAlgorithm.Compress(bytes) : bytes;
 
             if (processedBytes.Length > Options.MaxDatagramSize) {
@@ -658,7 +664,6 @@ namespace SocketJack.Net {
             _heartbeatCts = new CancellationTokenSource();
             var token = _heartbeatCts.Token;
             Task.Factory.StartNew(async () => {
-                int bytesPerSecondTimer = 0;
                 while (!token.IsCancellationRequested && !isDisposed && _Connected) {
                     await Task.Delay(1000);
                     if (UdpConn != null) {
@@ -693,6 +698,12 @@ namespace SocketJack.Net {
                     }
                 }
 
+                if (Connection != null && Connection.PatternCache != null) {
+                    if (!Connection.PatternCache.TryResolveReceived(data, Options, out data, out string cacheError)) {
+                        InvokeOnError(Connection, new Exception(cacheError));
+                        return;
+                    }
+                }
                 Wrapper wrapper = Options.Serializer.Deserialize(data);
                 if (wrapper == null) {
                     InvokeOnError(Connection, new Exception("Deserialized object returned null."));

@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <RootNamespace>LlmRuntime.VisualStudio2026</RootNamespace>
+    <AssemblyName>LlmRuntime.VisualStudio2026</AssemblyName>
+    <Version>0.2.30</Version>
+    <AssemblyVersion>0.2.30.0</AssemblyVersion>
+    <FileVersion>0.2.30.0</FileVersion>
+    <CopilotMcpBridgeProject>$(MSBuildProjectDirectory)\..\SocketJack.CopilotMcpBridge\SocketJack.CopilotMcpBridge.csproj</CopilotMcpBridgeProject>
+    <CopilotMcpBridgePublishDir>$(MSBuildProjectDirectory)\bin\$(Configuration)\Bridge\</CopilotMcpBridgePublishDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.Extensibility.Sdk" Version="17.14.40608" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.VisualStudio.Extensibility.Build" Version="17.14.40608" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\LlmRuntime.VisualStudio\SocketJackCopilotServices.cs" Link="Shared\SocketJackCopilotServices.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="SocketJackCopilotServersControl.xaml" />
+    <EmbeddedResource Include="SessionSyncControl.xaml" />
+    <EmbeddedResource Include="SocketJackSignInControl.xaml" />
+    <Page Remove="SocketJackCopilotServersControl.xaml" />
+    <Page Remove="SessionSyncControl.xaml" />
+    <Page Remove="SocketJackSignInControl.xaml" />
+  </ItemGroup>
+
+  <Target Name="PublishCopilotMcpBridge" BeforeTargets="GetVsixSourceItems" Condition="Exists('$(CopilotMcpBridgeProject)')">
+    <MSBuild Projects="$(CopilotMcpBridgeProject)"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);TargetFramework=net8.0;SelfContained=false;PublishDir=$(CopilotMcpBridgePublishDir)" />
+    <ItemGroup>
+      <Content Include="$(CopilotMcpBridgePublishDir)**\*.*"
+               Link="Bridge\%(RecursiveDir)%(Filename)%(Extension)"
+               CopyToOutputDirectory="PreserveNewest"
+               Visible="false" />
+      <VSIXSourceItem Include="$(CopilotMcpBridgePublishDir)**\*.*">
+        <VSIXSubPath>Bridge\%(RecursiveDir)</VSIXSubPath>
+      </VSIXSourceItem>
+    </ItemGroup>
+  </Target>
+</Project>

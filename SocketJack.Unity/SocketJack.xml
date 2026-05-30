@@ -53,6 +53,12 @@
             Sets the compression level.
             </summary>
         </member>
+        <member name="T:SocketJack.HtmlPageResources">
+            <summary>
+            Serves project HTML pages from embedded resources so runtime routes do not depend on
+            loose files under the application directory.
+            </summary>
+        </member>
         <member name="M:SocketJack.Extensions.ByteExtensions.Remove(System.Byte[],System.Int32,System.Int32)">
             <summary>
             Remove bytes from source Array.
@@ -305,6 +311,12 @@
             </list>
             </summary>
         </member>
+        <member name="M:SocketJack.Net.BroadcastServer.RegisterRtmpIngest(SocketJack.Net.MutableTcpServer)">
+            <summary>
+            Registers ingest-only routes on an additional plaintext RTMP server while
+            keeping all stream state, viewers, recordings, and keys on this instance.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.BroadcastServer.BroadcastToViewers(System.Byte[])">
             <summary>
             Broadcasts raw data to all connected stream viewers.
@@ -420,8 +432,8 @@
         </member>
         <member name="T:SocketJack.Net.Database.ConcatenatedStream">
             <summary>
-            A read-only stream that reads from <paramref name="first"/> until it is
-            exhausted, then seamlessly continues reading from <paramref name="second"/>.
+            A read-only stream that reads from the first stream until it is
+            exhausted, then seamlessly continues reading from the second stream.
             Used to prepend buffered leftover bytes (already consumed from the socket
             by ReceiveData) in front of the live NetworkStream so that the TDS read
             loop processes them in order without missing any data.
@@ -621,10 +633,10 @@
             <summary>
             TDS encryption mode negotiated during Pre-Login.
             <list type="bullet">
-            <item><c>0x00</c> � <b>ENCRYPT_OFF</b>: Encrypt the login packet only, then revert to plaintext.</item>
-            <item><c>0x01</c> � <b>ENCRYPT_ON</b>: Encrypt all traffic after the TLS handshake.</item>
-            <item><c>0x02</c> � <b>ENCRYPT_NOT_SUP</b>: No encryption at all (clients requiring encryption will refuse).</item>
-            <item><c>0x03</c> � <b>ENCRYPT_REQ</b>: Server requires full encryption.</item>
+            <item><c>0x00</c> – <b>ENCRYPT_OFF</b>: Encrypt the login packet only, then revert to plaintext.</item>
+            <item><c>0x01</c> – <b>ENCRYPT_ON</b>: Encrypt all traffic after the TLS handshake.</item>
+            <item><c>0x02</c> – <b>ENCRYPT_NOT_SUP</b>: No encryption at all (clients requiring encryption will refuse).</item>
+            <item><c>0x03</c> – <b>ENCRYPT_REQ</b>: Server requires full encryption.</item>
             </list>
             </summary>
         </member>
@@ -646,6 +658,24 @@
             Collection of registered users with their passwords
             </summary>
         </member>
+        <member name="P:SocketJack.Net.Database.DataServer.EnforceSqlLoginIpAllowList">
+            <summary>
+            When enabled, SQL logins are accepted only from loopback or addresses
+            listed in <see cref="P:SocketJack.Net.Database.DataServer.AllowedSqlLoginIpAddresses"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.AllowLoopbackSqlLogin">
+            <summary>
+            Allows local SQL admin/bootstrap access even when the SQL login IP
+            allowlist is enforced.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.AllowedSqlLoginIpAddresses">
+            <summary>
+            Remote IP addresses allowed to authenticate to SQL when
+            <see cref="P:SocketJack.Net.Database.DataServer.EnforceSqlLoginIpAllowList"/> is enabled.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.Database.DataServer.Databases">
             <summary>
             Databases available on this server
@@ -658,8 +688,9 @@
         </member>
         <member name="P:SocketJack.Net.Database.DataServer.DataPath">
             <summary>
-            File path used to persist database state.
-            When set, data is loaded from this file on startup and saved on every mutation.
+            Path used to persist database state.
+            If the path resolves to a file (or has a file extension), legacy JSON
+            persistence is used. Otherwise persistence is split across a folder.
             </summary>
         </member>
         <member name="P:SocketJack.Net.Database.DataServer.AutoSave">
@@ -668,10 +699,35 @@
             automatically flushed to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.Database.DataServer.EnableCacheOptimizing">
+            <summary>
+            Enables the database key/value cache optimizer. When enabled, simple
+            equality lookups are cached in memory and hot key metadata is persisted
+            so optimized cache indexes can be warmed on the next load.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.CacheMetadataPath">
+            <summary>
+            File path used to persist optimized cache metadata. When
+            <see langword="null"/>, the path is derived from <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.CacheOptimizationMaxKeys">
+            <summary>
+            Maximum number of hot key/value lookups to keep in the optimized cache
+            metadata and warm on startup.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.Database.DataServer.AutoSaveDebounceMs">
             <summary>
             Interval in milliseconds to debounce auto-save writes.
             Only the last mutation within this window triggers a write.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.EnablePayloadEncryption">
+            <summary>
+            Set this to <see langword="false"/> to keep persisted files in plain JSON.
+            Default is <see langword="true"/> so data is not readable at a glance.
             </summary>
         </member>
         <member name="E:SocketJack.Net.Database.DataServer.TdsClientConnected">
@@ -684,14 +740,15 @@
             Raised when a TDS client disconnects (standalone mode only).
             </summary>
         </member>
-        <member name="M:SocketJack.Net.Database.DataServer.#ctor(System.Int32,System.String)">
+        <member name="M:SocketJack.Net.Database.DataServer.#ctor(System.Int32,System.String,System.Boolean)">
             <summary>
-            Initialize a new MSSQL Server Emulator (standalone mode � owns the TCP listener).
+            Initialize a new MSSQL Server Emulator (standalone mode — owns the TCP listener).
             </summary>
             <param name="Port">Port to listen on (default MSSQL port is 1433)</param>
             <param name="Name">Server name for logging</param>
+            <param name="loadFromDisk">Load persisted state during construction.</param>
         </member>
-        <member name="M:SocketJack.Net.Database.DataServer.#ctor(System.String,System.Boolean)">
+        <member name="M:SocketJack.Net.Database.DataServer.#ctor(System.String,System.Boolean,System.Boolean)">
             <summary>
             Creates a <see cref="T:SocketJack.Net.Database.DataServer"/> in hosted mode (no TCP listener).
             <para>
@@ -703,10 +760,21 @@
             </summary>
             <param name="Name">Server name for logging.</param>
             <param name="hosted">Must be <see langword="true"/>. Distinguishes this from the standalone constructor.</param>
+            <param name="loadFromDisk">Load persisted state during construction.</param>
         </member>
         <member name="M:SocketJack.Net.Database.DataServer.Save">
             <summary>
             Saves the current server state (users, databases, tables, rows) to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.SaveAsync">
+            <summary>
+            Asynchronously saves the current server state (users, databases, tables, rows) to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.SaveAsync(System.Threading.CancellationToken)">
+            <summary>
+            Asynchronously saves the current server state (users, databases, tables, rows) to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
             </summary>
         </member>
         <member name="M:SocketJack.Net.Database.DataServer.Load">
@@ -714,10 +782,31 @@
             Loads server state from <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/> into memory.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.Database.DataServer.LoadAsync">
+            <summary>
+            Asynchronously loads server state from <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/> into memory.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.LoadAsync(System.Threading.CancellationToken)">
+            <summary>
+            Asynchronously loads server state from <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/> into memory.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.Database.DataServer.ScheduleSave">
             <summary>
             Schedules a debounced save. Multiple rapid calls within
             <see cref="P:SocketJack.Net.Database.DataServer.AutoSaveDebounceMs"/> collapse into a single write.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.ReloadOptimizedCache">
+            <summary>
+            Reloads optimized cache metadata and warms hot key/value indexes.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.ClearOptimizedCache">
+            <summary>
+            Clears all warmed optimized cache indexes. Metadata is kept so the
+            cache can be warmed again after the next load or lookup.
             </summary>
         </member>
         <member name="M:SocketJack.Net.Database.DataServer.ImportFromMssql(System.Data.Common.DbConnection,System.String,System.String[],System.Boolean,System.Int32)">
@@ -890,7 +979,7 @@
             <summary>
             Directory containing HTML page templates for the SQL Admin Panel.
             Templates use <c>$VariableName</c> placeholders that are replaced at runtime.
-            Defaults to a <c>Resources</c> folder next to the running application.
+            Defaults to a <c>html</c> folder next to the running application.
             </summary>
         </member>
         <member name="P:SocketJack.Net.Database.SqlAdminPanel.BasePath">
@@ -911,12 +1000,12 @@
             handler is wired up.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ResolveTable(SocketJack.Net.Database.DataServer,System.String,System.String,System.String,SocketJack.Net.Database.Database@)">
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ResolveTable(SocketJack.Net.Database.DataServer,SocketJack.Net.Database.SqlSession,System.String,System.String,SocketJack.Net.Database.Database@)">
             <summary>
             Resolves a potentially qualified table reference against the DataServer.
             When <paramref name="dbQualifier"/> names an existing database, the table
             is looked up there; otherwise the qualifier is treated as a schema (ignored)
-            and the table is looked up in <paramref name="defaultDbName"/>.
+            and the table is looked up in the session's current database.
             Automatically tries <c>dbo.</c>-prefixed and unprefixed variants so that
             <c>SELECT * FROM Uploads</c> finds <c>dbo.Uploads</c> and vice-versa.
             </summary>
@@ -990,7 +1079,7 @@
             .NET runtime / framework / system library.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ApiEventsReflect(SocketJack.Net.HttpRequest)">
+        <member name="M:SocketJack.Net.Database.SqlAdminPanel.ApiEndpointsReflect(SocketJack.Net.HttpRequest)">
             <summary>
             Returns discoverable types and their public static methods from loaded assemblies
             so the UI can offer reflection-based invocation targets.
@@ -998,15 +1087,13 @@
         </member>
         <member name="M:SocketJack.Net.Database.SqlAdminPanel.LoadPageTemplate(System.String)">
             <summary>
-            Loads an HTML page template from <see cref="P:SocketJack.Net.Database.SqlAdminPanel.PagesFolder"/> with file-hash-based caching.
-            Returns the file content, or an empty string if the file does not exist.
+            Loads an HTML page template from embedded memory first, with a disk fallback for
+            development overrides.
             </summary>
         </member>
         <member name="M:SocketJack.Net.Database.SqlAdminPanel.LoadHtmlFromBinary(System.String)">
             <summary>
-            Extracts an embedded HTML resource to <see cref="P:SocketJack.Net.Database.SqlAdminPanel.PagesFolder"/> if the file does not
-            already exist on disk. The resource is written once; users may then customise the
-            on-disk copy and it will not be overwritten.
+            Obsolete compatibility shim. HTML pages are now served from embedded memory.
             </summary>
         </member>
         <member name="P:SocketJack.Net.Database.SqlSession.ClientTdsVersion">
@@ -1162,7 +1249,7 @@
             <summary>
             Returns <see langword="true"/> if the SQL batch contains the given
             statement keyword at a line/statement boundary (not inside a string).
-            This is a simple heuristic � it looks for the keyword at the start of
+            This is a simple heuristic — it looks for the keyword at the start of
             any line or after a semicolon.
             </summary>
         </member>
@@ -1178,7 +1265,7 @@
             <summary>
             Handles TDS RPC requests (packet type 0x03).
             SSMS uses RPC for sp_executesql, sp_prepexec, and similar calls.
-            The RPC payload format differs from SQL batch � it starts with
+            The RPC payload format differs from SQL batch — it starts with
             ALL_HEADERS, then a procedure name or ID, followed by parameters.
             </summary>
         </member>
@@ -1201,14 +1288,14 @@
             <summary>
             Sends multiple result sets in a single TDS message (single EOM packet).
             For each result set, writes COLMETADATA + ROW(s) followed by
-            DONE (0xFD) with DONE_MORE � except the last which gets DONE (0xFD) without DONE_MORE.
+            DONE (0xFD) with DONE_MORE — except the last which gets DONE (0xFD) without DONE_MORE.
             Per [MS-TDS], SQL batch results use DONE (0xFD); DONEINPROC (0xFF) is only for stored procedures.
             </summary>
         </member>
         <member name="M:SocketJack.Net.Database.TdsProtocolHandler.WriteResultSetTokens(System.IO.BinaryWriter,SocketJack.Net.Database.QueryResult)">
             <summary>
             Writes COLMETADATA + ROW tokens for a single result set to a BinaryWriter.
-            Does NOT write a DONE token � the caller is responsible for that.
+            Does NOT write a DONE token — the caller is responsible for that.
             </summary>
         </member>
         <member name="M:SocketJack.Net.Database.TdsProtocolHandler.GetTdsStream(SocketJack.Net.NetworkConnection,SocketJack.Net.Database.SqlSession)">
@@ -1270,7 +1357,7 @@
         <member name="M:SocketJack.Net.Database.TdsWrapperStream.Feed(System.Byte[])">
             <summary>
             Pushes raw bytes (TLS records) into the feed buffer so that
-            <see cref="M:System.Net.Security.SslStream.Read(System.Byte[],System.Int32,System.Int32)"/> can decrypt them.  Called from
+            <c>SslStream.Read</c> can decrypt them.  Called from
             <see cref="M:SocketJack.Net.Database.TdsProtocolHandler.ProcessReceive(SocketJack.Net.MutableTcpServer,SocketJack.Net.NetworkConnection,SocketJack.Net.IReceivedEventArgs@)"/> when TLS is active.
             </summary>
         </member>
@@ -1291,7 +1378,7 @@
             with ENCRYPT_ON) send raw TLS records without TDS framing.  This
             method auto-detects the framing by peeking at the first byte: if it
             is <c>0x12</c> the data is TDS-wrapped; otherwise (TLS content types
-            <c>0x14</c>�<c>0x17</c>) it is raw TLS and the wrapper switches to
+            <c>0x14</c>–<c>0x17</c>) it is raw TLS and the wrapper switches to
             passthrough for the remainder of the handshake.
             </para>
             </summary>
@@ -1323,6 +1410,17 @@
             Reads exactly <paramref name="count"/> bytes, draining the
             pre-seed buffer first then falling back to <paramref name="stream"/>.
             Returns <see langword="null"/> if the stream ends prematurely.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.EndpointSecurityOptions">
+            <summary>
+            Tunable bot filtering and endpoint abuse controls for HTTP, SocketJack,
+            WebSocket, and filesystem-backed request surfaces.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.EndpointSecurityMonitor">
+            <summary>
+            Per-IP abuse monitor with decaying throttle and automatic temporary disables.
             </summary>
         </member>
         <member name="P:SocketJack.Net.IReceivedEventArgs.From">
@@ -1388,6 +1486,9 @@
         <member name="F:SocketJack.Net.TcpProtocol.Tds">
             <summary>TDS (Tabular Data Stream) protocol used by MSSQL.</summary>
         </member>
+        <member name="F:SocketJack.Net.TcpProtocol.Rtmp">
+            <summary>RTMP live media publishing protocol.</summary>
+        </member>
         <member name="T:SocketJack.Net.HtAccessResult">
             <summary>
             Result of evaluating <c>.htaccess</c> rules against an incoming request.
@@ -1405,8 +1506,8 @@
         <member name="T:SocketJack.Net.HtAccessBuilder">
             <summary>
             Fluent builder for generating <c>.htaccess</c> files that control directory
-            security and access when used with <see cref="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String)"/> or
-            <see cref="M:SocketJack.Net.HttpProtocolHandler.MapDirectory(System.String,System.String)"/>.
+            security and access when used with <c>HttpServer.MapDirectory</c> or
+            <c>HttpProtocolHandler.MapDirectory</c>.
             <para>
             Example usage:
             <code>
@@ -1547,6 +1648,41 @@
             Removes a previously registered protocol handler.
             </summary>
         </member>
+        <member name="T:SocketJack.Net.HttpMappedRoute">
+            <summary>
+            Read-only description of a route registered through <see cref="M:SocketJack.Net.HttpServer.Map(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.Method">
+            <summary>The HTTP method registered for the route.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.Path">
+            <summary>The URL path registered for the route.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.HandlerType">
+            <summary>The declaring type for the runtime handler delegate, when available.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.HandlerName">
+            <summary>The runtime handler method name, when available.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.HandlerSignature">
+            <summary>A best-effort runtime signature for the handler delegate.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.InputVariables">
+            <summary>Comma-separated API input variables inferred from route and typed body metadata.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.ParametersSchema">
+            <summary>JSON metadata describing route, query, body, and handler parameters.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.RequestBodySchema">
+            <summary>JSON schema/example inferred for typed request bodies.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.ResponseSchema">
+            <summary>JSON schema/example inferred for the handler return type.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpMappedRoute.RequestBodyKind">
+            <summary>Best-effort request body mode inferred from the route registration.</summary>
+        </member>
         <member name="M:SocketJack.Net.HttpServer.RouteFile(System.String,System.String,System.String,System.String[][],System.Int32)">
             <summary>
             Maps a route to an HTML file with variable replacement (e.g., $Username) and caching.
@@ -1618,6 +1754,16 @@
             that span multiple TCP segments.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.HttpServer.AllowHost(System.String)">
+            <summary>
+            Restricts HTTP routing to the supplied host name. Leave empty to allow all hosts.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.ClearAllowedHosts">
+            <summary>
+            Clears HTTP host restrictions and restores the default allow-all behavior.
+            </summary>
+        </member>
         <member name="F:SocketJack.Net.HttpServer._activeRtmpConnections">
             <summary>
             Tracks connections running the RTMP protocol (e.g., OBS publishing via <c>rtmp://</c>).
@@ -1675,21 +1821,63 @@
             per-directory with <c>Options +Indexes</c> or <c>Options -Indexes</c>.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.HttpServer.RequestGate">
+            <summary>
+            Optional request gate. Return a non-empty message to reject the request before
+            routes, static files, streaming handlers, or upload handlers run.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.EndpointSecurity">
+            <summary>
+            Shared per-IP bot filter and endpoint abuse monitor for this server.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.HttpServer.CacheControl">
             <summary>
             Gets or sets the <c>Cache-Control</c> header value added to every HTTP response.
             When <see langword="null"/> (the default), no <c>Cache-Control</c> header is emitted.
             Example values: <c>"public, max-age=3600"</c>, <c>"no-cache"</c>,
             <c>"private, max-age=86400"</c>.
-            For static files served via <see cref="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String)"/>, an <c>ETag</c> and
+            For static files served via <c>MapDirectory</c>, an <c>ETag</c> and
             <c>Last-Modified</c> header are also sent, and <c>If-None-Match</c> /
             <c>If-Modified-Since</c> conditional requests are honoured with <c>304 Not Modified</c>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.EnablePort80HttpsRedirect">
+            <summary>
+            Gets or sets whether a non-SSL server bound to port 80 should redirect requests to HTTPS.
             </summary>
         </member>
         <member name="M:SocketJack.Net.HttpServer.Map``1(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler{``0})">
             <summary>
             Maps a route whose handler receives a deserialized body of type <typeparamref name="T"/>.
             The request body is deserialized using the configured serializer before the handler is invoked.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapHost(System.String,System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)">
+            <summary>
+            Maps a route that only matches requests whose Host header matches <paramref name="hostName"/>.
+            Exact host names are supported, and wildcard entries such as <c>*.example.com</c> match subdomains.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapHost``1(System.String,System.String,System.String,SocketJack.Net.HttpServer.RouteHandler{``0})">
+            <summary>
+            Maps a host-specific route whose handler receives a deserialized request body.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RemoveHostRoute(System.String,System.String,System.String)">
+            <summary>
+            Removes a previously mapped host-specific route.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpServer.MappedRoutes">
+            <summary>
+            Gets a snapshot of routes registered through <see cref="M:SocketJack.Net.HttpServer.Map(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.GetMappedRoutes">
+            <summary>
+            Returns a point-in-time snapshot of routes registered through <see cref="M:SocketJack.Net.HttpServer.Map(System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>.
             </summary>
         </member>
         <member name="M:SocketJack.Net.HttpServer.MapStream(System.String,System.String,SocketJack.Net.HttpServer.StreamRouteHandler)">
@@ -1754,6 +1942,58 @@
             Removes a previously mapped file route.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.HttpServer.MapHostDirectory(System.String,System.String,System.String)">
+            <summary>
+            Maps a local directory to a URL prefix for a specific Host header.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapHostDirectory(System.String,System.String,System.String,System.Action{SocketJack.Net.HtAccessBuilder})">
+            <summary>
+            Maps a local directory to a URL prefix for a specific Host header and configures a <c>.htaccess</c> file.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RemoveHostDirectoryMapping(System.String,System.String)">
+            <summary>
+            Removes a previously mapped host-specific directory route.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapHostFile(System.String,System.String,System.String)">
+            <summary>
+            Maps a URL path to a local file for a specific Host header.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RemoveHostFileMapping(System.String,System.String)">
+            <summary>
+            Removes a previously mapped host-specific file route.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapSubdomain(System.String,System.String)">
+            <summary>
+            Proxies every request for <paramref name="hostName"/> to an existing HTTP or HTTPS server.
+            Use this to route a public subdomain to a local site, for example
+            <c>MapSubdomain("OtherWebsite.MyDomain.com", "http://127.0.0.1:7567")</c>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.ProxyHost(System.String,System.String)">
+            <summary>
+            Proxies every request for <paramref name="hostName"/> to an existing HTTP or HTTPS server.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.ProxyHost(System.String,System.String,System.Boolean)">
+            <summary>
+            Proxies every request for <paramref name="hostName"/> and optionally preserves that Host header upstream.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.ProxyHost(System.String,System.String,System.Int32,System.Boolean)">
+            <summary>
+            Proxies every request for <paramref name="hostName"/> to an existing server.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RemoveHostProxy(System.String)">
+            <summary>
+            Removes a host/subdomain proxy mapping.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.HttpServer.IsDirectoryListingAllowed(System.String)">
             <summary>
             Determines whether directory listing is allowed for the given local
@@ -1776,14 +2016,14 @@
         </member>
         <member name="P:SocketJack.Net.HttpServer.ChunkedThreshold">
             <summary>
-            Minimum body size in bytes before the server switches to chunked transfer encoding.
-            Bodies smaller than this are sent with Content-Length in a single write.
+            Minimum body size in bytes before fixed-length HTTP responses are written in buffered chunks.
+            Bodies smaller than this are sent with Content-Length in a single body write.
             Default is 8 KB.
             </summary>
         </member>
         <member name="P:SocketJack.Net.HttpServer.ChunkedSize">
             <summary>
-            Size of each chunk when using chunked transfer encoding. Default is 4 KB.
+            Preferred body write size for large fixed-length responses. Default is 4 KB.
             </summary>
         </member>
         <member name="M:SocketJack.Net.HttpServer.CleanupHttpConnection(System.Guid)">
@@ -1807,6 +2047,12 @@
             <param name="rawRequest">The raw HTTP request string.</param>
             <returns>HttpRequest object with parsed data.</returns>
         </member>
+        <member name="P:SocketJack.Net.HttpRequest.Host">
+            <summary>Raw Host header value, sanitized for control characters.</summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpRequest.HostName">
+            <summary>Normalized host name without port, suitable for host/subdomain routing.</summary>
+        </member>
         <member name="P:SocketJack.Net.HttpRequest.QueryString">
             <summary>
             The raw query string from the request URL (everything after the <c>?</c>),
@@ -1822,6 +2068,22 @@
         <member name="P:SocketJack.Net.HttpRequest.PathVariables">
             <summary>
             List of path variables extracted from wildcard routes (e.g. /api/*).
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpResponse.DisableChunkedTransfer">
+            <summary>
+            Sends large responses with a fixed Content-Length instead of chunked transfer encoding.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpResponse.RawResponseWritten">
+            <summary>
+            Set by advanced handlers that write a complete HTTP response directly to
+            the connection stream and want the normal response writer to stand down.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.HttpResponse.StreamFile">
+            <summary>
+            Optional file response streamed directly from disk without buffering the full body in memory.
             </summary>
         </member>
         <member name="P:SocketJack.Net.HttpResponse.StatusLine">
@@ -1850,7 +2112,13 @@
             <summary>The raw response body bytes.</summary>
         </member>
         <member name="P:SocketJack.Net.FileResponse.ContentType">
-            <summary>The MIME content type (e.g., <c>"image/png"</c>).</summary>
+            <summary>The MIME content type (e.g., <c>"image/png"</c>). If omitted, the server detects it from <see cref="P:SocketJack.Net.FileResponse.FileName"/>.</summary>
+        </member>
+        <member name="P:SocketJack.Net.FileResponse.FileName">
+            <summary>The file name advertised in the Content-Disposition response header.</summary>
+        </member>
+        <member name="P:SocketJack.Net.FileResponse.FilePath">
+            <summary>Optional source file path streamed directly to the response.</summary>
         </member>
         <member name="T:SocketJack.Net.ChunkedStream">
             <summary>
@@ -2049,9 +2317,9 @@
             <summary>
             Overrides peer synchronization so that only connections confirmed as
             SocketJack receive broadcast peer updates.  Without this filter,
-            <see cref="M:SocketJack.Extensions.ConnectedClientExtensions.SendBroadcast(System.Collections.Concurrent.ConcurrentDictionary{System.Guid,SocketJack.Net.NetworkConnection},System.Object,SocketJack.Net.NetworkConnection)"/> pushes
-            SocketJack-framed bytes into every connection's send queue �
-            including HTTP connections � corrupting their response stream.
+            <c>SendBroadcast</c> pushes
+            SocketJack-framed bytes into every connection's send queue —
+            including HTTP connections — corrupting their response stream.
             </summary>
         </member>
         <member name="M:SocketJack.Net.MutableTcpServer.SendBroadcast(System.Object)">
@@ -2179,18 +2447,6 @@
             an HTTP GET request that contains the <c>Upgrade: websocket</c> header.
             </summary>
         </member>
-        <member name="M:SocketJack.Net.WebSocketProtocolHandler.SendObject(SocketJack.Net.MutableTcpServer,SocketJack.Net.NetworkConnection,System.Object)">
-            <summary>
-            Serializes <paramref name="obj"/> and sends it as a WebSocket frame
-            directly on <paramref name="connection"/>'s stream.
-            </summary>
-        </member>
-        <member name="M:SocketJack.Net.WebSocketProtocolHandler.SendConstructors(SocketJack.Net.MutableTcpServer,SocketJack.Net.NetworkConnection)">
-            <summary>
-            Sends JavaScript class constructors for all whitelisted types so that
-            browser clients can create typed objects for the SocketJack protocol.
-            </summary>
-        </member>
         <member name="T:SocketJack.Net.HttpProtocolHandler">
             <summary>
             Detects and processes HTTP requests. Routes are stored in the parent
@@ -2248,6 +2504,14 @@
             Delegates to the underlying <see cref="P:SocketJack.Net.HttpServer.ChunkedSize"/>.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.HttpProtocolHandler.MappedRoutes">
+            <summary>
+            Gets a snapshot of routes registered through this HTTP handler.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.GetMappedRoutes">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.GetMappedRoutes"/>
+        </member>
         <member name="P:SocketJack.Net.HttpProtocolHandler.AllowDirectoryListing">
             <summary>
             When <see langword="true"/>, mapped directories that contain no
@@ -2271,6 +2535,15 @@
         <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveRoute(System.String,System.String)">
             <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveRoute(System.String,System.String)"/>
         </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapHost(System.String,System.String,System.String,SocketJack.Net.HttpProtocolHandler.RouteHandler)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapHost(System.String,System.String,System.String,SocketJack.Net.HttpServer.RouteHandler)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapHost``1(System.String,System.String,System.String,SocketJack.Net.HttpProtocolHandler.RouteHandler{``0})">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapHost``1(System.String,System.String,System.String,SocketJack.Net.HttpServer.RouteHandler{``0})"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveHostRoute(System.String,System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveHostRoute(System.String,System.String,System.String)"/>
+        </member>
         <member name="M:SocketJack.Net.HttpProtocolHandler.MapStream(System.String,System.String,SocketJack.Net.HttpProtocolHandler.StreamRouteHandler)">
             <inheritdoc cref="M:SocketJack.Net.HttpServer.MapStream(System.String,System.String,SocketJack.Net.HttpServer.StreamRouteHandler)"/>
         </member>
@@ -2281,7 +2554,9 @@
             <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveUploadStreamRoute(System.String,System.String)"/>
         </member>
         <member name="M:SocketJack.Net.HttpProtocolHandler.MapDirectory(System.String,System.String)">
-            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String)"/>
+            <summary>
+            Maps a local directory to a URL prefix.
+            </summary>
         </member>
         <member name="M:SocketJack.Net.HttpProtocolHandler.MapDirectory(System.String,System.String,System.Action{SocketJack.Net.HtAccessBuilder})">
             <summary>
@@ -2297,6 +2572,36 @@
         </member>
         <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveFileMapping(System.String)">
             <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveFileMapping(System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapHostDirectory(System.String,System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapHostDirectory(System.String,System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapHostDirectory(System.String,System.String,System.String,System.Action{SocketJack.Net.HtAccessBuilder})">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapHostDirectory(System.String,System.String,System.String,System.Action{SocketJack.Net.HtAccessBuilder})"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveHostDirectoryMapping(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveHostDirectoryMapping(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapHostFile(System.String,System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapHostFile(System.String,System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveHostFileMapping(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveHostFileMapping(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapSubdomain(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapSubdomain(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.ProxyHost(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.ProxyHost(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.ProxyHost(System.String,System.String,System.Boolean)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.ProxyHost(System.String,System.String,System.Boolean)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.ProxyHost(System.String,System.String,System.Int32,System.Boolean)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.ProxyHost(System.String,System.String,System.Int32,System.Boolean)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveHostProxy(System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveHostProxy(System.String)"/>
         </member>
         <member name="M:SocketJack.Net.HttpProtocolHandler.CanHandle(System.Byte[])">
             <summary>
@@ -2604,6 +2909,14 @@
             <param name="serverCertificate">The server certificate (required for server-side).</param>
             <param name="targetHost">Target host name (required for client-side).</param>
         </member>
+        <member name="M:SocketJack.Net.NetworkConnection.InitializeSslStream(System.Security.Cryptography.X509Certificates.X509Certificate,System.String,System.Func{System.String,System.Security.Cryptography.X509Certificates.X509Certificate})">
+            <summary>
+            Initializes the SSL stream for this connection.
+            </summary>
+            <param name="serverCertificate">The default server certificate (required for server-side).</param>
+            <param name="targetHost">Fallback target host name.</param>
+            <param name="certificateSelector">Optional SNI certificate selector.</param>
+        </member>
         <member name="M:SocketJack.Net.NetworkConnection.InitializeSslStream(System.String)">
             <summary>
             Initializes the SSL stream for this connection.
@@ -2613,7 +2926,7 @@
         <member name="M:SocketJack.Net.NetworkConnection.IsHttpPrefix(System.Byte[],System.Int32)">
             <summary>
             Returns <see langword="true"/> when <paramref name="data"/> begins with
-            a known HTTP method keyword (GET, POST, PUT, �).
+            a known HTTP method keyword (GET, POST, PUT, …).
             </summary>
         </member>
         <member name="M:SocketJack.Net.NetworkConnection.Send(SocketJack.Net.P2P.Identifier,System.Object)">
@@ -2723,6 +3036,12 @@
             </summary>
             <returns>100 is default. Lower to reduce processing time.</returns>
         </member>
+        <member name="P:SocketJack.Net.NetworkOptions.BindAddress">
+            <summary>
+            Local address used by TCP servers when binding their listening socket.
+            Defaults to <see cref="F:System.Net.IPAddress.Any"/> for the existing listen-on-all behavior.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.NetworkOptions.MaximumBufferSize">
             <summary>
             Maximum buffer size per connection.
@@ -2731,13 +3050,20 @@
             <value>Long</value>
             <remarks></remarks>
         </member>
+        <member name="P:SocketJack.Net.NetworkOptions.MaximumSendQueueBytes">
+            <summary>
+            Maximum queued outbound bytes per connection before the connection is
+            closed to protect the host from slow-client memory growth.
+            </summary>
+            <remarks>Default is 100MB. Set to 0 for unlimited legacy behavior.</remarks>
+        </member>
         <member name="P:SocketJack.Net.NetworkOptions.MaximumDownloadMbps">
             <summary>
             Maximum receiving bandwidth.
             </summary>
             <remarks>
-            <para>Default is 100Mbps. Set to 0 to disable buffering.</para>
-            <para>Disabling buffer will not work with SSL.</para>
+            <para>Default is 0, which means unlimited. Set a positive value to throttle downloads.</para>
+            <para>Setting 0 also disables explicit receive chunk throttling.</para>
             </remarks>
             <value>Integer</value>
         </member>
@@ -2753,7 +3079,7 @@
             <summary>
             Maximum Upload bandwidth.
             <remarks>
-            <para>Default is 100Mbps. Set to 0 for unlimited.</para>
+            <para>Default is 0, which means unlimited. Set a positive value to throttle uploads.</para>
             </remarks>
             <value>Integer</value>
             <remarks></remarks>
@@ -2771,6 +3097,46 @@
             <summary>
             <para>Use compression for network transfer.</para>
             <para>Must be set before connection started.</para>
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.UseHttpCompression">
+            <summary>
+            Enables HTTP response compression when a client advertises support with
+            <c>Accept-Encoding</c>. This is independent of SocketJack object-stream
+            compression and is safe for browser/API HTTP traffic.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.EndpointSecurity">
+            <summary>
+            Bot filtering and endpoint abuse controls for HTTP, SocketJack,
+            WebSocket, and filesystem-backed administrative surfaces.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.HttpAccessLogging">
+            <summary>
+            Writes one HTTP access log entry per completed request.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.HttpAccessLogDirectory">
+            <summary>
+            Directory for daily HTTP access logs. Default is <c>C:\LmVsProxy\Logs</c>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.HttpAccessLogDateFormat">
+            <summary>
+            Date format used for HTTP access log file names, followed by <c>.log</c>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.HttpCompressionMinimumBytes">
+            <summary>
+            Minimum uncompressed HTTP response size, in bytes, before compression is
+            considered. Small responses are usually cheaper to send as-is.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.NetworkOptions.HttpDefaultCorsOrigin">
+            <summary>
+            Optional default CORS origin for HTTP responses. Null or empty means SocketJack
+            will not add an Access-Control-Allow-Origin header automatically.
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.UseTerminatedStreams">
@@ -3143,6 +3509,210 @@
             Enqueue format: [typeId:1][timestamp_ms big-endian:4][payload]
             </summary>
         </member>
+        <member name="T:SocketJack.Net.Services.GitService">
+            <summary>
+            Executes a narrow, Codex-style Git tool surface for LmVsProxy agent mode.
+            This service builds known git commands itself instead of accepting raw shell text.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.PromptIntellisense">
+            <summary>
+            Provides intellisense-style completions for the WinAgent prompt input.
+            Handles command completion, parameter completion, and file system browsing.
+            Supports dynamic registration — call <see cref="M:SocketJack.Net.Services.PromptIntellisense.AddCommand(SocketJack.Net.Services.PromptIntellisense.CompletionItem)"/> or <see cref="M:SocketJack.Net.Services.PromptIntellisense.AddFeature(System.String,System.String,System.String,System.String)"/>
+            at any time and completions update automatically.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.PromptIntellisense.CompletionItem">
+            <summary>A single completion item with display text, insert text, and description.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Services.PromptIntellisense.CompletionItem.Writeup">
+            <summary>Extended writeup shown in expanded tooltips / help panels.</summary>
+        </member>
+        <member name="P:SocketJack.Net.Services.PromptIntellisense.CompletionItem.IsExecutable">
+            <summary>Whether this item can be executed directly from intellisense.</summary>
+        </member>
+        <member name="F:SocketJack.Net.Services.PromptIntellisense._commands">
+            <summary>All registered commands - dynamically extensible.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.AddCommand(SocketJack.Net.Services.PromptIntellisense.CompletionItem)">
+            <summary>Register a single command into intellisense.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.AddCommands(System.Collections.Generic.IEnumerable{SocketJack.Net.Services.PromptIntellisense.CompletionItem})">
+            <summary>Register multiple commands at once.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.AddFeature(System.String,System.String,System.String,System.String)">
+            <summary>Register an LLM / AI feature that appears in intellisense and is executable.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.AddAgentActions(System.Collections.Generic.IEnumerable{System.ValueTuple{System.String,System.String,System.Boolean}})">
+            <summary>Register agent slave actions so they appear in intellisense and can be invoked.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.ClearCategory(System.String)">
+            <summary>Remove all commands in a given category (useful before re-registering).</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.GetAllCommands">
+            <summary>Get a snapshot of all registered commands (for help display, etc.).</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.SetSequenceProvider(System.Func{System.Collections.Generic.List{System.String}})">
+            <summary>
+            Register a callback that returns current sequence names (for play/delete completion).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.SetModelProvider(System.Func{System.Collections.Generic.List{System.String}})">
+            <summary>
+            Register a callback that returns available .gguf model file paths (for ai load completion).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.SetReflectionProvider(System.Func{System.Collections.Generic.List{SocketJack.Net.Services.ReflectionService.MemberInfo}},System.Func{System.String,SocketJack.Net.Services.ReflectionService.MemberInfo},System.Func{System.String,System.Collections.Generic.List{SocketJack.Net.Services.ReflectionService.MemberInfo}})">
+            <summary>
+            Register a callback that returns discoverable reflection members.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.GetCompletions(System.String,System.Int32)">
+            <summary>
+            Get completion items for the current input text and caret position.
+            Returns an empty list if no completions are relevant.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.ApplyCompletion(System.String,System.Int32,SocketJack.Net.Services.PromptIntellisense.CompletionItem)">
+            <summary>
+            Apply a completion item to the current input, returning the new text and caret position.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.PromptIntellisense.ExtractTrailingPath(System.String)">
+            <summary>
+            Extract a trailing file path from the input (e.g. "ai load C:\Users" ? "C:\Users").
+            Returns null if no path-like segment is found.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.ReflectionService">
+            <summary>
+            Provides reflection-based execution of properties, fields, and methods on a target object.
+            Results are serialized to JSON using SocketJack-compatible settings with safe fallback
+            for non-serializable types.
+            Supports scanning all loaded assemblies and parsing method parameters.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.ReflectionService.AssemblyInfo">
+            <summary>Describes a loaded assembly with its types.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.ReflectionService.MemberInfo">
+            <summary>Describes a discoverable member on the target object.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.ReflectionService.ParameterDetail">
+            <summary>Describes a parameter of a method.</summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.ReflectionService.ExecutionResult">
+            <summary>Result of executing a reflection command.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.GetLoadedAssemblies">
+            <summary>
+            Gets all loaded assemblies with their public types.
+            Includes framework and application assemblies so /reflect can inspect the full runtime.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.NavigateTo(System.String)">
+            <summary>
+            Navigate a dot-separated member path and return a ReflectionService for the resolved object.
+            Returns null if any segment is null or not found.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.ReadMember(System.String)">
+            <summary>
+            Read the current value of a member by name (property or field).
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.DiscoverMembers">
+            <summary>
+            Discovers all accessible members (properties, fields, methods) on the target.
+            Excludes compiler-generated, WPF infrastructure, and common noise members.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.GetMatchingMembers(System.String)">
+            <summary>
+            Get members filtered by a prefix for intellisense.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.GetMethodInfo(System.String)">
+            <summary>
+            Get parameter info for a specific method by name.
+            Returns null if the method is not found.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.ParseParameters(System.String)">
+            <summary>
+            Parse parameter string from /reflect command. 
+            Parameters are in format (param1, param2, ...) where strings are quoted and numerics are not.
+            Example: (123, "hello world", 45.6, "test")
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.Execute(System.String,System.String[])">
+            <summary>
+            Execute a member by name, optionally with string arguments.
+            Properties/fields return their value; methods are invoked.
+            Supports parsing parameters from method call syntax: method(arg1, arg2, ...)
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.SafeSerialize(System.Object,System.Type)">
+            <summary>
+            Safely serialize a value to JSON. Skips non-serializable objects gracefully.
+            Uses SocketJack-compatible serializer options.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.ReflectionService.IsFileType(System.Type)">
+            <summary>Returns true for types that represent file-like inputs (byte[], Stream, FileInfo, etc.).</summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.SearchInternet">
+            <summary>
+            Runs internet search queries and returns raw JSON so prompt commands can surface
+            structured results without the UI formatter rewriting them.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.SearchService">
+            <summary>
+            Handles all web search operations: Google/DuckDuckGo, Bing RSS fallback,
+            video/YouTube/image/download searches.
+            Extracted from MainWindow to reduce monolith size.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.SearchService.SearchAndReturnContext(System.String)">
+            <summary>
+            Search the web and return plain-text results for LLM context injection.
+            Uses DuckDuckGo HTML with Bing RSS fallback.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.SearchService.SearchAsync(System.String,System.Int32)">
+            <summary>
+            Execute a web search and return structured results.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.SearchService.SearchVideosAsync(System.String,System.Int32)">
+            <summary>Search for videos via DuckDuckGo (appends site:youtube.com).</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.SearchService.SearchYouTubeAsync(System.String,System.Int32)">
+            <summary>Search YouTube specifically, filtering to YouTube URLs only.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.SearchService.SearchDownloadsAsync(System.String,System.Int32)">
+            <summary>Search for downloads by appending "download" to the query.</summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.SearchService.FetchImagesAsync(System.String,System.Int32)">
+            <summary>
+            Fetch image results. Tries DuckDuckGo Images API first, falls back to
+            Bing Image HTML scraping, then plain text search with image hints.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Services.SearchService.FetchOgImageAsync(System.String,System.Int32)">
+            <summary>
+            Fetch the og:image (or twitter:image) URL from a page's HEAD section.
+            Returns null if not found or on error.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Services.TerminalService">
+            <summary>
+            Executes local terminal commands for LmVsProxy after the caller has passed
+            the GUI-owned permission gate.
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.TcpClient">
             <summary>
             Multithreaded TCP Client.
@@ -3292,6 +3862,44 @@
             </summary>
             <param name="Obj"></param>
         </member>
+        <member name="M:SocketJack.Net.TcpDuplicator.#ctor(System.String,System.Int32,System.Int32)">
+            <summary>
+            Creates a new TcpDuplicator that listens locally and forwards to a remote server.
+            </summary>
+            <param name="remoteHost">The remote host to forward connections to.</param>
+            <param name="remotePort">The remote port to forward connections to.</param>
+            <param name="localPort">The local port to listen on.</param>
+        </member>
+        <member name="M:SocketJack.Net.TcpDuplicator.#ctor(System.String,System.Int32,System.Int32,System.Net.IPAddress)">
+            <summary>
+            Creates a new TcpDuplicator that listens on the given local address and forwards to a remote server.
+            </summary>
+            <param name="remoteHost">The remote host to forward connections to.</param>
+            <param name="remotePort">The remote port to forward connections to.</param>
+            <param name="localPort">The local port to listen on.</param>
+            <param name="listenAddress">The local address to bind. Defaults to loopback when null.</param>
+        </member>
+        <member name="M:SocketJack.Net.TcpDuplicator.Start">
+            <summary>
+            Starts listening on the local port and forwarding connections to the remote server.
+            </summary>
+            <returns>True if successfully started; false otherwise.</returns>
+        </member>
+        <member name="M:SocketJack.Net.TcpDuplicator.Stop">
+            <summary>
+            Stops listening and closes all forwarding sessions.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.TcpDuplicator.ForwardingSession">
+            <summary>
+            Manages bidirectional forwarding between a local client and remote server.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.SslCertificateBindingCollection">
+            <summary>
+            Stores SNI certificate bindings for servers that host multiple TLS domains on one listener.
+            </summary>
+        </member>
         <member name="T:SocketJack.Net.TcpServer">
             <summary>
             Multithreaded TCP Server.
@@ -3307,6 +3915,17 @@
         <member name="P:SocketJack.Net.TcpServer.SslCertificate">
             <summary>
             Server certificate for SSL connections.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.TcpServer.SslCertificateSelector">
+            <summary>
+            Optional server-side certificate selector used for SNI-based HTTPS hosting.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.TcpServer.SslCertificateBindings">
+            <summary>
+            Host-name to certificate mappings used for SNI-based HTTPS hosting.
+            Exact host names and wildcard names such as <c>*.example.com</c> are supported.
             </summary>
         </member>
         <member name="P:SocketJack.Net.TcpServer.Clients">
@@ -3330,7 +3949,7 @@
         <member name="M:SocketJack.Net.TcpServer.InitializePeer(SocketJack.Net.NetworkConnection)">
             <summary>
             Registers a connection as a peer and synchronizes peer lists.
-            <see cref="!:Peers.AddOrUpdate"/> runs synchronously so the peer is
+            <c>Peers.AddOrUpdate</c> runs synchronously so the peer is
             immediately visible to message handlers; the network sync runs
             asynchronously.
             </summary>
@@ -3811,17 +4430,17 @@
         </member>
         <member name="T:SocketJack.Examples.DataServerExample">
             <summary>
-            Example usage of DataServer � standalone, MutableTcpServer integration, and MSSQL import.
+            Example usage of DataServer — standalone, MutableTcpServer integration, and MSSQL import.
             </summary>
         </member>
         <member name="M:SocketJack.Examples.DataServerExample.StandaloneExample">
             <summary>
-            Standalone mode � DataServer owns the TCP listener on port 1433.
+            Standalone mode — DataServer owns the TCP listener on port 1433.
             </summary>
         </member>
         <member name="M:SocketJack.Examples.DataServerExample.MutableTcpServerExample">
             <summary>
-            MutableTcpServer mode � TDS/MSSQL shares a port with HTTP, WebSocket, and SocketJack.
+            MutableTcpServer mode — TDS/MSSQL shares a port with HTTP, WebSocket, and SocketJack.
             </summary>
         </member>
         <member name="M:SocketJack.Examples.DataServerExample.ImportExample">

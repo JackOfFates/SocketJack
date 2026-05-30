@@ -431,6 +431,10 @@ namespace SocketJack.Net {
 
             var wrapped = new Wrapper(Obj, this);
             byte[] bytes = Options.Serializer.Serialize(wrapped);
+            bytes = Client.PatternCache.PrepareSend(bytes, Options, frame => {
+                byte[] candidate = Options.UseCompression ? Options.CompressionAlgorithm.Compress(frame) : frame;
+                return candidate.Length <= Options.MaxDatagramSize;
+            });
             byte[] processedBytes = Options.UseCompression ? Options.CompressionAlgorithm.Compress(bytes) : bytes;
 
             if (processedBytes.Length > Options.MaxDatagramSize) {
@@ -498,17 +502,20 @@ namespace SocketJack.Net {
         private void SendBroadcastUdp(object Obj, UdpConnection Except = null) {
             var wrapped = new Wrapper(Obj, this);
             byte[] bytes = Options.Serializer.Serialize(wrapped);
-            byte[] processedBytes = Options.UseCompression ? Options.CompressionAlgorithm.Compress(bytes) : bytes;
-
-            if (processedBytes.Length > Options.MaxDatagramSize) {
-                InvokeOnError(Connection, new InvalidOperationException(
-                    string.Format("Datagram too large ({0} bytes). UDP max is {1} bytes.", processedBytes.Length, Options.MaxDatagramSize)));
-                return;
-            }
 
             foreach (var kvp in Clients.ToArray()) {
                 if (Except != null && ReferenceEquals(kvp.Value, Except)) continue;
                 if (kvp.Value != null && !kvp.Value.Closed && kvp.Value.EndPoint != null) {
+                    byte[] clientBytes = kvp.Value.PatternCache.PrepareSend(bytes, Options, frame => {
+                        byte[] candidate = Options.UseCompression ? Options.CompressionAlgorithm.Compress(frame) : frame;
+                        return candidate.Length <= Options.MaxDatagramSize;
+                    });
+                    byte[] processedBytes = Options.UseCompression ? Options.CompressionAlgorithm.Compress(clientBytes) : clientBytes;
+                    if (processedBytes.Length > Options.MaxDatagramSize) {
+                        InvokeOnError(Connection, new InvalidOperationException(
+                            string.Format("Datagram too large ({0} bytes). UDP max is {1} bytes.", processedBytes.Length, Options.MaxDatagramSize)));
+                        continue;
+                    }
                     _sendQueue.Enqueue(new UdpSendItem(processedBytes, kvp.Value.EndPoint));
                     try { _sendSignal.Release(); } catch (ObjectDisposedException) { }
                 }
@@ -663,6 +670,15 @@ namespace SocketJack.Net {
                         data = result.Result;
                     } else {
                         InvokeOnError(Connection, result.Exception);
+                        return;
+                    }
+                }
+
+                NetworkConnection cacheConnection = null;
+                _clientNetworkConnections.TryGetValue(key, out cacheConnection);
+                if (cacheConnection != null && cacheConnection.PatternCache != null) {
+                    if (!cacheConnection.PatternCache.TryResolveReceived(data, Options, out data, out string cacheError)) {
+                        InvokeOnError(cacheConnection, new Exception(cacheError));
                         return;
                     }
                 }

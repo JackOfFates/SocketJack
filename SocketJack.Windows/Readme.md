@@ -1,254 +1,114 @@
-# SocketJack.WPF
+# SocketJack.WPF 2026
 
 ![SocketJack WPF Icon](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack.Windows/SocketJackWpfIcon.png)
 
 [![NuGet](https://img.shields.io/nuget/v/SocketJack.WPF.svg)](https://www.nuget.org/packages/SocketJack.WPF)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SocketJack.WPF.svg)](https://www.nuget.org/packages/SocketJack.WPF)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/JackOfFates/SocketJack/blob/master/LICENSE)
 
-WPF extension for [SocketJack](https://www.nuget.org/packages/SocketJack) that adds live control sharing over the network. Share any `FrameworkElement` — a `Canvas`, `Grid`, `Border`, or entire `Window` — as a JPEG stream to a remote peer, and let the viewer interact with it as if it were local. Mouse input is automatically forwarded back and replayed on the original element.
+SocketJack.WPF 2026 adds live WPF control sharing, remote input, and browser-friendly remote administration to the SocketJack networking platform.
 
-Built on top of the full SocketJack networking stack: `System.Text.Json` serialization, TCP/UDP/WebSocket transports, peer-to-peer relay, compression, and TLS encryption.
+Share any `FrameworkElement` as a live image stream, view it from another peer, and route remote mouse, wheel, text, and keyboard input back into WPF without moving the real Windows cursor.
 
-**Target frameworks:** .NET 8 · .NET 9 · .NET 10
+<a id="versions"></a>
+## #Versions
 
----
+| Package / surface | Version | Target |
+|---|---:|---|
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.0` | `net8.0-windows7.0`, `net10.0-windows7.0` |
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.0` | `.NET Standard 2.1` |
+| `JackLLM Workstation` | `2026.0` | WPF app metadata |
+| `JackLLM Workstation Linux` | `1:26.0.1` | Debian-compatible package version for the 2026 line |
 
-## ? What's New in v1.6.6
+<details open>
+<summary><strong>#Install</strong> - add WPF remote control to a SocketJack app</summary>
 
-- **WebSocket support in `MutableTcpServer`** — HTTP, SocketJack, WebSocket, and RTMP now all auto-detect on a single port. Browser clients connect alongside native SocketJack and HTTP clients seamlessly.
-- **`WebSocketClientConnected` event** — fires after a successful WebSocket upgrade handshake for easy browser-client initialization.
-- **`MapFile`** — map an individual file to a URL path (e.g., `MapFile("/js/app.js", @"C:\Pages\app.js")`).
-- **`CacheControl` property** — global `Cache-Control` header for all HTTP responses, plus `ETag` / `Last-Modified` with `304 Not Modified` support for static files.
-- **Protocol-aware broadcasting** — `SendBroadcast` on `MutableTcpServer` serializes once per protocol type (SocketJack vs WebSocket) to eliminate redundant work.
-
----
-
-## How It Works
-
-1. **Sharer** calls `element.Share(client, peer, fps)` — captures the element as a JPEG bitmap each frame and streams `ControlShareFrame` messages via P2P.
-2. **Viewer** calls `client.ViewShare(image, peer)` — decodes incoming frames into a WPF `Image` and forwards mouse events back to the sharer.
-3. Mouse clicks and moves on the viewer are replayed on the original element as real input events.
-
----
-
-## Getting Started
-
+```powershell
+dotnet add package SocketJack.WPF
 ```
+
+Or with Package Manager:
+
+```powershell
 Install-Package SocketJack.WPF
 ```
 
----
+Use this package when the network should see, share, or control a WPF UI. Use the core `SocketJack` package by itself when you only need TCP, UDP, HTTP, WebSockets, SQL/data, streaming, and peer routing.
 
-## Examples
+</details>
 
-### Sharing a Control
+<details>
+<summary><strong>#What It Does</strong> - live capture, remote viewing, and direct WPF input</summary>
 
-```cs
-using SocketJack.Net;
-using SocketJack.Net.P2P;
-using SocketJack.WPF;
-
-// Both 'client' and 'peer' must already be connected and identified.
-IDisposable shareHandle = myCanvas.Share(client, peer, fps: 10);
-
-// Stop sharing
-shareHandle.Dispose();
-```
-
-### Viewing a Shared Control
-
-```cs
-using System.Windows.Controls;
-using SocketJack.Net;
-using SocketJack.WPF;
-
-var viewer = client.ViewShare(sharedImage, sharerPeer);
-
-// Dispose when finished
-viewer.Dispose();
-```
-
-### Full Example
-
-A typical setup uses two application instances connected through a `TcpServer`. One shares a control, the other views it.
-
-**XAML (both instances):**
-
-```xml
-<Image x:Name="SharedImage" Stretch="Uniform" />
-```
-
-**Sharer (Instance A):**
-
-```cs
-Identifier remotePeer = client.Peers.FirstNotMe();
-IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
-```
-
-**Viewer (Instance B):**
-
-```cs
-Identifier remotePeer = client.Peers.FirstNotMe();
-var viewer = client.ViewShare(SharedImage, remotePeer);
-```
-
----
-
-## HTTP Live Streaming with BroadcastServer
-
-`BroadcastServer` turns any `HttpServer` into a live video relay. Point OBS (or any RTMP encoder) at the server and viewers can watch in a browser or VLC — no additional dependencies required.
-
-![OBS streaming to SocketJack HttpServer via BroadcastServer](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/httpStream.PNG)
-
-```cs
-using SocketJack.Net;
-
-// Create the HTTP server
-var server = new HttpServer(port: 8080);
-
-// Attach BroadcastServer and register the default streaming routes:
-//   GET  /stream       — HTML player page (mpegts.js)
-//   GET  /stream/data  — raw FLV relay for the player / VLC
-//   PUT  /Upload       — OBS Custom Output (HTTP)
-//   POST /Upload       — OBS Custom Output (HTTP)
-//   RTMP rtmp://host:port/live  — OBS RTMP publish
-var broadcast = new BroadcastServer(server);
-broadcast.Register();
-
-// Start listening
-server.Listen();
-
-// The stream key is auto-generated. In OBS set:
-//   Server:     rtmp://localhost:8080/live
-//   Stream Key: <broadcast.StreamKey>
-Console.WriteLine("Stream Key: " + broadcast.StreamKey);
-
-// Viewers open http://localhost:8080/stream in a browser,
-// or play http://localhost:8080/stream/data directly in VLC.
-
-// Optional: poll stats once per second
-while (true) {
-    var stats = broadcast.UpdateStats();
-    if (stats.Active) {
-        Console.WriteLine(
-            stats.BitrateKbps.ToString("N0") + " kbps | " +
-            stats.VideoFrames + " video | " +
-            stats.AudioFrames + " audio | " +
-            BroadcastServer.FormatBytes(stats.TotalBytes));
-    }
-    Thread.Sleep(1000);
-}
-```
-
----
-
-## SocketJack Core Features
-
-This package includes the full [SocketJack](https://www.nuget.org/packages/SocketJack) library. All core networking features are available:
-
-| Category | Highlights |
+| Capability | What it means |
 |---|---|
-| **Transport** | Unified `TcpClient` / `TcpServer`, `UdpClient` / `UdpServer`, and WebSocket API. |
-| **Protocol Multiplexing** | `MutableTcpServer` auto-detects HTTP, SocketJack, WebSocket, and RTMP on a single port. |
-| **HTTP** | Route mapping (`Map`, `Map<T>`, `MapStream`, `MapUploadStream`), static file & directory serving via `MapFile` / `MapDirectory`, `.htaccess` security, `Cache-Control` / `ETag` / `304`, RTMP ingest. |
-| **Serialization** | `System.Text.Json` with pluggable `ISerializer`, type whitelist/blacklist. |
-| **Peer-to-Peer** | Automatic discovery, relay-based NAT traversal, metadata propagation. |
-| **Compression** | `GZipStream` / `DeflateStream` with configurable `CompressionLevel`. |
-| **Performance** | Async I/O, automatic segmentation, bandwidth throttling. |
-| **Security** | `SslStream` TLS 1.2, `X509Certificate` authentication, `.htaccess` access control. |
+| Live capture | Stream any `FrameworkElement`, including panels, canvases, controls, or windows. |
+| Viewer integration | Decode incoming frames into WPF image controls with a small extension-method surface. |
+| Remote input | Forward pointer movement, clicks, wheel events, text, and keyboard commands to WPF. |
+| Peer transport | Ride on SocketJack connections, peer identity, and metadata flows. |
+| Browser admin | Power JackLLM Workstation Remote Admin through the web console. |
+| Shared core stack | Benefit from SocketJack 2026 TCP, UDP, HTTP, WebSocket, `MutableTcpServer`, RTMP, SQL/TDS, TLS, compression, and P2P support. |
 
-### TCP — Quick Start
+</details>
 
-```cs
-var server = new TcpServer(port: 12345);
-server.Listen();
+<details>
+<summary><strong>#How It Works</strong> - host, stream, view, and control</summary>
 
-var client = new TcpClient();
-await client.Connect("127.0.0.1", 12345);
+1. A WPF host shares a `FrameworkElement` over a connected SocketJack peer.
+2. SocketJack.WPF captures the element as JPEG frames at the configured frame rate.
+3. A viewer renders frames into an `Image`.
+4. Viewer input is translated into WPF actions and sent back to the original element.
+5. JackLLM Remote Admin uses the same path to let the browser operate the WPF JackLLM Workstation UI.
 
-client.Send(new CustomMessage("Hello!"));
+```csharp
+using SocketJack.WPF;
 
-server.RegisterCallback<CustomMessage>((args) =>
-{
-    Console.WriteLine($"Received: {args.Object.Message}");
-    args.Connection.Send(new CustomMessage("10-4"));
-});
+IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
+IDisposable viewerHandle = client.ViewShare(SharedImage, sharerPeer);
 ```
 
-### UDP — Quick Start
+</details>
 
-```cs
-var server = new UdpServer(port: 12345);
-server.Listen();
+<details>
+<summary><strong>#JackLLM Remote Admin</strong> - browser control for the workstation UI</summary>
 
-var client = new UdpClient();
-await client.Connect("127.0.0.1", 12345);
+JackLLM Workstation can register a WPF host with SocketJack.WPF so the browser console can view and operate the desktop GUI. This is useful for remote workstations where the model server, proxy, billing, permissions, diagnostics, and node metadata are managed from a browser.
 
-client.Send(new CustomMessage("Hello via UDP!"));
+![JackLLM Remote Admin](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/3.jpg)
 
-server.RegisterCallback<CustomMessage>((args) =>
-{
-    Console.WriteLine($"Received: {args.Object.Message}");
-});
-```
+</details>
 
-### Default Options
+<details>
+<summary><strong>#Documentation</strong> - examples and related packages</summary>
 
-Must be set before creating any Client or Server instance.
+- [Examples](https://github.com/JackOfFates/SocketJack/blob/master/examples.md)
+- [SocketJack.WPF package](https://www.nuget.org/packages/SocketJack.WPF)
+- [SocketJack package](https://www.nuget.org/packages/SocketJack)
+- [GitHub repository](https://github.com/JackOfFates/SocketJack)
 
-```cs
-NetworkOptions.DefaultOptions.UsePeerToPeer = true;
-```
-
-### MutableTcpServer — Multi-Protocol Quick Start
-
-`MutableTcpServer` auto-detects **HTTP, SocketJack, WebSocket, and RTMP** per-connection on a single port:
-
-```cs
-var server = new MutableTcpServer(port: 9000);
-
-// HTTP routes via the Http property
-server.Http.Map("GET", "/api/status", (connection, request, ct) =>
-{
-    return "{ \"status\": \"ok\" }";
-});
-
-// Serve static files
-server.Http.MapDirectory("/www", @"C:\wwwroot");
-
-// WebSocket clients are detected automatically
-server.WebSocketClientConnected += (connection) =>
-{
-    Console.WriteLine($"WebSocket client connected: {connection.ID}");
-};
-
-// SocketJack callbacks work as usual (for both SocketJack and WebSocket clients)
-server.RegisterCallback<CustomMessage>((args) =>
-{
-    Console.WriteLine($"Received: {args.Object.Message}");
-});
-
-server.Listen();
-```
-
----
-
-## Documentation
-
-- [API Reference](https://github.com/JackOfFates/SocketJack)
-- [Examples & Tutorials](https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls)
+</details>
 
 ## License
 
-SocketJack is open source and licensed under the [MIT License](LICENSE).
+SocketJack.WPF is open source and licensed under the [MIT License](https://github.com/JackOfFates/SocketJack/blob/master/LICENSE).
 
-## Contributing
+<!-- LINECOUNTER-OUTPUT:START -->
+<details>
+<summary><strong>LineCounter - Output</strong> <code>9,050 lines / 16 files</code></summary>
 
-Contributions, bug reports, and feature requests are welcome! See [CONTRIBUTING.md](https://github.com/JackOfFates/SocketJack/blob/master/CONTRIBUTING.md) for details.
+<br>
 
----
+<strong>Scope:</strong> <code>SocketJack.Windows</code><br>
+<strong>Source:</strong> <code>GetLineCount.bat</code> rules, non-empty/non-whitespace lines only; build/vendor folders skipped.
 
-**SocketJack.WPF** — Live control sharing for WPF, powered by SocketJack.
+| Language | Files | Lines |
+|---|---:|---:|
+| XML | 1 | 5,161 |
+| C# | 12 | 3,200 |
+| MSBuild/XML | 1 | 466 |
+| EditorConfig | 1 | 143 |
+| Markdown | 1 | 80 |
+| **Total** | **16** | **9,050** |
 
-[NuGet](https://www.nuget.org/packages/SocketJack.WPF) · [GitHub](https://github.com/JackOfFates/SocketJack) · [Examples](https://github.com/JackOfFates/SocketJack/tree/master/Tests/TestControls)
+</details>
+<!-- LINECOUNTER-OUTPUT:END -->

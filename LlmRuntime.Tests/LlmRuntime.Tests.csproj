@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.2.0" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LlmRuntime\LlmRuntime.csproj" />
+    <ProjectReference Include="..\SocketJack.CopilotMcpBridge\SocketJack.CopilotMcpBridge.csproj" />
+    <ProjectReference Include="..\SocketJack.LlmCore\SocketJack.LlmCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\LlmRuntime.VisualStudio\SocketJackCopilotServices.cs" Link="VisualStudio\SocketJackCopilotServices.cs" />
+    <Compile Include="..\LlmRuntime.VisualStudio2026\SessionSyncDiffState.cs" Link="VisualStudio2026\SessionSyncDiffState.cs" />
+  </ItemGroup>
+</Project>

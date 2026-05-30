@@ -1,0 +1,1624 @@
+<UserControl x:Class="LlmRuntime.Wpf.ModelsManagerControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:LlmRuntime.Wpf"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="768"
+             d:DesignWidth="1440">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="ManagerBackgroundBrush" Color="#101216" />
+        <SolidColorBrush x:Key="ManagerPanelBrush" Color="#161B22" />
+        <SolidColorBrush x:Key="ManagerPanelAltBrush" Color="#111821" />
+        <SolidColorBrush x:Key="ManagerBorderBrush" Color="#2D3440" />
+        <SolidColorBrush x:Key="ManagerTextBrush" Color="#F2F4F8" />
+        <SolidColorBrush x:Key="ManagerSubtleTextBrush" Color="#AAB4C3" />
+        <SolidColorBrush x:Key="ManagerAccentBrush" Color="#FF5C7A" />
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Background" Value="#1D2630" />
+            <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+            <Setter Property="BorderBrush" Value="#3B4654" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonChrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="True"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#243142" />
+                                <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#80FCA5A5" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="{StaticResource ManagerAccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#182332" />
+                                <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="{StaticResource ManagerAccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Cursor" Value="Arrow" />
+                                <Setter Property="Foreground" Value="#708093" />
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#141A22" />
+                                <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#26313D" />
+                                <Setter TargetName="ButtonChrome" Property="Opacity" Value="0.92" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#0E141B" />
+            <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource ManagerBorderBrush}" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="#0E141B" />
+            <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource ManagerBorderBrush}" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="Background" Value="#0E141B" />
+            <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource ManagerBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,4,30,4" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="ComboChrome"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="7" />
+                            <ToggleButton Focusable="False"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent" />
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                              Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"
+                                              IsHitTestVisible="False"
+                                              TextElement.Foreground="{StaticResource ManagerTextBrush}" />
+                            <Path x:Name="DropArrow"
+                                  Data="M 0 0 L 4 4 L 8 0 Z"
+                                  Fill="{StaticResource ManagerAccentBrush}"
+                                  Width="8"
+                                  Height="4"
+                                  Stretch="Uniform"
+                                  HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,12,0"
+                                  IsHitTestVisible="False" />
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Placement="Bottom"
+                                   PopupAnimation="Fade">
+                                <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                        Background="#F00E141B"
+                                        BorderBrush="{StaticResource ManagerBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="7"
+                                        Padding="3"
+                                        TextElement.Foreground="{StaticResource ManagerTextBrush}">
+                                    <ScrollViewer CanContentScroll="True">
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ComboChrome" Property="Background" Value="#141D28" />
+                                <Setter TargetName="ComboChrome" Property="BorderBrush" Value="#80FCA5A5" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="ComboChrome" Property="BorderBrush" Value="{StaticResource ManagerAccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="DropArrow" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <RotateTransform Angle="180" CenterX="4" CenterY="2" />
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="9,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemChrome"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="5"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemChrome" Property="Background" Value="#553A1824" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemChrome" Property="Background" Value="#663A1824" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+            <Setter Property="Background" Value="#88263448" />
+            <Setter Property="BorderBrush" Value="{StaticResource ManagerBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid SnapsToDevicePixels="True">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="BoxChrome"
+                                    Width="18"
+                                    Height="18"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="5"
+                                    VerticalAlignment="Center">
+                                <Grid>
+                                    <Border x:Name="AccentFill"
+                                            Background="{StaticResource ManagerAccentBrush}"
+                                            CornerRadius="4"
+                                            Opacity="0" />
+                                    <Path x:Name="CheckGlyph"
+                                          Data="M 4.2 9.2 L 7.2 12.2 L 13.9 5.4"
+                                          Stroke="#061316"
+                                          StrokeThickness="2"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round"
+                                          Opacity="0" />
+                                    <Path x:Name="IndeterminateGlyph"
+                                          Data="M 5 9 H 13"
+                                          Stroke="#061316"
+                                          StrokeThickness="2"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          Opacity="0" />
+                                </Grid>
+                            </Border>
+                            <ContentPresenter Grid.Column="1"
+                                              Margin="8,0,0,0"
+                                              RecognizesAccessKey="True"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BoxChrome" Property="Background" Value="#141D28" />
+                                <Setter TargetName="BoxChrome" Property="BorderBrush" Value="#80FCA5A5" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="BoxChrome" Property="BorderBrush" Value="{StaticResource ManagerAccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="AccentFill" Property="Opacity" Value="1" />
+                                <Setter TargetName="CheckGlyph" Property="Opacity" Value="1" />
+                                <Setter TargetName="BoxChrome" Property="BorderBrush" Value="{StaticResource ManagerAccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="{x:Null}">
+                                <Setter TargetName="AccentFill" Property="Opacity" Value="1" />
+                                <Setter TargetName="IndeterminateGlyph" Property="Opacity" Value="1" />
+                                <Setter TargetName="BoxChrome" Property="BorderBrush" Value="{StaticResource ManagerAccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="BoxChrome" Property="Background" Value="#182332" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RgbCopilotProgressBarStyle" TargetType="ProgressBar">
+            <Setter Property="Minimum" Value="0" />
+            <Setter Property="Maximum" Value="100" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Background" Value="#0B1118" />
+            <Setter Property="BorderBrush" Value="#26313D" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid ClipToBounds="True">
+                            <Border x:Name="PART_Track"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6" />
+                            <Border x:Name="PART_Indicator"
+                                    HorizontalAlignment="Left"
+                                    CornerRadius="6"
+                                    Margin="1">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <GradientStop Color="#60A5FA" Offset="0.00" />
+                                        <GradientStop Color="#22D3EE" Offset="0.38" />
+                                        <GradientStop Color="#A78BFA" Offset="0.72" />
+                                        <GradientStop Color="#F472B6" Offset="1.00" />
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <Border.Triggers>
+                                    <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                                        <BeginStoryboard>
+                                            <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[0].(GradientStop.Color)"
+                                                                To="#22D3EE"
+                                                                Duration="0:0:1.8" />
+                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[1].(GradientStop.Color)"
+                                                                To="#A78BFA"
+                                                                Duration="0:0:1.8" />
+                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[2].(GradientStop.Color)"
+                                                                To="#F472B6"
+                                                                Duration="0:0:1.8" />
+                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[3].(GradientStop.Color)"
+                                                                To="#60A5FA"
+                                                                Duration="0:0:1.8" />
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </EventTrigger>
+                                </Border.Triggers>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="VramProgressBarStyle" TargetType="ProgressBar" BasedOn="{StaticResource RgbCopilotProgressBarStyle}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid ClipToBounds="True">
+                            <Border x:Name="PART_Track"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6" />
+                            <Border x:Name="PART_Indicator"
+                                    HorizontalAlignment="Left"
+                                    CornerRadius="6"
+                                    Margin="1">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <GradientStop Color="#34D399" Offset="0" />
+                                        <GradientStop Color="#FBBF24" Offset="0.58" />
+                                        <GradientStop Color="#FB7185" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ResourceVerticalProgressBarStyle" TargetType="ProgressBar">
+            <Setter Property="Minimum" Value="0" />
+            <Setter Property="Maximum" Value="100" />
+            <Setter Property="Orientation" Value="Vertical" />
+            <Setter Property="Width" Value="12" />
+            <Setter Property="Height" Value="48" />
+            <Setter Property="Background" Value="#0B1118" />
+            <Setter Property="Foreground" Value="#67E8F9" />
+            <Setter Property="BorderBrush" Value="#26313D" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <Style x:Key="HistoryProgressBarStyle" TargetType="ProgressBar" BasedOn="{StaticResource ResourceVerticalProgressBarStyle}">
+            <Setter Property="Width" Value="5" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Foreground" Value="#A78BFA" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <DataTemplate x:Key="ModelItemTemplate">
+            <Border Margin="0,0,0,8"
+                    Padding="10"
+                    Background="#121A23"
+                    BorderBrush="{Binding BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <Border Margin="8,0,0,0"
+                                Padding="6,2"
+                                Background="{Binding StatusBackgroundBrush}"
+                                BorderBrush="{Binding StatusBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="6">
+                            <TextBlock Text="{Binding StatusLabel}" FontSize="10" FontWeight="SemiBold" Foreground="{Binding StatusTextBrush}" />
+                        </Border>
+                        <Border Margin="6,0,0,0"
+                                Padding="6,2"
+                                Background="#1A2635"
+                                BorderBrush="#3B5A72"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                ToolTip="{Binding ParallelismToolTip}">
+                            <TextBlock Text="{Binding ParallelismLabel}"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Foreground="#C7E5FF" />
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="0"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                Margin="10,0,0,0">
+                        <TextBlock Text="{Binding SourceLabel}"
+                                   Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                   FontSize="11"
+                                   VerticalAlignment="Center" />
+                        <Border Margin="8,0,0,0"
+                                Padding="7,2"
+                                Background="{Binding BenchmarkBackgroundBrush}"
+                                BorderBrush="{Binding BenchmarkBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                ToolTip="{Binding BenchmarkToolTip}">
+                            <TextBlock Text="{Binding BenchmarkScoreText}"
+                                       FontFamily="Consolas"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="{Binding BenchmarkTextBrush}" />
+                        </Border>
+                        <Button Content="Benchmark"
+                                Click="BenchmarkModelButton_Click"
+                                CommandParameter="{Binding LoadIdentifier}"
+                                IsEnabled="{Binding BenchmarkCanRun}"
+                                MinHeight="24"
+                                Padding="8,1"
+                                Margin="6,0,0,0"
+                                ToolTip="{Binding BenchmarkToolTip}" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="1"
+                               Grid.ColumnSpan="2"
+                               Text="{Binding SummaryLine}"
+                               Foreground="{StaticResource ManagerSubtleTextBrush}"
+                               FontSize="11"
+                               Margin="0,6,0,0"
+                               TextTrimming="CharacterEllipsis" />
+
+                    <TextBlock Grid.Row="2"
+                               Grid.ColumnSpan="2"
+                               Text="{Binding BenchmarkLine}"
+                               Foreground="{Binding BenchmarkTextBrush}"
+                               FontSize="11"
+                               Margin="0,5,0,0"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding BenchmarkToolTip}" />
+
+                    <Border Grid.Row="3"
+                            Grid.ColumnSpan="2"
+                            Margin="0,7,0,0"
+                            Padding="8"
+                            Background="#1A111923"
+                            BorderBrush="#31445D"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <UniformGrid Columns="4" Rows="1" Width="150">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <ProgressBar Value="{Binding CpuUsagePercent, Mode=OneWay}" Foreground="#67E8F9" Style="{StaticResource ResourceVerticalProgressBarStyle}" />
+                                    <TextBlock Text="CPU" FontSize="9" Foreground="{StaticResource ManagerSubtleTextBrush}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding CpuUsageText}" FontSize="9" HorizontalAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel HorizontalAlignment="Center">
+                                    <ProgressBar Value="{Binding RamUsagePercent, Mode=OneWay}" Foreground="#A7F3D0" Style="{StaticResource ResourceVerticalProgressBarStyle}" />
+                                    <TextBlock Text="RAM" FontSize="9" Foreground="{StaticResource ManagerSubtleTextBrush}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding RamUsageText}" FontSize="9" HorizontalAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel HorizontalAlignment="Center">
+                                    <ProgressBar Value="{Binding GpuUsagePercent, Mode=OneWay}" Foreground="#A78BFA" Style="{StaticResource ResourceVerticalProgressBarStyle}" />
+                                    <TextBlock Text="GPU" FontSize="9" Foreground="{StaticResource ManagerSubtleTextBrush}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding GpuUsageText}" FontSize="9" HorizontalAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel HorizontalAlignment="Center">
+                                    <ProgressBar Value="{Binding VramUsagePercent, Mode=OneWay}" Foreground="#FBBF24" Style="{StaticResource ResourceVerticalProgressBarStyle}" />
+                                    <TextBlock Text="VRAM" FontSize="9" Foreground="{StaticResource ManagerSubtleTextBrush}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding VramUsageText}" FontSize="9" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </UniformGrid>
+
+                            <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                                <TextBlock Text="{Binding ResourceUsageSummary}"
+                                           Foreground="#CBD5E1"
+                                           FontSize="10"
+                                           TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding ResourceCostText}"
+                                           Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                           FontSize="10"
+                                           Margin="0,2,0,4"
+                                           TextWrapping="Wrap" />
+                                <ItemsControl ItemsSource="{Binding ResourceHistoryBars}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <ProgressBar Value="{Binding Value, Mode=OneWay}"
+                                                         ToolTip="{Binding ToolTip}"
+                                                         Style="{StaticResource HistoryProgressBarStyle}"
+                                                         Margin="0,0,2,0" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="4"
+                            Grid.ColumnSpan="2"
+                            Margin="0,7,0,0"
+                            Padding="8,5"
+                            Background="#3323120A"
+                            BorderBrush="#F59E0B"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Visibility="{Binding HardwareWarningVisibility}"
+                            ToolTip="{Binding HardwareWarningDetail}">
+                        <DockPanel LastChildFill="True">
+                            <Border DockPanel.Dock="Left"
+                                    Width="18"
+                                    Height="18"
+                                    Margin="0,0,7,0"
+                                    Background="#F59E0B"
+                                    CornerRadius="9">
+                                <TextBlock Text="!"
+                                           Foreground="#101216"
+                                           FontWeight="Bold"
+                                           FontSize="12"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="{Binding HardwareWarningSummary}"
+                                       Foreground="#FCD34D"
+                                       FontSize="11"
+                                       TextWrapping="Wrap" />
+                        </DockPanel>
+                    </Border>
+
+                    <TextBlock Grid.Row="5"
+                               Grid.ColumnSpan="2"
+                               Text="{Binding PathLine}"
+                               Foreground="#7F8A99"
+                               FontSize="10"
+                               FontFamily="Consolas"
+                               Margin="0,5,0,0"
+                               TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource ManagerBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="14,12,14,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                <TextBlock Text="Models" FontSize="24" FontWeight="SemiBold" Visibility="Collapsed" />
+                <TextBlock x:Name="ManagerStatusText"
+                           Text="Runtime model manager ready."
+                           Foreground="{StaticResource ManagerSubtleTextBrush}"
+                           FontSize="12"
+                           Margin="0,3,0,0"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="RefreshModelsButton"
+                        Content="Refresh"
+                        Click="RefreshModelsButton_Click"
+                        Margin="0,0,8,0"
+                        AutomationProperties.Name="Refresh model list" />
+                <Button x:Name="OpenBrowserButton"
+                        Content="Open Browser"
+                        Click="OpenBrowserButton_Click"
+                        AutomationProperties.Name="Open Hugging Face model browser" />
+            </StackPanel>
+        </Grid>
+
+        <TabControl x:Name="ManagerTabs"
+                    Grid.Row="1"
+                    Margin="14,0,14,0"
+                    Background="{StaticResource ManagerBackgroundBrush}"
+                    BorderBrush="{StaticResource ManagerBorderBrush}">
+            <TabControl.ItemContainerStyle>
+                <Style TargetType="TabItem">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </Style>
+            </TabControl.ItemContainerStyle>
+            <TabItem x:Name="ModelsTabItem" Header="Models">
+                    <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,10,0,0">
+                     <Grid.RowDefinitions>
+                         <RowDefinition Height="Auto" />
+                         <RowDefinition Height="*" />
+                     </Grid.RowDefinitions>
+
+                    <UniformGrid Grid.Row="0" Columns="4" Margin="0,0,0,10">
+                        <Border Background="{StaticResource ManagerPanelBrush}" BorderBrush="{StaticResource ManagerBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="Running" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                <TextBlock x:Name="RunningCountText" Text="0" FontSize="22" FontWeight="SemiBold" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource ManagerPanelBrush}" BorderBrush="{StaticResource ManagerBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="Downloaded" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                <TextBlock x:Name="DownloadedCountText" Text="0" FontSize="22" FontWeight="SemiBold" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource ManagerPanelBrush}" BorderBrush="{StaticResource ManagerBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock Text="LM Studio" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                <TextBlock x:Name="LmStudioCountText" Text="0" FontSize="22" FontWeight="SemiBold" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource ManagerPanelBrush}" BorderBrush="{StaticResource ManagerBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
+                            <StackPanel>
+                                <TextBlock Text="Total" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                <TextBlock x:Name="TotalCountText" Text="0" FontSize="22" FontWeight="SemiBold" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" MinWidth="420" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="1.05*" MinWidth="340" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                Background="{StaticResource ManagerPanelBrush}"
+                                BorderBrush="{StaticResource ManagerBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0" Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="160" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="ModelSearchBox"
+                                             AutomationProperties.Name="Search models"
+                                             TextChanged="ModelSearchBox_TextChanged"
+                                             ToolTip="Search by name, source, format, path, architecture, or tag." />
+                                    <ComboBox x:Name="ModelFilterBox"
+                                              Grid.Column="1"
+                                              Margin="8,0,0,0"
+                                              SelectionChanged="ModelFilterBox_SelectionChanged"
+                                              SelectedIndex="0">
+                                        <ComboBoxItem Content="All" Tag="all" />
+                                        <ComboBoxItem Content="LlmRuntime - Running" Tag="llmruntime:running" />
+                                        <ComboBoxItem Content="LlmRuntime - Idle" Tag="llmruntime:idle" />
+                                        <ComboBoxItem Content="LlmRuntime - All" Tag="llmruntime:all" />
+                                        <ComboBoxItem Content="Lm Studio - Running" Tag="lmstudio:running" />
+                                        <ComboBoxItem Content="Lm Studio - Idle" Tag="lmstudio:idle" />
+                                        <ComboBoxItem Content="Lm Studio - All" Tag="lmstudio:all" />
+                                    </ComboBox>
+                                    <Button Grid.Column="2"
+                                            Content="Benchmark All"
+                                            Click="BenchmarkAllModelsButton_Click"
+                                            Margin="8,0,0,0"
+                                            Padding="10,4"
+                                            Background="#1F7A68"
+                                            ToolTip="Benchmark every available model." />
+                                </Grid>
+
+                                <Grid Grid.Row="1">
+                                    <ListBox x:Name="ModelsListBox"
+                                             Background="#0E141B"
+                                             BorderBrush="{StaticResource ManagerBorderBrush}"
+                                             Foreground="{StaticResource ManagerTextBrush}"
+                                             ItemTemplate="{StaticResource ModelItemTemplate}"
+                                             SelectionChanged="ModelsListBox_SelectionChanged"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ScrollViewer.CanContentScroll="True"
+                                             VirtualizingPanel.IsVirtualizing="True"
+                                             VirtualizingPanel.ScrollUnit="Pixel" />
+                                    <TextBlock x:Name="ModelsEmptyText"
+                                               Text="No models match the current filter."
+                                               Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                               TextWrapping="Wrap"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Margin="32"
+                                               Visibility="Collapsed" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Column="2"
+                                Background="{StaticResource ManagerPanelBrush}"
+                                BorderBrush="{StaticResource ManagerBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock x:Name="SelectedModelTitleText"
+                                                   Text="Select a model"
+                                                   FontSize="18"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="SelectedModelSubtitleText"
+                                                   Text="Properties and load parameters appear here."
+                                                   Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                                   FontSize="12"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,4,0,0" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="EnabledBox"
+                                              Grid.Column="1"
+                                              Content="Enabled"
+                                              HorizontalAlignment="Right"
+                                              VerticalAlignment="Top"
+                                              Margin="12,2,0,0"
+                                              IsEnabled="False"
+                                              Checked="LoadSetting_Changed"
+                                              Unchecked="LoadSetting_Changed"
+                                              ToolTip="Allow this model to be loaded dynamically from the web chat UI. This is off by default unless the global Diagnostics API override is enabled." />
+                                </Grid>
+
+                                <Border Grid.Row="1"
+                                        Background="{StaticResource ManagerPanelAltBrush}"
+                                        BorderBrush="{StaticResource ManagerBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="10"
+                                        Margin="0,12,0,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="Status" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                            <TextBlock x:Name="SelectedModelStatusText" Text="-" FontWeight="SemiBold" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="Source" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                            <TextBlock x:Name="SelectedModelSourceText" Text="-" FontWeight="SemiBold" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <ScrollViewer Grid.Row="2"
+                                              VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled"
+                                              CanContentScroll="False"
+                                              PanningMode="VerticalOnly">
+                                    <StackPanel>
+                                        <Border x:Name="SelectedModelBaseModelPanel"
+                                                Background="#2A1518"
+                                                BorderBrush="#C24141"
+                                                BorderThickness="1"
+                                                CornerRadius="8"
+                                                Padding="10"
+                                                Margin="0,0,0,12"
+                                                Visibility="Collapsed">
+                                            <StackPanel>
+                                                <TextBlock Text="Base model required" FontWeight="SemiBold" Foreground="#FFD7D7" />
+                                                <TextBlock x:Name="SelectedModelBaseModelText"
+                                                           Text=""
+                                                           Foreground="#F6B7B7"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,4,0,8" />
+                                                <Button x:Name="DownloadBaseModelButton"
+                                                        Content="Download Base Model"
+                                                        Click="DownloadBaseModelButton_Click"
+                                                        HorizontalAlignment="Left" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border x:Name="SelectedModelHardwareWarningPanel"
+                                                Background="#2B1E0D"
+                                                BorderBrush="#F59E0B"
+                                                BorderThickness="1"
+                                                CornerRadius="8"
+                                                Padding="10"
+                                                Margin="0,0,0,12"
+                                                Visibility="Collapsed">
+                                            <StackPanel>
+                                                <TextBlock Text="Hardware warning" FontWeight="SemiBold" Foreground="#FCD34D" />
+                                                <TextBox x:Name="SelectedModelHardwareWarningText"
+                                                         Text=""
+                                                         IsReadOnly="True"
+                                                         TextWrapping="Wrap"
+                                                         AcceptsReturn="True"
+                                                         Background="Transparent"
+                                                         BorderThickness="0"
+                                                         Foreground="#FDE68A"
+                                                         Padding="0"
+                                                         Margin="0,4,0,0" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <TextBlock Text="Load Settings"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,0,0,8"
+                                                   ToolTip="Settings saved for this model and used when Workstation or an enabled web chat request loads it into LlmRuntime." />
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Backend" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Runtime backend for this model. Auto chooses CUDA 12, Vulkan, or CPU based on available drivers and native assets." />
+                                                <ComboBox x:Name="BackendBox" SelectedIndex="0" SelectionChanged="LoadSetting_Changed" ToolTip="Runtime backend for this model. Auto chooses CUDA 12, Vulkan, or CPU based on available drivers and native assets.">
+                                                    <ComboBoxItem Content="Auto" Tag="auto" />
+                                                    <ComboBoxItem Content="CPU" Tag="cpu" />
+                                                    <ComboBoxItem Content="CUDA" Tag="cuda" />
+                                                    <ComboBoxItem Content="CUDA 12" Tag="cuda12" />
+                                                    <ComboBoxItem Content="Vulkan" Tag="vulkan" />
+                                                    <ComboBoxItem Content="DirectML" Tag="directml" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="GPU Layers" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="-1 asks the backend to offload as many layers as it supports. Use 0 for CPU-only, or a positive number to cap GPU offload." />
+                                                <TextBox x:Name="GpuLayersBox" Text="-1" TextChanged="LoadSetting_Changed" ToolTip="-1 asks the backend to offload as many layers as it supports. Use 0 for CPU-only, or a positive number to cap GPU offload." />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Parallelism" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="How Workstation should place this model: single instance, data-parallel replicas, model offloading, or pipeline stages." />
+                                                <ComboBox x:Name="ParallelismModeBox" SelectedIndex="0" SelectionChanged="LoadSetting_Changed" ToolTip="How Workstation should place this model: single instance, data-parallel replicas, model offloading, or pipeline stages.">
+                                                    <ComboBoxItem Content="Single" Tag="single" />
+                                                    <ComboBoxItem Content="Data Parallelism" Tag="data_parallel" />
+                                                    <ComboBoxItem Content="Model Offloading" Tag="model_offload" />
+                                                    <ComboBoxItem Content="Pipeline Parallelism" Tag="pipeline_parallel" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="Placement" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Run locally, over network nodes, or as a hybrid local/network placement." />
+                                                <ComboBox x:Name="ParallelismPlacementBox" SelectedIndex="0" SelectionChanged="LoadSetting_Changed" ToolTip="Run locally, over network nodes, or as a hybrid local/network placement.">
+                                                    <ComboBoxItem Content="Local" Tag="local" />
+                                                    <ComboBoxItem Content="Network" Tag="network" />
+                                                    <ComboBoxItem Content="Hybrid" Tag="hybrid" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Target GPUs" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Comma-separated GPU device ids such as cuda:0,cuda:1. The GPU tab can fill this from model assignments." />
+                                                <TextBox x:Name="TargetDeviceIdsBox" Text="" TextChanged="LoadSetting_Changed" ToolTip="Comma-separated GPU device ids such as cuda:0,cuda:1. The GPU tab can fill this from model assignments." />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="Network nodes" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Comma-separated remote worker ids or host labels for network or hybrid placements." />
+                                                <TextBox x:Name="NetworkNodeIdsBox" Text="" TextChanged="LoadSetting_Changed" ToolTip="Comma-separated remote worker ids or host labels for network or hybrid placements." />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Max GPU load %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Maximum usable GPU compute load for this model placement. Per-GPU values are edited in the GPU tab." />
+                                                <TextBox x:Name="MaxGpuLoadPercentBox" Text="100" TextChanged="LoadSetting_Changed" ToolTip="Maximum usable GPU compute load for this model placement. Per-GPU values are edited in the GPU tab." />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="Max VRAM %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Maximum usable VRAM for this model placement. Per-GPU values are edited in the GPU tab." />
+                                                <TextBox x:Name="MaxVramUsagePercentBox" Text="100" TextChanged="LoadSetting_Changed" ToolTip="Maximum usable VRAM for this model placement. Per-GPU values are edited in the GPU tab." />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Context Length" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Maximum prompt and generated-token context reserved when the model is loaded." />
+                                                <TextBox x:Name="ContextLengthBox" Text="8192" TextChanged="LoadSetting_Changed" ToolTip="Maximum prompt and generated-token context reserved when the model is loaded." />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="Eval Batch" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Token evaluation batch size. Higher values can improve throughput but use more memory." />
+                                                <TextBox x:Name="EvalBatchBox" Text="512" TextChanged="LoadSetting_Changed" ToolTip="Token evaluation batch size. Higher values can improve throughput but use more memory." />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Idle unload (min)" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Minutes this model may sit idle after web chat use before LlmRuntime unloads it. Use 0 to keep it loaded until manually unloaded." />
+                                                <TextBox x:Name="IdleUnloadMinutesBox" Text="0" TextChanged="LoadSetting_Changed" ToolTip="Minutes this model may sit idle after web chat use before LlmRuntime unloads it. Use 0 to keep it loaded until manually unloaded." />
+                                            </StackPanel>
+                                        </Grid>
+
+                                         <CheckBox x:Name="FlashAttentionBox" Content="Flash attention" Margin="0,2,0,4" Checked="LoadSetting_Changed" Unchecked="LoadSetting_Changed" ToolTip="Enable flash attention when the selected backend supports it. It can reduce memory use and speed up attention." />
+                                         <CheckBox x:Name="KvCacheGpuBox" Content="Offload KV cache to GPU" Margin="0,2,0,4" Checked="LoadSetting_Changed" Unchecked="LoadSetting_Changed" ToolTip="Keep the key/value cache on the GPU when possible. This can improve speed but increases VRAM use." />
+                                         <CheckBox x:Name="AllowFallbackBox" Content="Allow backend fallback" IsChecked="False" Margin="0,2,0,12" Checked="LoadSetting_Changed" Unchecked="LoadSetting_Changed" ToolTip="Let LLamaSharp fall back to another native backend if the requested backend cannot initialize. Workstation's LlmRuntime policy prevents GPU requests from falling back to CPU." />
+
+                                        <TextBlock Text="Image/Video Placement" FontWeight="SemiBold" Margin="0,4,0,8" />
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Device map" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Diffusers device_map for large image and video pipelines." />
+                                                <ComboBox x:Name="VideoDeviceMapBox" SelectedIndex="1" SelectionChanged="LoadSetting_Changed" ToolTip="Balanced spreads pipeline components across available GPUs when Diffusers supports it. Off keeps one selected GPU; if the model exceeds that GPU's usable VRAM, JackONNX will not load it.">
+                                                    <ComboBoxItem Content="Off" Tag="" />
+                                                    <ComboBoxItem Content="Balanced" Tag="balanced" />
+                                                    <ComboBoxItem Content="Balanced low 0" Tag="balanced_low_0" />
+                                                    <ComboBoxItem Content="Sequential" Tag="sequential" />
+                                                    <ComboBoxItem Content="Auto" Tag="auto" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="CUDA reserve MB" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="VRAM left unused on each CUDA device before Diffusers placement." />
+                                                <TextBox x:Name="VideoCudaReserveMbBox" Text="1024" TextChanged="LoadSetting_Changed" ToolTip="VRAM left unused on each CUDA device before Diffusers placement. Raising this can make a model refuse to load sooner when GPU memory is tight." />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Offload folder" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Folder used for Diffusers CPU or disk offload." />
+                                                <TextBox x:Name="VideoOffloadFolderBox" Text="" TextChanged="LoadSetting_Changed" ToolTip="Folder used for Diffusers CPU or disk offload when GPUs cannot hold all components." />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="CPU max memory" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Optional Diffusers max_memory value for CPU, such as 96GiB." />
+                                                <TextBox x:Name="VideoCpuMaxMemoryBox" Text="" TextChanged="LoadSetting_Changed" ToolTip="Optional Diffusers max_memory value for CPU, such as 96GiB." />
+                                            </StackPanel>
+                                        </Grid>
+                                        <WrapPanel Margin="0,0,0,12">
+                                            <CheckBox x:Name="VideoAllowCpuOffloadBox" Content="Allow CPU/NVMe offload" Margin="0,2,16,4" Checked="LoadSetting_Changed" Unchecked="LoadSetting_Changed" ToolTip="Allow large image/video pipelines to use Diffusers device_map/offload instead of failing on one GPU. This can load slowly and can still fail if RAM, swap, or disk space is too low." />
+                                            <CheckBox x:Name="VideoDisableCudaGuardBox" Content="Disable single-GPU guard" Margin="0,2,16,4" Checked="LoadSetting_Changed" Unchecked="LoadSetting_Changed" ToolTip="Skip the single-GPU VRAM preflight. If placement/offload is off and the model exceeds available memory, the model can still fail during load." />
+                                            <CheckBox x:Name="VideoMemorySavingBox" Content="Memory saving" Margin="0,2,0,4" Checked="LoadSetting_Changed" Unchecked="LoadSetting_Changed" ToolTip="Enable Diffusers slicing/tiling options for image and video pipelines." />
+                                        </WrapPanel>
+
+                                        <TextBlock Text="Model Access" FontWeight="SemiBold" Margin="0,4,0,8" />
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,6,0">
+                                                <TextBlock Text="Hugging Face token" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                                <PasswordBox x:Name="HuggingFaceTokenBox" ToolTip="Stored locally for this model and used for gated Hugging Face downloads." />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                <TextBlock Text="Model API key" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                                <PasswordBox x:Name="ModelApiKeyBox" ToolTip="Stored locally for this model if a model/provider needs a key." />
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock x:Name="SelectedModelCredentialStatusText"
+                                                   Text="No model credentials saved."
+                                                   Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,12" />
+
+                                        <TextBlock Text="Model Properties" FontWeight="SemiBold" Margin="0,4,0,8" />
+                                        <ItemsControl x:Name="SelectedModelDetails">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,0,0,6" ToolTip="{Binding ToolTip}">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="116" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Name}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" FontSize="11" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </ScrollViewer>
+
+                                <Grid Grid.Row="3" Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="SaveModelSettingsButton"
+                                            Content="Save"
+                                            Click="SaveModelSettingsButton_Click"
+                                            Margin="0,0,6,0" />
+                                    <Button x:Name="ResetModelSettingsButton"
+                                            Grid.Column="1"
+                                            Content="Reset"
+                                            Click="ResetModelSettingsButton_Click"
+                                            Margin="6,0,6,0"
+                                            ToolTip="Reset this model's load settings to the current defaults." />
+                                    <Button x:Name="LoadModelButton"
+                                            Grid.Column="2"
+                                            Content="Load"
+                                            Click="LoadModelButton_Click"
+                                            Margin="6,0,6,0"
+                                            ToolTip="Load the selected model into LlmRuntime now using these saved settings." />
+                                    <Button x:Name="UnloadModelButton"
+                                            Grid.Column="3"
+                                            Content="Unload"
+                                            Click="UnloadModelButton_Click"
+                                            Margin="6,0,6,0" />
+                                    <Button x:Name="DeleteModelButton"
+                                            Grid.Column="4"
+                                            Content="X"
+                                            Click="DeleteModelButton_Click"
+                                            Background="#3A1114"
+                                            BorderBrush="#C24141"
+                                            Foreground="#FFD7D7"
+                                            ToolTip="Delete selected model from disk" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem x:Name="GpuTabItem" Header="GPU">
+                <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Background="{StaticResource ManagerPanelBrush}"
+                            BorderBrush="{StaticResource ManagerBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12"
+                            Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="GPU Configuration" FontSize="17" FontWeight="SemiBold" />
+                                <TextBlock x:Name="GpuConfigurationStatusText"
+                                           Text="GPU configuration follows the active LlmRuntime endpoint."
+                                           Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                           FontSize="12"
+                                           Margin="0,3,0,0"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="Refresh GPUs"
+                                        Click="RefreshGpuConfigButton_Click"
+                                        Margin="0,0,8,0" />
+                                <Button Content="Save now"
+                                        Click="ApplyGpuConfigButton_Click"
+                                        ToolTip="GPU edits save automatically. Use this to force an immediate re-apply to all model load settings." />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="1"
+                            Background="{StaticResource ManagerPanelBrush}"
+                            BorderBrush="{StaticResource ManagerBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="10"
+                            Margin="0,0,0,10">
+                        <ItemsControl ItemsSource="{Binding ElementName=GpuSelectorComboBox, Path=ItemsSource}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="310"
+                                            Margin="0,0,10,8"
+                                            Padding="9"
+                                            Background="#121A23"
+                                            BorderBrush="#31445D"
+                                            BorderThickness="1"
+                                            CornerRadius="8">
+                                        <StackPanel>
+                                            <DockPanel LastChildFill="True">
+                                                <Border DockPanel.Dock="Right"
+                                                        Padding="6,2"
+                                                        Background="#1A2635"
+                                                        BorderBrush="#3B5A72"
+                                                        BorderThickness="1"
+                                                        CornerRadius="6">
+                                                    <TextBlock Text="{Binding BusyLabel}" FontSize="10" FontWeight="SemiBold" />
+                                                </Border>
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Margin="0,0,8,0" />
+                                            </DockPanel>
+                                            <Grid Height="24" Margin="0,8,0,4">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <ProgressBar Value="{Binding GpuUsagePercent, Mode=OneWay}"
+                                                             Style="{StaticResource RgbCopilotProgressBarStyle}"
+                                                             Margin="0,0,3,0" />
+                                                <ProgressBar Grid.Column="1"
+                                                             Value="{Binding VramUsagePercent, Mode=OneWay}"
+                                                             Style="{StaticResource VramProgressBarStyle}"
+                                                             Margin="3,0,0,0" />
+                                                <TextBlock Text="{Binding GpuUsageText}"
+                                                           HorizontalAlignment="Left"
+                                                           VerticalAlignment="Center"
+                                                           Margin="8,0,0,0"
+                                                           FontSize="10"
+                                                           FontWeight="Bold" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding VramUsageText}"
+                                                           HorizontalAlignment="Left"
+                                                           VerticalAlignment="Center"
+                                                           Margin="8,0,0,0"
+                                                           FontSize="10"
+                                                           FontWeight="Bold"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                            <TextBlock Text="{Binding UsageLine}"
+                                                       Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                                       FontSize="10"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+
+                    <Border Grid.Row="2"
+                            Background="{StaticResource ManagerPanelBrush}"
+                            BorderBrush="{StaticResource ManagerBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12"
+                            Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.15*" MinWidth="180" />
+                                <ColumnDefinition Width="1.15*" MinWidth="180" />
+                                <ColumnDefinition Width="1.2*" MinWidth="190" />
+                                <ColumnDefinition Width="1.2*" MinWidth="190" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,10,0">
+                                <TextBlock Text="Global mode" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                <ComboBox x:Name="GlobalParallelismModeBox" SelectedValuePath="Tag" SelectedIndex="0">
+                                    <ComboBoxItem Content="Single" Tag="single" />
+                                    <ComboBoxItem Content="Data Parallelism" Tag="data_parallel" />
+                                    <ComboBoxItem Content="Model Offloading" Tag="model_offload" />
+                                    <ComboBoxItem Content="Pipeline Parallelism" Tag="pipeline_parallel" />
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="0,0,10,0">
+                                <TextBlock Text="Global placement" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                <ComboBox x:Name="GlobalParallelismPlacementBox" SelectedValuePath="Tag" SelectedIndex="0">
+                                    <ComboBoxItem Content="Local" Tag="local" />
+                                    <ComboBoxItem Content="Network" Tag="network" />
+                                    <ComboBoxItem Content="Hybrid" Tag="hybrid" />
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Margin="0,0,10,0">
+                                <TextBlock Text="Global target GPUs" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                <TextBox x:Name="GlobalTargetDeviceIdsBox" Text="" ToolTip="Comma-separated GPU ids. Blank uses enabled GPUs." />
+                            </StackPanel>
+                            <Grid Grid.Column="3" Margin="0,0,10,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,5,0">
+                                    <TextBlock Text="GPU %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <TextBox x:Name="GlobalMaxGpuLoadPercentBox" Text="100" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="5,0,0,0">
+                                    <TextBlock Text="VRAM %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <TextBox x:Name="GlobalMaxVramUsagePercentBox" Text="100" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Bottom">
+                                <Button Content="Save Default"
+                                        Click="SaveGlobalGpuDefaultsButton_Click"
+                                        Margin="0,0,8,0"
+                                        ToolTip="Save these values as defaults for new model/GPU placement." />
+                                <Button Content="Save Override"
+                                        Click="SaveGlobalGpuOverrideButton_Click"
+                                        ToolTip="Apply these values across existing model and GPU settings." />
+                            </StackPanel>
+
+                            <Grid Grid.Row="1"
+                                  Grid.ColumnSpan="5"
+                                  Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.15*" MinWidth="180" />
+                                    <ColumnDefinition Width="1.2*" MinWidth="190" />
+                                    <ColumnDefinition Width="1.2*" MinWidth="190" />
+                                    <ColumnDefinition Width="1.2*" MinWidth="190" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="Image/video device map" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Default Diffusers placement for image and video models." />
+                                    <ComboBox x:Name="GlobalVideoDeviceMapBox" SelectedValuePath="Tag" SelectedIndex="1" ToolTip="Balanced spreads pipeline components across available GPUs when Diffusers supports it. Off keeps one selected GPU; if the model exceeds that GPU's usable VRAM, JackONNX will not load it.">
+                                        <ComboBoxItem Content="Off" Tag="" />
+                                        <ComboBoxItem Content="Balanced" Tag="balanced" />
+                                        <ComboBoxItem Content="Balanced low 0" Tag="balanced_low_0" />
+                                        <ComboBoxItem Content="Sequential" Tag="sequential" />
+                                        <ComboBoxItem Content="Auto" Tag="auto" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="0,0,10,0">
+                                    <TextBlock Text="Media offload folder" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Default folder used for image/video CPU or disk offload." />
+                                    <TextBox x:Name="GlobalVideoOffloadFolderBox" Text="" ToolTip="Folder used for Diffusers CPU or disk offload when GPUs cannot hold all components." />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Margin="0,0,10,0">
+                                    <TextBlock Text="CPU max memory" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <TextBox x:Name="GlobalVideoCpuMaxMemoryBox" Text="" ToolTip="Optional Diffusers max_memory value for CPU, such as 96GiB." />
+                                </StackPanel>
+                                <StackPanel Grid.Column="3" Margin="0,0,10,0">
+                                    <TextBlock Text="CUDA reserve MB" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <TextBox x:Name="GlobalVideoCudaReserveMbBox" Text="1024" ToolTip="VRAM left unused on each CUDA device before Diffusers placement. Raising this can make a model refuse to load sooner when GPU memory is tight." />
+                                </StackPanel>
+                                <WrapPanel Grid.Column="4" VerticalAlignment="Bottom">
+                                    <CheckBox x:Name="GlobalVideoAllowCpuOffloadBox" Content="CPU/NVMe" Margin="0,0,12,4" ToolTip="Allow Diffusers CPU or disk offload for image/video generation. This can load slowly and can still fail if RAM, swap, or disk space is too low." />
+                                    <CheckBox x:Name="GlobalVideoDisableCudaGuardBox" Content="No guard" Margin="0,0,12,4" ToolTip="Skip the single-GPU image/video VRAM guard." />
+                                    <CheckBox x:Name="GlobalVideoMemorySavingBox" Content="Memory saving" Margin="0,0,0,4" ToolTip="Enable Diffusers slicing/tiling for image/video pipelines." />
+                                </WrapPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="3">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Border x:Name="GpuSelectedConfigurationPanel"
+                                Background="{StaticResource ManagerPanelBrush}"
+                                BorderBrush="{StaticResource ManagerBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12"
+                                Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.45*" MinWidth="250" />
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="96" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
+                                    <TextBlock Text="Selected GPU" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <ComboBox x:Name="GpuSelectorComboBox"
+                                              TextSearch.TextPath="DisplayName"
+                                              SelectionChanged="GpuSelectorComboBox_SelectionChanged"
+                                              ToolTip="Select the GPU whose model assignment list you want to edit.">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding UsageLine}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="10" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="{Binding DetailLine}"
+                                               Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                               FontSize="11"
+                                               Margin="0,4,0,0"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,12,0">
+                                    <TextBlock Text="State" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <CheckBox Content="Use GPU"
+                                              IsChecked="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              VerticalAlignment="Center"
+                                              Margin="0,8,0,0"
+                                              ToolTip="Enable this GPU as an eligible target for models assigned below." />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,12,0">
+                                    <TextBlock Text="{Binding MaxGpuLoadPercent, StringFormat=GPU {0}%}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <Slider Minimum="0"
+                                            Maximum="100"
+                                            TickFrequency="1"
+                                            IsSnapToTickEnabled="True"
+                                            Value="{Binding MaxGpuLoadPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            ToolTip="Maximum compute utilization this GPU should accept before the scheduler avoids placing more work here." />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0" Grid.Column="3" Margin="0,0,12,0">
+                                    <TextBlock Text="{Binding MaxVramUsagePercent, StringFormat=VRAM {0}%}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <Slider Minimum="0"
+                                            Maximum="100"
+                                            TickFrequency="1"
+                                            IsSnapToTickEnabled="True"
+                                            Value="{Binding MaxVramUsagePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            ToolTip="Maximum VRAM pressure this GPU should accept before the scheduler avoids loading or routing more work here." />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0" Grid.Column="4" Margin="0,0,12,0">
+                                    <TextBlock Text="Mode" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                    <ComboBox SelectedValue="{Binding ParallelismMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Tag">
+                                        <ComboBoxItem Content="Single" Tag="single" />
+                                        <ComboBoxItem Content="Data Parallelism" Tag="data_parallel" />
+                                        <ComboBoxItem Content="Model Offloading" Tag="model_offload" />
+                                        <ComboBoxItem Content="Pipeline Parallelism" Tag="pipeline_parallel" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0" Grid.Column="5">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Placement" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
+                                        <TextBlock Text="?"
+                                                   Width="18"
+                                                   Height="18"
+                                                   Margin="6,-2,0,0"
+                                                   TextAlignment="Center"
+                                                   FontWeight="Bold"
+                                                   Foreground="#071316"
+                                                   Background="#67E8F9"
+                                                   ToolTipService.InitialShowDelay="0"
+                                                   ToolTipService.BetweenShowDelay="0"
+                                                   ToolTipService.ShowDuration="60000">
+                                            <TextBlock.ToolTip>
+                                                <ToolTip Placement="Right">
+                                                    <StackPanel MaxWidth="420">
+                                                        <TextBlock Text="Placement controls where this GPU's assigned models are allowed to run." FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                                        <TextBlock Text="Local: use this workstation GPU only. This is the lowest-latency option and is best when the model fits locally or you want private single-machine inference." TextWrapping="Wrap" Margin="0,0,0,6" />
+                                                        <TextBlock Text="Network: use remote SocketJack worker nodes instead of local GPUs. Choose this when the local machine should coordinate work but not spend its own VRAM or GPU cycles." TextWrapping="Wrap" Margin="0,0,0,6" />
+                                                        <TextBlock Text="Hybrid: allow this GPU and compatible remote workers to participate together. This is useful for overflow, shared pools, and future model/tensor sharding where local and network resources may both be eligible." TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </ToolTip>
+                                            </TextBlock.ToolTip>
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <ComboBox SelectedValue="{Binding ParallelismPlacement, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Tag">
+                                        <ComboBoxItem Content="Local" Tag="local" />
+                                        <ComboBoxItem Content="Network" Tag="network" />
+                                        <ComboBoxItem Content="Hybrid" Tag="hybrid" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <Button Grid.Row="0"
+                                        Grid.Column="6"
+                                        Content="Reset"
+                                        Click="ResetSelectedGpuButton_Click"
+                                        VerticalAlignment="Bottom"
+                                        ToolTip="Reset this GPU's policy and model assignment overrides to the current defaults." />
+
+                                <Grid Grid.Row="1"
+                                      Grid.ColumnSpan="7"
+                                      Height="34"
+                                      Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ProgressBar Value="{Binding GpuUsagePercent, Mode=OneWay}"
+                                                 Style="{StaticResource RgbCopilotProgressBarStyle}"
+                                                 Margin="0,0,4,0" />
+                                    <ProgressBar Grid.Column="1"
+                                                 Value="{Binding VramUsagePercent, Mode=OneWay}"
+                                                 Style="{StaticResource VramProgressBarStyle}"
+                                                 Margin="4,0,0,0" />
+                                    <TextBlock Text="{Binding GpuUsageText}"
+                                               VerticalAlignment="Center"
+                                               Margin="12,0,0,0"
+                                               FontWeight="Bold" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding VramUsageText}"
+                                               VerticalAlignment="Center"
+                                               Margin="12,0,0,0"
+                                               FontWeight="Bold"
+                                               TextTrimming="CharacterEllipsis" />
+                                </Grid>
+
+                                <TextBlock Grid.Row="2"
+                                           Grid.ColumnSpan="7"
+                                           Text="{Binding StatusLine}"
+                                           Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                           FontSize="11"
+                                           Margin="0,10,0,0"
+                                           TextWrapping="Wrap" />
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="1"
+                                Background="{StaticResource ManagerPanelBrush}"
+                                BorderBrush="{StaticResource ManagerBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <Grid Margin="7,0,7,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="42" />
+                                        <ColumnDefinition Width="1.25*" MinWidth="170" />
+                                        <ColumnDefinition Width="1.35*" MinWidth="190" />
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="2*" MinWidth="240" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Use" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="1" Text="Model" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="2" Text="Model ID" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="3" Text="Kind" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="4" Text="Description" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" FontWeight="SemiBold" />
+                                </Grid>
+
+                                <ListView x:Name="GpuModelAssignmentsListView"
+                                          Grid.Row="1"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,4">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="42" />
+                                                    <ColumnDefinition Width="1.25*" MinWidth="170" />
+                                                    <ColumnDefinition Width="1.35*" MinWidth="190" />
+                                                    <ColumnDefinition Width="150" />
+                                                    <ColumnDefinition Width="2*" MinWidth="240" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <CheckBox IsChecked="{Binding IsAssigned, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          IsEnabled="{Binding IsSelectable}"
+                                                          VerticalAlignment="Center"
+                                                          ToolTip="{Binding AssignmentToolTip}" />
+
+                                                <StackPanel Grid.Column="1" Margin="4,0,10,0">
+                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding SourceLabel}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding ModelId}"
+                                                           Margin="0,0,10,0"
+                                                           TextWrapping="Wrap"
+                                                           FontFamily="Consolas"
+                                                           FontSize="11" />
+
+                                                <StackPanel Grid.Column="3" Margin="0,0,10,0">
+                                                    <TextBlock Text="{Binding TypeLabel}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding StatusLabel}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+
+                                                <TextBlock Grid.Column="4"
+                                                           Text="{Binding Description}"
+                                                           TextWrapping="Wrap" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Grid>
+                        </Border>
+
+                        <TextBlock x:Name="GpuAssignmentEmptyText"
+                                   Grid.Row="2"
+                                   Text="Select a GPU to edit model placement. Models enabled on the Models tab are checked by default unless this GPU has an override."
+                                   Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                   FontSize="11"
+                                   Margin="0,8,0,0"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem x:Name="BrowserTabItem" Header="Model Browser" Visibility="Collapsed">
+                <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0"
+                            Background="{StaticResource ManagerPanelBrush}"
+                            BorderBrush="{StaticResource ManagerBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12"
+                            Margin="0,0,0,8">
+                        <DockPanel LastChildFill="True">
+                            <Button DockPanel.Dock="Right"
+                                    Content="Close"
+                                    Click="CloseBrowserButton_Click"
+                                    AutomationProperties.Name="Close model browser" />
+                            <StackPanel>
+                                <TextBlock Text="Hugging Face Model Browser"
+                                           FontSize="18"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="Download queue is on the right. Base-model downloads from the Models tab appear here too."
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                           FontSize="11"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <local:HuggingFaceModelDownloaderControl x:Name="ModelBrowserControl" Grid.Row="1" />
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <TextBlock Grid.Row="2"
+                   x:Name="ManagerFooterText"
+                   Text="Running models are listed first. LM Studio downloads are included when LlmRuntime can discover the LM Studio model folder."
+                   Foreground="{StaticResource ManagerSubtleTextBrush}"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Margin="14,8,14,12" />
+    </Grid>
+</UserControl>

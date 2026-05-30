@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+  <Commands package="guidLlmRuntimePackage">
+    <Groups>
+      <Group guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" priority="0x0600">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="SocketJackMenu" />
+      </Group>
+    </Groups>
+    <Menus>
+      <Menu guid="guidLlmRuntimePackageCmdSet" id="SocketJackMenu" priority="0x0600" type="Menu">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_EXTENSIONS" />
+        <Strings>
+          <ButtonText>SocketJack</ButtonText>
+          <CommandName>SocketJack</CommandName>
+        </Strings>
+      </Menu>
+    </Menus>
+    <Buttons>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidChat" priority="0x0100" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Chat</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidInlineCompletion" priority="0x0110" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Inline Completion</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidNextEdit" priority="0x0120" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Next Edit</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidAgent" priority="0x0130" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Agent Mode</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidCheckpoint" priority="0x0140" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Checkpoint</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidMcp" priority="0x0150" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime MCP Context</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidModelPicker" priority="0x0160" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Model Picker</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidCodeReview" priority="0x0170" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Code Review</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidWorkspaceIndex" priority="0x0180" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Workspace Index</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidPromptFiles" priority="0x0190" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Prompt Files</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidCustomInstructions" priority="0x01A0" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings><ButtonText>LlmRuntime Custom Instructions</ButtonText></Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidCopilotServers" priority="0x01B0" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings>
+          <ButtonText>SocketJack Copilot Servers</ButtonText>
+          <CommandName>SocketJack.CopilotServers</CommandName>
+        </Strings>
+      </Button>
+      <Button guid="guidLlmRuntimePackageCmdSet" id="cmdidCreateMcpConfig" priority="0x01C0" type="Button">
+        <Parent guid="guidLlmRuntimePackageCmdSet" id="LlmRuntimeMenuGroup" />
+        <Strings>
+          <ButtonText>Create SocketJack MCP Config</ButtonText>
+          <CommandName>SocketJack.CreateMcpConfig</CommandName>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+  <Symbols>
+    <GuidSymbol name="guidLlmRuntimePackage" value="{1f4b99bb-0a4d-4f1c-9e3f-02d3bbf71289}" />
+    <GuidSymbol name="guidSHLMainMenuExtensionsShim" value="{d309f791-903f-11d0-9efc-00a0c911004f}">
+      <IDSymbol name="IDM_VS_MENU_EXTENSIONS" value="0x0091" />
+    </GuidSymbol>
+    <GuidSymbol name="guidLlmRuntimePackageCmdSet" value="{de8da57b-c53f-444e-90ed-b7c5ba148796}">
+      <IDSymbol name="LlmRuntimeMenuGroup" value="0x1020" />
+      <IDSymbol name="SocketJackMenu" value="0x1021" />
+      <IDSymbol name="cmdidChat" value="0x0100" />
+      <IDSymbol name="cmdidInlineCompletion" value="0x0101" />
+      <IDSymbol name="cmdidNextEdit" value="0x0102" />
+      <IDSymbol name="cmdidAgent" value="0x0103" />
+      <IDSymbol name="cmdidCheckpoint" value="0x0104" />
+      <IDSymbol name="cmdidMcp" value="0x0105" />
+      <IDSymbol name="cmdidModelPicker" value="0x0106" />
+      <IDSymbol name="cmdidCodeReview" value="0x0107" />
+      <IDSymbol name="cmdidWorkspaceIndex" value="0x0108" />
+      <IDSymbol name="cmdidPromptFiles" value="0x0109" />
+      <IDSymbol name="cmdidCustomInstructions" value="0x010A" />
+      <IDSymbol name="cmdidCopilotServers" value="0x010B" />
+      <IDSymbol name="cmdidCreateMcpConfig" value="0x010C" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>

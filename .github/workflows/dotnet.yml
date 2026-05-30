@@ -1,16 +1,61 @@
 name: "Deploy to nuget"
-on: ["push"]
+on:
+  push:
+    paths-ignore:
+      - "LlmRuntime/**"
+      - "LlmRuntime.Tests/**"
+      - "LlmRuntime.Wpf/**"
+      - "JackLLMBridgeInstaller/**"
+      - "JackLLM/**"
+      - "JackLLMInstaller/**"
+      - "JackLLMUpdater/**"
+      - "SocketJack-MagicMasterList/**"
+      - "artifacts/JackLLM/**"
 
-jobs: 
+jobs:
+ linux-build:
+    name: "Linux build"
+    runs-on: ubuntu-latest
+    steps:
+    - name: "Checkout"
+      uses: actions/checkout@v4
+
+    - name: "Setup .NET"
+      uses: actions/setup-dotnet@v4
+      with:
+         dotnet-version: "10.0.x"
+
+    - name: "Restore SocketJack"
+      run: dotnet restore ./SocketJack/SocketJack.csproj
+
+    - name: "Build SocketJack"
+      run: dotnet build ./SocketJack/SocketJack.csproj --configuration Release --framework netstandard2.1 --no-restore -p:NoWarn=true
+
+    - name: "Restore SocketJack.WPF"
+      run: dotnet restore ./SocketJack.Windows/SocketJack.WPF.csproj
+
+    - name: "Build SocketJack.WPF"
+      run: dotnet build ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-restore -p:NoWarn=true
+
+    - name: "Publish Linux JackLLM Workstation"
+      run: dotnet publish ./JackLLM.Workstation/JackLLM.Workstation.csproj --configuration Release --runtime linux-x64 --self-contained false -p:NoWarn=true
+
+    - name: "Restore WPF sample app"
+      run: dotnet restore ./SocketJack.WpfBasicGame/SocketJack.WpfBasicGame.csproj
+
+    - name: "Build WPF sample app"
+      run: dotnet build ./SocketJack.WpfBasicGame/SocketJack.WpfBasicGame.csproj --configuration Release --no-restore -p:NoWarn=true
+
  deploy:
     name: "Deploy"
     runs-on: windows-latest
+    needs: linux-build
     steps:
     - name: "Checkout"
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: "Setup .NET"
-      uses: actions/setup-dotnet@v1
+      uses: actions/setup-dotnet@v4
       with:
          dotnet-version: "10.0.x"
 
@@ -21,10 +66,10 @@ jobs:
       run: dotnet build ./SocketJack/SocketJack.csproj --configuration Release --no-restore -p:NoWarn=true
 
     - name: "Pack Project"
-      run: dotnet pack ./SocketJack/SocketJack.csproj --configuration Release --no-build --include-symbols -o ./nupkg
+      run: dotnet pack ./SocketJack/SocketJack.csproj --configuration Release --no-build --include-symbols -o ./nupkg/SocketJack
 
     - name: "Push to NuGet"
-      run: dotnet nuget push D:\a\SocketJack\SocketJack\nupkg\*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate
+      run: dotnet nuget push D:\a\SocketJack\SocketJack\nupkg\SocketJack\SocketJack*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate
 
     - name: "Restore WPF dependencies"
       run: dotnet restore ./SocketJack.Windows/SocketJack.WPF.csproj
@@ -33,7 +78,7 @@ jobs:
       run: dotnet build ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-restore -p:NoWarn=true
 
     - name: "Pack WPF Project"
-      run: dotnet pack ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-build --include-symbols -o ./nupkg
+      run: dotnet pack ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-build --include-symbols -o ./nupkg/SocketJack.WPF
 
     - name: "Push WPF to NuGet"
-      run: dotnet nuget push D:\a\SocketJack\SocketJack\nupkg\*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate
+      run: dotnet nuget push D:\a\SocketJack\SocketJack\nupkg\SocketJack.WPF\SocketJack.WPF*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate

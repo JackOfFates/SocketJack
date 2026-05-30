@@ -72,7 +72,7 @@ namespace SocketJack.Net.Database {
 
         /// <summary>
         /// Pushes raw bytes (TLS records) into the feed buffer so that
-        /// <see cref="System.Net.Security.SslStream.Read"/> can decrypt them.  Called from
+        /// <c>SslStream.Read</c> can decrypt them.  Called from
         /// <see cref="TdsProtocolHandler.ProcessReceive"/> when TLS is active.
         /// </summary>
         internal void Feed(byte[] data) {

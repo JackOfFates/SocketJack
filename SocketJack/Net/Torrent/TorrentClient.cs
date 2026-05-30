@@ -549,6 +549,7 @@ namespace SocketJack.Net.Torrent {
             // Disconnect all peer sessions
             foreach (var kvp in _peers) {
                 kvp.Value.Client.Dispose();
+                PeerDisconnectedEvent?.Invoke(kvp.Key);
             }
             _peers.Clear();
 
@@ -712,6 +713,7 @@ namespace SocketJack.Net.Torrent {
                     if (ReferenceEquals(kvp.Value.Client, e.sender)) {
                         kvp.Value.Client.Dispose();
                         _peers.TryRemove(kvp.Key, out _);
+                        PeerDisconnectedEvent?.Invoke(kvp.Key);
                         break;
                     }
                 }

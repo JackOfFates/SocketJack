@@ -7,8 +7,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using SystemNetHttpClient = System.Net.Http.HttpClient;
 
-namespace EasyYoloOcr.Example.Wpf.Services;
+namespace SocketJack.Net.Services;
 
 /// <summary>
 /// Handles all web search operations: Google/DuckDuckGo, Bing RSS fallback,
@@ -17,7 +18,7 @@ namespace EasyYoloOcr.Example.Wpf.Services;
 /// </summary>
 public sealed class SearchService
 {
-    private static readonly HttpClient _httpClient = new();
+    private static readonly SystemNetHttpClient _httpClient = new();
 
     // --- State for pagination ---
     public List<(string Title, string Url, string Snippet)> LastSearchResults { get; private set; } = new();

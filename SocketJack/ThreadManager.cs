@@ -14,6 +14,11 @@ namespace SocketJack {
     /// Manages all Tcp Client and Server threads.
     /// </summary>
     public class ThreadManager : IDisposable {
+        static ThreadManager() {
+            RegisterShutdownHooks();
+        }
+
+        private static int ShutdownInProgress;
 
         #region Properties
 
@@ -61,18 +66,19 @@ namespace SocketJack {
         private static bool _Alive = false;
 
         protected internal static void StartCounters(bool Start) {
+            if (!Start)
+                return;
+
             if (CounterThread == null || CounterThread.ThreadState == System.Threading.ThreadState.Stopped) {
-                CounterThread = new Thread(CounterLoop) { Name = "ByteCounterThread" };
+                CounterThread = new Thread(CounterLoop) { Name = "ByteCounterThread", IsBackground = true };
             }
             if (TickThread == null || TickThread.ThreadState == System.Threading.ThreadState.Stopped) {
-                TickThread = new Thread(TickLoop) { Name = "SocketJackTickThread" };
+                TickThread = new Thread(TickLoop) { Name = "SocketJackTickThread", IsBackground = true };
             }
-            if (Start) {
-                if (!CounterThread.IsAlive)
-                    CounterThread.Start();
-                if (UseGlobalTickLoop && !TickThread.IsAlive)
-                    TickThread.Start();
-            }
+            if (!CounterThread.IsAlive)
+                CounterThread.Start();
+            if (UseGlobalTickLoop && !TickThread.IsAlive)
+                TickThread.Start();
         }
 
         /// <summary>
@@ -89,9 +95,18 @@ namespace SocketJack {
         /// Must be called on application shutdown to ensure all threads are closed.
         /// </summary>
         public static void Shutdown() {
-            Alive = false;
-            TcpClients.Values.ToList().ForEach(DisposeDelegate);
-            TcpServers.Values.ToList().ForEach(DisposeDelegate);
+            if (Interlocked.Exchange(ref ShutdownInProgress, 1) == 1)
+                return;
+
+            try {
+                Alive = false;
+                TcpClients.Values.ToArray().ToList().ForEach(DisposeDelegate);
+                TcpServers.Values.ToArray().ToList().ForEach(DisposeDelegate);
+                TcpClients.Clear();
+                TcpServers.Clear();
+            } finally {
+                Interlocked.Exchange(ref ShutdownInProgress, 0);
+            }
         }
 
         protected virtual void Dispose(bool disposing) {
@@ -109,8 +124,20 @@ namespace SocketJack {
         }
 
         private static void DisposeDelegate(ISocket Instance) {
-            if (Instance != null && !Instance.isDisposed)
-                Instance.Dispose();
+            try {
+                if (Instance != null && !Instance.isDisposed)
+                    Instance.Dispose();
+            } catch {
+            }
+        }
+
+        private static void RegisterShutdownHooks() {
+            AppDomain.CurrentDomain.ProcessExit += ShutdownOnProcessExit;
+            AppDomain.CurrentDomain.DomainUnload += ShutdownOnProcessExit;
+        }
+
+        private static void ShutdownOnProcessExit(object sender, EventArgs e) {
+            Shutdown();
         }
 
         #endregion
@@ -132,11 +159,17 @@ namespace SocketJack {
             Environment.SetEnvironmentVariable("COMPlus_GCNoAffinitize", "1");
         }
 
-        protected internal async void ModifyRuntimeConfig() {
-            EnableMultithreading();
-            if (RuntimesSet)
-                return;
+        protected internal void ApplyRuntimeEnvironmentOptions() {
+            if (AllowRuntimeEnvironmentMutation)
+                EnableMultithreading();
             RuntimesSet = true;
+        }
+
+        protected internal async void ModifyRuntimeConfig() {
+            ApplyRuntimeEnvironmentOptions();
+            if (!AllowRuntimeConfigMutation)
+                return;
+
             string ConfigFile = AssemblyRuntimeConfig();
             if (System.IO.File.Exists(ConfigFile)) {
                 string config = await System.IO.File.ReadAllTextAsync(ConfigFile);
@@ -167,16 +200,13 @@ namespace SocketJack {
                 }
                 if ((config ?? "") != (newConfig ?? "")) {
                     System.IO.File.WriteAllText(ConfigFile, newConfig);
-                    if (!Debugger.IsAttached) {
-                        string ProcessName = System.Reflection.Assembly.GetEntryAssembly().Location.Replace(".dll", ".exe");
-                        if (System.IO.File.Exists(ProcessName)) {
-                            Process.Start(new ProcessStartInfo() { FileName = ProcessName });
-                            Process.GetCurrentProcess().Kill();
-                        }
-                    }
                 }
             }
         }
+
+        public static bool AllowRuntimeEnvironmentMutation { get; set; } = false;
+
+        public static bool AllowRuntimeConfigMutation { get; set; } = false;
 
         private static bool ContainsVariables(string config) {
             if (config.Contains(ConfigPropertiesHeader)) {

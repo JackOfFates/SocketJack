@@ -8,8 +8,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using SocketJackJsonSerializer = SocketJack.Serialization.Json.JsonSerializer;
 
-namespace EasyYoloOcr.Example.Wpf.Services;
+namespace SocketJack.Net.Services;
 
 /// <summary>
 /// Provides reflection-based execution of properties, fields, and methods on a target object.
@@ -19,15 +20,7 @@ namespace EasyYoloOcr.Example.Wpf.Services;
 /// </summary>
 public sealed class ReflectionService
 {
-    private static readonly JsonSerializerOptions _jsonOptions = new()
-    {
-        WriteIndented = true,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
-        ReferenceHandler = ReferenceHandler.IgnoreCycles,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        MaxDepth = 8
-    };
+    private static readonly JsonSerializerOptions _jsonOptions = CreateSocketJackJsonOptions();
 
     /// <summary>Describes a loaded assembly with its types.</summary>
     public sealed class AssemblyInfo
@@ -97,11 +90,10 @@ public sealed class ReflectionService
             {
                 var name = assembly.GetName().Name ?? "";
 
-                var publicTypes = assembly.GetExportedTypes()
-                    .Where(t => !t.IsNested && !t.Name.Contains('<'))
+                var publicTypes = GetLoadableTypes(assembly)
+                    .Where(t => !t.Name.Contains('<'))
                     .Select(t => t.FullName ?? t.Name)
                     .OrderBy(n => n)
-                    .Take(100) // Limit to prevent overwhelming output
                     .ToList();
 
                 if (publicTypes.Count > 0)
@@ -121,6 +113,299 @@ public sealed class ReflectionService
         }
 
         return assemblies.OrderBy(a => a.Name).ToList();
+    }
+
+    /// <summary>
+    /// Creates the SocketJack JSON options used for safe reflection output.
+    /// </summary>
+    public static JsonSerializerOptions CreateSocketJackJsonOptions()
+    {
+        var socketJackSerializer = new SocketJackJsonSerializer();
+        return new JsonSerializerOptions(socketJackSerializer.JsonOptions)
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+            ReferenceHandler = ReferenceHandler.IgnoreCycles,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            MaxDepth = 8
+        };
+    }
+
+    /// <summary>
+    /// Resolve a type from loaded assemblies and optionally enforce an allowlist.
+    /// </summary>
+    public static bool TryResolveLoadedType(string typeName, Predicate<Type>? allowType, out Type? type, out string error)
+    {
+        type = null;
+        error = "";
+        typeName = (typeName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(typeName))
+        {
+            error = "Type name is required.";
+            return false;
+        }
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                Type? candidate = assembly.GetType(typeName, throwOnError: false, ignoreCase: true);
+                if (candidate == null)
+                {
+                    candidate = GetLoadableTypes(assembly)
+                        .FirstOrDefault(t => string.Equals(t.FullName, typeName, StringComparison.OrdinalIgnoreCase) ||
+                                             string.Equals(t.Name, typeName, StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (candidate == null)
+                    continue;
+
+                if (allowType != null && !allowType(candidate))
+                {
+                    error = $"Type '{typeName}' is not allowed.";
+                    return false;
+                }
+
+                type = candidate;
+                return true;
+            }
+            catch
+            {
+                // Skip assemblies that cannot be inspected.
+            }
+        }
+
+        error = $"Type '{typeName}' was not found in loaded assemblies.";
+        return false;
+    }
+
+    /// <summary>
+    /// Creates an instance with string arguments converted to the constructor parameter types.
+    /// </summary>
+    public static object CreateInstance(Type type, string[]? args = null)
+    {
+        if (type == null)
+            throw new ArgumentNullException(nameof(type));
+
+        args ??= Array.Empty<string>();
+        ConstructorInfo[] constructors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        ConstructorInfo? constructor = constructors
+            .OrderBy(ctor => Math.Abs(ctor.GetParameters().Length - args.Length))
+            .ThenBy(ctor => ctor.GetParameters().Count(p => !p.IsOptional))
+            .FirstOrDefault();
+
+        if (constructor == null)
+        {
+            if (args.Length == 0)
+                return Activator.CreateInstance(type)!;
+            throw new InvalidOperationException($"Type '{FriendlyTypeName(type)}' has no usable constructor.");
+        }
+
+        ParameterInfo[] parameters = constructor.GetParameters();
+        object?[] invokeArgs = BuildInvokeArgs(parameters, args);
+        return constructor.Invoke(invokeArgs);
+    }
+
+    /// <summary>
+    /// Executes a static property, field, or method after resolving the type from loaded assemblies.
+    /// </summary>
+    public static ExecutionResult ExecuteStatic(string typeName, string memberName, string[]? args = null, Predicate<Type>? allowType = null)
+    {
+        try
+        {
+            if (!TryResolveLoadedType(typeName, allowType, out Type? type, out string error) || type == null)
+            {
+                return new ExecutionResult
+                {
+                    Success = false,
+                    MemberName = memberName ?? "",
+                    Error = error
+                };
+            }
+
+            return ExecuteStatic(type, memberName, args);
+        }
+        catch (TargetInvocationException tie)
+        {
+            return new ExecutionResult
+            {
+                Success = false,
+                MemberName = memberName ?? "",
+                Error = tie.InnerException?.Message ?? tie.Message
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ExecutionResult
+            {
+                Success = false,
+                MemberName = memberName ?? "",
+                Error = ex.Message
+            };
+        }
+    }
+
+    /// <summary>
+    /// Serializes reflection output with SocketJack-compatible options and safe fallback.
+    /// </summary>
+    public static string? SerializeResultValue(object? value, Type? declaredType = null)
+    {
+        return SafeSerialize(value, declaredType ?? value?.GetType() ?? typeof(object));
+    }
+
+    private static ExecutionResult ExecuteStatic(Type type, string memberName, string[]? args)
+    {
+        memberName = (memberName ?? "").Trim();
+        args ??= Array.Empty<string>();
+        const BindingFlags staticFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.FlattenHierarchy;
+
+        var prop = type.GetProperty(memberName, staticFlags);
+        if (prop != null && prop.GetIndexParameters().Length == 0)
+        {
+            if (args.Length > 0 && prop.CanWrite)
+            {
+                object? converted = ConvertArg(args[0], prop.PropertyType);
+                prop.SetValue(null, converted);
+                return new ExecutionResult
+                {
+                    Success = true,
+                    MemberName = memberName,
+                    MemberKind = "Static Property (set)",
+                    ReturnType = FriendlyTypeName(prop.PropertyType),
+                    Json = "\"Property set successfully.\""
+                };
+            }
+
+            if (prop.CanRead)
+                return BuildStaticResult(memberName, "Static Property", prop.PropertyType, prop.GetValue(null));
+        }
+
+        var field = type.GetField(memberName, staticFlags);
+        if (field != null)
+        {
+            if (args.Length > 0 && !field.IsInitOnly && !field.IsLiteral)
+            {
+                object? converted = ConvertArg(args[0], field.FieldType);
+                field.SetValue(null, converted);
+                return new ExecutionResult
+                {
+                    Success = true,
+                    MemberName = memberName,
+                    MemberKind = "Static Field (set)",
+                    ReturnType = FriendlyTypeName(field.FieldType),
+                    Json = "\"Field set successfully.\""
+                };
+            }
+
+            return BuildStaticResult(memberName, "Static Field", field.FieldType, field.GetValue(null));
+        }
+
+        MethodInfo? method = type.GetMethods(staticFlags)
+            .Where(m => m.Name.Equals(memberName, StringComparison.OrdinalIgnoreCase) && !m.IsSpecialName)
+            .OrderBy(m => Math.Abs(m.GetParameters().Length - args.Length))
+            .ThenBy(m => m.GetParameters().Count(p => !p.IsOptional))
+            .FirstOrDefault();
+
+        if (method == null)
+        {
+            return new ExecutionResult
+            {
+                Success = false,
+                MemberName = memberName,
+                Error = $"Static member '{memberName}' not found."
+            };
+        }
+
+        object?[] invokeArgs = BuildInvokeArgs(method.GetParameters(), args);
+        object? value = method.Invoke(null, invokeArgs);
+        if (value is Task task)
+        {
+            task.GetAwaiter().GetResult();
+            if (task.GetType().IsGenericType)
+            {
+                PropertyInfo? resultProperty = task.GetType().GetProperty("Result");
+                object? taskResult = resultProperty?.GetValue(task);
+                return BuildStaticResult(memberName, "Static Method (async)", resultProperty?.PropertyType ?? typeof(object), taskResult);
+            }
+
+            return new ExecutionResult
+            {
+                Success = true,
+                MemberName = memberName,
+                MemberKind = "Static Method (async)",
+                IsVoidMethod = true,
+                Json = "\"Code executed.\""
+            };
+        }
+
+        if (method.ReturnType == typeof(void))
+        {
+            return new ExecutionResult
+            {
+                Success = true,
+                MemberName = memberName,
+                MemberKind = "Static Method",
+                IsVoidMethod = true,
+                Json = "\"Code executed.\""
+            };
+        }
+
+        return BuildStaticResult(memberName, "Static Method", method.ReturnType, value);
+    }
+
+    private static object?[] BuildInvokeArgs(ParameterInfo[] parameters, string[] args)
+    {
+        object?[] invokeArgs = new object?[parameters.Length];
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            if (i < args.Length)
+            {
+                invokeArgs[i] = ConvertArg(args[i], parameters[i].ParameterType);
+            }
+            else if (parameters[i].HasDefaultValue)
+            {
+                invokeArgs[i] = parameters[i].DefaultValue;
+            }
+            else if (parameters[i].ParameterType.IsValueType)
+            {
+                invokeArgs[i] = Activator.CreateInstance(parameters[i].ParameterType);
+            }
+            else
+            {
+                invokeArgs[i] = null;
+            }
+        }
+
+        return invokeArgs;
+    }
+
+    private static ExecutionResult BuildStaticResult(string name, string kind, Type returnType, object? value)
+    {
+        return new ExecutionResult
+        {
+            Success = true,
+            MemberName = name,
+            MemberKind = kind,
+            ReturnType = FriendlyTypeName(returnType),
+            Value = value,
+            Json = SafeSerialize(value, returnType)
+        };
+    }
+    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            return ex.Types.Where(t => t != null).Cast<Type>();
+        }
+        catch
+        {
+            return Array.Empty<Type>();
+        }
     }
 
     /// <summary>
@@ -587,7 +872,7 @@ public sealed class ReflectionService
 
         try
         {
-            // Simple types — serialize directly
+            // Simple types â€” serialize directly
             if (IsSimpleType(declaredType) || IsSimpleType(value.GetType()))
                 return JsonSerializer.Serialize(value, _jsonOptions);
 
@@ -610,7 +895,7 @@ public sealed class ReflectionService
         }
         catch
         {
-            // Non-serializable — return a type description
+            // Non-serializable â€” return a type description
             try
             {
                 return JsonSerializer.Serialize(new

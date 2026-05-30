@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL Admin - Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: 'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh
+        }
+
+        .login-box {
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 8px;
+            padding: 40px;
+            width: 380px;
+            box-shadow: 0 8px 32px rgba(0,0,0,.5)
+        }
+
+            .login-box h1 {
+                color: #569cd6;
+                font-size: 20px;
+                margin-bottom: 8px;
+                display: flex;
+                align-items: center;
+                gap: 8px
+            }
+
+                .login-box h1 svg {
+                    width: 24px;
+                    height: 24px;
+                    fill: #569cd6
+                }
+
+            .login-box p.sub {
+                color: #808080;
+                font-size: 12px;
+                margin-bottom: 24px
+            }
+
+        .form-group {
+            margin-bottom: 16px
+        }
+
+            .form-group label {
+                display: block;
+                font-size: 12px;
+                color: #9cdcfe;
+                margin-bottom: 4px
+            }
+
+            .form-group input {
+                width: 100%;
+                padding: 8px 12px;
+                background: #1e1e1e;
+                border: 1px solid #3c3c3c;
+                border-radius: 4px;
+                color: #d4d4d4;
+                font-size: 14px;
+                outline: none
+            }
+
+                .form-group input:focus {
+                    border-color: #569cd6
+                }
+
+        .error {
+            color: #f44747;
+            font-size: 12px;
+            margin-bottom: 12px;
+            display: none
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px;
+            background: #0e639c;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background .2s
+        }
+
+            .btn:hover {
+                background: #1177bb
+            }
+
+            .btn:disabled {
+                opacity: .5;
+                cursor: not-allowed
+            }
+
+        .bootstrap-box {
+            display: none;
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px solid #3c3c3c
+        }
+
+            .bootstrap-box.active {
+                display: block
+            }
+
+            .bootstrap-box .notice {
+                background: #332a18;
+                border: 1px solid #8a6d1d;
+                border-radius: 6px;
+                color: #dcdcaa;
+                font-size: 12px;
+                line-height: 1.5;
+                margin-bottom: 14px;
+                padding: 10px 12px
+            }
+
+        .setup-btn {
+            background: #2e7d32
+        }
+
+            .setup-btn:hover {
+                background: #388e3c
+            }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 3.79 2 6v12c0 2.21 4.48 4 10 4s10-1.79 10-4V6c0-2.21-4.48-4-10-4zm0 2c4.42 0 8 1.34 8 3s-3.58 3-8 3-8-1.34-8-3 3.58-3 8-3zM4 18V9.87C5.73 11.14 8.59 12 12 12s6.27-.86 8-2.13V18c0 1.66-3.58 3-8 3s-8-1.34-8-3z" /></svg> SQL Admin Panel</h1>
+        <p class="sub">Connect to the SocketJack DataServer</p>
+        <div class="error" id="error"></div>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="username" autocomplete="username" placeholder="sa">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="password" autocomplete="current-password" placeholder="Password">
+        </div>
+        <button class="btn" id="loginBtn" onclick="doLogin()">Connect</button>
+        <div class="bootstrap-box" id="saBootstrapBox">
+            <div class="notice" id="saBootstrapNotice">The default <strong>sa</strong> login has a blank password. Set a new password from localhost before using SQL Admin.</div>
+            <div class="form-group">
+                <label>New sa Password</label>
+                <input type="password" id="saNewPassword" autocomplete="new-password" placeholder="At least 8 characters">
+            </div>
+            <div class="form-group">
+                <label>Confirm Password</label>
+                <input type="password" id="saConfirmPassword" autocomplete="new-password" placeholder="Confirm password">
+            </div>
+            <button class="btn setup-btn" id="saSetupBtn" onclick="setSaPassword()">Set sa Password</button>
+        </div>
+    </div>
+    <script>
+        var SA_BOOTSTRAP_REQUIRED = $SaBootstrapRequired;
+        var SA_BOOTSTRAP_LOCAL = $SaBootstrapLocal;
+
+        function showSaBootstrap(message) {
+            var box = document.getElementById('saBootstrapBox');
+            var notice = document.getElementById('saBootstrapNotice');
+            box.classList.add('active');
+            if (message) notice.textContent = message;
+            if (!SA_BOOTSTRAP_LOCAL) {
+                document.getElementById('saSetupBtn').disabled = true;
+                notice.textContent = 'The sa password can only be set from localhost or 127.0.0.1.';
+            }
+        }
+
+        function doLogin() {
+            var btn = document.getElementById('loginBtn');
+            var err = document.getElementById('error');
+            btn.disabled = true; err.style.display = 'none';
+            var u = document.getElementById('username').value;
+            var p = document.getElementById('password').value;
+            fetch('$BasePath/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) })
+                .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d } }) })
+                .then(function (r) {
+                    if (r.ok) { window.location.reload() }
+                    else {
+                        err.textContent = r.data.error || 'Login failed'; err.style.display = 'block';
+                        if (r.data && r.data.requireSaPasswordSetup) showSaBootstrap(r.data.error);
+                    }
+                    btn.disabled = false;
+                }).catch(function (e) { err.textContent = 'Connection error'; err.style.display = 'block'; btn.disabled = false });
+        }
+
+        function setSaPassword() {
+            var btn = document.getElementById('saSetupBtn');
+            var err = document.getElementById('error');
+            var p = document.getElementById('saNewPassword').value;
+            var c = document.getElementById('saConfirmPassword').value;
+            err.style.display = 'none';
+            if (p.length < 8) { err.textContent = 'Password must be at least 8 characters.'; err.style.display = 'block'; return }
+            if (p !== c) { err.textContent = 'Passwords do not match.'; err.style.display = 'block'; return }
+            btn.disabled = true;
+            fetch('$BasePath/api/bootstrap/sa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'sa', password: p, confirmPassword: c }) })
+                .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d } }) })
+                .then(function (r) {
+                    if (!r.ok || r.data.error) { err.textContent = r.data.error || 'Could not set sa password.'; err.style.display = 'block'; btn.disabled = false; return }
+                    document.getElementById('username').value = 'sa';
+                    document.getElementById('password').value = p;
+                    doLogin();
+                }).catch(function () { err.textContent = 'Connection error'; err.style.display = 'block'; btn.disabled = false });
+        }
+
+        if (SA_BOOTSTRAP_REQUIRED) showSaBootstrap();
+        document.getElementById('password').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin() });
+        document.getElementById('saConfirmPassword').addEventListener('keydown', function (e) { if (e.key === 'Enter') setSaPassword() });
+        document.getElementById('username').addEventListener('keydown', function (e) { if (e.key === 'Enter') document.getElementById('password').focus() });
+        document.getElementById('username').focus();
+    </script>
+</body>
+</html>

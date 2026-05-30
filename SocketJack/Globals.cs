@@ -1,4 +1,4 @@
-﻿using SocketJack;
+using SocketJack;
 using SocketJack.Extensions;
 using SocketJack.Net;
 using SocketJack.Net.P2P;
@@ -34,7 +34,7 @@ namespace SocketJack {
         public static void RegisterClient(ref ISocket Client) {
             ThreadManager.TcpClients.AddOrUpdate(Client.InternalID, Client);
             if (!ThreadManager.RuntimesSet)
-                threadManager.ModifyRuntimeConfig();
+                threadManager.ApplyRuntimeEnvironmentOptions();
             if (!ThreadManager.Alive)
                 ThreadManager.Alive = true;
         }
@@ -48,7 +48,7 @@ namespace SocketJack {
         public static void RegisterServer(ref ISocket Server) {
             ThreadManager.TcpServers.AddOrUpdate(Server.InternalID, Server);
             if (!ThreadManager.RuntimesSet)
-                threadManager.ModifyRuntimeConfig();
+                threadManager.ApplyRuntimeEnvironmentOptions();
             if (!ThreadManager.Alive)
                 ThreadManager.Alive = true;
         }

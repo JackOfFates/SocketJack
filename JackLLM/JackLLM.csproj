@@ -1,0 +1,86 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JackONNX\JackONNX.csproj" />
+    <ProjectReference Include="..\LlmRuntime\LlmRuntime.csproj" />
+    <ProjectReference Include="..\LlmRuntime.Wpf\LlmRuntime.Wpf.csproj" />
+    <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
+    <ProjectReference Include="..\SocketJack.LlmCore\SocketJack.LlmCore.csproj" />
+    <ProjectReference Include="..\SocketJack.Stripe\SocketJack.Stripe.csproj" />
+    <ProjectReference Include="..\JackLLMUpdater\JackLLMUpdater.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" Condition="'$(IncludeJackLLMUpdater)' == 'true'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3124.44" />
+    <PackageReference Include="System.Speech" Version="9.0.0" />
+    <PackageReference Include="System.Text.Json" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\tools\linux\install-jackllm-cuda-pytorch.sh" Link="install\linux\install-jackllm-cuda-pytorch.sh" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="artifacts\**" />
+    <Compile Remove="bin\**" />
+    <Compile Remove="obj\**" />
+    <ApplicationDefinition Remove="bin\**\*.xaml" />
+    <ApplicationDefinition Remove="obj\**\*.xaml" />
+    <EmbeddedResource Remove="artifacts\**" />
+    <EmbeddedResource Remove="bin\**" />
+    <EmbeddedResource Remove="obj\**" />
+    <None Remove="artifacts\**" />
+    <None Remove="bin\**" />
+    <None Remove="obj\**" />
+    <Page Remove="artifacts\**" />
+    <Page Remove="bin\**\*.xaml" />
+    <Page Remove="obj\**\*.xaml" />
+    <Compile Include="..\SocketJack.Windows\Controller\ClickIndicatorAdorner.cs" Link="SocketJack.WPF\Controller\ClickIndicatorAdorner.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\ControlBitmapCapture.cs" Link="SocketJack.WPF\Controller\ControlBitmapCapture.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\ControlShareFrame.cs" Link="SocketJack.WPF\Controller\ControlShareFrame.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\ControlShareViewer.cs" Link="SocketJack.WPF\Controller\ControlShareViewer.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\ElementRoute.cs" Link="SocketJack.WPF\Controller\ElementRoute.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\Extensions.cs" Link="SocketJack.WPF\Controller\Extensions.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\FrameworkElementShareExtensions.cs" Link="SocketJack.WPF\Controller\FrameworkElementShareExtensions.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\LmVsProxyWpfRemoteControl.cs" Link="SocketJack.WPF\Controller\LmVsProxyWpfRemoteControl.cs" />
+    <Compile Include="..\SocketJack.Windows\Controller\RemoteAction.cs" Link="SocketJack.WPF\Controller\RemoteAction.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="..\SocketJack.Windows\Controller\*.cs">
+      <Nullable>disable</Nullable>
+    </Compile>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows7.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <IsPackable>false</IsPackable>
+    <AssemblyTitle>JackLLM Workstation</AssemblyTitle>
+    <Product>JackLLM Workstation</Product>
+    <Version>2026.0</Version>
+    <AssemblyVersion>2026.0.0.0</AssemblyVersion>
+    <FileVersion>2026.0.0.0</FileVersion>
+    <InformationalVersion>2026</InformationalVersion>
+    <StartupObject>JackLLM.App</StartupObject>
+    <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8618;CS8622;CS8625</NoWarn>
+    <JackOnnxBundleCudaDependencies>true</JackOnnxBundleCudaDependencies>
+  </PropertyGroup>
+
+  <Target Name="CopyJackLLMUpdater" AfterTargets="Build" Condition="'$(IncludeJackLLMUpdater)' == 'true'">
+    <ItemGroup>
+      <JackLLMUpdaterFiles Include="..\JackLLMUpdater\bin\$(Configuration)\net8.0-windows7.0\JackLLMUpdater.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(JackLLMUpdaterFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(JackLLMUpdaterFiles)' != ''" />
+  </Target>
+
+</Project>

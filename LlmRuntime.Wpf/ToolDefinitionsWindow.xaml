@@ -1,0 +1,11 @@
+<Window x:Class="LlmRuntime.Wpf.ToolDefinitionsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:LlmRuntime.Wpf"
+        Title="LLM Runtime Tools"
+        Width="1280"
+        Height="760"
+        WindowStartupLocation="CenterOwner"
+        Background="#101216">
+    <local:ToolDefinitionsControl x:Name="ToolDefinitions" />
+</Window>

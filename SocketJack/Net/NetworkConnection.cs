@@ -11,6 +11,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -50,6 +51,7 @@ namespace SocketJack.Net {
         private static readonly TimeSpan OneSecond = TimeSpan.FromSeconds(1);
         private static readonly Type ByteArrayType = typeof(byte[]);
         private static readonly char[] LengthTrimChars = { '\0', ' ', '\r', '\n' };
+        internal SocketJackPatternCache PatternCache { get; } = new SocketJackPatternCache();
 
         /// <summary>
         /// Whether or not data is compressed.
@@ -320,6 +322,24 @@ namespace SocketJack.Net {
         protected internal ConcurrentQueue<SendQueueItem> SendQueue = new();
         protected internal List<byte> SendQueueRaw = new();
 
+        protected internal bool TryEnqueueSendBytes(byte[] bytes) {
+            if (bytes == null || bytes.Length == 0 || Closed || Closing)
+                return false;
+
+            NetworkOptions options = Parent?.Options;
+            int maxQueuedBytes = options?.MaximumSendQueueBytes ?? 0;
+            lock (SendQueueRaw) {
+                if (maxQueuedBytes > 0 && SendQueueRaw.Count + bytes.Length > maxQueuedBytes) {
+                    Parent?.InvokeOnError(this, new IOException("Send queue exceeded NetworkOptions.MaximumSendQueueBytes."));
+                    Parent?.CloseConnection(this, DisconnectionReason.LocalSocketClosed);
+                    return false;
+                }
+                SendQueueRaw.AddRange(bytes);
+            }
+
+            try { _SendSignal.Release(); } catch (ObjectDisposedException) { }
+            return true;
+        }
         /// <summary>
         /// Adjusts <see cref="ThreadPool"/> minimum threads so worker/IO capacity
         /// scales with the number of active connections.  Without this, the default
@@ -560,6 +580,16 @@ namespace SocketJack.Net {
         /// <param name="serverCertificate">The server certificate (required for server-side).</param>
         /// <param name="targetHost">Target host name (required for client-side).</param>
         protected internal void InitializeSslStream(X509Certificate serverCertificate, string targetHost) {
+            InitializeSslStream(serverCertificate, targetHost, null);
+        }
+
+        /// <summary>
+        /// Initializes the SSL stream for this connection.
+        /// </summary>
+        /// <param name="serverCertificate">The default server certificate (required for server-side).</param>
+        /// <param name="targetHost">Fallback target host name.</param>
+        /// <param name="certificateSelector">Optional SNI certificate selector.</param>
+        protected internal void InitializeSslStream(X509Certificate serverCertificate, string targetHost, Func<string, X509Certificate> certificateSelector) {
             if (_Stream == null)
                 throw new InvalidOperationException("NetworkStream must be initialized before SSL.");
 
@@ -569,11 +599,62 @@ namespace SocketJack.Net {
             if (serverCertificate == null)
                 throw new ArgumentNullException(nameof(serverCertificate), "Server certificate required for SSL server mode.");
 
+            ValidateServerCertificate(serverCertificate);
+
             SslStream = new SslStream(_Stream, true);
-            SslStream.AuthenticateAsServer(serverCertificate, false, SslProtocols.Tls12 | SslProtocols.Tls12, false);
+            if (certificateSelector == null) {
+                SslStream.AuthenticateAsServer(serverCertificate, false, SslProtocols.None, false);
+                return;
+            }
+
+            var options = new SslServerAuthenticationOptions {
+                ServerCertificate = serverCertificate,
+                ClientCertificateRequired = false,
+                EnabledSslProtocols = SslProtocols.None,
+                CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                ServerCertificateSelectionCallback = (sender, hostName) => {
+                    string requestedHost = string.IsNullOrWhiteSpace(hostName) ? targetHost : hostName;
+                    X509Certificate selected = certificateSelector(requestedHost);
+                    ValidateServerCertificate(selected ?? serverCertificate);
+                    return selected ?? serverCertificate;
+                }
+            };
+            if (!TryAuthenticateAsServerWithOptions(SslStream, options))
+                SslStream.AuthenticateAsServer(serverCertificate, false, SslProtocols.None, false);
 
         }
 
+
+        private static bool TryAuthenticateAsServerWithOptions(SslStream sslStream, SslServerAuthenticationOptions options) {
+            var method = typeof(SslStream).GetMethod("AuthenticateAsServer", new[] { typeof(SslServerAuthenticationOptions) });
+            if (method == null)
+                return false;
+
+            try {
+                method.Invoke(sslStream, new object[] { options });
+                return true;
+            } catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException != null) {
+                throw ex.InnerException;
+            }
+        }
+        private static void ValidateServerCertificate(X509Certificate certificate) {
+            if (certificate == null)
+                throw new ArgumentNullException(nameof(certificate), "Server certificate required for SSL server mode.");
+
+            if (certificate is X509Certificate2 certificate2 && !certificate2.HasPrivateKey)
+                throw new InvalidOperationException("Server certificate must include an accessible private key.");
+
+            if (certificate is X509Certificate2 certificateWithKey) {
+                try {
+                    using RSA rsa = certificateWithKey.GetRSAPrivateKey();
+                    using ECDsa ecdsa = certificateWithKey.GetECDsaPrivateKey();
+                    if (rsa == null && ecdsa == null)
+                        throw new InvalidOperationException("Server certificate private key is not RSA or ECDSA.");
+                } catch (Exception ex) {
+                    throw new InvalidOperationException("Server certificate private key could not be opened by this process.", ex);
+                }
+            }
+        }
         /// <summary>
         /// Initializes the SSL stream for this connection.
         /// </summary>
@@ -589,7 +670,7 @@ namespace SocketJack.Net {
                 throw new ArgumentNullException(nameof(targetHost), "Target host required for SSL client mode.");
 
             SslStream = new SslStream(_Stream, true, null);
-            SslStream.AuthenticateAsClient(targetHost, null, SslProtocols.Tls12 | SslProtocols.Tls12, false);
+            SslStream.AuthenticateAsClient(targetHost, null, SslProtocols.None, false);
         }
         #endregion
 
@@ -671,9 +752,7 @@ namespace SocketJack.Net {
                     var bufSize = options.DownloadBufferSize > 0 ? options.DownloadBufferSize : 8192;
                     var buffer = ArrayPool<byte>.Shared.Rent(bufSize);
                     try {
-                        var temp = new List<byte>();
                         int bytesRead = 0;
-                        // Read available data into buffer
                         do {
                             try {
                                 bytesRead = await stream.ReadAsync(buffer, 0, bufSize);
@@ -682,32 +761,28 @@ namespace SocketJack.Net {
                                 if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
                                 break;
                             }
+
                             // A protocol handler took ownership while we were blocking.
                             // Yield without closing — the handler owns the stream now.
                             if (RawTcpMode) {
-                                ArrayPool<byte>.Shared.Return(buffer);
                                 IsReceiving = false;
                                 return;
                             }
+
                             if (bytesRead <= 0) {
-                                // Stream ended — remote side closed the connection.
-                                // Close locally to prevent the outer loop from spinning.
-                                if (temp.Count > 0) {
-                                    await ParseBuffer(temp, this, Parent);
-                                }
-                                ArrayPool<byte>.Shared.Return(buffer);
                                 IsReceiving = false;
                                 Parent.CloseConnection(this, DisconnectionReason.RemoteSocketClosed);
                                 return;
                             }
+
                             Interlocked.Add(ref _TotalBytesReceived, bytesRead);
                             Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
-                            temp.AddRange(new ArraySegment<byte>(buffer, 0, bytesRead));
-                        } while (_Stream.DataAvailable);
 
-                        if (temp.Count > 0) {
-                            await ParseBuffer(temp, this, Parent);
-                        }
+                            var payload = new List<byte>(bytesRead);
+                            for (int i = 0; i < bytesRead; i++)
+                                payload.Add(buffer[i]);
+                            Parent.HandleReceive(this, payload, ByteArrayType, bytesRead);
+                        } while (_Stream.DataAvailable);
                     } catch (Exception ex) {
                         var Reason = ex.Interpret();
                         if (Reason.ShouldLogReason()) Parent.InvokeOnError(this, ex);
@@ -787,6 +862,13 @@ namespace SocketJack.Net {
                     return;
                 }
 
+                if (Length < 0 || Length > options.MaximumBufferSize) {
+                    Parent.InvokeOnError(this, new IOException("SocketJack frame length " + Length + " exceeds NetworkOptions.MaximumBufferSize " + options.MaximumBufferSize + "."));
+                    Parent.CloseConnection(this, DisconnectionReason.Unknown);
+                    IsReceiving = false;
+                    return;
+                }
+
                 byte[] Body = new byte[Length];
                 int totalRead = 0;
                 try {
@@ -797,18 +879,6 @@ namespace SocketJack.Net {
                             return;
                         }
 
-                        long diff = ((TotalBytesReceived - _TotalBytesReceived_l)) - options.MaximumDownloadBytesPerSecond;
-                        if (diff > 0) {
-                            var now = DateTime.UtcNow;
-                            var timeDiff = now - LastReceiveFrame;
-                            _ReceivedBytesPerSecond = (int)(TotalBytesReceived - _TotalBytesReceived_l);
-                            _TotalBytesReceived_l = TotalBytesReceived;
-                            LastReceiveFrame = now;
-                            if (timeDiff > OneSecond) {
-                                await Task.Delay((int)Math.Min(1000, diff * 1000L / Math.Max(1, options.MaximumDownloadBytesPerSecond)));
-                            }
-                        }
-
                         int chunkSize = options.isDownloadBuffered ? options.DownloadBufferSize : (Length - totalRead);
                         chunkSize = Math.Min(chunkSize, Length - totalRead);
 
@@ -817,6 +887,7 @@ namespace SocketJack.Net {
                         totalRead += bytesRead;
                         Interlocked.Add(ref _TotalBytesReceived, bytesRead);
                         Parent.InvokeInternalReceivedByteCounter(this, bytesRead);
+                        await ThrottleReceiveIfNeededAsync(options);
                     }
                 } catch (Exception ex) {
                     var Reason = ex.Interpret();
@@ -935,6 +1006,12 @@ namespace SocketJack.Net {
                 } else {
                     Target.CloseConnection(Sender, DisconnectionReason.CompressionError);
                     Target.InvokeOnError(Sender, decompressionResult.Exception);
+                    return;
+                }
+            }
+            if (Sender != null && Sender.PatternCache != null) {
+                if (!Sender.PatternCache.TryResolveReceived(Bytes, Target.Options, out Bytes, out string cacheError)) {
+                    Target.InvokeOnError(Sender, new P2PException(cacheError));
                     return;
                 }
             }
@@ -1140,6 +1217,80 @@ namespace SocketJack.Net {
         //            }
         //        }
 
+        private async Task ThrottleReceiveIfNeededAsync(NetworkOptions options) {
+            if (options == null || !options.isDownloadBuffered || options.MaximumDownloadBytesPerSecond <= 0)
+                return;
+
+            long total = TotalBytesReceived;
+            var now = DateTime.UtcNow;
+            var elapsed = now - LastReceiveFrame;
+            if (elapsed >= OneSecond) {
+                _ReceivedBytesPerSecond = (int)Math.Min(int.MaxValue, Math.Max(0, total - _TotalBytesReceived_l));
+                _TotalBytesReceived_l = total;
+                LastReceiveFrame = now;
+                return;
+            }
+
+            long bytesThisWindow = total - _TotalBytesReceived_l;
+            if (bytesThisWindow <= options.MaximumDownloadBytesPerSecond)
+                return;
+
+            int waitMs = Math.Max(1, (int)(OneSecond - elapsed).TotalMilliseconds);
+            await Task.Delay(waitMs);
+            _ReceivedBytesPerSecond = (int)Math.Min(int.MaxValue, Math.Max(0, TotalBytesReceived - _TotalBytesReceived_l));
+            _TotalBytesReceived_l = TotalBytesReceived;
+            LastReceiveFrame = DateTime.UtcNow;
+        }
+
+        private void ThrottleSendIfNeeded(NetworkOptions options) {
+            if (options == null || !options.isUploadBuffered || options.MaximumUploadBytesPerSecond <= 0)
+                return;
+
+            long total = TotalBytesSent;
+            var now = DateTime.UtcNow;
+            var elapsed = now - LastSendFrame;
+            if (elapsed >= OneSecond) {
+                _SentBytesPerSecond = (int)Math.Min(int.MaxValue, Math.Max(0, total - _TotalBytesSent_l));
+                _TotalBytesSent_l = total;
+                LastSendFrame = now;
+                return;
+            }
+
+            long bytesThisWindow = total - _TotalBytesSent_l;
+            if (bytesThisWindow <= options.MaximumUploadBytesPerSecond)
+                return;
+
+            int waitMs = Math.Max(1, (int)(OneSecond - elapsed).TotalMilliseconds);
+            Thread.Sleep(waitMs);
+            _SentBytesPerSecond = (int)Math.Min(int.MaxValue, Math.Max(0, TotalBytesSent - _TotalBytesSent_l));
+            _TotalBytesSent_l = TotalBytesSent;
+            LastSendFrame = DateTime.UtcNow;
+        }
+
+        private async Task ThrottleSendIfNeededAsync(NetworkOptions options) {
+            if (options == null || !options.isUploadBuffered || options.MaximumUploadBytesPerSecond <= 0)
+                return;
+
+            long total = TotalBytesSent;
+            var now = DateTime.UtcNow;
+            var elapsed = now - LastSendFrame;
+            if (elapsed >= OneSecond) {
+                _SentBytesPerSecond = (int)Math.Min(int.MaxValue, Math.Max(0, total - _TotalBytesSent_l));
+                _TotalBytesSent_l = total;
+                LastSendFrame = now;
+                return;
+            }
+
+            long bytesThisWindow = total - _TotalBytesSent_l;
+            if (bytesThisWindow <= options.MaximumUploadBytesPerSecond)
+                return;
+
+            int waitMs = Math.Max(1, (int)(OneSecond - elapsed).TotalMilliseconds);
+            await Task.Delay(waitMs);
+            _SentBytesPerSecond = (int)Math.Min(int.MaxValue, Math.Max(0, TotalBytesSent - _TotalBytesSent_l));
+            _TotalBytesSent_l = TotalBytesSent;
+            LastSendFrame = DateTime.UtcNow;
+        }
         protected internal bool SendSerializedBytes(byte[] SerializedBytes) {
             //return await Task.Run(async () => {
             //});
@@ -1147,68 +1298,48 @@ namespace SocketJack.Net {
             if (isDisposed || stream == null || Closed) return false;
             var options = Parent.Options;
             bool useSsl = SSL;
-            int mtu = NIC.MTU;
             bool sentSuccessful = false;
             try {
-                if (mtu == -1 || SerializedBytes.Length < mtu && SerializedBytes.Length < 65535) {
-                    // Object smaller than MTU.
-                    byte[] ProcessedBytes = SerializedBytes;
-                    int totalBytes = ProcessedBytes.Length;
+                byte[] ProcessedBytes = SerializedBytes;
+                int totalBytes = ProcessedBytes.Length;
 
-                    // If upload buffering is disabled or UploadBufferSize is invalid, write whole buffer at once
-                    if (!options.isUploadBuffered || options.UploadBufferSize <= 0) {
-                        if (useSsl) {
-                            SslStream.Write(ProcessedBytes, 0, totalBytes);
-                        } else {
-                            stream.Write(ProcessedBytes, 0, totalBytes);
-                        }
-                        Parent.InvokeInternalSentByteCounter(this, totalBytes);
+                if (!options.isUploadBuffered || options.UploadBufferSize <= 0) {
+                    if (useSsl) {
+                        SslStream.Write(ProcessedBytes, 0, totalBytes);
                     } else {
-                        int chunkUnit = Math.Max(1, options.UploadBufferSize);
-
-                        for (int offset = 0; offset < totalBytes; offset += chunkUnit) {
-                            if (Socket is null || stream is null || !Socket.Connected || Closed || (useSsl && SslStream is null)) {
-                                SerializedBytes = null;
-                                ProcessedBytes = null;
-                                if (!Closed) Parent.CloseConnection(this);
-                                return false;
-                            }
-
-                            long diff = ((TotalBytesSent - _TotalBytesSent_l)) - options.MaximumUploadBytesPerSecond;
-                            if (diff > 0) {
-                                var now = DateTime.UtcNow;
-                                var timeDiff = now - LastSendFrame;
-                                _SentBytesPerSecond = (int)(TotalBytesSent - _TotalBytesSent_l);
-                                _TotalBytesSent_l = TotalBytesSent;
-                                LastSendFrame = now;
-                                if (timeDiff > OneSecond) {
-                                    Thread.Sleep((int)(options.MaximumUploadBytesPerSecond / (diff * 10)));
-                                }
-
-                            }
-
-                            int chunkSize = Math.Min(chunkUnit, totalBytes - offset);
-                            if (useSsl) {
-                                SslStream.Write(ProcessedBytes, offset, chunkSize);
-                            } else {
-                                stream.Write(ProcessedBytes, offset, chunkSize);
-                            }
-
-                            Interlocked.Add(ref _TotalBytesSent, chunkSize);
-                            Parent.InvokeInternalSentByteCounter(this, chunkSize);
-                        }
+                        stream.Write(ProcessedBytes, 0, totalBytes);
                     }
-                    sentSuccessful = true;
-                    //if (!Globals.IgnoreLoggedTypes.Contains(type)) {
-                    Parent.InvokeInternalSendEvent(this, ByteArrayType, "[CHUNK]", ProcessedBytes.Length);
-                    Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, ByteArrayType, ProcessedBytes.Length));
-                //}
+                    Interlocked.Add(ref _TotalBytesSent, totalBytes);
+                    Parent.InvokeInternalSentByteCounter(this, totalBytes);
+                    ThrottleSendIfNeeded(options);
+                } else {
+                    int chunkUnit = Math.Max(1, options.UploadBufferSize);
 
-            } else if (SerializedBytes.Length > mtu) {
-               // Object larger than MTU, we have to Segment the object.
-               Parent.SendSegmented(this, SerializedBytes);
-            }
-        } catch (Exception ex) {
+                    for (int offset = 0; offset < totalBytes; offset += chunkUnit) {
+                        if (Socket is null || stream is null || !Socket.Connected || Closed || (useSsl && SslStream is null)) {
+                            SerializedBytes = null;
+                            ProcessedBytes = null;
+                            if (!Closed) Parent.CloseConnection(this);
+                            return false;
+                        }
+
+                        int chunkSize = Math.Min(chunkUnit, totalBytes - offset);
+                        if (useSsl) {
+                            SslStream.Write(ProcessedBytes, offset, chunkSize);
+                        } else {
+                            stream.Write(ProcessedBytes, offset, chunkSize);
+                        }
+
+                        Interlocked.Add(ref _TotalBytesSent, chunkSize);
+                        Parent.InvokeInternalSentByteCounter(this, chunkSize);
+                        ThrottleSendIfNeeded(options);
+                    }
+                }
+
+                sentSuccessful = true;
+                Parent.InvokeInternalSendEvent(this, ByteArrayType, "[CHUNK]", ProcessedBytes.Length);
+                Parent.InvokeOnSent(new SentEventArgs(this.Parent, this, ByteArrayType, ProcessedBytes.Length));
+            } catch (Exception ex) {
                 if (Closed) return false;
                 var Reason = ex.Interpret();
                 if (Reason.ShouldLogReason()) {
@@ -1232,6 +1363,7 @@ namespace SocketJack.Net {
                 }
                 // if (NIC.MTU == -1 || SerializedBytes.Length < NIC.MTU && SerializedBytes.Length < 65535) {
                 //    Object smaller than MTU.
+                SerializedBytes = Item.Connection.PatternCache.PrepareSend(SerializedBytes, Parent.Options);
                 byte[] ProcessedBytes = Item.Connection.Compressed ? Parent.Options.CompressionAlgorithm.Compress(SerializedBytes).Terminate() : SerializedBytes.Terminate();
                 int totalBytes = ProcessedBytes.Length;
                 NetworkConnection Client = Item.Connection;
@@ -1252,7 +1384,9 @@ namespace SocketJack.Net {
                         } else {
                             await Stream.WriteAsync(ProcessedBytes, offset, chunkSize);
                         }
+                        Interlocked.Add(ref _TotalBytesSent, chunkSize);
                         Parent.InvokeInternalSentByteCounter(Item.Connection, chunkSize);
+                        await ThrottleSendIfNeededAsync(Parent.Options);
                     }
                 } else {
                     if (SSL) {
@@ -1260,7 +1394,9 @@ namespace SocketJack.Net {
                     } else {
                         await Stream.WriteAsync(ProcessedBytes, 0, ProcessedBytes.Length);
                     }
+                    Interlocked.Add(ref _TotalBytesSent, ProcessedBytes.Length);
                     Parent.InvokeInternalSentByteCounter(Item.Connection, ProcessedBytes.Length);
+                    await ThrottleSendIfNeededAsync(Parent.Options);
                 }
                 sentSuccessful = true;
                 //if (!Globals.IgnoreLoggedTypes.Contains(type)) {

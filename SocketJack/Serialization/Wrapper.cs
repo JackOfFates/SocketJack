@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -172,11 +172,9 @@ namespace SocketJack.Serialization {
 
         private bool IsTypeAllowed(Type Type, ISocket sender) {
             if (sender.Options.Blacklist.Contains(Type)) {
-                if (Type == typeof(object) && this.Type != GetTypeName(typeof(PeerRedirect)))
-                    throw CreateTypeException(ref sender, Type, true);
+                throw CreateTypeException(ref sender, Type, true);
             } else if(!sender.Options.Whitelist.Contains(Type) ){
-                if(Type == typeof(object) && this.Type != GetTypeName(typeof(PeerRedirect)))
-                    throw CreateTypeException(ref sender, Type);
+                throw CreateTypeException(ref sender, Type);
             }
             return true;
         }

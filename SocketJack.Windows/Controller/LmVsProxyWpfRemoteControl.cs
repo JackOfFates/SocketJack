@@ -12,6 +12,9 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using LmVs;
 using SocketJack.Net;
+using ButtonBase = System.Windows.Controls.Primitives.ButtonBase;
+using Point = System.Windows.Point;
+using TextBox = System.Windows.Controls.TextBox;
 
 namespace SocketJack.WPF {
     namespace Controller {
@@ -20,6 +23,17 @@ namespace SocketJack.WPF {
             private static readonly object SyncRoot = new object();
             private static WeakReference<FrameworkElement>? _captureElement;
             private static ButtonBase? _lastPressedButton;
+
+            public static bool RemoteCursorHiddenByUser => ClickIndicatorAdorner.RemoteCursorHiddenByUser;
+
+            public static event EventHandler? RemoteCursorHiddenChanged {
+                add => ClickIndicatorAdorner.RemoteCursorHiddenChanged += value;
+                remove => ClickIndicatorAdorner.RemoteCursorHiddenChanged -= value;
+            }
+
+            public static void RestoreRemoteCursorVisibility() {
+                ClickIndicatorAdorner.RestoreRemoteCursorVisibility();
+            }
 
             public static void EnsureRegistered() {
                 lock (SyncRoot) {
@@ -30,6 +44,14 @@ namespace SocketJack.WPF {
             }
 
             public static void RegisterAdminPanel(FrameworkElement element) {
+                if (element is Window window) {
+                    if (window.FindName("RemoteCursorOverlay") is Canvas overlay)
+                        ClickIndicatorAdorner.RegisterRemoteCursorHost(window, overlay);
+
+                    RegisterCaptureElement(window);
+                    return;
+                }
+
                 RegisterCaptureElement(element);
             }
 
@@ -95,6 +117,7 @@ namespace SocketJack.WPF {
                     ? ResolveElementPoint(element, input.ToX, input.ToY, input.Normalized)
                     : start;
 
+                ShowRemoteCursor(start);
                 switch (action) {
                     case "move":
                     case "mousemove":
@@ -144,6 +167,10 @@ namespace SocketJack.WPF {
                     Y = start.RootPoint.Y,
                     Message = "SocketJack.WPF routed event input executed."
                 };
+            }
+
+            private static void ShowRemoteCursor(RemoteElementPoint point) {
+                ClickIndicatorAdorner.ShowRemoteCursor(point.Root, point.RootPoint);
             }
 
             private static FrameworkElement? ResolveCaptureElement() {
@@ -201,10 +228,13 @@ namespace SocketJack.WPF {
                     var nextPoint = new Point(
                         start.RootPoint.X + ((target.RootPoint.X - start.RootPoint.X) * t),
                         start.RootPoint.Y + ((target.RootPoint.Y - start.RootPoint.Y) * t));
-                    RaiseMouseMove(ResolveElementPoint(start.Root, nextPoint.X, nextPoint.Y, normalized: false));
+                    RemoteElementPoint nextElementPoint = ResolveElementPoint(start.Root, nextPoint.X, nextPoint.Y, normalized: false);
+                    ShowRemoteCursor(nextElementPoint);
+                    RaiseMouseMove(nextElementPoint);
                     if (delay > 0)
                         Thread.Sleep(delay);
                 }
+                ShowRemoteCursor(target);
                 RaiseMouseUp(target, mouseButton);
             }
 

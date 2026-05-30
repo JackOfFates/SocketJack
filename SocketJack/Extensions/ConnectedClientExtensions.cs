@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using SocketJack.Net;
@@ -39,10 +39,7 @@ namespace SocketJack.Extensions {
             for (int i = 0; i < clientArray.Length; i++) {
                 var client = clientArray[i].Value;
                 if (client != null && !ReferenceEquals(client, Except) && !client.Closed && client.Socket != null && client.Socket.Connected) {
-                    lock (client.SendQueueRaw) {
-                        client.SendQueueRaw.AddRange(serialized);
-                    }
-                    try { client._SendSignal.Release(); } catch (ObjectDisposedException) { }
+                    client.TryEnqueueSendBytes(serialized);
                 }
             }
         }

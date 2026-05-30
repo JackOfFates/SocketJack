@@ -4,6 +4,35 @@
         <name>SocketJack.WebSocketServer</name>
     </assembly>
     <members>
+        <member name="T:SocketJack.Net.WebSocketFrameHelper">
+            <summary>
+            Shared WebSocket frame-building and JS constructor generation utilities
+            used by both <see cref="T:SocketJack.Net.WebSocketProtocolHandler"/> and
+            <see cref="T:SocketJack.Net.WebSockets.WebSocketServer"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.WebSocketFrameHelper.GetHeaderLength(System.Int32)">
+            <summary>
+            Returns the header length for a WebSocket frame with the given payload size.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.WebSocketFrameHelper.WriteHeader(System.Span{System.Byte},System.Boolean,System.Int32)">
+            <summary>
+            Writes a WebSocket frame header into <paramref name="dest"/> and returns
+            the number of bytes written.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.WebSocketFrameHelper.BuildFrame(System.Byte[],System.Boolean)">
+            <summary>
+            Builds a complete WebSocket frame (header + payload) as a new byte array.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.WebSocketFrameHelper.GenerateJSConstructors(System.Collections.Generic.IEnumerable{System.String})">
+            <summary>
+            Generates JavaScript class constructors for all whitelisted types so that
+            browser clients can create typed objects for the SocketJack protocol.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.WebSockets.WebSocketServer.SslCertificate">
             <summary>
             Server certificate for SSL connections.

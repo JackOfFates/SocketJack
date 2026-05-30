@@ -3,11 +3,14 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using SocketJack.Serialization;
 
 namespace SocketJack.Net.Database {
 
@@ -33,16 +36,25 @@ namespace SocketJack.Net.Database {
         private readonly ConcurrentDictionary<string, ApiEndpointDef> _apiEndpoints = new ConcurrentDictionary<string, ApiEndpointDef>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, ApiEndpointDef> _apiRouteSettings = new ConcurrentDictionary<string, ApiEndpointDef>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, EventDef> _eventDefs = new ConcurrentDictionary<string, EventDef>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, List<DateTime>> _dynamicEndpointRateWindows = new ConcurrentDictionary<string, List<DateTime>>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, int> _eventCircuitFailures = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, string> _pageTemplateCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, string> _pageHashCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly JsonSerializerOptions _reflectJsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        private const string ErrorDiagnosticsTableName = "LmVsProxyErrorLog";
+        private const string SqlAdminAuditTableName = "SqlAdminAuditLog";
+        private const string SqlAdminRestorePointsTableName = "SqlAdminRestorePoints";
+        private const int MaxSqlRestorePointRows = 32;
+        private const int MaxSqlRestorePointBytes = 24 * 1024 * 1024;
+        private const int MaxSingleSqlRestorePointBytes = 8 * 1024 * 1024;
         private bool _registered;
 
         /// <summary>
         /// Directory containing HTML page templates for the SQL Admin Panel.
         /// Templates use <c>$VariableName</c> placeholders that are replaced at runtime.
-        /// Defaults to a <c>Resources</c> folder next to the running application.
+        /// Defaults to a <c>html</c> folder next to the running application.
         /// </summary>
-        internal static string PagesFolder { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources");
+        internal static string PagesFolder { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "html");
 
         /// <summary>
         /// Base URL path for all admin panel routes.
@@ -67,6 +79,7 @@ namespace SocketJack.Net.Database {
 
             // Login / Logout
             _server.Map("POST", basePath + "/login", (conn, req, ct) => HandleLogin(req));
+            _server.Map("POST", basePath + "/api/bootstrap/sa", (conn, req, ct) => HandleSaBootstrap(req));
             _server.Map("GET", basePath + "/logout", (conn, req, ct) => HandleLogout(req));
 
             // API endpoints
@@ -77,6 +90,12 @@ namespace SocketJack.Net.Database {
             _server.Map("POST", basePath + "/api/query", (conn, req, ct) => ApiQuery(req));
             _server.Map("GET", basePath + "/api/users", (conn, req, ct) => ApiUsers(req));
             _server.Map("GET", basePath + "/api/sessions", (conn, req, ct) => ApiSessions(req));
+            _server.Map("GET", basePath + "/api/audit/recent", (conn, req, ct) => ApiAuditRecent(req));
+            _server.Map("GET", basePath + "/api/backups/list", (conn, req, ct) => ApiBackupsList(req));
+            _server.Map("POST", basePath + "/api/backups/restore", (conn, req, ct) => ApiBackupsRestore(req));
+            _server.Map("GET", basePath + "/api/operations/dashboard", (conn, req, ct) => ApiOperationsDashboard(req));
+            _server.Map("GET", basePath + "/api/errors/recent", (conn, req, ct) => ApiErrorDiagnosticsRecent(req));
+            _server.Map("POST", basePath + "/api/errors/analyze", (conn, req, ct) => ApiErrorDiagnosticsAnalyze(req));
 
             // Table Designer API endpoints
             _server.Map("POST", basePath + "/api/designer/create-table", (conn, req, ct) => ApiDesignerCreateTable(req));
@@ -97,6 +116,7 @@ namespace SocketJack.Net.Database {
             _server.Map("POST", basePath + "/api/endpoints/delete", (conn, req, ct) => ApiEndpointsDelete(req));
             _server.Map("POST", basePath + "/api/endpoints/test", (conn, req, ct) => ApiEndpointsTest(req));
             _server.Map("POST", basePath + "/api/endpoints/settings/save", (conn, req, ct) => ApiEndpointSettingsSave(req));
+            _server.Map("GET", basePath + "/api/endpoints/reflect", (conn, req, ct) => ApiEndpointsReflect(req));
 
             // Query Builder saved trees
             _server.Map("GET", basePath + "/api/qb/list-trees", (conn, req, ct) => QbListTrees(req));
@@ -115,6 +135,7 @@ namespace SocketJack.Net.Database {
             LoadApiEndpoints();
             LoadApiRouteSettings();
             LoadEventDefs();
+            PruneSqlAdminStorage();
         }
 
         internal void Unregister() {
@@ -125,6 +146,7 @@ namespace SocketJack.Net.Database {
             _server.RemoveRoute("GET", basePath);
             _server.RemoveRoute("GET", basePath + "/");
             _server.RemoveRoute("POST", basePath + "/login");
+            _server.RemoveRoute("POST", basePath + "/api/bootstrap/sa");
             _server.RemoveRoute("GET", basePath + "/logout");
             _server.RemoveRoute("GET", basePath + "/api/databases");
             _server.RemoveRoute("GET", basePath + "/api/tables");
@@ -133,6 +155,12 @@ namespace SocketJack.Net.Database {
             _server.RemoveRoute("POST", basePath + "/api/query");
             _server.RemoveRoute("GET", basePath + "/api/users");
             _server.RemoveRoute("GET", basePath + "/api/sessions");
+            _server.RemoveRoute("GET", basePath + "/api/audit/recent");
+            _server.RemoveRoute("GET", basePath + "/api/backups/list");
+            _server.RemoveRoute("POST", basePath + "/api/backups/restore");
+            _server.RemoveRoute("GET", basePath + "/api/operations/dashboard");
+            _server.RemoveRoute("GET", basePath + "/api/errors/recent");
+            _server.RemoveRoute("POST", basePath + "/api/errors/analyze");
 
             // Table Designer routes
             _server.RemoveRoute("POST", basePath + "/api/designer/create-table");
@@ -153,6 +181,7 @@ namespace SocketJack.Net.Database {
             _server.RemoveRoute("POST", basePath + "/api/endpoints/delete");
             _server.RemoveRoute("POST", basePath + "/api/endpoints/test");
             _server.RemoveRoute("POST", basePath + "/api/endpoints/settings/save");
+            _server.RemoveRoute("GET", basePath + "/api/endpoints/reflect");
 
             // Query Builder tree routes
             _server.RemoveRoute("GET", basePath + "/api/qb/list-trees");
@@ -184,10 +213,14 @@ namespace SocketJack.Net.Database {
 
         private class SqlAdminSession {
             public string Token;
+            public string SessionId;
             public string Username;
+            public string OwnerKey;
+            public string CsrfToken;
             public DateTime Created;
             public DateTime LastActivity;
             public string CurrentDatabase;
+            public bool Revoked;
         }
 
         private class ApiEndpointDef {
@@ -202,6 +235,10 @@ namespace SocketJack.Net.Database {
             public string ContentType;
             public string Variables; // Comma-separated list of $variable names
             public bool Enabled;
+            public bool Approved = false;
+            public string ApprovedBy = null;
+            public string ApprovedUtc = null;
+            public bool DryRunByDefault = false;
             public string BodyType;
             public string BodySchema;
             public string Parameters;
@@ -209,6 +246,16 @@ namespace SocketJack.Net.Database {
             public string Description;
             public string Source;
             public bool ReadOnly;
+            public string HandlerTypeName;
+            public string HandlerMethodName;
+            public string HandlerArguments;
+            public string AuthMode;
+            public string Scopes;
+            public int RateLimitPerMinute;
+            public string CorsPolicy;
+            public string InputSchema;
+            public bool PublicEnabled;
+            public string EndpointSecret;
         }
 
         /// <summary>
@@ -220,17 +267,47 @@ namespace SocketJack.Net.Database {
             public string Name;
             public string Description;
             public bool Enabled;
-            public string Nodes; // JSON – array of node objects (trigger, action, condition, etc.)
+            public bool Approved;
+            public string ApprovedBy;
+            public string ApprovedUtc;
+            public bool DryRunByDefault;
+            public string Nodes; // JSON â€“ array of node objects (trigger, action, condition, etc.)
+        }
+
+        private class SqlRiskAssessment {
+            public string Operation = "read";
+            public string Severity = "low";
+            public string Reason = "";
+            public bool RequiresConfirmation;
+        }
+
+        private class SqlDatabaseSnapshotDto {
+            public List<SqlTableSnapshotDto> Tables { get; set; } = new List<SqlTableSnapshotDto>();
+        }
+
+        private class SqlTableSnapshotDto {
+            public string Name { get; set; } = "";
+            public List<SqlColumnSnapshotDto> Columns { get; set; } = new List<SqlColumnSnapshotDto>();
+            public List<List<string>> Rows { get; set; } = new List<List<string>>();
+        }
+
+        private class SqlColumnSnapshotDto {
+            public string Name { get; set; } = "";
+            public string TypeName { get; set; } = "";
+            public int MaxLength { get; set; }
         }
 
         private string CreateSession(string username) {
             var token = GenerateToken();
             var session = new SqlAdminSession {
                 Token = token,
+                SessionId = "sqlsess_" + Guid.NewGuid().ToString("N"),
                 Username = username,
+                OwnerKey = BuildSqlOwnerKey(username),
+                CsrfToken = GenerateToken(),
                 Created = DateTime.UtcNow,
                 LastActivity = DateTime.UtcNow,
-                CurrentDatabase = "db"
+                CurrentDatabase = GetDefaultDatabaseForUser(username)
             };
             _sessions[token] = session;
             return token;
@@ -240,6 +317,10 @@ namespace SocketJack.Net.Database {
             var cookie = GetCookie(req, "sqladmin_token");
             if (string.IsNullOrEmpty(cookie)) return null;
             if (_sessions.TryGetValue(cookie, out var session)) {
+                if (session.Revoked) {
+                    _sessions.TryRemove(cookie, out _);
+                    return null;
+                }
                 // Expire sessions after 8 hours of inactivity
                 if ((DateTime.UtcNow - session.LastActivity).TotalHours > 8) {
                     _sessions.TryRemove(cookie, out _);
@@ -270,6 +351,78 @@ namespace SocketJack.Net.Database {
                 rng.GetBytes(bytes);
             }
             return Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").TrimEnd('=');
+        }
+
+        private string GetDefaultDatabaseForUser(string username) {
+            var ds = GetDataServer();
+            if (ds == null)
+                return "db";
+
+            if (ds.IsSqlAdminAccount(username))
+                return ds.Databases.ContainsKey("db") ? "db" : ds.Databases.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? "db";
+
+            foreach (var kvp in ds.Databases.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase)) {
+                if (CanSqlUserAccessDatabase(ds, username, kvp.Key, kvp.Value))
+                    return kvp.Key;
+            }
+            return "";
+        }
+
+        private bool CanSqlAdminSessionAccessDatabase(HttpRequest req, SqlAdminSession session, DataServer ds, string databaseName) {
+            if (session == null || ds == null || string.IsNullOrWhiteSpace(databaseName))
+                return false;
+            if (!ds.Databases.TryGetValue(databaseName, out var db))
+                return false;
+
+            if (ds.IsSqlAdminAccount(session.Username))
+                return IsLocalhostRequest(req);
+
+            return CanSqlUserAccessDatabase(ds, session.Username, databaseName, db);
+        }
+
+        private static bool CanSqlSessionAccessDatabase(DataServer ds, SqlSession session, string databaseName) {
+            if (session == null || ds == null || string.IsNullOrWhiteSpace(databaseName))
+                return false;
+            if (!ds.Databases.TryGetValue(databaseName, out var db))
+                return false;
+            if (ds.IsSqlAdminAccount(session.Username))
+                return true;
+            return CanSqlUserAccessDatabase(ds, session.Username, databaseName, db);
+        }
+
+        private static bool CanSqlUserAccessDatabase(DataServer ds, string username, string databaseName, Database db) {
+            if (db == null || string.IsNullOrWhiteSpace(username))
+                return false;
+
+            string user = NormalizeSqlTenantName(username);
+            string owner = NormalizeSqlTenantName(FirstNonEmpty(db.OwnerUsername, db.SqlAdminUsername));
+            string name = NormalizeSqlTenantName(databaseName);
+
+            if (!string.IsNullOrWhiteSpace(owner))
+                return string.Equals(owner, user, StringComparison.OrdinalIgnoreCase);
+
+            return string.Equals(name, user, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeSqlTenantName(string value) {
+            return (value ?? "").Trim().Trim('[', ']', '"', '\'').ToLowerInvariant();
+        }
+
+        private static string BuildSqlOwnerKey(string username) {
+            return "sql:" + NormalizeSqlTenantName(username);
+        }
+
+        private static string FirstNonEmpty(params string[] values) {
+            foreach (var value in values ?? Array.Empty<string>()) {
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value.Trim();
+            }
+            return "";
+        }
+
+        private string SqlTenantForbiddenJson(HttpRequest req, string databaseName) {
+            req.Context.StatusCode = "403 Forbidden";
+            return "{\"error\":\"SQL Admin tenant isolation blocked database access.\",\"database\":\"" + EscapeJson(databaseName ?? "") + "\",\"tenantIsolation\":true}";
         }
 
         #endregion
@@ -307,6 +460,89 @@ namespace SocketJack.Net.Database {
             return ds.Authenticate(username, password);
         }
 
+        private bool IsSaBootstrapRequired() {
+            var ds = GetDataServer();
+            return ds != null && ds.RequiresSaPasswordSetup;
+        }
+
+        private bool IsLocalhostRequest(HttpRequest req) {
+            var address = req?.Context?.Connection?.EndPoint?.Address;
+            if (address == null)
+                return false;
+            return IPAddress.IsLoopback(address)
+                || address.Equals(IPAddress.Parse("127.0.0.1"))
+                || address.Equals(IPAddress.IPv6Loopback);
+        }
+
+        private static string GetHeader(HttpRequest req, string name) {
+            if (req?.Headers == null || string.IsNullOrWhiteSpace(name))
+                return null;
+            if (req.Headers.TryGetValue(name, out var direct))
+                return direct;
+            foreach (var kvp in req.Headers) {
+                if (string.Equals(kvp.Key, name, StringComparison.OrdinalIgnoreCase))
+                    return kvp.Value;
+            }
+            return null;
+        }
+
+        private static bool IsHttpsRequest(HttpRequest req) {
+            if (req?.Context?.Connection?.Parent?.Options?.UseSsl == true)
+                return true;
+
+            bool trustForwardedScheme = req?.Context?.Connection?.Parent?.Options?.EndpointSecurity?.TrustForwardedForHeaders == true;
+            if (!trustForwardedScheme)
+                return false;
+
+            var forwarded = GetHeader(req, "X-Forwarded-Proto");
+            if (string.Equals(forwarded, "https", StringComparison.OrdinalIgnoreCase))
+                return true;
+            var scheme = GetHeader(req, "X-Scheme") ?? GetHeader(req, "X-Forwarded-Scheme");
+            return string.Equals(scheme, "https", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string BuildSqlAdminCookie(HttpRequest req, string token, bool expired = false) {
+            var sb = new StringBuilder();
+            sb.Append("sqladmin_token=").Append(token ?? "")
+              .Append("; Path=/; HttpOnly; SameSite=Strict");
+            if (expired)
+                sb.Append("; Max-Age=0");
+            if (IsHttpsRequest(req))
+                sb.Append("; Secure");
+            return sb.ToString();
+        }
+
+        private bool ValidateSqlAdminMutation(HttpRequest req, SqlAdminSession session, string scope, out string errorJson) {
+            errorJson = null;
+            if (session == null) {
+                req.Context.StatusCode = "401 Unauthorized";
+                errorJson = "{\"error\":\"Not authenticated.\"}";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(session.CsrfToken))
+                session.CsrfToken = GenerateToken();
+
+            // Local developer use stays frictionless; remote browser/API mutations must prove same-session intent.
+            if (IsLocalhostRequest(req))
+                return true;
+
+            string supplied = GetHeader(req, "X-SqlAdmin-Csrf")
+                ?? GetHeader(req, "X-CSRF-Token");
+            if (string.IsNullOrWhiteSpace(supplied) && req?.QueryParameters != null && req.QueryParameters.TryGetValue("csrf", out var qsToken))
+                supplied = qsToken;
+            if (string.IsNullOrWhiteSpace(supplied))
+                supplied = ExtractJsonString(req?.Body ?? "", "csrfToken") ?? ExtractJsonString(req?.Body ?? "", "csrf");
+
+            if (string.Equals(supplied, session.CsrfToken, StringComparison.Ordinal))
+                return true;
+
+            req.Context.StatusCode = "403 Forbidden";
+            WriteSqlAudit(req, session, "auth.csrf", session.CurrentDatabase ?? "", scope ?? "", "blocked", 0, "Missing or invalid SQL Admin CSRF token.", "");
+            errorJson = "{\"error\":\"SQL Admin mutation requires a valid CSRF token.\",\"csrfRequired\":true}";
+            return false;
+        }
+
         #endregion
 
         #region Route Handlers
@@ -315,7 +551,7 @@ namespace SocketJack.Net.Database {
             var session = GetSession(req);
             req.Context.ContentType = "text/html";
             if (session == null) {
-                return LoginPageHtml();
+                return LoginPageHtml(req);
             }
             return PanelPageHtml(session);
         }
@@ -332,29 +568,99 @@ namespace SocketJack.Net.Database {
 
             if (string.IsNullOrEmpty(username)) {
                 req.Context.StatusCode = "401 Unauthorized";
+                WriteSqlAudit(req, null, "login.failed", "", "auth", "error", 0, "Username is required.", "");
                 return "{\"error\":\"Username is required.\"}";
+            }
+
+            var ds = GetDataServer();
+            string clientIp = ExtractSqlAdminClientIp(req);
+            if (ds != null && !ds.IsSqlLoginIpAllowed(clientIp)) {
+                req.Context.StatusCode = "403 Forbidden";
+                WriteSqlAudit(req, null, "login.blocked", "", username, "blocked", 0, "SQL Admin login from this IP address is not allowed.", clientIp);
+                return "{\"error\":\"SQL Admin login from this IP address is not allowed.\"}";
+            }
+            if (ds != null && ds.IsSqlAdminAccount(username)) {
+                if (!IsLocalhostRequest(req)) {
+                    req.Context.StatusCode = "403 Forbidden";
+                    WriteSqlAudit(req, null, "login.blocked", "", "sa", "blocked", 0, "The sa account can only log in from localhost.", "");
+                    return "{\"error\":\"The sa account can only log in from localhost or 127.0.0.1.\"}";
+                }
+                if (ds.RequiresSaPasswordSetup) {
+                    req.Context.StatusCode = "428 Precondition Required";
+                    WriteSqlAudit(req, null, "login.blocked", "", "sa", "blocked", 0, "The default sa password must be set locally before login.", "");
+                    return "{\"error\":\"The default sa password is blank. Set a new sa password from localhost before logging in.\",\"requireSaPasswordSetup\":true}";
+                }
             }
 
             if (!Authenticate(username, password ?? "")) {
                 req.Context.StatusCode = "401 Unauthorized";
+                WriteSqlAudit(req, null, "login.failed", "", username, "error", 0, "Invalid username or password.", "");
                 return "{\"error\":\"Invalid username or password.\"}";
             }
 
+            string defaultDatabase = GetDefaultDatabaseForUser(username);
+            if (ds != null && !ds.IsSqlAdminAccount(username) && string.IsNullOrWhiteSpace(defaultDatabase)) {
+                req.Context.StatusCode = "403 Forbidden";
+                WriteSqlAudit(req, null, "login.blocked", "", username, "blocked", 0, "No SQL Admin tenant database is owned by this username.", "");
+                return "{\"error\":\"No SQL Admin tenant database is owned by this username.\",\"tenantIsolation\":true}";
+            }
+
             var token = CreateSession(username);
+            _sessions.TryGetValue(token, out var createdSession);
             var resp = req.Context.Response;
-            resp.Headers["Set-Cookie"] = "sqladmin_token=" + token + "; Path=" + BasePath + "; HttpOnly; SameSite=Strict";
-            return "{\"success\":true,\"username\":\"" + EscapeJson(username) + "\"}";
+            resp.Headers["Set-Cookie"] = BuildSqlAdminCookie(req, token);
+            WriteSqlAudit(req, createdSession, "login.success", createdSession?.CurrentDatabase ?? defaultDatabase, "auth", "success", 0, "SQL Admin session created.", "");
+            return "{\"success\":true,\"username\":\"" + EscapeJson(username) + "\",\"currentDatabase\":\"" + EscapeJson(createdSession?.CurrentDatabase ?? defaultDatabase) + "\",\"csrfToken\":\"" + EscapeJson(createdSession?.CsrfToken ?? "") + "\",\"sessionId\":\"" + EscapeJson(createdSession?.SessionId ?? "") + "\",\"tenantIsolation\":true}";
+        }
+
+        private object HandleSaBootstrap(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var ds = GetDataServer();
+            if (ds == null) {
+                req.Context.StatusCode = "503 Service Unavailable";
+                return "{\"error\":\"DataServer not available.\"}";
+            }
+            if (!IsLocalhostRequest(req)) {
+                req.Context.StatusCode = "403 Forbidden";
+                return "{\"error\":\"The sa password can only be set from localhost or 127.0.0.1.\"}";
+            }
+            if (!ds.RequiresSaPasswordSetup) {
+                return "{\"success\":true,\"alreadyConfigured\":true}";
+            }
+
+            var body = req.Body ?? "";
+            var username = ExtractJsonString(body, "username") ?? "sa";
+            var password = ExtractJsonString(body, "password");
+            var confirmPassword = ExtractJsonString(body, "confirmPassword");
+            if (!string.Equals(username, "sa", StringComparison.OrdinalIgnoreCase)) {
+                req.Context.StatusCode = "400 Bad Request";
+                return "{\"error\":\"The bootstrap dialog can only set the sa account.\"}";
+            }
+            if (string.IsNullOrEmpty(password) || password.Length < 8) {
+                req.Context.StatusCode = "400 Bad Request";
+                return "{\"error\":\"Password must be at least 8 characters.\"}";
+            }
+            if (confirmPassword != null && !string.Equals(password, confirmPassword, StringComparison.Ordinal)) {
+                req.Context.StatusCode = "400 Bad Request";
+                return "{\"error\":\"Passwords do not match.\"}";
+            }
+
+            ds.SetSqlAdminAccount("sa", password);
+            WriteSqlAudit(req, null, "sa.bootstrap", "", "sa", "success", 0, "The sa account password was set from localhost.", "");
+            return "{\"success\":true}";
         }
 
         private object HandleLogout(HttpRequest req) {
             var cookie = GetCookie(req, "sqladmin_token");
-            if (!string.IsNullOrEmpty(cookie))
-                _sessions.TryRemove(cookie, out _);
+            SqlAdminSession session = null;
+            if (!string.IsNullOrEmpty(cookie) && _sessions.TryRemove(cookie, out session))
+                session.Revoked = true;
             req.Context.ContentType = "text/html";
             var resp = req.Context.Response;
-            resp.Headers["Set-Cookie"] = "sqladmin_token=; Path=" + BasePath + "; HttpOnly; SameSite=Strict; Max-Age=0";
+            resp.Headers["Set-Cookie"] = BuildSqlAdminCookie(req, "", expired: true);
             resp.Headers["Location"] = BasePath;
             req.Context.StatusCode = "302 Found";
+            WriteSqlAudit(req, session, "logout", session?.CurrentDatabase ?? "", "auth", "success", 0, "SQL Admin session revoked.", "");
             return "<html><body>Redirecting...</body></html>";
         }
 
@@ -370,11 +676,16 @@ namespace SocketJack.Net.Database {
             sb.Append("{\"databases\":[");
             bool first = true;
             foreach (var kvp in ds.Databases.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase)) {
+                if (!CanSqlAdminSessionAccessDatabase(req, session, ds, kvp.Key))
+                    continue;
                 if (!first) sb.Append(",");
                 first = false;
-                sb.Append("{\"name\":\"").Append(EscapeJson(kvp.Key)).Append("\",\"tableCount\":").Append(kvp.Value.Tables.Count).Append("}");
+                sb.Append("{\"name\":\"").Append(EscapeJson(kvp.Key))
+                  .Append("\",\"ownerUsername\":\"").Append(EscapeJson(FirstNonEmpty(kvp.Value.OwnerUsername, kvp.Value.SqlAdminUsername, kvp.Key)))
+                  .Append("\",\"tenantScoped\":true")
+                  .Append(",\"tableCount\":").Append(kvp.Value.Tables.Count).Append("}");
             }
-            sb.Append("]}");
+            sb.Append("],\"tenantIsolation\":true}");
             return sb.ToString();
         }
 
@@ -388,6 +699,8 @@ namespace SocketJack.Net.Database {
 
             var dbName = req.QueryParameters.ContainsKey("db") ? req.QueryParameters["db"] : session.CurrentDatabase;
             if (!ds.Databases.TryGetValue(dbName, out var db)) { return "{\"tables\":[]}"; }
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName))
+                return SqlTenantForbiddenJson(req, dbName);
 
             var sb = new StringBuilder();
             sb.Append("{\"database\":\"").Append(EscapeJson(dbName)).Append("\",\"tables\":[");
@@ -417,6 +730,8 @@ namespace SocketJack.Net.Database {
             if (tableName == null) { return "{\"columns\":[]}"; }
 
             if (!ds.Databases.TryGetValue(dbName, out var db)) { return "{\"columns\":[]}"; }
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName))
+                return SqlTenantForbiddenJson(req, dbName);
             if (!db.Tables.TryGetValue(tableName, out var table)) { return "{\"columns\":[]}"; }
 
             var sb = new StringBuilder();
@@ -453,6 +768,8 @@ namespace SocketJack.Net.Database {
                 top = Math.Min(Math.Max(parsedTop, 1), 10000);
 
             if (!ds.Databases.TryGetValue(dbName, out var db)) { return "{\"columns\":[],\"rows\":[]}"; }
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName))
+                return SqlTenantForbiddenJson(req, dbName);
             if (!db.Tables.TryGetValue(tableName, out var table)) { return "{\"columns\":[],\"rows\":[]}"; }
 
             var sb = new StringBuilder();
@@ -488,6 +805,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "query", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -495,10 +813,37 @@ namespace SocketJack.Net.Database {
             var body = req.Body ?? "";
             var sql = ExtractJsonString(body, "query");
             var dbName = ExtractJsonString(body, "database");
-            if (!string.IsNullOrEmpty(dbName)) session.CurrentDatabase = dbName;
+            if (!string.IsNullOrEmpty(dbName)) {
+                if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName))
+                    return SqlTenantForbiddenJson(req, dbName);
+                session.CurrentDatabase = dbName;
+            }
+            if (string.IsNullOrWhiteSpace(session.CurrentDatabase) ||
+                !CanSqlAdminSessionAccessDatabase(req, session, ds, session.CurrentDatabase))
+                return SqlTenantForbiddenJson(req, session.CurrentDatabase);
 
             if (string.IsNullOrWhiteSpace(sql)) {
                 return "{\"error\":\"No query provided.\"}";
+            }
+
+            var risk = ClassifySqlRisk(sql);
+            bool confirmed = ExtractJsonBool(body, "confirmDestructive") || ExtractJsonBool(body, "confirmRisk");
+            string confirmText = (ExtractJsonString(body, "confirmText") ?? "").Trim();
+            string requiredConfirmText = risk.Operation.ToUpperInvariant();
+            long affectedRowsPreview = EstimateSqlAffectedRows(ds, session.CurrentDatabase ?? "db", sql, risk.Operation);
+            if (risk.RequiresConfirmation && (!confirmed || !string.Equals(confirmText, requiredConfirmText, StringComparison.OrdinalIgnoreCase))) {
+                req.Context.StatusCode = "409 Conflict";
+                WriteSqlAudit(req, session, "query.blocked", session.CurrentDatabase ?? "db", risk.Operation, "blocked", 0, risk.Reason, sql);
+                return "{\"error\":\"" + EscapeJson(risk.Reason) + "\",\"requiresConfirmation\":true,\"risk\":{\"operation\":\"" +
+                       EscapeJson(risk.Operation) + "\",\"severity\":\"" + EscapeJson(risk.Severity) + "\",\"reason\":\"" + EscapeJson(risk.Reason) +
+                       "\",\"typedConfirmation\":\"" + EscapeJson(requiredConfirmText) + "\",\"affectedRowsPreview\":" + affectedRowsPreview + "}}";
+            }
+
+            string restorePointId = "";
+            string beforeHash = "";
+            if (risk.RequiresConfirmation && ds.Databases.TryGetValue(session.CurrentDatabase ?? "db", out var currentDb)) {
+                beforeHash = ComputeSqlDatabaseSnapshotHash(currentDb);
+                restorePointId = CreateSqlRestorePoint(ds, session, session.CurrentDatabase ?? "db", risk.Operation, "query." + risk.Operation, sql);
             }
 
             // Create a temporary SqlSession for query execution
@@ -550,9 +895,22 @@ namespace SocketJack.Net.Database {
                     sb.Append(",\"message\":\"Query executed successfully.\"");
                 }
 
+                sb.Append(",\"risk\":{\"operation\":\"").Append(EscapeJson(risk.Operation))
+                  .Append("\",\"severity\":\"").Append(EscapeJson(risk.Severity))
+                  .Append("\",\"confirmed\":").Append(confirmed ? "true" : "false")
+                  .Append(",\"affectedRowsPreview\":").Append(affectedRowsPreview)
+                  .Append("}");
+                if (!string.IsNullOrWhiteSpace(restorePointId))
+                    sb.Append(",\"restorePointId\":\"").Append(EscapeJson(restorePointId)).Append("\"");
                 sb.Append("}");
+                long auditRowsAffected = result.RowsAffected;
+                string afterHash = beforeHash;
+                if (!string.IsNullOrWhiteSpace(beforeHash) && ds.Databases.TryGetValue(sqlSession.CurrentDatabase ?? "db", out var afterDb))
+                    afterHash = ComputeSqlDatabaseSnapshotHash(afterDb);
+                WriteSqlAudit(req, session, "query.execute", sqlSession.CurrentDatabase ?? "db", risk.Operation, "success", auditRowsAffected, "", sql, beforeHash, afterHash, restorePointId, "query");
                 return sb.ToString();
             } catch (Exception ex) {
+                WriteSqlAudit(req, session, "query.execute", sqlSession.CurrentDatabase ?? "db", risk.Operation, "error", 0, ex.Message, sql);
                 return "{\"error\":\"" + EscapeJson(ex.Message) + "\"}";
             }
         }
@@ -573,11 +931,11 @@ namespace SocketJack.Net.Database {
             if (upper.StartsWith("USE ")) {
                 var dbName = trimmed.Substring(4).Trim().TrimEnd(';').Trim();
                 dbName = StripBrackets(dbName);
-                if (ds.Databases.ContainsKey(dbName)) {
+                if (ds.Databases.ContainsKey(dbName) && CanSqlSessionAccessDatabase(ds, session, dbName)) {
                     session.CurrentDatabase = dbName;
                     result.RowsAffected = 0;
                 } else {
-                    throw new Exception("Database '" + dbName + "' does not exist.");
+                    throw new Exception("Database '" + dbName + "' does not exist or is blocked by SQL Admin tenant isolation.");
                 }
                 return result;
             }
@@ -626,7 +984,7 @@ namespace SocketJack.Net.Database {
                 }
 
                 Database db;
-                var table = ResolveTable(ds, session.CurrentDatabase, dbQualifier, tableName, out db);
+                var table = ResolveTable(ds, session, dbQualifier, tableName, out db);
                 if (table == null)
                     throw new Exception("Invalid object name '" + (dbQualifier != null ? dbQualifier + "." : "") + tableName + "'.");
 
@@ -707,8 +1065,23 @@ namespace SocketJack.Net.Database {
                     orderByClause = afterOrder;
                 }
 
-                // Collect all matching rows (without TOP limit) so ORDER BY works correctly
-                for (int r = 0; r < table.Rows.Count; r++) {
+                // Collect all matching rows (without TOP limit) so ORDER BY works correctly.
+                // Simple equality predicates can use the DataServer key/value cache first.
+                List<int> cachedRowIndexes = null;
+                IEnumerable<int> rowIndexes = Enumerable.Range(0, table.Rows.Count);
+                if (selectWhereClause != null && ds.TryGetCachedRowIndexes(
+                    db?.Name ?? session.CurrentDatabase,
+                    table.Name,
+                    table,
+                    selectWhereClause,
+                    out cachedRowIndexes)) {
+                    rowIndexes = cachedRowIndexes;
+                }
+
+                foreach (int r in rowIndexes) {
+                    if (r < 0 || r >= table.Rows.Count)
+                        continue;
+
                     var srcRow = table.Rows[r];
                     if (selectWhereClause != null && !RowMatchesWhere(table, srcRow, selectWhereClause))
                         continue;
@@ -745,7 +1118,7 @@ namespace SocketJack.Net.Database {
                 }
                 if (tableName == null) throw new Exception("Could not parse INSERT statement.");
                 Database db;
-                var table = ResolveTable(ds, session.CurrentDatabase, dbQualifier, tableName, out db);
+                var table = ResolveTable(ds, session, dbQualifier, tableName, out db);
                 if (table == null)
                     throw new Exception("Invalid object name '" + (dbQualifier != null ? dbQualifier + "." : "") + tableName + "'.");
 
@@ -784,7 +1157,7 @@ namespace SocketJack.Net.Database {
                 string tableName = ParseTableName(afterFrom, out dbQualifier);
                 if (tableName == null) throw new Exception("Could not parse DELETE statement.");
                 Database db;
-                var table = ResolveTable(ds, session.CurrentDatabase, dbQualifier, tableName, out db);
+                var table = ResolveTable(ds, session, dbQualifier, tableName, out db);
                 if (table == null)
                     throw new Exception("Invalid object name '" + (dbQualifier != null ? dbQualifier + "." : "") + tableName + "'.");
 
@@ -792,7 +1165,7 @@ namespace SocketJack.Net.Database {
                 int whereIdx = upper.IndexOf(" WHERE ", StringComparison.Ordinal);
                 if (whereIdx >= 0) {
                     string whereClause = trimmed.Substring(whereIdx + 7).Trim().TrimEnd(';');
-                    int removed = RemoveMatchingRows(table, whereClause);
+                    int removed = RemoveMatchingRows(ds, db?.Name ?? session.CurrentDatabase, table, whereClause);
                     result.RowsAffected = removed;
                 } else {
                     result.RowsAffected = table.Rows.Count;
@@ -809,7 +1182,7 @@ namespace SocketJack.Net.Database {
                 string tableName = ParseTableName(afterUpdate, out dbQualifier);
                 if (tableName == null) throw new Exception("Could not parse UPDATE statement.");
                 Database db;
-                var table = ResolveTable(ds, session.CurrentDatabase, dbQualifier, tableName, out db);
+                var table = ResolveTable(ds, session, dbQualifier, tableName, out db);
                 if (table == null)
                     throw new Exception("Invalid object name '" + (dbQualifier != null ? dbQualifier + "." : "") + tableName + "'.");
 
@@ -824,7 +1197,24 @@ namespace SocketJack.Net.Database {
                 var assignments = ParseAssignments(setClause, table);
 
                 int updated = 0;
-                for (int r = 0; r < table.Rows.Count; r++) {
+                List<int> updateRowIndexes = null;
+                IEnumerable<int> updateCandidates = Enumerable.Range(0, table.Rows.Count);
+                if (whereIdx >= 0) {
+                    string whereClause = trimmed.Substring(whereIdx + 7).Trim().TrimEnd(';');
+                    if (ds.TryGetCachedRowIndexes(
+                        db?.Name ?? session.CurrentDatabase,
+                        table.Name,
+                        table,
+                        whereClause,
+                        out updateRowIndexes)) {
+                        updateCandidates = updateRowIndexes;
+                    }
+                }
+
+                foreach (int r in updateCandidates) {
+                    if (r < 0 || r >= table.Rows.Count)
+                        continue;
+
                     bool match = true;
                     if (whereIdx >= 0) {
                         string whereClause = trimmed.Substring(whereIdx + 7).Trim().TrimEnd(';');
@@ -923,7 +1313,7 @@ namespace SocketJack.Net.Database {
                 string tableName = ParseTableName(afterTrunc, out dbQualifier);
                 if (tableName == null) throw new Exception("Could not parse TRUNCATE TABLE statement.");
                 Database db;
-                var table = ResolveTable(ds, session.CurrentDatabase, dbQualifier, tableName, out db);
+                var table = ResolveTable(ds, session, dbQualifier, tableName, out db);
                 if (table == null)
                     throw new Exception("Invalid object name '" + (dbQualifier != null ? dbQualifier + "." : "") + tableName + "'.");
                 result.RowsAffected = table.Rows.Count;
@@ -998,16 +1388,19 @@ namespace SocketJack.Net.Database {
         /// Resolves a potentially qualified table reference against the DataServer.
         /// When <paramref name="dbQualifier"/> names an existing database, the table
         /// is looked up there; otherwise the qualifier is treated as a schema (ignored)
-        /// and the table is looked up in <paramref name="defaultDbName"/>.
+        /// and the table is looked up in the session's current database.
         /// Automatically tries <c>dbo.</c>-prefixed and unprefixed variants so that
         /// <c>SELECT * FROM Uploads</c> finds <c>dbo.Uploads</c> and vice-versa.
         /// </summary>
-        private static Table ResolveTable(DataServer ds, string defaultDbName, string dbQualifier, string tableName, out Database db) {
+        private static Table ResolveTable(DataServer ds, SqlSession session, string dbQualifier, string tableName, out Database db) {
             db = null;
             if (tableName == null) return null;
+            string defaultDbName = session?.CurrentDatabase ?? "";
 
             // If there's a qualifier and it matches a known database, use that database.
             if (!string.IsNullOrEmpty(dbQualifier) && ds.Databases.TryGetValue(dbQualifier, out db)) {
+                if (!CanSqlSessionAccessDatabase(ds, session, dbQualifier))
+                    return null;
                 var tbl = FindTableFuzzy(db, tableName);
                 return tbl;
             }
@@ -1016,17 +1409,23 @@ namespace SocketJack.Net.Database {
             if (!ds.Databases.TryGetValue(defaultDbName, out db)) {
                 // Also search all databases if the default doesn't contain the table
                 foreach (var kvp in ds.Databases) {
+                    if (!CanSqlSessionAccessDatabase(ds, session, kvp.Key))
+                        continue;
                     var found = FindTableFuzzy(kvp.Value, tableName);
                     if (found != null) { db = kvp.Value; return found; }
                 }
                 return null;
             }
+            if (!CanSqlSessionAccessDatabase(ds, session, defaultDbName))
+                return null;
             var fallback = FindTableFuzzy(db, tableName);
             if (fallback != null) return fallback;
 
-            // Table not in default database — search all databases
+            // Table not in default database â€” search all databases
             foreach (var kvp in ds.Databases) {
                 if (kvp.Key.Equals(defaultDbName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!CanSqlSessionAccessDatabase(ds, session, kvp.Key))
+                    continue;
                 var found = FindTableFuzzy(kvp.Value, tableName);
                 if (found != null) { db = kvp.Value; return found; }
             }
@@ -1366,9 +1765,17 @@ namespace SocketJack.Net.Database {
             return values;
         }
 
-        private static int RemoveMatchingRows(Table table, string whereClause) {
+        private static int RemoveMatchingRows(DataServer ds, string dbName, Table table, string whereClause) {
             int removed = 0;
-            for (int i = table.Rows.Count - 1; i >= 0; i--) {
+            List<int> cachedRowIndexes = null;
+            IEnumerable<int> removeCandidates = Enumerable.Range(0, table.Rows.Count);
+            if (ds != null && ds.TryGetCachedRowIndexes(dbName, table.Name, table, whereClause, out cachedRowIndexes))
+                removeCandidates = cachedRowIndexes;
+
+            foreach (int i in removeCandidates.Distinct().OrderByDescending(i => i)) {
+                if (i < 0 || i >= table.Rows.Count)
+                    continue;
+
                 if (RowMatchesWhere(table, table.Rows[i], whereClause)) {
                     table.Rows.RemoveAt(i);
                     removed++;
@@ -1514,14 +1921,926 @@ namespace SocketJack.Net.Database {
             return sb.ToString();
         }
 
+        private object ApiAuditRecent(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+
+            var ds = GetDataServer();
+            if (ds == null) return "{\"entries\":[]}";
+
+            int take = 100;
+            if (req.QueryParameters != null && req.QueryParameters.ContainsKey("take") && int.TryParse(req.QueryParameters["take"], out var parsedTake))
+                take = Math.Min(Math.Max(parsedTake, 1), 500);
+
+            var table = GetSqlAuditTable(ds);
+            var rows = new List<object[]>();
+            lock (table) {
+                for (int i = table.Rows.Count - 1; i >= 0 && rows.Count < take; i--)
+                    rows.Add(NormalizeSqlAuditRow(table.Rows[i]));
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("{\"entries\":[");
+            for (int i = 0; i < rows.Count; i++) {
+                if (i > 0) sb.Append(",");
+                var row = rows[i];
+                sb.Append("{\"id\":\"").Append(EscapeJson(GetRow(row, 0)))
+                  .Append("\",\"createdUtc\":\"").Append(EscapeJson(GetRow(row, 1)))
+                  .Append("\",\"username\":\"").Append(EscapeJson(GetRow(row, 2)))
+                  .Append("\",\"clientIp\":\"").Append(EscapeJson(GetRow(row, 3)))
+                  .Append("\",\"action\":\"").Append(EscapeJson(GetRow(row, 4)))
+                  .Append("\",\"database\":\"").Append(EscapeJson(GetRow(row, 5)))
+                  .Append("\",\"target\":\"").Append(EscapeJson(GetRow(row, 6)))
+                  .Append("\",\"status\":\"").Append(EscapeJson(GetRow(row, 7)))
+                  .Append("\",\"rowsAffected\":\"").Append(EscapeJson(GetRow(row, 8)))
+                  .Append("\",\"message\":\"").Append(EscapeJson(GetRow(row, 9)))
+                  .Append("\",\"sqlHash\":\"").Append(EscapeJson(GetRow(row, 10)))
+                  .Append("\",\"sqlPreview\":\"").Append(EscapeJson(GetRow(row, 11)))
+                  .Append("\",\"ownerKey\":\"").Append(EscapeJson(GetRow(row, 12)))
+                  .Append("\",\"sessionId\":\"").Append(EscapeJson(GetRow(row, 13)))
+                  .Append("\",\"beforeHash\":\"").Append(EscapeJson(GetRow(row, 14)))
+                  .Append("\",\"afterHash\":\"").Append(EscapeJson(GetRow(row, 15)))
+                  .Append("\",\"correlationId\":\"").Append(EscapeJson(GetRow(row, 16)))
+                  .Append("\",\"scope\":\"").Append(EscapeJson(GetRow(row, 17)))
+                  .Append("\"}");
+            }
+            sb.Append("]}");
+            return sb.ToString();
+        }
+
+        private object ApiOperationsDashboard(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+
+            var ds = GetDataServer();
+            if (ds == null) return "{\"databases\":[],\"activeSqlAdminSessions\":0}";
+
+            int databaseCount = 0;
+            int tableCount = 0;
+            long rowCount = 0;
+            var hotTables = new List<object>();
+            foreach (var dbKvp in ds.Databases.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase)) {
+                if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbKvp.Key))
+                    continue;
+                databaseCount++;
+                foreach (var tableKvp in dbKvp.Value.Tables) {
+                    tableCount++;
+                    long rows = tableKvp.Value?.Rows?.Count ?? 0;
+                    rowCount += rows;
+                    hotTables.Add(new {
+                        database = dbKvp.Key,
+                        table = tableKvp.Key,
+                        rows,
+                        columns = tableKvp.Value?.Columns?.Count ?? 0
+                    });
+                }
+            }
+
+            var audit = GetSqlAuditTable(ds);
+            int destructiveOperations = 0;
+            int failedOperations = 0;
+            int apiInvocations = 0;
+            int eventFailures = _eventCircuitFailures.Values.Sum();
+            lock (audit) {
+                foreach (var row in audit.Rows.Select(NormalizeSqlAuditRow).Reverse().Take(500)) {
+                    string database = GetRow(row, 5);
+                    if (!string.IsNullOrWhiteSpace(database) && !CanSqlAdminSessionAccessDatabase(req, session, ds, database))
+                        continue;
+                    string action = GetRow(row, 4);
+                    string status = GetRow(row, 7);
+                    string target = GetRow(row, 6);
+                    if (action.IndexOf("drop", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        action.IndexOf("delete", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        action.IndexOf("schema", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        target.Equals("drop", StringComparison.OrdinalIgnoreCase) ||
+                        target.Equals("truncate", StringComparison.OrdinalIgnoreCase))
+                        destructiveOperations++;
+                    if (status.Equals("error", StringComparison.OrdinalIgnoreCase) || status.Equals("blocked", StringComparison.OrdinalIgnoreCase))
+                        failedOperations++;
+                    if (action.StartsWith("api-endpoint.", StringComparison.OrdinalIgnoreCase))
+                        apiInvocations++;
+                }
+            }
+
+            var backups = GetSqlRestorePointTable(ds);
+            int restorePoints = 0;
+            lock (backups) {
+                restorePoints = backups.Rows.Select(NormalizeSqlRestorePointRow)
+                    .Count(row => CanSqlAdminSessionAccessDatabase(req, session, ds, GetRow(row, 5)));
+            }
+            int errorDiagnostics = 0;
+            if (CanSqlAdminSessionAccessDatabase(req, session, ds, "SocketJack")) {
+                var errorTable = GetErrorDiagnosticsTable(ds);
+                lock (errorTable)
+                    errorDiagnostics = errorTable.Rows.Count;
+            }
+
+            var payload = new {
+                generatedUtc = DateTime.UtcNow.ToString("O"),
+                ownerKey = session.OwnerKey ?? "",
+                username = session.Username ?? "",
+                activeSqlAdminSessions = _sessions.Values.Count(s => s != null && !s.Revoked),
+                activeTdsSessions = ds.Sessions?.Count ?? 0,
+                databases = databaseCount,
+                tables = tableCount,
+                rows = rowCount,
+                hotTables = hotTables.OrderByDescending(item => (long)item.GetType().GetProperty("rows").GetValue(item)).Take(10).ToList(),
+                apiEndpoints = _apiEndpoints.Count,
+                runtimeApiRoutes = _apiRouteSettings.Count,
+                events = _eventDefs.Count,
+                eventCircuitFailures = eventFailures,
+                recentDestructiveOperations = destructiveOperations,
+                recentFailedOrBlockedOperations = failedOperations,
+                recentApiInvocations = apiInvocations,
+                errorDiagnostics,
+                restorePoints,
+                safety = new {
+                    ownerUsernameIsolation = true,
+                    csrfForRemoteMutations = true,
+                    restorePointsBeforeRiskyActions = true,
+                    dynamicEndpointPolicies = true,
+                    eventCircuitBreakers = true
+                }
+            };
+            return JsonSerializer.Serialize(payload);
+        }
+
+        private object ApiErrorDiagnosticsRecent(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+
+            var ds = GetDataServer();
+            if (ds == null) return "{\"entries\":[]}";
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, "SocketJack"))
+                return SqlTenantForbiddenJson(req, "SocketJack");
+
+            int take = ReadTakeQuery(req, 100, 500);
+            var rows = ReadRecentErrorDiagnosticsRows(ds, take);
+            return JsonSerializer.Serialize(new {
+                generatedUtc = DateTime.UtcNow.ToString("O"),
+                database = "SocketJack",
+                table = ErrorDiagnosticsTableName,
+                entries = rows.Select(ErrorDiagnosticsRowToDto).ToList()
+            });
+        }
+
+        private object ApiErrorDiagnosticsAnalyze(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "error-diagnostics.analyze", out var mutationError)) return mutationError;
+
+            var ds = GetDataServer();
+            if (ds == null) return "{\"error\":\"DataServer not available.\"}";
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, "SocketJack"))
+                return SqlTenantForbiddenJson(req, "SocketJack");
+
+            string body = req.Body ?? "";
+            int take = ParsePositiveInt(ExtractJsonString(body, "take"), 80);
+            take = Math.Min(Math.Max(take, 1), 200);
+            string focus = ExtractJsonString(body, "focus") ?? "";
+            var rows = ReadRecentErrorDiagnosticsRows(ds, take);
+            if (rows.Count == 0)
+                return JsonSerializer.Serialize(new {
+                    success = true,
+                    analysis = "No stored LmVsProxy errors are available to analyze.",
+                    entries = new List<object>()
+                });
+
+            try {
+                string analysis = AnalyzeErrorDiagnosticsWithLocalLlm(rows, focus);
+                WriteSqlAudit(req, session, "error-diagnostics.analyze", "SocketJack", ErrorDiagnosticsTableName, "success", rows.Count, "LLM diagnosis completed.", "");
+                return JsonSerializer.Serialize(new {
+                    success = true,
+                    generatedUtc = DateTime.UtcNow.ToString("O"),
+                    analyzedCount = rows.Count,
+                    analysis,
+                    entries = rows.Select(ErrorDiagnosticsRowToDto).ToList()
+                });
+            } catch (Exception ex) {
+                WriteSqlAudit(req, session, "error-diagnostics.analyze", "SocketJack", ErrorDiagnosticsTableName, "error", 0, ex.Message, "");
+                req.Context.StatusCode = "502 Bad Gateway";
+                return JsonSerializer.Serialize(new { error = ex.Message });
+            }
+        }
+
+        private List<object[]> ReadRecentErrorDiagnosticsRows(DataServer ds, int take) {
+            var table = GetErrorDiagnosticsTable(ds);
+            var rows = new List<object[]>();
+            lock (table) {
+                var normalized = table.Rows.Select(NormalizeErrorDiagnosticsRow)
+                    .OrderByDescending(row => GetRow(row, 2))
+                    .Take(Math.Min(Math.Max(take, 1), 500));
+                rows.AddRange(normalized);
+            }
+            return rows;
+        }
+
+        private object ErrorDiagnosticsRowToDto(object[] row) {
+            row = NormalizeErrorDiagnosticsRow(row);
+            return new {
+                id = GetRow(row, 0),
+                createdUtc = GetRow(row, 1),
+                lastSeenUtc = GetRow(row, 2),
+                severity = GetRow(row, 3),
+                category = GetRow(row, 4),
+                source = GetRow(row, 5),
+                route = GetRow(row, 6),
+                ownerKey = GetRow(row, 7),
+                message = GetRow(row, 8),
+                detail = GetRow(row, 9),
+                exceptionType = GetRow(row, 10),
+                stackTrace = GetRow(row, 11),
+                fingerprint = GetRow(row, 12),
+                count = ParsePositiveInt(GetRow(row, 13), 1)
+            };
+        }
+
+        private string AnalyzeErrorDiagnosticsWithLocalLlm(List<object[]> rows, string focus) {
+            string endpoint = "http://127.0.0.1:" + _server.Port.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/api/chat";
+            string logText = BuildErrorDiagnosticsPrompt(rows, focus);
+            var payload = new {
+                model = "lm-studio",
+                temperature = 0.2,
+                max_tokens = 900,
+                messages = new[] {
+                    new {
+                        role = "system",
+                        content = "You diagnose SocketJack LmVsProxy server errors for an administrator. Be concise and operational. Return: Summary, Most likely cause, Evidence, Next checks, and Suggested fix. If the evidence is weak, say what is uncertain."
+                    },
+                    new {
+                        role = "user",
+                        content = logText
+                    }
+                }
+            };
+
+            using (var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(120) })
+            using (var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"))
+            using (var response = client.PostAsync(endpoint, content).GetAwaiter().GetResult()) {
+                string responseBody = response.Content == null ? "" : response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                if (!response.IsSuccessStatusCode)
+                    throw new InvalidOperationException("LLM diagnostics request failed: HTTP " + ((int)response.StatusCode).ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + response.ReasonPhrase + ". " + TruncateAuditText(responseBody, 1000));
+
+                using (JsonDocument document = JsonDocument.Parse(responseBody)) {
+                    JsonElement root = document.RootElement;
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("ok", out JsonElement okElement) &&
+                        okElement.ValueKind == JsonValueKind.False) {
+                        string error = root.TryGetProperty("error", out JsonElement errorElement) ? JsonElementToText(errorElement) : "LLM diagnostics request failed.";
+                        throw new InvalidOperationException(error);
+                    }
+
+                    string contentText = root.TryGetProperty("content", out JsonElement contentElement) ? JsonElementToText(contentElement) : "";
+                    string reasoningText = root.TryGetProperty("reasoning", out JsonElement reasoningElement) ? JsonElementToText(reasoningElement) : "";
+                    string combined = (contentText ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(combined))
+                        combined = (reasoningText ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(combined))
+                        combined = TruncateAuditText(responseBody, 4000);
+                    return combined;
+                }
+            }
+        }
+
+        private string BuildErrorDiagnosticsPrompt(List<object[]> rows, string focus) {
+            var sb = new StringBuilder();
+            sb.AppendLine("Analyze these stored LmVsProxy errors.");
+            if (!string.IsNullOrWhiteSpace(focus))
+                sb.AppendLine("Admin focus: " + focus.Trim());
+            sb.AppendLine();
+            sb.AppendLine("Recent grouped errors, newest first:");
+            int index = 0;
+            foreach (object[] sourceRow in rows) {
+                object[] row = NormalizeErrorDiagnosticsRow(sourceRow);
+                index++;
+                sb.Append(index.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append(". ");
+                sb.Append("lastSeen=").Append(GetRow(row, 2));
+                sb.Append("; count=").Append(GetRow(row, 13));
+                sb.Append("; severity=").Append(GetRow(row, 3));
+                sb.Append("; category=").Append(GetRow(row, 4));
+                sb.Append("; source=").Append(GetRow(row, 5));
+                sb.Append("; route=").Append(GetRow(row, 6));
+                sb.AppendLine();
+                sb.AppendLine("   message: " + TruncateAuditText(GetRow(row, 8), 1200));
+                string detail = GetRow(row, 9);
+                if (!string.IsNullOrWhiteSpace(detail))
+                    sb.AppendLine("   detail: " + TruncateAuditText(detail, 1200));
+                string stack = GetRow(row, 11);
+                if (!string.IsNullOrWhiteSpace(stack))
+                    sb.AppendLine("   stack: " + TruncateAuditText(stack, 1600));
+            }
+            return sb.ToString();
+        }
+
+        private static string JsonElementToText(JsonElement element) {
+            switch (element.ValueKind) {
+                case JsonValueKind.String:
+                    return element.GetString() ?? "";
+                case JsonValueKind.Null:
+                case JsonValueKind.Undefined:
+                    return "";
+                default:
+                    return element.GetRawText();
+            }
+        }
+
+        private static int ReadTakeQuery(HttpRequest req, int defaultValue, int maxValue) {
+            int take = defaultValue;
+            if (req?.QueryParameters != null && req.QueryParameters.ContainsKey("take"))
+                take = ParsePositiveInt(req.QueryParameters["take"], defaultValue);
+            return Math.Min(Math.Max(take, 1), Math.Max(1, maxValue));
+        }
+
+        private Table GetErrorDiagnosticsTable(DataServer ds) {
+            var db = ds.Databases.GetOrAdd("SocketJack", _ => new Database("SocketJack"));
+            var table = db.Tables.GetOrAdd(ErrorDiagnosticsTableName, _ => new Table(ErrorDiagnosticsTableName));
+            EnsureErrorDiagnosticsColumns(table);
+            if (table.Rows == null) table.Rows = new List<object[]>();
+            lock (table) {
+                for (int i = 0; i < table.Rows.Count; i++)
+                    table.Rows[i] = NormalizeErrorDiagnosticsRow(table.Rows[i]);
+            }
+            return table;
+        }
+
+        private static void EnsureErrorDiagnosticsColumns(Table table) {
+            if (table.Columns == null) table.Columns = new List<Column>();
+            EnsureColumn(table, 0, "Id", 80);
+            EnsureColumn(table, 1, "CreatedUtc", 80);
+            EnsureColumn(table, 2, "LastSeenUtc", 80);
+            EnsureColumn(table, 3, "Severity", 48);
+            EnsureColumn(table, 4, "Category", 120);
+            EnsureColumn(table, 5, "Source", 240);
+            EnsureColumn(table, 6, "Route", 240);
+            EnsureColumn(table, 7, "OwnerKey", 180);
+            EnsureColumn(table, 8, "Message", -1);
+            EnsureColumn(table, 9, "Detail", -1);
+            EnsureColumn(table, 10, "ExceptionType", 240);
+            EnsureColumn(table, 11, "StackTrace", -1);
+            EnsureColumn(table, 12, "Fingerprint", 96);
+            EnsureColumn(table, 13, "Count", 32);
+        }
+
+        private static object[] NormalizeErrorDiagnosticsRow(object[] row) {
+            var normalized = new object[14];
+            if (row != null) {
+                int copy = Math.Min(row.Length, normalized.Length);
+                for (int i = 0; i < copy; i++)
+                    normalized[i] = row[i];
+            }
+            string now = DateTime.UtcNow.ToString("O");
+            if (string.IsNullOrWhiteSpace(normalized[0]?.ToString())) normalized[0] = "err_" + Guid.NewGuid().ToString("N");
+            if (string.IsNullOrWhiteSpace(normalized[1]?.ToString())) normalized[1] = now;
+            if (string.IsNullOrWhiteSpace(normalized[2]?.ToString())) normalized[2] = normalized[1];
+            for (int i = 3; i <= 12; i++) {
+                if (normalized[i] == null) normalized[i] = "";
+            }
+            if (string.IsNullOrWhiteSpace(normalized[13]?.ToString())) normalized[13] = "1";
+            return normalized;
+        }
+
+        private Table GetSqlAuditTable(DataServer ds) {
+            var db = ds.Databases.GetOrAdd("SocketJack", _ => new Database("SocketJack"));
+            var table = db.Tables.GetOrAdd(SqlAdminAuditTableName, _ => new Table(SqlAdminAuditTableName));
+            EnsureSqlAuditColumns(table);
+            if (table.Rows == null) table.Rows = new List<object[]>();
+            lock (table) {
+                for (int i = 0; i < table.Rows.Count; i++)
+                    table.Rows[i] = NormalizeSqlAuditRow(table.Rows[i]);
+            }
+            return table;
+        }
+
+        private static void EnsureSqlAuditColumns(Table table) {
+            if (table.Columns == null) table.Columns = new List<Column>();
+            EnsureColumn(table, 0, "Id", 80);
+            EnsureColumn(table, 1, "CreatedUtc", 80);
+            EnsureColumn(table, 2, "Username", 160);
+            EnsureColumn(table, 3, "ClientIp", 160);
+            EnsureColumn(table, 4, "Action", 80);
+            EnsureColumn(table, 5, "DatabaseName", 160);
+            EnsureColumn(table, 6, "Target", 240);
+            EnsureColumn(table, 7, "Status", 32);
+            EnsureColumn(table, 8, "RowsAffected", 32);
+            EnsureColumn(table, 9, "Message", 1024);
+            EnsureColumn(table, 10, "SqlHash", 96);
+            EnsureColumn(table, 11, "SqlPreview", 2048);
+            EnsureColumn(table, 12, "OwnerKey", 180);
+            EnsureColumn(table, 13, "SessionId", 120);
+            EnsureColumn(table, 14, "BeforeHash", 96);
+            EnsureColumn(table, 15, "AfterHash", 96);
+            EnsureColumn(table, 16, "CorrelationId", 120);
+            EnsureColumn(table, 17, "Scope", 160);
+        }
+
+        private static void EnsureColumn(Table table, int index, string name, int maxLength) {
+            while (table.Columns.Count <= index)
+                table.Columns.Add(new Column());
+            table.Columns[index] = new Column(name, typeof(string), maxLength);
+        }
+
+        private static object[] NormalizeSqlAuditRow(object[] row) {
+            var normalized = new object[18];
+            if (row != null) {
+                int copy = Math.Min(row.Length, normalized.Length);
+                for (int i = 0; i < copy; i++)
+                    normalized[i] = row[i];
+            }
+            if (string.IsNullOrWhiteSpace(normalized[0]?.ToString())) normalized[0] = "audit_" + Guid.NewGuid().ToString("N");
+            if (string.IsNullOrWhiteSpace(normalized[1]?.ToString())) normalized[1] = DateTime.UtcNow.ToString("O");
+            for (int i = 2; i < normalized.Length; i++) {
+                if (normalized[i] == null) normalized[i] = "";
+            }
+            return normalized;
+        }
+
+        private static string GetRow(object[] row, int index) {
+            return row != null && index >= 0 && index < row.Length && row[index] != null ? row[index].ToString() : "";
+        }
+
+        private void WriteSqlAudit(HttpRequest req, SqlAdminSession session, string action, string database, string target, string status, long rowsAffected, string message, string sql, string beforeHash = "", string afterHash = "", string correlationId = "", string scope = "") {
+            try {
+                var ds = GetDataServer();
+                if (ds == null) return;
+                var table = GetSqlAuditTable(ds);
+                var row = NormalizeSqlAuditRow(new object[] {
+                    "audit_" + Guid.NewGuid().ToString("N"),
+                    DateTime.UtcNow.ToString("O"),
+                    session?.Username ?? "",
+                    ExtractSqlAdminClientIp(req),
+                    action ?? "",
+                    database ?? "",
+                    target ?? "",
+                    status ?? "",
+                    rowsAffected.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    TruncateAuditText(message, 1000),
+                    ComputeSqlAuditHash(sql),
+                    TruncateAuditText(NormalizeSqlPreview(sql), 2000),
+                    session?.OwnerKey ?? BuildSqlOwnerKey(session?.Username ?? ""),
+                    session?.SessionId ?? "",
+                    beforeHash ?? "",
+                    afterHash ?? "",
+                    string.IsNullOrWhiteSpace(correlationId) ? "corr_" + Guid.NewGuid().ToString("N") : correlationId,
+                    scope ?? ""
+                });
+                lock (table) {
+                    table.Rows.Add(row);
+                    while (table.Rows.Count > 2000)
+                        table.Rows.RemoveAt(0);
+                }
+                ds.ScheduleSave();
+            } catch { }
+        }
+
+        private Table GetSqlRestorePointTable(DataServer ds) {
+            var db = ds.Databases.GetOrAdd("SocketJack", _ => new Database("SocketJack"));
+            var table = db.Tables.GetOrAdd(SqlAdminRestorePointsTableName, _ => new Table(SqlAdminRestorePointsTableName));
+            EnsureSqlRestorePointColumns(table);
+            if (table.Rows == null) table.Rows = new List<object[]>();
+            bool changed;
+            lock (table) {
+                for (int i = 0; i < table.Rows.Count; i++)
+                    table.Rows[i] = NormalizeSqlRestorePointRow(table.Rows[i]);
+                changed = TrimSqlRestorePointRows(table);
+            }
+            if (changed)
+                ds.ScheduleSave();
+            return table;
+        }
+
+        private static void EnsureSqlRestorePointColumns(Table table) {
+            if (table.Columns == null) table.Columns = new List<Column>();
+            EnsureColumn(table, 0, "Id", 80);
+            EnsureColumn(table, 1, "CreatedUtc", 80);
+            EnsureColumn(table, 2, "Username", 160);
+            EnsureColumn(table, 3, "OwnerKey", 180);
+            EnsureColumn(table, 4, "SessionId", 120);
+            EnsureColumn(table, 5, "DatabaseName", 160);
+            EnsureColumn(table, 6, "Target", 240);
+            EnsureColumn(table, 7, "Reason", 120);
+            EnsureColumn(table, 8, "SqlHash", 96);
+            EnsureColumn(table, 9, "SnapshotHash", 96);
+            EnsureColumn(table, 10, "DataJson", -1);
+            EnsureColumn(table, 11, "AuditId", 120);
+        }
+
+        private static object[] NormalizeSqlRestorePointRow(object[] row) {
+            var normalized = new object[12];
+            if (row != null) {
+                int copy = Math.Min(row.Length, normalized.Length);
+                for (int i = 0; i < copy; i++)
+                    normalized[i] = row[i];
+            }
+            if (string.IsNullOrWhiteSpace(normalized[0]?.ToString())) normalized[0] = "restore_" + Guid.NewGuid().ToString("N");
+            if (string.IsNullOrWhiteSpace(normalized[1]?.ToString())) normalized[1] = DateTime.UtcNow.ToString("O");
+            for (int i = 2; i < normalized.Length; i++) {
+                if (normalized[i] == null) normalized[i] = "";
+            }
+            return normalized;
+        }
+
+        private void PruneSqlAdminStorage() {
+            try {
+                var ds = GetDataServer();
+                if (ds == null)
+                    return;
+                GetSqlRestorePointTable(ds);
+            } catch {
+            }
+        }
+
+        private static bool IsSqlAdminMaintenanceTable(string tableName) {
+            return string.Equals(tableName, SqlAdminRestorePointsTableName, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(tableName, SqlAdminAuditTableName, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(tableName, ErrorDiagnosticsTableName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int Utf8ByteCount(string text) {
+            return string.IsNullOrEmpty(text) ? 0 : Encoding.UTF8.GetByteCount(text);
+        }
+
+        private static bool TrimSqlRestorePointRows(Table table) {
+            if (table?.Rows == null || table.Rows.Count == 0)
+                return false;
+
+            int originalCount = table.Rows.Count;
+            int totalBytes = 0;
+            var keptNewestFirst = new List<object[]>(Math.Min(originalCount, MaxSqlRestorePointRows));
+
+            for (int i = table.Rows.Count - 1; i >= 0; i--) {
+                var row = NormalizeSqlRestorePointRow(table.Rows[i]);
+                int rowBytes = Utf8ByteCount(GetRow(row, 10));
+                if (rowBytes > MaxSingleSqlRestorePointBytes)
+                    continue;
+                if (keptNewestFirst.Count >= MaxSqlRestorePointRows)
+                    continue;
+                if (totalBytes + rowBytes > MaxSqlRestorePointBytes)
+                    continue;
+
+                keptNewestFirst.Add(row);
+                totalBytes += rowBytes;
+            }
+
+            keptNewestFirst.Reverse();
+            bool changed = keptNewestFirst.Count != originalCount;
+            if (!changed)
+                return false;
+
+            table.Rows = keptNewestFirst;
+            return true;
+        }
+
+        private string CreateSqlRestorePoint(DataServer ds, SqlAdminSession session, string databaseName, string target, string reason, string sql) {
+            if (ds == null || string.IsNullOrWhiteSpace(databaseName) || !ds.Databases.TryGetValue(databaseName, out var db))
+                return "";
+            var snapshot = BuildSqlDatabaseSnapshot(db);
+            var dataJson = JsonSerializer.Serialize(snapshot);
+            if (Utf8ByteCount(dataJson) > MaxSingleSqlRestorePointBytes)
+                return "";
+
+            var snapshotHash = ComputeSqlAuditHash(dataJson);
+            var id = "restore_" + Guid.NewGuid().ToString("N");
+            var auditId = "audit_" + Guid.NewGuid().ToString("N");
+            var table = GetSqlRestorePointTable(ds);
+            var row = NormalizeSqlRestorePointRow(new object[] {
+                id,
+                DateTime.UtcNow.ToString("O"),
+                session?.Username ?? "",
+                session?.OwnerKey ?? BuildSqlOwnerKey(session?.Username ?? ""),
+                session?.SessionId ?? "",
+                databaseName ?? "",
+                target ?? "",
+                reason ?? "",
+                ComputeSqlAuditHash(sql),
+                snapshotHash,
+                dataJson,
+                auditId
+            });
+            lock (table) {
+                table.Rows.Add(row);
+                TrimSqlRestorePointRows(table);
+            }
+            ds.ScheduleSave();
+            return id;
+        }
+
+        private string CreateSqlDesignerRestorePoint(DataServer ds, SqlAdminSession session, string databaseName, string target, string reason, out string beforeHash) {
+            beforeHash = "";
+            if (ds == null || string.IsNullOrWhiteSpace(databaseName) || !ds.Databases.TryGetValue(databaseName, out var db))
+                return "";
+            beforeHash = ComputeSqlDatabaseSnapshotHash(db);
+            return CreateSqlRestorePoint(ds, session, databaseName, target, reason, "");
+        }
+
+        private static SqlDatabaseSnapshotDto BuildSqlDatabaseSnapshot(Database db) {
+            var snapshot = new SqlDatabaseSnapshotDto();
+            if (db == null)
+                return snapshot;
+
+            foreach (var tableKvp in db.Tables.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase)) {
+                if (IsSqlAdminMaintenanceTable(tableKvp.Key))
+                    continue;
+
+                var table = tableKvp.Value;
+                if (table == null)
+                    continue;
+                var tableSnapshot = new SqlTableSnapshotDto { Name = tableKvp.Key };
+                foreach (var column in table.Columns ?? new List<Column>()) {
+                    tableSnapshot.Columns.Add(new SqlColumnSnapshotDto {
+                        Name = column?.Name ?? "",
+                        TypeName = column?.DataType?.AssemblyQualifiedName ?? typeof(string).AssemblyQualifiedName,
+                        MaxLength = column?.MaxLength ?? -1
+                    });
+                }
+                foreach (var row in table.Rows ?? new List<object[]>()) {
+                    var values = new List<string>();
+                    int width = Math.Max(tableSnapshot.Columns.Count, row?.Length ?? 0);
+                    for (int i = 0; i < width; i++) {
+                        object value = row != null && i < row.Length ? row[i] : null;
+                        values.Add(value?.ToString());
+                    }
+                    tableSnapshot.Rows.Add(values);
+                }
+                snapshot.Tables.Add(tableSnapshot);
+            }
+            return snapshot;
+        }
+
+        private string ComputeSqlDatabaseSnapshotHash(Database db) {
+            return ComputeSqlAuditHash(JsonSerializer.Serialize(BuildSqlDatabaseSnapshot(db)));
+        }
+
+        private void RestoreSqlDatabaseSnapshot(Database db, string dataJson) {
+            if (db == null || string.IsNullOrWhiteSpace(dataJson))
+                throw new InvalidOperationException("Restore point is empty.");
+
+            var snapshot = JsonSerializer.Deserialize<SqlDatabaseSnapshotDto>(dataJson);
+            if (snapshot == null)
+                throw new InvalidOperationException("Restore point could not be read.");
+
+            var maintenanceTables = db.Tables
+                .Where(kvp => IsSqlAdminMaintenanceTable(kvp.Key))
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+            db.Tables.Clear();
+            foreach (var maintenance in maintenanceTables)
+                db.Tables[maintenance.Key] = maintenance.Value;
+
+            foreach (var tableSnapshot in snapshot.Tables ?? new List<SqlTableSnapshotDto>()) {
+                if (string.IsNullOrWhiteSpace(tableSnapshot.Name) || IsSqlAdminMaintenanceTable(tableSnapshot.Name))
+                    continue;
+                var table = new Table(tableSnapshot.Name);
+                foreach (var columnSnapshot in tableSnapshot.Columns ?? new List<SqlColumnSnapshotDto>()) {
+                    var type = Type.GetType(columnSnapshot.TypeName ?? "", false) ?? ResolveType(columnSnapshot.TypeName ?? "string");
+                    table.Columns.Add(new Column(columnSnapshot.Name ?? "", type, columnSnapshot.MaxLength));
+                }
+                foreach (var rowSnapshot in tableSnapshot.Rows ?? new List<List<string>>()) {
+                    var row = new object[table.Columns.Count];
+                    for (int i = 0; i < row.Length; i++) {
+                        string raw = rowSnapshot != null && i < rowSnapshot.Count ? rowSnapshot[i] : null;
+                        row[i] = raw == null ? null : ConvertValue(raw, table.Columns[i].DataType);
+                    }
+                    table.Rows.Add(row);
+                }
+                db.Tables[table.Name] = table;
+            }
+        }
+
+        private object ApiBackupsList(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+
+            var ds = GetDataServer();
+            if (ds == null) return "{\"restorePoints\":[]}";
+            var table = GetSqlRestorePointTable(ds);
+            var rows = new List<object[]>();
+            lock (table) {
+                for (int i = table.Rows.Count - 1; i >= 0 && rows.Count < 200; i--) {
+                    var row = NormalizeSqlRestorePointRow(table.Rows[i]);
+                    if (CanSqlAdminSessionAccessDatabase(req, session, ds, GetRow(row, 5)))
+                        rows.Add(row);
+                }
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("{\"restorePoints\":[");
+            for (int i = 0; i < rows.Count; i++) {
+                if (i > 0) sb.Append(",");
+                var row = rows[i];
+                sb.Append("{\"id\":\"").Append(EscapeJson(GetRow(row, 0)))
+                  .Append("\",\"createdUtc\":\"").Append(EscapeJson(GetRow(row, 1)))
+                  .Append("\",\"username\":\"").Append(EscapeJson(GetRow(row, 2)))
+                  .Append("\",\"ownerKey\":\"").Append(EscapeJson(GetRow(row, 3)))
+                  .Append("\",\"sessionId\":\"").Append(EscapeJson(GetRow(row, 4)))
+                  .Append("\",\"database\":\"").Append(EscapeJson(GetRow(row, 5)))
+                  .Append("\",\"target\":\"").Append(EscapeJson(GetRow(row, 6)))
+                  .Append("\",\"reason\":\"").Append(EscapeJson(GetRow(row, 7)))
+                  .Append("\",\"sqlHash\":\"").Append(EscapeJson(GetRow(row, 8)))
+                  .Append("\",\"snapshotHash\":\"").Append(EscapeJson(GetRow(row, 9)))
+                  .Append("\"}");
+            }
+            sb.Append("]}");
+            return sb.ToString();
+        }
+
+        private object ApiBackupsRestore(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (!ValidateSqlAdminMutation(req, session, "backups.restore", out var mutationError))
+                return mutationError;
+
+            var ds = GetDataServer();
+            if (ds == null) return "{\"error\":\"DataServer not available.\"}";
+            var body = req.Body ?? "";
+            var id = ExtractJsonString(body, "id") ?? ExtractJsonString(body, "restorePointId");
+            var confirmText = (ExtractJsonString(body, "confirmText") ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(id)) return "{\"error\":\"Restore point id is required.\"}";
+            if (!string.Equals(confirmText, "RESTORE", StringComparison.OrdinalIgnoreCase)) {
+                req.Context.StatusCode = "409 Conflict";
+                return "{\"error\":\"Type RESTORE to roll back to this restore point.\",\"typedConfirmation\":\"RESTORE\"}";
+            }
+
+            var table = GetSqlRestorePointTable(ds);
+            object[] restoreRow = null;
+            lock (table) {
+                restoreRow = table.Rows.Select(NormalizeSqlRestorePointRow)
+                    .FirstOrDefault(row => string.Equals(GetRow(row, 0), id, StringComparison.OrdinalIgnoreCase));
+            }
+            if (restoreRow == null) return "{\"error\":\"Restore point not found.\"}";
+
+            var databaseName = GetRow(restoreRow, 5);
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, databaseName))
+                return SqlTenantForbiddenJson(req, databaseName);
+            if (!ds.Databases.TryGetValue(databaseName, out var db))
+                return "{\"error\":\"Database not found.\"}";
+
+            string beforeHash = ComputeSqlDatabaseSnapshotHash(db);
+            RestoreSqlDatabaseSnapshot(db, GetRow(restoreRow, 10));
+            string afterHash = ComputeSqlDatabaseSnapshotHash(db);
+            ds.ScheduleSave();
+            WriteSqlAudit(req, session, "backup.restore", databaseName, GetRow(restoreRow, 6), "success", 0, "Database restored from SQL Admin restore point.", "", beforeHash, afterHash, GetRow(restoreRow, 11), "backup");
+            return "{\"success\":true,\"restorePointId\":\"" + EscapeJson(id) + "\",\"database\":\"" + EscapeJson(databaseName) + "\",\"beforeHash\":\"" + EscapeJson(beforeHash) + "\",\"afterHash\":\"" + EscapeJson(afterHash) + "\"}";
+        }
+
+        private static string ExtractSqlAdminClientIp(HttpRequest req) {
+            foreach (string headerName in new[] { "CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For" }) {
+                string forwarded = DataServer.NormalizeSqlLoginIpAddress(GetHeader(req, headerName));
+                if (!string.IsNullOrWhiteSpace(forwarded))
+                    return forwarded;
+            }
+
+            try {
+                var address = req?.Context?.Connection?.EndPoint?.Address;
+                if (address != null) return DataServer.NormalizeSqlLoginIpAddress(address.ToString());
+            } catch { }
+            return "";
+        }
+
+        private static string ComputeSqlAuditHash(string sql) {
+            if (string.IsNullOrEmpty(sql)) return "";
+            using (var sha = SHA256.Create()) {
+                var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(sql));
+                return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        private static string TruncateAuditText(string text, int maxLength) {
+            text = text ?? "";
+            return text.Length <= maxLength ? text : text.Substring(0, Math.Max(0, maxLength - 3)) + "...";
+        }
+
+        private static string NormalizeSqlPreview(string sql) {
+            if (string.IsNullOrWhiteSpace(sql)) return "";
+            return System.Text.RegularExpressions.Regex.Replace(sql, @"\s+", " ").Trim();
+        }
+
+        private static SqlRiskAssessment ClassifySqlRisk(string sql) {
+            string normalized = NormalizeSqlPreview(RemoveSqlComments(sql)).ToUpperInvariant();
+            var risk = new SqlRiskAssessment();
+            if (string.IsNullOrWhiteSpace(normalized))
+                return risk;
+
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bDROP\s+(DATABASE|TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER)\b")) {
+                risk.Operation = "drop";
+                risk.Severity = "critical";
+                risk.RequiresConfirmation = true;
+                risk.Reason = "DROP statements can permanently remove schema or data and require explicit confirmation.";
+                return risk;
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bTRUNCATE\s+TABLE\b")) {
+                risk.Operation = "truncate";
+                risk.Severity = "critical";
+                risk.RequiresConfirmation = true;
+                risk.Reason = "TRUNCATE TABLE removes all table rows and requires explicit confirmation.";
+                return risk;
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bALTER\s+(DATABASE|TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER)\b")) {
+                risk.Operation = "alter";
+                risk.Severity = "high";
+                risk.RequiresConfirmation = true;
+                risk.Reason = "ALTER statements change database schema and require explicit confirmation.";
+                return risk;
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bDELETE\s+FROM\b")) {
+                risk.Operation = "delete";
+                if (!System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bWHERE\b")) {
+                    risk.Severity = "critical";
+                    risk.RequiresConfirmation = true;
+                    risk.Reason = "DELETE without a WHERE clause can remove every row and requires explicit confirmation.";
+                } else {
+                    risk.Severity = "medium";
+                }
+                return risk;
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bUPDATE\s+[\[\]\w\.]+")) {
+                risk.Operation = "update";
+                if (!System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bWHERE\b")) {
+                    risk.Severity = "high";
+                    risk.RequiresConfirmation = true;
+                    risk.Reason = "UPDATE without a WHERE clause can modify every row and requires explicit confirmation.";
+                } else {
+                    risk.Severity = "medium";
+                }
+                return risk;
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bINSERT\s+INTO\b")) {
+                risk.Operation = "insert";
+                risk.Severity = "medium";
+                return risk;
+            }
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"\bCREATE\s+(DATABASE|TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER)\b")) {
+                risk.Operation = "create";
+                risk.Severity = "medium";
+                return risk;
+            }
+
+            risk.Operation = "read";
+            risk.Severity = "low";
+            return risk;
+        }
+
+        private static string RemoveSqlComments(string sql) {
+            if (string.IsNullOrEmpty(sql)) return "";
+            string withoutBlock = System.Text.RegularExpressions.Regex.Replace(sql, @"/\*.*?\*/", " ", System.Text.RegularExpressions.RegexOptions.Singleline);
+            return System.Text.RegularExpressions.Regex.Replace(withoutBlock, @"--.*?$", " ", System.Text.RegularExpressions.RegexOptions.Multiline);
+        }
+
+        private static long EstimateSqlAffectedRows(DataServer ds, string databaseName, string sql, string operation) {
+            if (ds == null || string.IsNullOrWhiteSpace(databaseName) || string.IsNullOrWhiteSpace(sql))
+                return 0;
+            if (!ds.Databases.TryGetValue(databaseName, out var db))
+                return 0;
+
+            string normalized = NormalizeSqlPreview(RemoveSqlComments(sql));
+            string tableName = null;
+            try {
+                switch ((operation ?? "").ToLowerInvariant()) {
+                    case "drop": {
+                        var m = System.Text.RegularExpressions.Regex.Match(normalized, @"\bDROP\s+TABLE\s+(?<table>[\[\]\w\.]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (m.Success) tableName = StripBrackets(m.Groups["table"].Value.Split('.').Last());
+                        break;
+                    }
+                    case "truncate": {
+                        var m = System.Text.RegularExpressions.Regex.Match(normalized, @"\bTRUNCATE\s+TABLE\s+(?<table>[\[\]\w\.]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (m.Success) tableName = StripBrackets(m.Groups["table"].Value.Split('.').Last());
+                        break;
+                    }
+                    case "delete": {
+                        var m = System.Text.RegularExpressions.Regex.Match(normalized, @"\bDELETE\s+FROM\s+(?<table>[\[\]\w\.]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (m.Success) tableName = StripBrackets(m.Groups["table"].Value.Split('.').Last());
+                        break;
+                    }
+                    case "update": {
+                        var m = System.Text.RegularExpressions.Regex.Match(normalized, @"\bUPDATE\s+(?<table>[\[\]\w\.]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (m.Success) tableName = StripBrackets(m.Groups["table"].Value.Split('.').Last());
+                        break;
+                    }
+                }
+            } catch { }
+
+            if (!string.IsNullOrWhiteSpace(tableName)) {
+                var table = FindTableFuzzy(db, tableName);
+                if (table != null)
+                    return table.Rows?.Count ?? 0;
+            }
+
+            return db.Tables.Values.Sum(table => (long)(table?.Rows?.Count ?? 0));
+        }
+
         #endregion
 
         #region Table Designer API
 
-        private Table FindTable(DataServer ds, string dbName, string tableName, out Database db) {
+        private Table FindTable(HttpRequest req, SqlAdminSession session, DataServer ds, string dbName, string tableName, out Database db) {
             db = null;
             if (ds == null || string.IsNullOrEmpty(dbName) || string.IsNullOrEmpty(tableName)) return null;
             if (!ds.Databases.TryGetValue(dbName, out db)) return null;
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName)) return null;
             return FindTableFuzzy(db, tableName);
         }
 
@@ -1598,6 +2917,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.create-table", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1607,12 +2927,15 @@ namespace SocketJack.Net.Database {
             var tableName = ExtractJsonString(body, "table");
             if (string.IsNullOrWhiteSpace(tableName)) { return "{\"error\":\"Table name is required.\"}"; }
             if (!ds.Databases.TryGetValue(dbName, out var db)) { return "{\"error\":\"Database not found.\"}"; }
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName)) return SqlTenantForbiddenJson(req, dbName);
             if (db.Tables.ContainsKey(tableName)) { return "{\"error\":\"Table already exists.\"}"; }
 
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.create-table", out var beforeHash);
             var table = new Table(tableName);
             table.Columns.Add(new Column("Id", typeof(int), -1));
             db.Tables[tableName] = table;
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.create-table", dbName, tableName, "success", 0, "Table created through SQL Admin designer.", "", beforeHash, ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true}";
         }
 
@@ -1620,6 +2943,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.drop-table", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1629,9 +2953,12 @@ namespace SocketJack.Net.Database {
             var tableName = ExtractJsonString(body, "table");
             if (string.IsNullOrWhiteSpace(tableName)) { return "{\"error\":\"Table name is required.\"}"; }
             if (!ds.Databases.TryGetValue(dbName, out var db)) { return "{\"error\":\"Database not found.\"}"; }
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName)) return SqlTenantForbiddenJson(req, dbName);
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.drop-table", out var beforeHash);
             if (!db.Tables.TryRemove(tableName, out _)) { return "{\"error\":\"Table not found.\"}"; }
 
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.drop-table", dbName, tableName, "success", 0, "Table dropped through SQL Admin designer.", "", beforeHash, ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true}";
         }
 
@@ -1639,6 +2966,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.rename-table", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1649,6 +2977,8 @@ namespace SocketJack.Net.Database {
             var newName = ExtractJsonString(body, "newName");
             if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName)) { return "{\"error\":\"Table name and new name are required.\"}"; }
             if (!ds.Databases.TryGetValue(dbName, out var db)) { return "{\"error\":\"Database not found.\"}"; }
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, dbName)) return SqlTenantForbiddenJson(req, dbName);
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, oldName, "designer.rename-table", out var beforeHash);
             if (!db.Tables.TryRemove(oldName, out var table)) { return "{\"error\":\"Table not found.\"}"; }
             if (db.Tables.ContainsKey(newName)) {
                 db.Tables[oldName] = table;
@@ -1657,6 +2987,7 @@ namespace SocketJack.Net.Database {
             table.Name = newName;
             db.Tables[newName] = table;
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.rename-table", dbName, oldName + " -> " + newName, "success", 0, "Table renamed through SQL Admin designer.", "", beforeHash, ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true}";
         }
 
@@ -1664,6 +2995,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.save-schema", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1675,9 +3007,10 @@ namespace SocketJack.Net.Database {
             var colTypes = ExtractJsonString(body, "colTypes");
             var colMaxLens = ExtractJsonString(body, "colMaxLengths");
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out var db);
             if (table == null) { return "{\"error\":\"Table not found.\"}"; }
             if (string.IsNullOrEmpty(colNames)) { return "{\"error\":\"Column names are required.\"}"; }
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.save-schema", out var beforeHash);
 
             var names = colNames.Split('|');
             var types = (colTypes ?? "").Split('|');
@@ -1708,6 +3041,7 @@ namespace SocketJack.Net.Database {
             table.Columns.Clear();
             table.Columns.AddRange(newCols);
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.save-schema", dbName, tableName, "success", table.Rows.Count, "Table schema saved through SQL Admin designer.", "", beforeHash, db == null ? "" : ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true,\"columnCount\":" + newCols.Count + "}";
         }
 
@@ -1715,6 +3049,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.add-column", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1728,9 +3063,10 @@ namespace SocketJack.Net.Database {
             int colMaxLen = -1;
             if (colMaxLenStr != null) int.TryParse(colMaxLenStr, out colMaxLen);
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out var db);
             if (table == null) { return "{\"error\":\"Table not found.\"}"; }
             if (string.IsNullOrWhiteSpace(colName)) { return "{\"error\":\"Column name is required.\"}"; }
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.add-column", out var beforeHash);
 
             table.Columns.Add(new Column(colName.Trim(), ResolveType(colType), colMaxLen));
 
@@ -1743,6 +3079,7 @@ namespace SocketJack.Net.Database {
             }
 
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.add-column", dbName, tableName + "." + colName, "success", table.Rows.Count, "Column added through SQL Admin designer.", "", beforeHash, db == null ? "" : ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true,\"columnCount\":" + table.Columns.Count + "}";
         }
 
@@ -1750,6 +3087,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.remove-column", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1760,9 +3098,11 @@ namespace SocketJack.Net.Database {
             var colIndexStr = ExtractJsonString(body, "colIndex");
             if (!int.TryParse(colIndexStr, out var colIndex)) { return "{\"error\":\"Column index is required.\"}"; }
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out var db);
             if (table == null) { return "{\"error\":\"Table not found.\"}"; }
             if (colIndex < 0 || colIndex >= table.Columns.Count) { return "{\"error\":\"Column index out of range.\"}"; }
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.remove-column", out var beforeHash);
+            string removedName = table.Columns[colIndex].Name;
 
             table.Columns.RemoveAt(colIndex);
 
@@ -1779,6 +3119,7 @@ namespace SocketJack.Net.Database {
             }
 
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.remove-column", dbName, tableName + "." + removedName, "success", table.Rows.Count, "Column removed through SQL Admin designer.", "", beforeHash, db == null ? "" : ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true,\"columnCount\":" + table.Columns.Count + "}";
         }
 
@@ -1786,6 +3127,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.update-column", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1796,9 +3138,10 @@ namespace SocketJack.Net.Database {
             var colIndexStr = ExtractJsonString(body, "colIndex");
             if (!int.TryParse(colIndexStr, out var colIndex)) { return "{\"error\":\"Column index is required.\"}"; }
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out var db);
             if (table == null) { return "{\"error\":\"Table not found.\"}"; }
             if (colIndex < 0 || colIndex >= table.Columns.Count) { return "{\"error\":\"Column index out of range.\"}"; }
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.update-column", out var beforeHash);
 
             var col = table.Columns[colIndex];
             var newName = ExtractJsonString(body, "newName");
@@ -1810,6 +3153,7 @@ namespace SocketJack.Net.Database {
             if (newMaxLenStr != null && int.TryParse(newMaxLenStr, out var newMaxLen)) col.MaxLength = newMaxLen;
 
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.update-column", dbName, tableName + "." + col.Name, "success", table.Rows.Count, "Column updated through SQL Admin designer.", "", beforeHash, db == null ? "" : ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true}";
         }
 
@@ -1817,6 +3161,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.insert-row", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1825,8 +3170,9 @@ namespace SocketJack.Net.Database {
             var dbName = ExtractJsonString(body, "database") ?? session.CurrentDatabase;
             var tableName = ExtractJsonString(body, "table");
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out var db);
             if (table == null) { return "{\"error\":\"Table not found.\"}"; }
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.insert-row", out var beforeHash);
 
             var colCount = table.Columns.Count;
             var newRow = new object[colCount];
@@ -1844,6 +3190,7 @@ namespace SocketJack.Net.Database {
             }
             table.Rows.Add(newRow);
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.insert-row", dbName, tableName, "success", 1, "Row inserted through SQL Admin designer.", "", beforeHash, db == null ? "" : ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true,\"rowIndex\":" + (table.Rows.Count - 1) + ",\"totalRows\":" + table.Rows.Count + "}";
         }
 
@@ -1851,6 +3198,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.update-cell", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1867,10 +3215,11 @@ namespace SocketJack.Net.Database {
                 return "{\"error\":\"Row and column indices are required.\"}";
             }
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out var db);
             if (table == null) { return "{\"error\":\"Table not found.\"}"; }
             if (rowIdx < 0 || rowIdx >= table.Rows.Count) { return "{\"error\":\"Row index out of range.\"}"; }
             if (colIdx < 0 || colIdx >= table.Columns.Count) { return "{\"error\":\"Column index out of range.\"}"; }
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.update-cell", out var beforeHash);
 
             // Ensure row has enough slots
             var row = table.Rows[rowIdx];
@@ -1888,6 +3237,7 @@ namespace SocketJack.Net.Database {
             }
 
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.update-cell", dbName, tableName + "[" + rowIdx + "," + colIdx + "]", "success", 1, "Cell updated through SQL Admin designer.", "", beforeHash, db == null ? "" : ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true}";
         }
 
@@ -1895,6 +3245,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "designer.delete-row", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -1906,12 +3257,14 @@ namespace SocketJack.Net.Database {
 
             if (!int.TryParse(rowStr, out var rowIdx)) { return "{\"error\":\"Row index is required.\"}"; }
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out var db);
             if (table == null) { return "{\"error\":\"Table not found.\"}"; }
             if (rowIdx < 0 || rowIdx >= table.Rows.Count) { return "{\"error\":\"Row index out of range.\"}"; }
+            var restorePointId = CreateSqlDesignerRestorePoint(ds, session, dbName, tableName, "designer.delete-row", out var beforeHash);
 
             table.Rows.RemoveAt(rowIdx);
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "designer.delete-row", dbName, tableName + "[" + rowIdx + "]", "success", 1, "Row deleted through SQL Admin designer.", "", beforeHash, db == null ? "" : ComputeSqlDatabaseSnapshotHash(db), restorePointId, "designer");
             return "{\"success\":true,\"totalRows\":" + table.Rows.Count + "}";
         }
 
@@ -1929,7 +3282,7 @@ namespace SocketJack.Net.Database {
             if (req.QueryParameters.ContainsKey("offset") && int.TryParse(req.QueryParameters["offset"], out var o)) offset = Math.Max(o, 0);
             if (req.QueryParameters.ContainsKey("limit") && int.TryParse(req.QueryParameters["limit"], out var l)) limit = Math.Min(Math.Max(l, 1), 1000);
 
-            var table = FindTable(ds, dbName, tableName, out _);
+            var table = FindTable(req, session, ds, dbName, tableName, out _);
             if (table == null) { return "{\"columns\":[],\"rows\":[],\"totalRows\":0}"; }
 
             var sb = new StringBuilder();
@@ -1996,6 +3349,16 @@ namespace SocketJack.Net.Database {
                     Parameters = row.Length > 13 ? row[13]?.ToString() : null,
                     OutputSchema = row.Length > 14 ? row[14]?.ToString() : null,
                     Description = row.Length > 15 ? row[15]?.ToString() : null,
+                    HandlerTypeName = row.Length > 16 ? row[16]?.ToString() : null,
+                    HandlerMethodName = row.Length > 17 ? row[17]?.ToString() : null,
+                    HandlerArguments = row.Length > 18 ? row[18]?.ToString() : null,
+                    AuthMode = NormalizeApiAuthMode(row.Length > 19 ? row[19]?.ToString() : "session"),
+                    Scopes = row.Length > 20 ? row[20]?.ToString() : "sql:read",
+                    RateLimitPerMinute = ParsePositiveInt(row.Length > 21 ? row[21]?.ToString() : null, 60),
+                    CorsPolicy = row.Length > 22 ? row[22]?.ToString() : "same-origin",
+                    InputSchema = row.Length > 23 ? row[23]?.ToString() : null,
+                    PublicEnabled = row.Length > 24 && (row[24]?.ToString() ?? "").Equals("true", StringComparison.OrdinalIgnoreCase),
+                    EndpointSecret = row.Length > 25 ? row[25]?.ToString() : null,
                     Source = "creator",
                     ReadOnly = false
                 };
@@ -2030,6 +3393,16 @@ namespace SocketJack.Net.Database {
             table.Columns.Add(new Column("Parameters", typeof(string), -1));
             table.Columns.Add(new Column("OutputSchema", typeof(string), -1));
             table.Columns.Add(new Column("Description", typeof(string), -1));
+            table.Columns.Add(new Column("HandlerTypeName", typeof(string), -1));
+            table.Columns.Add(new Column("HandlerMethodName", typeof(string), -1));
+            table.Columns.Add(new Column("HandlerArguments", typeof(string), -1));
+            table.Columns.Add(new Column("AuthMode", typeof(string), 40));
+            table.Columns.Add(new Column("Scopes", typeof(string), -1));
+            table.Columns.Add(new Column("RateLimitPerMinute", typeof(string), 16));
+            table.Columns.Add(new Column("CorsPolicy", typeof(string), -1));
+            table.Columns.Add(new Column("InputSchema", typeof(string), -1));
+            table.Columns.Add(new Column("PublicEnabled", typeof(string), 8));
+            table.Columns.Add(new Column("EndpointSecret", typeof(string), -1));
 
             foreach (var ep in _apiEndpoints.Values) {
                 table.Rows.Add(new object[] {
@@ -2037,7 +3410,12 @@ namespace SocketJack.Net.Database {
                     ep.SqlQuery, ep.ResponseFormat, ep.ContentType,
                     ep.Enabled ? "true" : "false", ep.Variables ?? "", ep.QuerySteps ?? "",
                     ep.BodyType ?? "", ep.BodySchema ?? "", ep.Parameters ?? "",
-                    ep.OutputSchema ?? "", ep.Description ?? ""
+                    ep.OutputSchema ?? "", ep.Description ?? "",
+                    ep.HandlerTypeName ?? "", ep.HandlerMethodName ?? "", ep.HandlerArguments ?? "",
+                    NormalizeApiAuthMode(ep.AuthMode), ep.Scopes ?? "sql:read",
+                    (ep.RateLimitPerMinute <= 0 ? 60 : ep.RateLimitPerMinute).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ep.CorsPolicy ?? "same-origin", ep.InputSchema ?? "",
+                    ep.PublicEnabled ? "true" : "false", ep.EndpointSecret ?? ""
                 });
             }
 
@@ -2067,6 +3445,16 @@ namespace SocketJack.Net.Database {
                     OutputSchema = row.Length > 9 ? row[9]?.ToString() : null,
                     ResponseFormat = row.Length > 10 ? row[10]?.ToString() : "handler",
                     ContentType = row.Length > 11 ? row[11]?.ToString() : null,
+                    HandlerTypeName = row.Length > 12 ? row[12]?.ToString() : null,
+                    HandlerMethodName = row.Length > 13 ? row[13]?.ToString() : null,
+                    HandlerArguments = row.Length > 14 ? row[14]?.ToString() : null,
+                    AuthMode = NormalizeApiAuthMode(row.Length > 15 ? row[15]?.ToString() : "session"),
+                    Scopes = row.Length > 16 ? row[16]?.ToString() : "sql:read",
+                    RateLimitPerMinute = ParsePositiveInt(row.Length > 17 ? row[17]?.ToString() : null, 120),
+                    CorsPolicy = row.Length > 18 ? row[18]?.ToString() : "same-origin",
+                    InputSchema = row.Length > 19 ? row[19]?.ToString() : null,
+                    PublicEnabled = row.Length > 20 && (row[20]?.ToString() ?? "").Equals("true", StringComparison.OrdinalIgnoreCase),
+                    EndpointSecret = row.Length > 21 ? row[21]?.ToString() : null,
                     Enabled = true,
                     Source = "mapped",
                     ReadOnly = true
@@ -2097,6 +3485,16 @@ namespace SocketJack.Net.Database {
             table.Columns.Add(new Column("OutputSchema", typeof(string), -1));
             table.Columns.Add(new Column("ResponseFormat", typeof(string), 20));
             table.Columns.Add(new Column("ContentType", typeof(string), -1));
+            table.Columns.Add(new Column("HandlerTypeName", typeof(string), -1));
+            table.Columns.Add(new Column("HandlerMethodName", typeof(string), -1));
+            table.Columns.Add(new Column("HandlerArguments", typeof(string), -1));
+            table.Columns.Add(new Column("AuthMode", typeof(string), 40));
+            table.Columns.Add(new Column("Scopes", typeof(string), -1));
+            table.Columns.Add(new Column("RateLimitPerMinute", typeof(string), 16));
+            table.Columns.Add(new Column("CorsPolicy", typeof(string), -1));
+            table.Columns.Add(new Column("InputSchema", typeof(string), -1));
+            table.Columns.Add(new Column("PublicEnabled", typeof(string), 8));
+            table.Columns.Add(new Column("EndpointSecret", typeof(string), -1));
 
             foreach (var ep in _apiRouteSettings.Values
                 .OrderBy(e => e.Route, StringComparer.OrdinalIgnoreCase)
@@ -2105,7 +3503,11 @@ namespace SocketJack.Net.Database {
                     ep.Id, ep.HttpMethod, ep.Route, ep.Name ?? "", ep.Description ?? "",
                     ep.Variables ?? "", ep.BodyType ?? "", ep.BodySchema ?? "",
                     ep.Parameters ?? "", ep.OutputSchema ?? "", ep.ResponseFormat ?? "handler",
-                    ep.ContentType ?? ""
+                    ep.ContentType ?? "", ep.HandlerTypeName ?? "", ep.HandlerMethodName ?? "",
+                    ep.HandlerArguments ?? "", NormalizeApiAuthMode(ep.AuthMode), ep.Scopes ?? "sql:read",
+                    (ep.RateLimitPerMinute <= 0 ? 120 : ep.RateLimitPerMinute).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ep.CorsPolicy ?? "same-origin", ep.InputSchema ?? "",
+                    ep.PublicEnabled ? "true" : "false", ep.EndpointSecret ?? ""
                 });
             }
 
@@ -2135,6 +3537,16 @@ namespace SocketJack.Net.Database {
                     parameters = ep.Parameters ?? "",
                     outputSchema = ep.OutputSchema ?? "",
                     description = ep.Description ?? "",
+                    handlerTypeName = ep.HandlerTypeName ?? "",
+                    handlerMethodName = ep.HandlerMethodName ?? "",
+                    handlerArguments = ep.HandlerArguments ?? "",
+                    authMode = NormalizeApiAuthMode(ep.AuthMode),
+                    scopes = ep.Scopes ?? "sql:read",
+                    rateLimitPerMinute = ep.RateLimitPerMinute <= 0 ? 60 : ep.RateLimitPerMinute,
+                    corsPolicy = ep.CorsPolicy ?? "same-origin",
+                    inputSchema = ep.InputSchema ?? "",
+                    publicEnabled = ep.PublicEnabled,
+                    endpointSecretConfigured = !string.IsNullOrWhiteSpace(ep.EndpointSecret),
                     enabled = ep.Enabled,
                     source = string.IsNullOrEmpty(ep.Source) ? "creator" : ep.Source,
                     readOnly = ep.ReadOnly
@@ -2182,6 +3594,16 @@ namespace SocketJack.Net.Database {
                     Parameters = route.ParametersSchema ?? "",
                     OutputSchema = route.ResponseSchema ?? "",
                     Description = BuildMappedRouteDescription(route),
+                    HandlerTypeName = route.HandlerType ?? "",
+                    HandlerMethodName = route.HandlerName ?? "",
+                    HandlerArguments = "",
+                    AuthMode = "session",
+                    Scopes = "sql:read",
+                    RateLimitPerMinute = 120,
+                    CorsPolicy = "same-origin",
+                    InputSchema = route.RequestBodySchema ?? "",
+                    PublicEnabled = false,
+                    EndpointSecret = "",
                     Enabled = true,
                     Source = "mapped",
                     ReadOnly = true
@@ -2216,6 +3638,16 @@ namespace SocketJack.Net.Database {
             target.OutputSchema = settings.OutputSchema ?? "";
             target.ResponseFormat = string.IsNullOrWhiteSpace(settings.ResponseFormat) ? target.ResponseFormat : settings.ResponseFormat;
             target.ContentType = settings.ContentType ?? "";
+            target.HandlerTypeName = settings.HandlerTypeName ?? "";
+            target.HandlerMethodName = settings.HandlerMethodName ?? "";
+            target.HandlerArguments = settings.HandlerArguments ?? "";
+            target.AuthMode = NormalizeApiAuthMode(settings.AuthMode);
+            target.Scopes = settings.Scopes ?? "sql:read";
+            target.RateLimitPerMinute = settings.RateLimitPerMinute <= 0 ? target.RateLimitPerMinute : settings.RateLimitPerMinute;
+            target.CorsPolicy = string.IsNullOrWhiteSpace(settings.CorsPolicy) ? target.CorsPolicy : settings.CorsPolicy;
+            target.InputSchema = settings.InputSchema ?? target.InputSchema ?? "";
+            target.PublicEnabled = settings.PublicEnabled;
+            target.EndpointSecret = settings.EndpointSecret ?? "";
         }
 
         private static void AppendApiEndpointJson(StringBuilder sb, ApiEndpointDef ep) {
@@ -2234,6 +3666,16 @@ namespace SocketJack.Net.Database {
               .Append(@""",""parameters"":""").Append(EscapeJson(ep.Parameters ?? ""))
               .Append(@""",""outputSchema"":""").Append(EscapeJson(ep.OutputSchema ?? ""))
               .Append(@""",""description"":""").Append(EscapeJson(ep.Description ?? ""))
+              .Append(@""",""handlerTypeName"":""").Append(EscapeJson(ep.HandlerTypeName ?? ""))
+              .Append(@""",""handlerMethodName"":""").Append(EscapeJson(ep.HandlerMethodName ?? ""))
+              .Append(@""",""handlerArguments"":""").Append(EscapeJson(ep.HandlerArguments ?? ""))
+              .Append(@""",""authMode"":""").Append(EscapeJson(NormalizeApiAuthMode(ep.AuthMode)))
+              .Append(@""",""scopes"":""").Append(EscapeJson(ep.Scopes ?? "sql:read"))
+              .Append(@""",""rateLimitPerMinute"":").Append(ep.RateLimitPerMinute <= 0 ? 60 : ep.RateLimitPerMinute)
+              .Append(@",""corsPolicy"":""").Append(EscapeJson(ep.CorsPolicy ?? "same-origin"))
+              .Append(@""",""inputSchema"":""").Append(EscapeJson(ep.InputSchema ?? ""))
+              .Append(@""",""publicEnabled"":").Append(ep.PublicEnabled ? "true" : "false")
+              .Append(@",""endpointSecretConfigured"":").Append(string.IsNullOrWhiteSpace(ep.EndpointSecret) ? "false" : "true")
               .Append(@""",""enabled"":").Append(ep.Enabled ? "true" : "false")
               .Append(@",""source"":""").Append(EscapeJson(string.IsNullOrEmpty(ep.Source) ? "creator" : ep.Source))
               .Append(@""",""readOnly"":").Append(ep.ReadOnly ? "true" : "false")
@@ -2262,6 +3704,8 @@ namespace SocketJack.Net.Database {
                 "/api/query",
                 "/api/users",
                 "/api/sessions",
+                "/api/audit/recent",
+                "/api/bootstrap/sa",
                 "/api/designer/create-table",
                 "/api/designer/drop-table",
                 "/api/designer/rename-table",
@@ -2278,6 +3722,7 @@ namespace SocketJack.Net.Database {
                 "/api/endpoints/delete",
                 "/api/endpoints/test",
                 "/api/endpoints/settings/save",
+                "/api/endpoints/reflect",
                 "/api/qb/list-trees",
                 "/api/qb/load-tree",
                 "/api/qb/save-tree",
@@ -2352,6 +3797,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "api-endpoints.save", out var mutationError)) return mutationError;
 
             var body = req.Body ?? "";
             var id = ExtractJsonProperty(body, "id");
@@ -2369,16 +3815,34 @@ namespace SocketJack.Net.Database {
             var parameters = ExtractJsonProperty(body, "parameters");
             var outputSchema = ExtractJsonProperty(body, "outputSchema");
             var description = ExtractJsonProperty(body, "description");
+            var handlerTypeName = ExtractJsonProperty(body, "handlerTypeName");
+            var handlerMethodName = ExtractJsonProperty(body, "handlerMethodName");
+            var handlerArguments = ExtractJsonProperty(body, "handlerArguments");
+            var authMode = NormalizeApiAuthMode(ExtractJsonProperty(body, "authMode") ?? "session");
+            var scopes = ExtractJsonProperty(body, "scopes") ?? "sql:read";
+            var rateLimitPerMinute = ParsePositiveInt(ExtractJsonProperty(body, "rateLimitPerMinute"), 60);
+            var corsPolicy = ExtractJsonProperty(body, "corsPolicy") ?? "same-origin";
+            var inputSchema = ExtractJsonProperty(body, "inputSchema") ?? bodySchema;
+            var publicEnabled = ExtractJsonBool(body, "publicEnabled");
+            var endpointSecret = ExtractJsonProperty(body, "endpointSecret");
             var enabledStr = ExtractJsonProperty(body, "enabled") ?? "true";
 
             if (string.IsNullOrWhiteSpace(name)) return "{\"error\":\"Endpoint name is required.\"}";
             if (string.IsNullOrWhiteSpace(route)) return "{\"error\":\"Route path is required.\"}";
-            // Allow empty sqlQuery if querySteps is provided
-            if (string.IsNullOrWhiteSpace(sqlQuery) && string.IsNullOrWhiteSpace(querySteps)) return "{\"error\":\"SQL query is required.\"}";
+            var hasHandler = !string.IsNullOrWhiteSpace(handlerTypeName) && !string.IsNullOrWhiteSpace(handlerMethodName);
+            // Allow empty SQL when query steps or a reflected handler are provided.
+            if (string.IsNullOrWhiteSpace(sqlQuery) && string.IsNullOrWhiteSpace(querySteps) && !hasHandler) return "{\"error\":\"SQL query or handler target is required.\"}";
 
             if (!route.StartsWith("/")) route = "/" + route;
             httpMethod = httpMethod.ToUpperInvariant();
-            if (httpMethod != "GET" && httpMethod != "POST") httpMethod = "GET";
+            if (!IsRestApiMethod(httpMethod)) httpMethod = "GET";
+            var ds = GetDataServer();
+            if (ds != null && !string.IsNullOrWhiteSpace(database) && !CanSqlAdminSessionAccessDatabase(req, session, ds, database))
+                return SqlTenantForbiddenJson(req, database);
+            if (authMode == "secret" && string.IsNullOrWhiteSpace(endpointSecret))
+                endpointSecret = GenerateToken();
+            if (authMode == "public" && !publicEnabled)
+                return "{\"error\":\"Public auth mode requires publicEnabled=true so the exposure is explicit.\"}";
 
             bool isNew = string.IsNullOrEmpty(id);
             if (isNew) id = Guid.NewGuid().ToString("N").Substring(0, 12);
@@ -2404,6 +3868,16 @@ namespace SocketJack.Net.Database {
                 Parameters = parameters,
                 OutputSchema = outputSchema,
                 Description = description,
+                HandlerTypeName = handlerTypeName,
+                HandlerMethodName = handlerMethodName,
+                HandlerArguments = handlerArguments,
+                AuthMode = authMode,
+                Scopes = scopes,
+                RateLimitPerMinute = rateLimitPerMinute,
+                CorsPolicy = corsPolicy,
+                InputSchema = inputSchema,
+                PublicEnabled = publicEnabled,
+                EndpointSecret = endpointSecret,
                 Source = "creator",
                 ReadOnly = false,
                 Enabled = enabledStr.Equals("true", StringComparison.OrdinalIgnoreCase)
@@ -2417,6 +3891,7 @@ namespace SocketJack.Net.Database {
             }
 
             SaveApiEndpointsTable();
+            WriteSqlAudit(req, session, "api-endpoint.save", database, route, "success", 0, "API Creator endpoint saved.", "", "", "", id, "api");
             return "{\"success\":true,\"id\":\"" + EscapeJson(id) + "\"}";
         }
 
@@ -2424,6 +3899,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return @"{""error"":""Not authenticated.""}"; }
+            if (!ValidateSqlAdminMutation(req, session, "api-endpoints.settings-save", out var mutationError)) return mutationError;
 
             var body = req.Body ?? "";
             var id = ExtractJsonProperty(body, "id");
@@ -2438,6 +3914,18 @@ namespace SocketJack.Net.Database {
             var outputSchema = ExtractJsonProperty(body, "outputSchema");
             var responseFormat = ExtractJsonProperty(body, "responseFormat") ?? "handler";
             var contentType = ExtractJsonProperty(body, "contentType");
+            var handlerTypeName = ExtractJsonProperty(body, "handlerTypeName");
+            var handlerMethodName = ExtractJsonProperty(body, "handlerMethodName");
+            var handlerArguments = ExtractJsonProperty(body, "handlerArguments");
+            var authMode = NormalizeApiAuthMode(ExtractJsonProperty(body, "authMode") ?? "session");
+            var scopes = ExtractJsonProperty(body, "scopes") ?? "sql:read";
+            var rateLimitPerMinute = ParsePositiveInt(ExtractJsonProperty(body, "rateLimitPerMinute"), 120);
+            var corsPolicy = ExtractJsonProperty(body, "corsPolicy") ?? "same-origin";
+            var inputSchema = ExtractJsonProperty(body, "inputSchema") ?? bodySchema;
+            var publicEnabled = ExtractJsonBool(body, "publicEnabled");
+            var endpointSecret = ExtractJsonProperty(body, "endpointSecret");
+            if (authMode == "public" && !publicEnabled)
+                return "{\"error\":\"Public auth mode requires publicEnabled=true so the exposure is explicit.\"}";
 
             ApiEndpointDef existingCreator = null;
             if (!string.IsNullOrEmpty(id)) {
@@ -2454,7 +3942,20 @@ namespace SocketJack.Net.Database {
                 existingCreator.OutputSchema = outputSchema;
                 existingCreator.ResponseFormat = string.IsNullOrWhiteSpace(responseFormat) ? existingCreator.ResponseFormat : responseFormat;
                 existingCreator.ContentType = contentType;
+                existingCreator.HandlerTypeName = handlerTypeName;
+                existingCreator.HandlerMethodName = handlerMethodName;
+                existingCreator.HandlerArguments = handlerArguments;
+                existingCreator.AuthMode = authMode;
+                existingCreator.Scopes = scopes;
+                existingCreator.RateLimitPerMinute = rateLimitPerMinute;
+                existingCreator.CorsPolicy = corsPolicy;
+                existingCreator.InputSchema = inputSchema;
+                existingCreator.PublicEnabled = publicEnabled;
+                existingCreator.EndpointSecret = authMode == "secret"
+                    ? (string.IsNullOrWhiteSpace(endpointSecret) ? (existingCreator.EndpointSecret ?? GenerateToken()) : endpointSecret)
+                    : (endpointSecret ?? "");
                 SaveApiEndpointsTable();
+                WriteSqlAudit(req, session, "api-endpoint.settings", existingCreator.Database, existingCreator.Route, "success", 0, "API Creator endpoint settings saved.", "", "", "", existingCreator.Id, "api");
                 return "{\"success\":true,\"id\":\"" + EscapeJson(existingCreator.Id) + "\",\"source\":\"creator\"}";
             }
 
@@ -2478,6 +3979,16 @@ namespace SocketJack.Net.Database {
                 Parameters = parameters,
                 OutputSchema = outputSchema,
                 Description = description,
+                HandlerTypeName = handlerTypeName,
+                HandlerMethodName = handlerMethodName,
+                HandlerArguments = handlerArguments,
+                AuthMode = authMode,
+                Scopes = scopes,
+                RateLimitPerMinute = rateLimitPerMinute,
+                CorsPolicy = corsPolicy,
+                InputSchema = inputSchema,
+                PublicEnabled = publicEnabled,
+                EndpointSecret = authMode == "secret" && string.IsNullOrWhiteSpace(endpointSecret) ? GenerateToken() : endpointSecret,
                 Enabled = true,
                 Source = "mapped",
                 ReadOnly = true
@@ -2485,6 +3996,7 @@ namespace SocketJack.Net.Database {
 
             _apiRouteSettings[ApiEndpointRouteKey(httpMethod, route)] = setting;
             SaveApiRouteSettingsTable();
+            WriteSqlAudit(req, session, "api-endpoint.settings", "", route, "success", 0, "Runtime API route settings saved.", "", "", "", id, "api");
             return "{\"success\":true,\"id\":\"" + EscapeJson(id) + "\",\"source\":\"mapped\"}";
         }
 
@@ -2492,6 +4004,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "api-endpoints.delete", out var mutationError)) return mutationError;
 
             var body = req.Body ?? "";
             var id = ExtractJsonString(body, "id");
@@ -2499,6 +4012,7 @@ namespace SocketJack.Net.Database {
 
             if (_apiEndpoints.TryRemove(id, out var ep)) {
                 try { _server.RemoveRoute(ep.HttpMethod.ToUpperInvariant(), ep.Route); } catch { }
+                WriteSqlAudit(req, session, "api-endpoint.delete", ep.Database, ep.Route, "success", 0, "API Creator endpoint deleted.", "", "", "", id, "api");
             }
 
             SaveApiEndpointsTable();
@@ -2509,15 +4023,26 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "api-endpoints.test", out var mutationError)) return mutationError;
 
             var body = req.Body ?? "";
             var tempEp = new ApiEndpointDef {
                 Database = ExtractJsonString(body, "database") ?? "db",
                 SqlQuery = ExtractJsonString(body, "sqlQuery") ?? "",
+                QuerySteps = ExtractJsonString(body, "querySteps") ?? "",
                 ResponseFormat = ExtractJsonString(body, "responseFormat") ?? "json",
                 ContentType = ExtractJsonString(body, "contentType"),
                 HttpMethod = ExtractJsonString(body, "httpMethod") ?? "GET",
-                Variables = ExtractJsonString(body, "variables")
+                Variables = ExtractJsonString(body, "variables"),
+                HandlerTypeName = ExtractJsonString(body, "handlerTypeName"),
+                HandlerMethodName = ExtractJsonString(body, "handlerMethodName"),
+                HandlerArguments = ExtractJsonString(body, "handlerArguments"),
+                AuthMode = "session",
+                Scopes = ExtractJsonString(body, "scopes") ?? "sql:read",
+                RateLimitPerMinute = ParsePositiveInt(ExtractJsonString(body, "rateLimitPerMinute"), 60),
+                CorsPolicy = ExtractJsonString(body, "corsPolicy") ?? "same-origin",
+                InputSchema = ExtractJsonString(body, "inputSchema") ?? ExtractJsonString(body, "bodySchema"),
+                PublicEnabled = false
             };
 
             var paramsJson = ExtractJsonString(body, "parameters") ?? "{}";
@@ -2528,6 +4053,9 @@ namespace SocketJack.Net.Database {
         }
 
         private object HandleDynamicApiEndpoint(HttpRequest req, ApiEndpointDef endpoint) {
+            if (!ValidateDynamicEndpointRequest(req, endpoint, out var policyError))
+                return policyError;
+
             var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             // Gather querystring parameters
@@ -2556,10 +4084,227 @@ namespace SocketJack.Net.Database {
                 }
             }
 
-            return ExecuteEndpointQuery(req, endpoint, parameters);
+            try {
+                var result = ExecuteEndpointQuery(req, endpoint, parameters);
+                WriteSqlAudit(req, GetSession(req), "api-endpoint.invoke", endpoint.Database ?? "", endpoint.Route ?? "", "success", 0, "Dynamic API endpoint invoked.", "", "", "", endpoint.Id ?? "", "api");
+                return result;
+            } catch (Exception ex) {
+                WriteSqlAudit(req, GetSession(req), "api-endpoint.invoke", endpoint.Database ?? "", endpoint.Route ?? "", "error", 0, ex.Message, "", "", "", endpoint.Id ?? "", "api");
+                throw;
+            }
+        }
+
+        private bool ValidateDynamicEndpointRequest(HttpRequest req, ApiEndpointDef endpoint, out string errorJson) {
+            errorJson = null;
+            req.Context.ContentType = "application/json";
+            if (endpoint == null || !endpoint.Enabled) {
+                req.Context.StatusCode = "404 Not Found";
+                errorJson = "{\"error\":\"Endpoint is disabled or not found.\"}";
+                return false;
+            }
+
+            ApplyDynamicEndpointCors(req, endpoint);
+            if (string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase)) {
+                errorJson = "{\"ok\":true}";
+                return false;
+            }
+
+            if (!CheckDynamicEndpointRateLimit(req, endpoint)) {
+                req.Context.StatusCode = "429 Too Many Requests";
+                errorJson = "{\"error\":\"Endpoint rate limit exceeded.\"}";
+                return false;
+            }
+
+            if (!ValidateEndpointInputSchema(req, endpoint, out var schemaError)) {
+                req.Context.StatusCode = "400 Bad Request";
+                errorJson = "{\"error\":\"" + EscapeJson(schemaError) + "\",\"schemaValidation\":true}";
+                return false;
+            }
+
+            string mode = NormalizeApiAuthMode(endpoint.AuthMode);
+            if (mode == "public" && endpoint.PublicEnabled)
+                return true;
+
+            if (mode == "secret") {
+                if (ValidateEndpointSecret(req, endpoint))
+                    return true;
+                req.Context.StatusCode = "401 Unauthorized";
+                errorJson = "{\"error\":\"Endpoint secret is required.\"}";
+                return false;
+            }
+
+            var session = GetSession(req);
+            if (session == null) {
+                req.Context.StatusCode = "401 Unauthorized";
+                errorJson = "{\"error\":\"SQL Admin session is required for this endpoint.\"}";
+                return false;
+            }
+
+            var ds = GetDataServer();
+            if (ds != null && !string.IsNullOrWhiteSpace(endpoint.Database) && !CanSqlAdminSessionAccessDatabase(req, session, ds, endpoint.Database)) {
+                errorJson = SqlTenantForbiddenJson(req, endpoint.Database);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string NormalizeApiAuthMode(string mode) {
+            mode = (mode ?? "").Trim().ToLowerInvariant();
+            if (mode == "public" || mode == "secret" || mode == "session")
+                return mode;
+            return "session";
+        }
+
+        private static int ParsePositiveInt(string value, int defaultValue) {
+            if (int.TryParse(value, out var parsed) && parsed > 0)
+                return parsed;
+            return defaultValue;
+        }
+
+        private void ApplyDynamicEndpointCors(HttpRequest req, ApiEndpointDef endpoint) {
+            string origin = GetHeader(req, "Origin");
+            string policy = (endpoint?.CorsPolicy ?? "same-origin").Trim();
+            if (string.IsNullOrWhiteSpace(origin) || string.Equals(policy, "same-origin", StringComparison.OrdinalIgnoreCase) || string.Equals(policy, "deny", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            bool allowed = policy == "*" ||
+                           policy.Equals("any", StringComparison.OrdinalIgnoreCase) ||
+                           policy.Split(',').Any(item => string.Equals(item.Trim(), origin, StringComparison.OrdinalIgnoreCase));
+            if (!allowed)
+                return;
+
+            req.Context.Response.Headers["Access-Control-Allow-Origin"] = policy == "*" || policy.Equals("any", StringComparison.OrdinalIgnoreCase) ? origin : origin;
+            req.Context.Response.Headers["Access-Control-Allow-Credentials"] = "true";
+            req.Context.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-SqlAdmin-Csrf, X-CSRF-Token, X-SocketJack-Api-Secret";
+            req.Context.Response.Headers["Access-Control-Allow-Methods"] = (endpoint?.HttpMethod ?? "GET") + ", OPTIONS";
+        }
+
+        private bool CheckDynamicEndpointRateLimit(HttpRequest req, ApiEndpointDef endpoint) {
+            int limit = endpoint?.RateLimitPerMinute <= 0 ? 60 : endpoint.RateLimitPerMinute;
+            string key = (endpoint?.Id ?? endpoint?.Route ?? "dynamic") + ":" + ExtractSqlAdminClientIp(req);
+            var window = _dynamicEndpointRateWindows.GetOrAdd(key, _ => new List<DateTime>());
+            var cutoff = DateTime.UtcNow.AddMinutes(-1);
+            lock (window) {
+                window.RemoveAll(ts => ts < cutoff);
+                if (window.Count >= limit)
+                    return false;
+                window.Add(DateTime.UtcNow);
+                return true;
+            }
+        }
+
+        private bool ValidateEndpointSecret(HttpRequest req, ApiEndpointDef endpoint) {
+            if (endpoint == null || string.IsNullOrWhiteSpace(endpoint.EndpointSecret))
+                return false;
+            string supplied = GetHeader(req, "X-SocketJack-Api-Secret")
+                ?? GetHeader(req, "Authorization");
+            if (!string.IsNullOrWhiteSpace(supplied) && supplied.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                supplied = supplied.Substring("Bearer ".Length).Trim();
+            if (string.IsNullOrWhiteSpace(supplied) && req?.QueryParameters != null)
+                req.QueryParameters.TryGetValue("apiKey", out supplied);
+            return string.Equals(supplied, endpoint.EndpointSecret, StringComparison.Ordinal);
+        }
+
+        private bool ValidateEndpointInputSchema(HttpRequest req, ApiEndpointDef endpoint, out string error) {
+            error = null;
+            string schema = endpoint?.InputSchema;
+            if (string.IsNullOrWhiteSpace(schema))
+                schema = endpoint?.BodySchema;
+            if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(req?.Body))
+                return true;
+
+            try {
+                using (var schemaDoc = JsonDocument.Parse(schema))
+                using (var bodyDoc = JsonDocument.Parse(req.Body)) {
+                    if (schemaDoc.RootElement.ValueKind != JsonValueKind.Object)
+                        return true;
+                    if (schemaDoc.RootElement.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array) {
+                        foreach (var item in required.EnumerateArray()) {
+                            var propertyName = item.ValueKind == JsonValueKind.String ? item.GetString() : "";
+                            if (!string.IsNullOrWhiteSpace(propertyName) &&
+                                (bodyDoc.RootElement.ValueKind != JsonValueKind.Object || !bodyDoc.RootElement.TryGetProperty(propertyName, out _))) {
+                                error = "Missing required field: " + propertyName;
+                                return false;
+                            }
+                        }
+                    }
+
+                    if (schemaDoc.RootElement.TryGetProperty("properties", out var properties) &&
+                        properties.ValueKind == JsonValueKind.Object &&
+                        bodyDoc.RootElement.ValueKind == JsonValueKind.Object) {
+                        foreach (var property in properties.EnumerateObject()) {
+                            if (!bodyDoc.RootElement.TryGetProperty(property.Name, out var value))
+                                continue;
+                            if (property.Value.ValueKind == JsonValueKind.Object &&
+                                property.Value.TryGetProperty("type", out var typeElement) &&
+                                typeElement.ValueKind == JsonValueKind.String &&
+                                !JsonValueMatchesSchemaType(value, typeElement.GetString())) {
+                                error = "Field '" + property.Name + "' did not match type " + typeElement.GetString() + ".";
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            } catch (Exception ex) {
+                error = "Invalid JSON body or schema: " + ex.Message;
+                return false;
+            }
+        }
+
+        private static bool JsonValueMatchesSchemaType(JsonElement value, string type) {
+            switch ((type ?? "").Trim().ToLowerInvariant()) {
+                case "string": return value.ValueKind == JsonValueKind.String;
+                case "number": return value.ValueKind == JsonValueKind.Number;
+                case "integer": return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _);
+                case "boolean": return value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False;
+                case "object": return value.ValueKind == JsonValueKind.Object;
+                case "array": return value.ValueKind == JsonValueKind.Array;
+                case "null": return value.ValueKind == JsonValueKind.Null;
+                default: return true;
+            }
+        }
+
+        private bool ValidateEndpointSqlPolicy(HttpRequest req, ApiEndpointDef endpoint, string sql, out string errorJson) {
+            errorJson = null;
+            var risk = ClassifySqlRisk(sql);
+            if (risk.Operation == "read")
+                return true;
+
+            bool writeScope = EndpointHasScope(endpoint, "sql:write") || EndpointHasScope(endpoint, "sql:admin");
+            if (endpoint == null || endpoint.ReadOnly || !writeScope) {
+                req.Context.ContentType = "application/json";
+                req.Context.StatusCode = "403 Forbidden";
+                errorJson = "{\"error\":\"Dynamic endpoint SQL write was blocked by endpoint policy.\",\"operation\":\"" + EscapeJson(risk.Operation) + "\",\"requiredScope\":\"sql:write\"}";
+                WriteSqlAudit(req, GetSession(req), "api-endpoint.sql-blocked", endpoint?.Database ?? "", endpoint?.Route ?? "", "blocked", 0, "Dynamic API SQL write blocked by endpoint policy.", sql, "", "", endpoint?.Id ?? "", "api");
+                return false;
+            }
+
+            if (risk.RequiresConfirmation) {
+                req.Context.ContentType = "application/json";
+                req.Context.StatusCode = "403 Forbidden";
+                errorJson = "{\"error\":\"Dynamic endpoints cannot run destructive SQL without an interactive SQL Admin restore-point workflow.\",\"operation\":\"" + EscapeJson(risk.Operation) + "\"}";
+                WriteSqlAudit(req, GetSession(req), "api-endpoint.sql-blocked", endpoint?.Database ?? "", endpoint?.Route ?? "", "blocked", 0, "Dynamic API destructive SQL blocked.", sql, "", "", endpoint?.Id ?? "", "api");
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool EndpointHasScope(ApiEndpointDef endpoint, string scope) {
+            if (endpoint == null || string.IsNullOrWhiteSpace(scope))
+                return false;
+            return (endpoint.Scopes ?? "").Split(',')
+                .Any(item => string.Equals(item.Trim(), scope, StringComparison.OrdinalIgnoreCase));
         }
 
         private object ExecuteEndpointQuery(HttpRequest req, ApiEndpointDef endpoint, Dictionary<string, string> parameters) {
+            if (!string.IsNullOrWhiteSpace(endpoint.HandlerTypeName)
+                && !string.IsNullOrWhiteSpace(endpoint.HandlerMethodName)) {
+                return ExecuteReflectedEndpoint(req, endpoint, parameters);
+            }
+
             var ds = GetDataServer();
             if (ds == null) {
                 req.Context.ContentType = "application/json";
@@ -2592,6 +4337,8 @@ namespace SocketJack.Net.Database {
 
             // Legacy: single SQL query execution
             var sql = SubstituteParameters(endpoint.SqlQuery ?? "", workingParams, endpoint.Variables);
+            if (!ValidateEndpointSqlPolicy(req, endpoint, sql, out var policyError))
+                return policyError;
 
             try {
                 var result = ds.ExecuteQuery(sqlSession, sql);
@@ -2626,6 +4373,8 @@ namespace SocketJack.Net.Database {
 
             foreach (var step in steps) {
                 var sql = SubstituteParameters(step.Sql ?? "", workingParams, endpoint.Variables);
+                if (!ValidateEndpointSqlPolicy(req, endpoint, sql, out var policyError))
+                    return policyError;
 
                 var result = ds.ExecuteQuery(sqlSession, sql);
                 if (!result.HasResultSet && result.Columns.Count == 0 && result.Rows.Count == 0 && result.RowsAffected == 0) {
@@ -2690,6 +4439,260 @@ namespace SocketJack.Net.Database {
             }
 
             return "{\"success\":true,\"message\":\"All steps executed successfully.\"}";
+        }
+
+        private object ExecuteReflectedEndpoint(HttpRequest req, ApiEndpointDef endpoint, Dictionary<string, string> parameters) {
+            req.Context.ContentType = string.IsNullOrWhiteSpace(endpoint.ContentType) ? "application/json" : endpoint.ContentType;
+            try {
+                var result = InvokeStaticReflectMethod(
+                    endpoint.HandlerTypeName,
+                    endpoint.HandlerMethodName,
+                    endpoint.HandlerArguments,
+                    req,
+                    parameters);
+
+                switch ((endpoint.ResponseFormat ?? "handler").ToLowerInvariant()) {
+                    case "plaintext":
+                        req.Context.ContentType = "text/plain";
+                        return result?.ToString() ?? "";
+                    case "binary":
+                        if (result is byte[] bytes)
+                            return new FileResponse(bytes, string.IsNullOrWhiteSpace(endpoint.ContentType) ? "application/octet-stream" : endpoint.ContentType);
+                        return SerializeReflectResultSafe(result);
+                    case "handler":
+                    case "json":
+                    default:
+                        req.Context.ContentType = "application/json";
+                        return SerializeReflectResultSafe(result);
+                }
+            } catch (Exception ex) {
+                req.Context.ContentType = "application/json";
+                req.Context.StatusCode = "500 Internal Server Error";
+                var message = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                return "{\"error\":\"" + EscapeJson(message) + "\"}";
+            }
+        }
+
+        private object InvokeStaticReflectMethod(string typeName, string methodName, string argumentsJson, HttpRequest req, Dictionary<string, string> parameters) {
+            var targetType = FindReflectType(typeName);
+            if (targetType == null)
+                throw new InvalidOperationException("Type not found: " + typeName);
+
+            var methods = targetType
+                .GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.IgnoreCase)
+                .Where(m => string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(m => m.GetParameters().Length)
+                .ToArray();
+            if (methods.Length == 0)
+                throw new InvalidOperationException("Public static method not found: " + methodName);
+
+            Exception lastError = null;
+            foreach (var method in methods) {
+                try {
+                    var args = BuildReflectArguments(method, argumentsJson, req, parameters);
+                    var value = method.Invoke(null, args);
+                    return UnwrapTaskResult(value);
+                } catch (Exception ex) {
+                    lastError = ex;
+                }
+            }
+
+            throw lastError ?? new InvalidOperationException("Could not bind reflected method arguments.");
+        }
+
+        private object[] BuildReflectArguments(MethodInfo method, string argumentsJson, HttpRequest req, Dictionary<string, string> parameters) {
+            var methodParameters = method.GetParameters();
+            var args = new object[methodParameters.Length];
+            JsonDocument argumentsDocument = null;
+            JsonDocument bodyDocument = null;
+
+            try {
+                if (!string.IsNullOrWhiteSpace(argumentsJson))
+                    argumentsDocument = JsonDocument.Parse(argumentsJson);
+            } catch { }
+
+            try {
+                if (!string.IsNullOrWhiteSpace(req?.Body))
+                    bodyDocument = JsonDocument.Parse(req.Body);
+            } catch { }
+
+            try {
+                for (int i = 0; i < methodParameters.Length; i++) {
+                    var p = methodParameters[i];
+                    var pType = p.ParameterType;
+
+                    if (pType == typeof(HttpRequest)) {
+                        args[i] = req;
+                        continue;
+                    }
+                    if (pType == typeof(DataServer)) {
+                        args[i] = GetDataServer();
+                        continue;
+                    }
+                    if (pType == typeof(Dictionary<string, string>) || pType == typeof(IDictionary<string, string>)) {
+                        args[i] = parameters;
+                        continue;
+                    }
+                    if (pType == typeof(CancellationToken)) {
+                        args[i] = req?.Context?.cancellationToken ?? CancellationToken.None;
+                        continue;
+                    }
+
+                    if (TryGetJsonArgument(argumentsDocument, p.Name, i, out var argElement)) {
+                        args[i] = ConvertJsonElementToType(argElement, pType);
+                        continue;
+                    }
+                    if (parameters != null && !string.IsNullOrEmpty(p.Name) && parameters.TryGetValue(p.Name, out var parameterValue)) {
+                        args[i] = ConvertStringToType(parameterValue, pType);
+                        continue;
+                    }
+                    if (TryGetJsonArgument(bodyDocument, p.Name, -1, out var bodyElement)) {
+                        args[i] = ConvertJsonElementToType(bodyElement, pType);
+                        continue;
+                    }
+                    if (bodyDocument != null && bodyDocument.RootElement.ValueKind != JsonValueKind.Object && methodParameters.Length == 1) {
+                        args[i] = ConvertJsonElementToType(bodyDocument.RootElement, pType);
+                        continue;
+                    }
+                    if (p.HasDefaultValue) {
+                        args[i] = p.DefaultValue;
+                        continue;
+                    }
+                    if (!pType.IsValueType || Nullable.GetUnderlyingType(pType) != null) {
+                        args[i] = null;
+                        continue;
+                    }
+
+                    args[i] = Activator.CreateInstance(pType);
+                }
+                return args;
+            } finally {
+                argumentsDocument?.Dispose();
+                bodyDocument?.Dispose();
+            }
+        }
+
+        private static bool TryGetJsonArgument(JsonDocument document, string name, int index, out JsonElement value) {
+            value = default;
+            if (document == null)
+                return false;
+
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Array && index >= 0 && root.GetArrayLength() > index) {
+                value = root[index];
+                return true;
+            }
+            if (root.ValueKind == JsonValueKind.Object && !string.IsNullOrEmpty(name)) {
+                foreach (var property in root.EnumerateObject()) {
+                    if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) {
+                        value = property.Value;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static object ConvertJsonElementToType(JsonElement element, Type targetType) {
+            if (targetType == null || targetType == typeof(object))
+                return System.Text.Json.JsonSerializer.Deserialize<object>(element.GetRawText(), _reflectJsonOptions);
+            if (targetType == typeof(JsonElement))
+                return element.Clone();
+            if (targetType == typeof(string))
+                return element.ValueKind == JsonValueKind.String ? element.GetString() : element.GetRawText();
+            if (targetType == typeof(Wrapper))
+                return System.Text.Json.JsonSerializer.Deserialize<Wrapper>(element.GetRawText(), _reflectJsonOptions);
+
+            var nullableType = Nullable.GetUnderlyingType(targetType);
+            if (nullableType != null) {
+                if (element.ValueKind == JsonValueKind.Null)
+                    return null;
+                targetType = nullableType;
+            }
+            if (targetType.IsEnum) {
+                var enumText = element.ValueKind == JsonValueKind.String ? element.GetString() : element.GetRawText();
+                return Enum.Parse(targetType, enumText, true);
+            }
+
+            return System.Text.Json.JsonSerializer.Deserialize(element.GetRawText(), targetType, _reflectJsonOptions);
+        }
+
+        private static object ConvertStringToType(string value, Type targetType) {
+            if (targetType == null || targetType == typeof(string))
+                return value;
+            if (string.Equals(value, "null", StringComparison.OrdinalIgnoreCase) && (!targetType.IsValueType || Nullable.GetUnderlyingType(targetType) != null))
+                return null;
+            var nullableType = Nullable.GetUnderlyingType(targetType);
+            if (nullableType != null)
+                targetType = nullableType;
+            if (targetType.IsEnum)
+                return Enum.Parse(targetType, value, true);
+            if (targetType == typeof(Guid))
+                return Guid.Parse(value);
+            if (targetType == typeof(DateTime))
+                return DateTime.Parse(value);
+            if (targetType == typeof(DateTimeOffset))
+                return DateTimeOffset.Parse(value);
+            return Convert.ChangeType(value, targetType);
+        }
+
+        private static object UnwrapTaskResult(object value) {
+            if (value is System.Threading.Tasks.Task task) {
+                task.GetAwaiter().GetResult();
+                var taskType = value.GetType();
+                if (taskType.IsGenericType) {
+                    var resultProperty = taskType.GetProperty("Result");
+                    return resultProperty?.GetValue(value);
+                }
+                return null;
+            }
+            return value;
+        }
+
+        private static Type FindReflectType(string typeName) {
+            if (string.IsNullOrWhiteSpace(typeName))
+                return null;
+            var direct = Type.GetType(typeName, false, true);
+            if (direct != null)
+                return direct;
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
+                if (assembly.IsDynamic)
+                    continue;
+                Type type = null;
+                try { type = assembly.GetType(typeName, false, true); } catch { }
+                if (type != null)
+                    return type;
+                foreach (var candidate in GetLoadableTypes(assembly)) {
+                    if (string.Equals(candidate.FullName, typeName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(candidate.Name, typeName, StringComparison.OrdinalIgnoreCase))
+                        return candidate;
+                }
+            }
+            return null;
+        }
+
+        private static IEnumerable<Type> GetLoadableTypes(Assembly assembly) {
+            if (assembly == null || assembly.IsDynamic)
+                return Enumerable.Empty<Type>();
+            try {
+                return assembly.GetTypes().Where(t => t != null);
+            } catch (ReflectionTypeLoadException ex) {
+                return ex.Types.Where(t => t != null);
+            } catch {
+                return Enumerable.Empty<Type>();
+            }
+        }
+
+        private string SerializeReflectResultSafe(object value) {
+            if (value == null)
+                return "null";
+            try {
+                var wrapped = value is Wrapper wrapper ? wrapper : new Wrapper(value, _server);
+                return SerializeReflectResult(wrapped);
+            } catch {
+                return SerializeReflectResult(value);
+            }
         }
 
         private string SubstituteParameters(string sql, Dictionary<string, string> parameters, string variablesList) {
@@ -2952,6 +4955,9 @@ namespace SocketJack.Net.Database {
             bool first = true;
             for (int r = 0; r < table.Rows.Count; r++) {
                 var row = table.Rows[r];
+                var rowDbForAccess = row.Length > 2 ? row[2]?.ToString() : "";
+                if (!string.IsNullOrWhiteSpace(rowDbForAccess) && !CanSqlAdminSessionAccessDatabase(req, session, ds, rowDbForAccess))
+                    continue;
                 if (!first) sb.Append(",");
                 first = false;
                 sb.Append("{\"id\":\"").Append(EscapeJson(row.Length > 0 ? row[0]?.ToString() : ""))
@@ -2992,6 +4998,8 @@ namespace SocketJack.Net.Database {
                     // If db filter is specified, check it matches
                     if (!string.IsNullOrEmpty(dbFilter) && !dbFilter.Equals(rowDb, StringComparison.OrdinalIgnoreCase))
                         continue;
+                    if (!CanSqlAdminSessionAccessDatabase(req, session, ds, rowDb))
+                        return SqlTenantForbiddenJson(req, rowDb);
 
                     var sb = new StringBuilder();
                     sb.Append("{\"id\":\"").Append(EscapeJson(row.Length > 0 ? row[0]?.ToString() : ""))
@@ -3012,6 +5020,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "query-builder.save", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -3029,6 +5038,7 @@ namespace SocketJack.Net.Database {
 
             if (string.IsNullOrWhiteSpace(name)) return "{\"error\":\"Tree name is required.\"}";
             if (string.IsNullOrWhiteSpace(treeJson)) return "{\"error\":\"Tree data is required.\"}";
+            if (!CanSqlAdminSessionAccessDatabase(req, session, ds, database)) return SqlTenantForbiddenJson(req, database);
 
             bool isNew = string.IsNullOrEmpty(id);
             if (isNew) id = Guid.NewGuid().ToString("N").Substring(0, 12);
@@ -3049,6 +5059,7 @@ namespace SocketJack.Net.Database {
             }
 
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "query-builder.save", database, name, "success", 0, "Query Builder tree saved.", generatedSql ?? "", "", "", id, "query-builder");
             return "{\"success\":true,\"id\":\"" + EscapeJson(id) + "\"}";
         }
 
@@ -3056,6 +5067,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "query-builder.delete", out var mutationError)) return mutationError;
 
             var ds = GetDataServer();
             if (ds == null) { return "{\"error\":\"DataServer not available.\"}"; }
@@ -3071,6 +5083,8 @@ namespace SocketJack.Net.Database {
             bool removed = false;
             for (int r = table.Rows.Count - 1; r >= 0; r--) {
                 if (table.Rows[r].Length > 0 && id.Equals(table.Rows[r][0]?.ToString(), StringComparison.OrdinalIgnoreCase)) {
+                    string rowDb = table.Rows[r].Length > 2 ? table.Rows[r][2]?.ToString() : "";
+                    if (!CanSqlAdminSessionAccessDatabase(req, session, ds, rowDb)) return SqlTenantForbiddenJson(req, rowDb);
                     table.Rows.RemoveAt(r);
                     removed = true;
                     break;
@@ -3078,6 +5092,7 @@ namespace SocketJack.Net.Database {
             }
 
             ds.ScheduleSave();
+            WriteSqlAudit(req, session, "query-builder.delete", "", id, removed ? "success" : "not_found", 0, "Query Builder tree delete requested.", "", "", "", id, "query-builder");
             return "{\"success\":true,\"removed\":" + (removed ? "true" : "false") + "}";
         }
 
@@ -3099,7 +5114,11 @@ namespace SocketJack.Net.Database {
                     Name = row.Length > 1 ? row[1]?.ToString() : null,
                     Description = row.Length > 2 ? row[2]?.ToString() : null,
                     Enabled = row.Length > 3 && (row[3]?.ToString() ?? "").Equals("true", StringComparison.OrdinalIgnoreCase),
-                    Nodes = row.Length > 4 ? row[4]?.ToString() : null
+                    Nodes = row.Length > 4 ? row[4]?.ToString() : null,
+                    Approved = row.Length > 5 && (row[5]?.ToString() ?? "").Equals("true", StringComparison.OrdinalIgnoreCase),
+                    ApprovedBy = row.Length > 6 ? row[6]?.ToString() : null,
+                    ApprovedUtc = row.Length > 7 ? row[7]?.ToString() : null,
+                    DryRunByDefault = row.Length <= 8 || !(row[8]?.ToString() ?? "").Equals("false", StringComparison.OrdinalIgnoreCase)
                 };
                 if (string.IsNullOrEmpty(ev.Id)) continue;
                 _eventDefs[ev.Id] = ev;
@@ -3118,11 +5137,17 @@ namespace SocketJack.Net.Database {
             table.Columns.Add(new Column("Description", typeof(string), -1));
             table.Columns.Add(new Column("Enabled", typeof(string), 5));
             table.Columns.Add(new Column("Nodes", typeof(string), -1));
+            table.Columns.Add(new Column("Approved", typeof(string), 5));
+            table.Columns.Add(new Column("ApprovedBy", typeof(string), 160));
+            table.Columns.Add(new Column("ApprovedUtc", typeof(string), 80));
+            table.Columns.Add(new Column("DryRunByDefault", typeof(string), 5));
 
             foreach (var ev in _eventDefs.Values) {
                 table.Rows.Add(new object[] {
                     ev.Id, ev.Name, ev.Description ?? "",
-                    ev.Enabled ? "true" : "false", ev.Nodes ?? "[]"
+                    ev.Enabled ? "true" : "false", ev.Nodes ?? "[]",
+                    ev.Approved ? "true" : "false", ev.ApprovedBy ?? "",
+                    ev.ApprovedUtc ?? "", ev.DryRunByDefault ? "true" : "false"
                 });
             }
 
@@ -3145,6 +5170,10 @@ namespace SocketJack.Net.Database {
                   .Append("\",\"name\":\"").Append(EscapeJson(ev.Name))
                   .Append("\",\"description\":\"").Append(EscapeJson(ev.Description ?? ""))
                   .Append("\",\"enabled\":").Append(ev.Enabled ? "true" : "false")
+                  .Append(",\"approved\":").Append(ev.Approved ? "true" : "false")
+                  .Append(",\"approvedBy\":\"").Append(EscapeJson(ev.ApprovedBy ?? ""))
+                  .Append("\",\"approvedUtc\":\"").Append(EscapeJson(ev.ApprovedUtc ?? ""))
+                  .Append("\",\"dryRunByDefault\":").Append(ev.DryRunByDefault ? "true" : "false")
                   .Append(",\"nodes\":\"").Append(EscapeJson(ev.Nodes ?? "[]"))
                   .Append("\"}");
             }
@@ -3156,6 +5185,7 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "events.save", out var mutationError)) return mutationError;
 
             var body = req.Body ?? "";
             var id = ExtractJsonString(body, "id");
@@ -3163,6 +5193,8 @@ namespace SocketJack.Net.Database {
             var description = ExtractJsonString(body, "description") ?? "";
             var nodes = ExtractJsonString(body, "nodes") ?? "[]";
             var enabledStr = ExtractJsonString(body, "enabled") ?? "true";
+            bool approved = ExtractJsonBool(body, "approved");
+            bool dryRunByDefault = !ExtractJsonBool(body, "dryRunDisabled");
 
             if (string.IsNullOrWhiteSpace(name)) return "{\"error\":\"Event name is required.\"}";
 
@@ -3174,11 +5206,16 @@ namespace SocketJack.Net.Database {
                 Name = name,
                 Description = description,
                 Enabled = enabledStr.Equals("true", StringComparison.OrdinalIgnoreCase),
+                Approved = approved,
+                ApprovedBy = approved ? session.Username : "",
+                ApprovedUtc = approved ? DateTime.UtcNow.ToString("O") : "",
+                DryRunByDefault = dryRunByDefault,
                 Nodes = nodes
             };
 
             _eventDefs[id] = ev;
             SaveEventsTable();
+            WriteSqlAudit(req, session, "event.save", "", id, "success", 0, "SQL Admin event definition saved.", nodes, "", "", id, "event");
             return "{\"success\":true,\"id\":\"" + EscapeJson(id) + "\"}";
         }
 
@@ -3186,13 +5223,15 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "events.delete", out var mutationError)) return mutationError;
 
             var body = req.Body ?? "";
             var id = ExtractJsonString(body, "id");
             if (string.IsNullOrEmpty(id)) return "{\"error\":\"Event ID is required.\"}";
 
-            _eventDefs.TryRemove(id, out _);
+            _eventDefs.TryRemove(id, out var removedEvent);
             SaveEventsTable();
+            WriteSqlAudit(req, session, "event.delete", "", id, "success", 0, "SQL Admin event definition deleted.", removedEvent?.Nodes ?? "", "", "", id, "event");
             return "{\"success\":true}";
         }
 
@@ -3204,9 +5243,27 @@ namespace SocketJack.Net.Database {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
             if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+            if (!ValidateSqlAdminMutation(req, session, "events.execute", out var mutationError)) return mutationError;
 
             var body = req.Body ?? "";
+            var eventId = ExtractJsonString(body, "eventId") ?? ExtractJsonString(body, "id") ?? "";
+            EventDef eventDef = null;
+            if (!string.IsNullOrWhiteSpace(eventId)) {
+                if (!_eventDefs.TryGetValue(eventId, out eventDef))
+                    return "{\"error\":\"Event definition not found.\"}";
+                if (!eventDef.Enabled)
+                    return "{\"error\":\"Event definition is disabled.\"}";
+                if (_eventCircuitFailures.TryGetValue(eventId, out var failures) && failures >= 5) {
+                    req.Context.StatusCode = "429 Too Many Requests";
+                    return "{\"error\":\"Event circuit breaker is open after repeated failures.\",\"eventId\":\"" + EscapeJson(eventId) + "\"}";
+                }
+            }
             var actionType = ExtractJsonString(body, "actionType") ?? "";
+            bool dryRun = ExtractJsonBool(body, "dryRun") || (eventDef != null && eventDef.DryRunByDefault && !ExtractJsonBool(body, "executeNow"));
+            if (dryRun) {
+                WriteSqlAudit(req, session, "event.dry-run", "", eventId, "preview", 0, "SQL Admin event dry-run preview generated.", body, "", "", eventId, "event");
+                return "{\"success\":true,\"dryRun\":true,\"eventId\":\"" + EscapeJson(eventId) + "\",\"actionType\":\"" + EscapeJson(actionType) + "\",\"wouldExecute\":true}";
+            }
             var sb = new StringBuilder();
 
             try {
@@ -3217,17 +5274,12 @@ namespace SocketJack.Net.Database {
                         var method = (ExtractJsonString(body, "method") ?? "GET").ToUpperInvariant();
                         var payload = ExtractJsonString(body, "payload") ?? "";
                         if (string.IsNullOrWhiteSpace(url)) return "{\"error\":\"URL is required for HTTP action.\"}";
+                        if (!ValidateEventHttpAction(req, url, method, out var httpError)) return httpError;
 
-                        using (var client = new System.Net.WebClient()) {
-                            client.Headers["Content-Type"] = "application/json";
-                            string result;
-                            if (method == "POST") {
-                                result = client.UploadString(url, "POST", payload);
-                            } else {
-                                result = client.DownloadString(url);
-                            }
-                            sb.Append("{\"success\":true,\"result\":\"").Append(EscapeJson(result)).Append("\"}");
-                        }
+                        string result = ExecuteEventHttpAction(url, method, payload);
+                        sb.Append("{\"success\":true,\"result\":\"").Append(EscapeJson(result)).Append("\"}");
+                        WriteSqlAudit(req, session, "event.http", "", eventId, "success", 0, "SQL Admin event HTTP action executed.", RedactEventPayloadForAudit(url + " " + payload), "", "", eventId, "event");
+                        ResetEventCircuit(eventId);
                         return sb.ToString();
                     }
                     case "sql": {
@@ -3238,6 +5290,16 @@ namespace SocketJack.Net.Database {
 
                         var ds = GetDataServer();
                         if (ds == null) return "{\"error\":\"DataServer not available.\"}";
+                        if (!CanSqlAdminSessionAccessDatabase(req, session, ds, database)) return SqlTenantForbiddenJson(req, database);
+                        var risk = ClassifySqlRisk(sql);
+                        if (risk.RequiresConfirmation && (eventDef == null || !eventDef.Approved)) {
+                            req.Context.StatusCode = "403 Forbidden";
+                            return "{\"error\":\"High-risk SQL event actions require an approved event definition.\",\"operation\":\"" + EscapeJson(risk.Operation) + "\"}";
+                        }
+                        string restorePointId = "";
+                        string beforeHash = "";
+                        if (risk.RequiresConfirmation)
+                            restorePointId = CreateSqlDesignerRestorePoint(ds, session, database, risk.Operation, "event.sql", out beforeHash);
 
                         var sqlSession = new SqlSession {
                             ConnectionId = Guid.NewGuid(),
@@ -3251,6 +5313,11 @@ namespace SocketJack.Net.Database {
                         if (!result.HasResultSet && result.Columns.Count == 0 && result.Rows.Count == 0 && result.RowsAffected == 0) {
                             result = ExecuteInMemoryQuery(ds, sqlSession, sql);
                         }
+                        string afterHash = beforeHash;
+                        if (!string.IsNullOrWhiteSpace(beforeHash) && ds.Databases.TryGetValue(database, out var afterDb))
+                            afterHash = ComputeSqlDatabaseSnapshotHash(afterDb);
+                        WriteSqlAudit(req, session, "event.sql", database, eventId, "success", result.RowsAffected, "SQL Admin event SQL action executed.", sql, beforeHash, afterHash, string.IsNullOrWhiteSpace(restorePointId) ? eventId : restorePointId, "event");
+                        ResetEventCircuit(eventId);
                         sb.Append("{\"success\":true,\"result\":\"").Append(EscapeJson(FormatResultAsJson(result))).Append("\"}");
                         return sb.ToString();
                     }
@@ -3261,6 +5328,10 @@ namespace SocketJack.Net.Database {
                         var argsJson = ExtractJsonString(body, "args") ?? "[]";
                         if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(methodName))
                             return "{\"error\":\"typeName and methodName are required.\"}";
+                        if (!IsEventReflectionAllowed(req, eventDef, typeName, methodName)) {
+                            req.Context.StatusCode = "403 Forbidden";
+                            return "{\"error\":\"Reflection events are blocked unless they are local, approved, and allowlisted.\"}";
+                        }
 
                         // Search across application assemblies (skip system/framework DLLs)
                         Type targetType = null;
@@ -3365,7 +5436,9 @@ namespace SocketJack.Net.Database {
                             }
                         }
 
-                        var serialized = SerializeReflectResult(returnVal);
+                        var serialized = SerializeReflectResultSafe(returnVal);
+                        WriteSqlAudit(req, session, "event.reflect", "", typeName + "." + methodName, "success", 0, "SQL Admin event reflection action executed.", argsJson, "", "", eventId, "event");
+                        ResetEventCircuit(eventId);
                         sb.Append("{\"success\":true,\"result\":").Append(serialized).Append("}");
                         return sb.ToString();
                     }
@@ -3373,8 +5446,123 @@ namespace SocketJack.Net.Database {
                         return "{\"error\":\"Unknown actionType: " + EscapeJson(actionType) + ". Expected http, sql, or reflect.\"}";
                 }
             } catch (Exception ex) {
+                IncrementEventCircuit(eventId);
+                WriteSqlAudit(req, session, "event.execute", "", eventId, "error", 0, ex.Message, RedactEventPayloadForAudit(body), "", "", eventId, "event");
                 return "{\"success\":false,\"error\":\"" + EscapeJson(ex.Message) + "\"}";
             }
+        }
+
+        private bool ValidateEventHttpAction(HttpRequest req, string url, string method, out string errorJson) {
+            errorJson = null;
+            method = (method ?? "GET").ToUpperInvariant();
+            var allowedMethods = (Environment.GetEnvironmentVariable("SOCKETJACK_SQL_EVENT_HTTP_METHODS") ?? "GET,POST")
+                .Split(',')
+                .Select(m => m.Trim().ToUpperInvariant())
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .ToList();
+            if (!allowedMethods.Contains(method)) {
+                errorJson = "{\"error\":\"HTTP event method is not allowlisted.\"}";
+                return false;
+            }
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) {
+                errorJson = "{\"error\":\"HTTP event URL must be absolute http or https.\"}";
+                return false;
+            }
+
+            string allowlist = Environment.GetEnvironmentVariable("SOCKETJACK_SQL_EVENT_HTTP_ALLOWLIST") ?? "";
+            var allowedHosts = allowlist.Split(',').Select(h => h.Trim()).Where(h => !string.IsNullOrWhiteSpace(h)).ToList();
+            if (allowedHosts.Count > 0 &&
+                !allowedHosts.Any(pattern => HostMatchesAllowlist(uri.Host, pattern))) {
+                errorJson = "{\"error\":\"HTTP event URL host is not allowlisted.\"}";
+                return false;
+            }
+
+            if (IsPrivateOrLoopbackHost(uri.Host) && !IsLocalhostRequest(req)) {
+                errorJson = "{\"error\":\"HTTP events cannot target private or loopback network addresses from non-local SQL Admin sessions.\"}";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool HostMatchesAllowlist(string host, string pattern) {
+            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(pattern))
+                return false;
+            if (pattern == "*")
+                return true;
+            if (pattern.StartsWith("*.", StringComparison.Ordinal))
+                return host.EndsWith(pattern.Substring(1), StringComparison.OrdinalIgnoreCase);
+            return string.Equals(host, pattern, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsPrivateOrLoopbackHost(string host) {
+            if (string.IsNullOrWhiteSpace(host))
+                return true;
+            if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                return true;
+            try {
+                foreach (var address in Dns.GetHostAddresses(host)) {
+                    if (IPAddress.IsLoopback(address))
+                        return true;
+                    byte[] bytes = address.GetAddressBytes();
+                    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && bytes.Length == 4) {
+                        if (bytes[0] == 10 || bytes[0] == 127 || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) || (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 169 && bytes[1] == 254))
+                            return true;
+                    } else if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && bytes.Length == 16) {
+                        if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || (bytes[0] & 0xfe) == 0xfc)
+                            return true;
+                    }
+                }
+            } catch {
+                return true;
+            }
+            return false;
+        }
+
+        private static string ExecuteEventHttpAction(string url, string method, string payload) {
+            using (var client = new System.Net.Http.HttpClient()) {
+                client.Timeout = TimeSpan.FromSeconds(10);
+                using (var request = new System.Net.Http.HttpRequestMessage(new System.Net.Http.HttpMethod((method ?? "GET").ToUpperInvariant()), url)) {
+                    if (!string.IsNullOrEmpty(payload) && request.Method != System.Net.Http.HttpMethod.Get && request.Method != System.Net.Http.HttpMethod.Head)
+                        request.Content = new System.Net.Http.StringContent(payload, Encoding.UTF8, "application/json");
+
+                    using (var response = client.SendAsync(request).GetAwaiter().GetResult())
+                        return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                }
+            }
+        }
+
+        private bool IsEventReflectionAllowed(HttpRequest req, EventDef eventDef, string typeName, string methodName) {
+            if (!IsLocalhostRequest(req) || eventDef == null || !eventDef.Approved)
+                return false;
+
+            string target = (typeName ?? "") + "." + (methodName ?? "");
+            string allowlist = Environment.GetEnvironmentVariable("SOCKETJACK_SQL_EVENT_REFLECT_ALLOWLIST") ?? "";
+            return allowlist.Split(',')
+                .Select(item => item.Trim())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Any(item => item == "*" || string.Equals(item, target, StringComparison.OrdinalIgnoreCase) || (item.EndsWith(".*", StringComparison.Ordinal) && target.StartsWith(item.Substring(0, item.Length - 1), StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private void ResetEventCircuit(string eventId) {
+            if (!string.IsNullOrWhiteSpace(eventId))
+                _eventCircuitFailures.TryRemove(eventId, out _);
+        }
+
+        private void IncrementEventCircuit(string eventId) {
+            if (!string.IsNullOrWhiteSpace(eventId))
+                _eventCircuitFailures.AddOrUpdate(eventId, 1, (_, count) => Math.Min(1000, count + 1));
+        }
+
+        private static string RedactEventPayloadForAudit(string text) {
+            if (string.IsNullOrEmpty(text))
+                return "";
+            return System.Text.RegularExpressions.Regex.Replace(
+                text,
+                "(?i)(api[_-]?key|token|secret|password|authorization)([\"'\\s:=]+)([^\"'\\s,}]+)",
+                "$1$2[redacted]");
         }
 
         /// <summary>
@@ -3514,6 +5702,135 @@ namespace SocketJack.Net.Database {
         /// Returns discoverable types and their public static methods from loaded assemblies
         /// so the UI can offer reflection-based invocation targets.
         /// </summary>
+        private object ApiEndpointsReflect(HttpRequest req) {
+            req.Context.ContentType = "application/json";
+            var session = GetSession(req);
+            if (session == null) { req.Context.StatusCode = "401 Unauthorized"; return "{\"error\":\"Not authenticated.\"}"; }
+
+            var query = "";
+            if (req.QueryString != null) {
+                var qs = System.Web.HttpUtility.ParseQueryString(req.QueryString);
+                query = qs["q"] ?? "";
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("{\"types\":[");
+            bool firstType = true;
+            int count = 0;
+            const int limit = 500;
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()
+                .Where(a => !a.IsDynamic)
+                .OrderByDescending(IsApplicationAssembly)
+                .ThenBy(a => a.GetName().Name, StringComparer.OrdinalIgnoreCase)) {
+                if (count >= limit) break;
+
+                foreach (var type in GetLoadableTypes(assembly)) {
+                    if (count >= limit) break;
+
+                    MethodInfo[] methods = Array.Empty<MethodInfo>();
+                    PropertyInfo[] properties = Array.Empty<PropertyInfo>();
+                    FieldInfo[] fields = Array.Empty<FieldInfo>();
+                    try { methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly).Where(m => !m.IsSpecialName).ToArray(); } catch { }
+                    try { properties = type.GetProperties(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly); } catch { }
+                    try { fields = type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly); } catch { }
+                    if (methods.Length == 0 && properties.Length == 0 && fields.Length == 0) continue;
+
+                    var fullName = type.FullName ?? type.Name;
+                    if (!string.IsNullOrEmpty(query)
+                        && fullName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0
+                        && !methods.Any(m => m.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                        && !properties.Any(p => p.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                        && !fields.Any(f => f.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)) {
+                        continue;
+                    }
+
+                    if (!firstType) sb.Append(",");
+                    firstType = false;
+                    sb.Append("{\"type\":\"").Append(EscapeJson(fullName))
+                        .Append("\",\"assembly\":\"").Append(EscapeJson(assembly.GetName().Name))
+                        .Append("\",\"methods\":[");
+
+                    bool firstMethod = true;
+                    foreach (var method in methods) {
+                        if (!firstMethod) sb.Append(",");
+                        firstMethod = false;
+                        sb.Append("{\"name\":\"").Append(EscapeJson(method.Name))
+                            .Append("\",\"returnType\":\"").Append(EscapeJson(TypeToReflectionName(method.ReturnType)))
+                            .Append("\",\"fullReturnType\":\"").Append(EscapeJson(method.ReturnType.FullName ?? method.ReturnType.Name))
+                            .Append("\",\"isStatic\":").Append(method.IsStatic ? "true" : "false")
+                            .Append(",\"params\":[");
+
+                        bool firstParam = true;
+                        foreach (var parameter in method.GetParameters()) {
+                            if (!firstParam) sb.Append(",");
+                            firstParam = false;
+                            var parameterType = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
+                            sb.Append("{\"name\":\"").Append(EscapeJson(parameter.Name))
+                                .Append("\",\"type\":\"").Append(EscapeJson(TypeToReflectionName(parameter.ParameterType)))
+                                .Append("\",\"fullType\":\"").Append(EscapeJson(parameter.ParameterType.FullName ?? parameter.ParameterType.Name))
+                                .Append("\",\"optional\":").Append(parameter.HasDefaultValue ? "true" : "false");
+                            if (parameter.HasDefaultValue && parameter.DefaultValue != null)
+                                sb.Append(",\"defaultValue\":\"").Append(EscapeJson(parameter.DefaultValue.ToString())).Append("\"");
+                            if (parameterType.IsEnum) {
+                                sb.Append(",\"isEnum\":true,\"enumValues\":[");
+                                var enumNames = Enum.GetNames(parameterType);
+                                for (int i = 0; i < enumNames.Length; i++) {
+                                    if (i > 0) sb.Append(",");
+                                    sb.Append("\"").Append(EscapeJson(enumNames[i])).Append("\"");
+                                }
+                                sb.Append("]");
+                            }
+                            sb.Append("}");
+                        }
+                        sb.Append("]}");
+                    }
+
+                    sb.Append("],\"properties\":[");
+                    bool firstProperty = true;
+                    foreach (var property in properties) {
+                        if (!firstProperty) sb.Append(",");
+                        firstProperty = false;
+                        var access = property.GetGetMethod() ?? property.GetSetMethod();
+                        sb.Append("{\"name\":\"").Append(EscapeJson(property.Name))
+                            .Append("\",\"type\":\"").Append(EscapeJson(TypeToReflectionName(property.PropertyType)))
+                            .Append("\",\"fullType\":\"").Append(EscapeJson(property.PropertyType.FullName ?? property.PropertyType.Name))
+                            .Append("\",\"canRead\":").Append(property.CanRead ? "true" : "false")
+                            .Append(",\"canWrite\":").Append(property.CanWrite ? "true" : "false")
+                            .Append(",\"isStatic\":").Append(access != null && access.IsStatic ? "true" : "false")
+                            .Append("}");
+                    }
+
+                    sb.Append("],\"fields\":[");
+                    bool firstField = true;
+                    foreach (var field in fields) {
+                        if (!firstField) sb.Append(",");
+                        firstField = false;
+                        sb.Append("{\"name\":\"").Append(EscapeJson(field.Name))
+                            .Append("\",\"type\":\"").Append(EscapeJson(TypeToReflectionName(field.FieldType)))
+                            .Append("\",\"fullType\":\"").Append(EscapeJson(field.FieldType.FullName ?? field.FieldType.Name))
+                            .Append("\",\"isStatic\":").Append(field.IsStatic ? "true" : "false")
+                            .Append("}");
+                    }
+
+                    sb.Append("]}");
+                    count++;
+                }
+            }
+
+            sb.Append("]}");
+            return sb.ToString();
+        }
+
+        private static string TypeToReflectionName(Type type) {
+            if (type == null) return "";
+            if (!type.IsGenericType) return type.Name;
+            var name = type.Name;
+            var tick = name.IndexOf('`');
+            if (tick > 0) name = name.Substring(0, tick);
+            return name + "<" + string.Join(", ", type.GetGenericArguments().Select(TypeToReflectionName)) + ">";
+        }
+
         private object ApiEventsReflect(HttpRequest req) {
             req.Context.ContentType = "application/json";
             var session = GetSession(req);
@@ -3538,7 +5855,7 @@ namespace SocketJack.Net.Database {
                 try { types = asm.GetTypes(); } catch { continue; }
                 foreach (var t in types) {
                     if (count >= limit) break;
-                    if (t.IsAbstract && t.IsSealed) { /* static class – always include */ }
+                    if (t.IsAbstract && t.IsSealed) { /* static class â€“ always include */ }
                     else if (!t.IsPublic) continue;
 
                     MethodInfo[] methods;
@@ -3736,6 +6053,14 @@ namespace SocketJack.Net.Database {
             return sb.ToString();
         }
 
+        private static bool ExtractJsonBool(string json, string key) {
+            var value = ExtractJsonProperty(json, key);
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string EscapeJson(string s) {
             if (string.IsNullOrEmpty(s)) return "";
             var sb = new StringBuilder(s.Length + 8);
@@ -3764,10 +6089,13 @@ namespace SocketJack.Net.Database {
         #region Page Template Loading
 
         /// <summary>
-        /// Loads an HTML page template from <see cref="PagesFolder"/> with file-hash-based caching.
-        /// Returns the file content, or an empty string if the file does not exist.
+        /// Loads an HTML page template from embedded memory first, with a disk fallback for
+        /// development overrides.
         /// </summary>
         private static string LoadPageTemplate(string filename) {
+            if (SocketJack.HtmlPageResources.TryGetHtml(filename, out var embeddedTemplate))
+                return embeddedTemplate;
+
             var filePath = Path.Combine(PagesFolder, filename);
             if (!File.Exists(filePath)) return "";
 
@@ -3791,46 +6119,35 @@ namespace SocketJack.Net.Database {
         }
 
         /// <summary>
-        /// Extracts an embedded HTML resource to <see cref="PagesFolder"/> if the file does not
-        /// already exist on disk. The resource is written once; users may then customise the
-        /// on-disk copy and it will not be overwritten.
+        /// Obsolete compatibility shim. HTML pages are now served from embedded memory.
         /// </summary>
         private static void LoadHtmlFromBinary(string filename) {
-            var filePath = Path.Combine(PagesFolder, filename);
-            if (File.Exists(filePath)) return;
-
-            var asm = typeof(SqlAdminPanel).Assembly;
-            var resourceName = "SocketJack." + filename;
-            using (var stream = asm.GetManifestResourceStream(resourceName)) {
-                if (stream == null) return;
-                Directory.CreateDirectory(PagesFolder);
-                using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None)) {
-                    stream.CopyTo(fs);
-                }
-            }
         }
 
         #endregion
 
         #region HTML Generation
 
-        private string LoginPageHtml() {
-            LoadHtmlFromBinary("SqlLogin.html");
+        private string LoginPageHtml(HttpRequest req) {
             var template = LoadPageTemplate("SqlLogin.html");
             if (!string.IsNullOrEmpty(template)) {
-                return template.Replace("$BasePath", BasePath.TrimEnd('/'));
+                return template
+                    .Replace("$BasePath", BasePath.TrimEnd('/'))
+                    .Replace("$SaBootstrapRequired", IsSaBootstrapRequired() ? "true" : "false")
+                    .Replace("$SaBootstrapLocal", IsLocalhostRequest(req) ? "true" : "false");
             }
             return "";
         }
 
         private string PanelPageHtml(SqlAdminSession session) {
-            LoadHtmlFromBinary("SqlPanel.html");
             var template = LoadPageTemplate("SqlPanel.html");
             if (!string.IsNullOrEmpty(template)) {
                 var basePath = BasePath.TrimEnd('/');
                 return template
                     .Replace("$BasePath", basePath)
                     .Replace("$Username", EscapeHtml(session.Username))
+                    .Replace("$SqlAdminSessionId", EscapeJson(session.SessionId ?? ""))
+                    .Replace("$SqlAdminCsrfToken", EscapeJson(session.CsrfToken ?? ""))
                     .Replace("$CurrentDatabase", EscapeJson(session.CurrentDatabase ?? "db"));
             }
             return "";
