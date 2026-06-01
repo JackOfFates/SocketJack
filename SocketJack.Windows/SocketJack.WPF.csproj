@@ -45,7 +45,7 @@
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack.WPF/</PackageProjectUrl>
     <PackageIcon>SocketJackWpfIcon.png</PackageIcon>
     <PackageReadmeFile>Readme.md</PackageReadmeFile>
-    <RepositoryUrl>https://github.com/JackOfFates/SocketJack/tree/master/SocketJack.Windows</RepositoryUrl>
+    <RepositoryUrl>https://github.com/JackOfFates/SocketJack</RepositoryUrl>
     <PackageTags>Socket; Sockets; Jack; Serialization; Json; Networking; Managed; TCP; Client; TcpClient; TcpServer; Server; P2P; Peer; To; Generic; Compressed; Multi Threaded; Concurrent; Multi Platform; WebSocket; WebSockets; WPF; Remote; Control </PackageTags>
     <UseWPF>True</UseWPF>
   </PropertyGroup>
