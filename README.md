@@ -5,6 +5,7 @@
 [![NuGet](https://img.shields.io/nuget/v/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/SocketJack.svg)](https://www.nuget.org/packages/SocketJack)
 [![SocketJack.WPF](https://img.shields.io/nuget/v/SocketJack.WPF.svg?label=SocketJack.WPF)](https://www.nuget.org/packages/SocketJack.WPF)
+[![GitHub Packages](https://img.shields.io/badge/GitHub%20Packages-published-24292f?logo=github)](https://github.com/JackOfFates/SocketJack/packages)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 SocketJack 2026 is a batteries-included .NET networking platform for typed object transport, TCP, UDP, WebSockets, HTTP apps, protocol multiplexing, SQL-backed management, peer-to-peer metadata, and remote WPF control.
