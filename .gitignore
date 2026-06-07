@@ -431,3 +431,4 @@ log_sess*.txt
 /SocketJack-MagicMasterList/README.md
 /SocketJack/SocketJackIcon.png
 /SocketJack-MagicMasterList/MainWindow.xaml.cs
+/SocketJack-MagicMasterList/App.xaml.cs
