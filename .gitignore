@@ -406,3 +406,5 @@ log_sess*.txt
 /build-check/JackLLM
 /SocketJack/local_after_patch_probe2.txt containing exactly this single line
 /SocketJack/local_after_patch_probe.txt containing exactly this single line
+/tools/Deploy-JackLLMWorkstationSable.ps1
+/tools/Package-JackLLMWorkstationLinuxWindows.ps1
