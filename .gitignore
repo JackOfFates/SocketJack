@@ -403,3 +403,6 @@ log_sess*.txt
 **/[Tt]ools/**/*.exe
 **/[Tt]ools/**/*.dll
 /.vsix-bridge-backups/
+/build-check/JackLLM
+/SocketJack/local_after_patch_probe2.txt containing exactly this single line
+/SocketJack/local_after_patch_probe.txt containing exactly this single line
