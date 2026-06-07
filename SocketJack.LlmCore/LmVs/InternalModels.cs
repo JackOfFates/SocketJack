@@ -129,6 +129,13 @@ namespace LmVs
         public int score { get; set; }
         public string benchmarkedUtc { get; set; } = "";
         public string benchmarkStatus { get; set; } = "";
+        public bool requiresPayment { get; set; }
+        public string stripePriceId { get; set; } = "";
+        public string stripeAccount { get; set; } = "";
+        public long stripeUnitAmountCents { get; set; }
+        public string stripeCurrency { get; set; } = "usd";
+        public string paymentStatus { get; set; } = "";
+        public bool checkoutConfigured { get; set; }
         public bool supportsImageGeneration { get; set; }
         public bool imageGeneration
         {
@@ -247,6 +254,8 @@ namespace LmVs
         public string SessionId { get; set; }
         public CancellationTokenSource Cancellation { get; set; }
         public DateTimeOffset StartedUtc { get; set; }
+        public string MediaToolCallId { get; set; }
+        public string MediaJobId { get; set; }
         public List<string> SteeringMessages { get; } = new List<string>();
     }
 
@@ -318,6 +327,40 @@ namespace LmVs
         public string password { get; set; } = "";
         public string rootPath { get; set; } = "";
         public bool allowWrite { get; set; } = true;
+    }
+
+    internal sealed class PersonaPlexSettings
+    {
+        public bool enabled { get; set; } = true;
+        public string serverUrl { get; set; } = "ws://localhost:8998";
+        public string voicePrompt { get; set; } = "NATF0.pt";
+        public string personaPrompt { get; set; } = "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.";
+        public string updatedUtc { get; set; } = "";
+    }
+
+    internal sealed class PersonaPlexInstallState
+    {
+        public string id { get; set; } = "";
+        public string status { get; set; } = "idle";
+        public string message { get; set; } = "";
+        public int progress { get; set; }
+        public bool localInstalled { get; set; }
+        public bool serverRunning { get; set; }
+        public bool hfTokenAvailable { get; set; }
+        public bool needsHuggingFaceToken { get; set; }
+        public bool hfTokenValidated { get; set; }
+        public bool hfTokenRejected { get; set; }
+        public string hfTokenError { get; set; } = "";
+        public bool installFootprintFound { get; set; }
+        public bool installIncomplete { get; set; }
+        public List<string> missingComponents { get; set; } = new List<string>();
+        public string installRoot { get; set; } = "";
+        public string repositoryPath { get; set; } = "";
+        public string pythonExecutable { get; set; } = "";
+        public string logPath { get; set; } = "";
+        public string startedUtc { get; set; } = "";
+        public string updatedUtc { get; set; } = "";
+        public string completedUtc { get; set; } = "";
     }
 
     internal sealed class ChatPermissionState

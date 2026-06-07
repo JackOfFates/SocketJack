@@ -19,6 +19,8 @@ public sealed class JackOnnxPythonDiffusersImageRunner : IJackOnnxImageModelRunn
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
     private const string BundledPythonBaseUrl = "https://www.python.org/ftp/python";
     private const string BundledPythonVersion = "3.12.8";
+    private const string CudaLegacyPythonVersion = "3.11.9";
+    private const string CudaLegacyTorchIndexUrl = "https://download.pytorch.org/whl/cu118";
     private const string MinimumSchedulerDiffusersVersion = "0.31.0";
     private const string MaximumSchedulerDiffusersVersionExclusive = "0.32.0";
     private const string MinimumQwenDiffusersVersion = "0.35.0";
@@ -37,6 +39,8 @@ public sealed class JackOnnxPythonDiffusersImageRunner : IJackOnnxImageModelRunn
         "python-" + BundledPythonVersion + (RuntimeInformation.ProcessArchitecture == Architecture.X64 ? "-amd64" : "") + ".exe";
     private static string BundledPythonEmbedFile =>
         "python-" + BundledPythonVersion + "-embed-" + GetPythonArchiveArchitecture() + ".zip";
+    private static string CudaLegacyPythonInstallerFile =>
+        "python-" + CudaLegacyPythonVersion + (RuntimeInformation.ProcessArchitecture == Architecture.X64 ? "-amd64" : "") + ".exe";
     private static string ApplicationBaseDirectory => Path.GetFullPath(AppContext.BaseDirectory);
     private static string BundledPythonDirectory => Path.Combine(ApplicationBaseDirectory, "Python");
     private static string BundledPythonExecutable => OperatingSystem.IsWindows()
@@ -44,7 +48,7 @@ public sealed class JackOnnxPythonDiffusersImageRunner : IJackOnnxImageModelRunn
         : Path.Combine(BundledPythonDirectory, "bin", "python3");
     private static string CudaLegacyPythonDirectory => Path.Combine(ApplicationBaseDirectory, "PythonCudaLegacy");
     private static string CudaLegacyPythonExecutable => OperatingSystem.IsWindows()
-        ? Path.Combine(CudaLegacyPythonDirectory, "Scripts", "python.exe")
+        ? Path.Combine(CudaLegacyPythonDirectory, "python.exe")
         : Path.Combine(CudaLegacyPythonDirectory, "bin", "python3");
     private static string BundledPythonModelsDirectory => Path.Combine(BundledPythonDirectory, "ImageModels");
 
@@ -1377,7 +1381,7 @@ except Exception as exc:
             try
             {
                 status?.Report("Installing Python from " + installerPath + "...");
-                var install = await InstallBundledPythonAsync(installerPath, cancellationToken).ConfigureAwait(false);
+                var install = await InstallPythonAsync(installerPath, BundledPythonDirectory, cancellationToken).ConfigureAwait(false);
                 if (install.ExitCode != 0)
                     throw new InvalidOperationException("Python bootstrap installer returned exit code " + install.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ". " + BuildProcessDetail(install));
             }
@@ -1395,6 +1399,117 @@ except Exception as exc:
 
             status?.Report("Python installer completed but did not create python.exe; extracting embedded Python runtime...");
             return await EnsureEmbeddedPythonZipAsync(cancellationToken, status).ConfigureAwait(false);
+        }
+        finally
+        {
+            PythonProvisioningGate.Release();
+        }
+    }
+
+    public static async Task<string> EnsureCudaLegacyPythonRuntimeAsync(
+        CancellationToken cancellationToken = default,
+        IProgress<string>? status = null)
+    {
+        if (!OperatingSystem.IsWindows())
+            return "";
+
+        PythonCommand command = await EnsureCudaLegacyPythonAsync(cancellationToken, status).ConfigureAwait(false);
+        status?.Report("Installing legacy CUDA PyTorch for Maxwell/Pascal GPUs in " + command.FileName + "...");
+        var torch = await RunPythonArgumentsAsync(
+            command,
+            [
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-input",
+                "--upgrade",
+                "--force-reinstall",
+                "torch==2.1.*",
+                "torchvision==0.16.*",
+                "torchaudio==2.1.*",
+                "--index-url",
+                CudaLegacyTorchIndexUrl
+            ],
+            TimeSpan.FromMinutes(30),
+            cancellationToken).ConfigureAwait(false);
+        if (torch.ExitCode != 0)
+            throw new InvalidOperationException("Legacy CUDA PyTorch install failed. " + BuildProcessDetail(torch));
+
+        status?.Report("Pinning NumPy for legacy CUDA PyTorch in " + command.FileName + "...");
+        var numpy = await RunPythonArgumentsAsync(
+            command,
+            [
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-input",
+                "--upgrade",
+                "--force-reinstall",
+                "numpy<2"
+            ],
+            TimeSpan.FromMinutes(8),
+            cancellationToken).ConfigureAwait(false);
+        if (numpy.ExitCode != 0)
+            throw new InvalidOperationException("Legacy CUDA NumPy pin failed. " + BuildProcessDetail(numpy));
+
+        LlmRuntimeCompatibilityStatus compatibility = new LlmRuntimeCompatibilityService(new LlmRuntimeOptions())
+            .GetStatus(command.FileName, cancellationToken, forceRefresh: true);
+        if (!compatibility.IsGpuGenerationEnabled)
+            throw new InvalidOperationException("Legacy CUDA PyTorch installed, but GPU image generation is still disabled. " + BuildGpuGenerationDisabledDetail(compatibility));
+
+        await EnsureTorchRuntimeAsync(command, cancellationToken, status).ConfigureAwait(false);
+        await EnsureDiffusersAtLeastAsync(command, cancellationToken, status).ConfigureAwait(false);
+        status?.Report("Legacy CUDA image-generation Python runtime is ready at " + command.FileName + ".");
+        return command.FileName;
+    }
+
+    private static async Task<PythonCommand> EnsureCudaLegacyPythonAsync(
+        CancellationToken cancellationToken,
+        IProgress<string>? status)
+    {
+        if (File.Exists(CudaLegacyPythonExecutable))
+        {
+            status?.Report("Using existing legacy CUDA Python at " + CudaLegacyPythonExecutable + ".");
+            return new PythonCommand(CudaLegacyPythonExecutable, []);
+        }
+
+        await PythonProvisioningGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(CudaLegacyPythonExecutable))
+            {
+                status?.Report("Using existing legacy CUDA Python at " + CudaLegacyPythonExecutable + ".");
+                return new PythonCommand(CudaLegacyPythonExecutable, []);
+            }
+
+            Directory.CreateDirectory(CudaLegacyPythonDirectory);
+            string installerPath = Path.Combine(CudaLegacyPythonDirectory, CudaLegacyPythonInstallerFile);
+            string installerUrl = string.Join("/", BundledPythonBaseUrl, CudaLegacyPythonVersion, CudaLegacyPythonInstallerFile);
+            if (!File.Exists(installerPath))
+            {
+                status?.Report("Downloading Python " + CudaLegacyPythonVersion + " for legacy CUDA PyTorch...");
+                await DownloadFileAsync(installerUrl, installerPath, cancellationToken).ConfigureAwait(false);
+            }
+
+            status?.Report("Installing legacy CUDA Python to " + CudaLegacyPythonDirectory + "...");
+            var install = await InstallPythonAsync(installerPath, CudaLegacyPythonDirectory, cancellationToken).ConfigureAwait(false);
+            if (install.ExitCode != 0)
+                throw new InvalidOperationException("Legacy CUDA Python installer returned exit code " + install.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ". " + BuildProcessDetail(install));
+
+            if (!File.Exists(CudaLegacyPythonExecutable))
+                throw new InvalidOperationException("Legacy CUDA Python install completed but did not create " + CudaLegacyPythonExecutable + ".");
+
+            var pip = await RunPythonArgumentsAsync(
+                new PythonCommand(CudaLegacyPythonExecutable, []),
+                ["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "pip", "setuptools", "wheel"],
+                TimeSpan.FromMinutes(8),
+                cancellationToken).ConfigureAwait(false);
+            if (pip.ExitCode != 0)
+                status?.Report("Legacy CUDA Python is usable, but pip upgrade failed: " + BuildProcessDetail(pip));
+
+            return new PythonCommand(CudaLegacyPythonExecutable, []);
         }
         finally
         {
@@ -1678,7 +1793,7 @@ except Exception as exc:
         };
     }
 
-    private static async Task<ProcessRunResult> InstallBundledPythonAsync(string installerPath, CancellationToken cancellationToken)
+    private static async Task<ProcessRunResult> InstallPythonAsync(string installerPath, string targetDirectory, CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -1693,7 +1808,7 @@ except Exception as exc:
         startInfo.ArgumentList.Add("PrependPath=0");
         startInfo.ArgumentList.Add("Include_pip=1");
         startInfo.ArgumentList.Add("Include_test=0");
-        startInfo.ArgumentList.Add($"TargetDir={BundledPythonDirectory}");
+        startInfo.ArgumentList.Add($"TargetDir={targetDirectory}");
 
         using var process = new Process { StartInfo = startInfo };
         StartProcessOrThrow(process, "Python installer");

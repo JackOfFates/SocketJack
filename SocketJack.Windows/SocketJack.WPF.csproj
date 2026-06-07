@@ -315,6 +315,7 @@
     <Compile Include="..\SocketJack\Net\Database\DbContextGenerator.cs" Link="Net\Database\DbContextGenerator.cs" />
     <Compile Include="..\SocketJack\Net\Database\DbContextGeneratorTool.cs" Link="Net\Database\DbContextGeneratorTool.cs" />
     <Compile Include="..\SocketJack\Net\Database\QueryResult.cs" Link="Net\Database\QueryResult.cs" />
+    <Compile Include="..\SocketJack\Net\Database\AdminSuite.cs" Link="Net\Database\AdminSuite.cs" />
     <Compile Include="..\SocketJack\Net\Database\SqlAdminPanel.cs" Link="Net\Database\SqlAdminPanel.cs" />
     <Compile Include="..\SocketJack\Net\Database\SqlSession.cs" Link="Net\Database\SqlSession.cs" />
     <Compile Include="..\SocketJack\Net\Database\Table.cs" Link="Net\Database\Table.cs" />

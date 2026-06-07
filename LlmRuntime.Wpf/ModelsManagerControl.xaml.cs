@@ -57,6 +57,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     private readonly ObservableCollection<ModelManagerModelItem> _models = [];
     private readonly ObservableCollection<GpuConfigurationItem> _gpuConfigurations = [];
     private readonly ObservableCollection<GpuModelAssignmentItem> _gpuModelAssignments = [];
+    private readonly ObservableCollection<GpuPythonProcessItem> _gpuPythonProcesses = [];
     private readonly Dictionary<string, ModelManagerLoadSettings> _settingsByModel = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _pendingDownloadedModelEnableTokens = new(StringComparer.OrdinalIgnoreCase);
     private GpuGlobalSettings _globalGpuSettings = new();
@@ -77,6 +78,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     private bool _refreshingGpuAssignments;
     private bool _applyingGpuConfiguration;
     private bool _refreshingResourceUsage;
+    private bool _stoppingGpuPythonProcess;
     private string _preferredSelectionKey = "";
     private ulong _lastCpuIdleTime;
     private ulong _lastCpuKernelTime;
@@ -93,6 +95,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         ModelsListBox.ItemsSource = _modelView;
         GpuSelectorComboBox.ItemsSource = _gpuConfigurations;
         GpuModelAssignmentsListView.ItemsSource = _gpuModelAssignments;
+        GpuPythonProcessSelectorBox.ItemsSource = _gpuPythonProcesses;
+        GpuPythonProcessListView.ItemsSource = _gpuPythonProcesses;
         _viewReady = true;
         ModelBrowserControl.ModelDownloaded += path =>
         {
@@ -420,6 +424,28 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         }
     }
 
+    private async Task<GpuPythonProcessSnapshot> TryFetchGpuPythonProcessSnapshotAsync()
+    {
+        string baseUrl = GetRuntimeBaseUrl();
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return GpuPythonProcessSnapshot.Empty;
+
+        try
+        {
+            using var response = await ApiClient.GetAsync(baseUrl.TrimEnd('/') + "/api/v1/runtime/gpu/processes").ConfigureAwait(true);
+            string body = await response.Content.ReadAsStringAsync().ConfigureAwait(true);
+            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(body))
+                return GpuPythonProcessSnapshot.Empty;
+
+            using JsonDocument document = JsonDocument.Parse(body);
+            return GpuPythonProcessSnapshot.FromJson(document.RootElement);
+        }
+        catch
+        {
+            return GpuPythonProcessSnapshot.Empty;
+        }
+    }
+
     private async Task RefreshGpuConfigurationAsync()
     {
         RuntimeHardwareSnapshot hardware = await TryFetchRuntimeHardwareSnapshotAsync().ConfigureAwait(true);
@@ -434,8 +460,12 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         _refreshingResourceUsage = true;
         try
         {
-            RuntimeHardwareSnapshot hardware = await TryFetchRuntimeHardwareSnapshotAsync().ConfigureAwait(true);
+            Task<RuntimeHardwareSnapshot> hardwareTask = TryFetchRuntimeHardwareSnapshotAsync();
+            Task<GpuPythonProcessSnapshot> pythonTask = TryFetchGpuPythonProcessSnapshotAsync();
+            RuntimeHardwareSnapshot hardware = await hardwareTask.ConfigureAwait(true);
+            GpuPythonProcessSnapshot python = await pythonTask.ConfigureAwait(true);
             RefreshGpuUsageReadings(hardware);
+            RefreshGpuPythonProcesses(python);
         }
         finally
         {
@@ -474,6 +504,34 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         }
 
         ApplySystemResourceSnapshot(hardware);
+    }
+
+    private void RefreshGpuPythonProcesses(GpuPythonProcessSnapshot snapshot)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            TryBeginOnUi(() => RefreshGpuPythonProcesses(snapshot));
+            return;
+        }
+
+        HashSet<int> selected = _gpuPythonProcesses
+            .Where(process => process.IsSelectedForStop)
+            .Select(process => process.Pid)
+            .ToHashSet();
+        _gpuPythonProcesses.Clear();
+        foreach (GpuPythonProcessSnapshot.ProcessSnapshot process in snapshot.Processes)
+        {
+            var item = GpuPythonProcessItem.FromSnapshot(process);
+            item.IsSelectedForStop = selected.Contains(item.Pid);
+            _gpuPythonProcesses.Add(item);
+        }
+
+        int stoppable = _gpuPythonProcesses.Count(process => process.IsStoppable);
+        GpuPythonProcessStatusText.Text = _gpuPythonProcesses.Count == 0
+            ? "No Python GPU generator processes are currently visible."
+            : _gpuPythonProcesses.Count.ToString(CultureInfo.InvariantCulture) + " running Python GPU process group(s), " +
+              stoppable.ToString(CultureInfo.InvariantCulture) + " stoppable, " +
+              snapshot.TotalGpuMemoryText + " VRAM.";
     }
 
     private void RefreshGpuConfigurationItems(RuntimeHardwareSnapshot hardware)
@@ -749,6 +807,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                              nameof(GpuConfigurationItem.MaxVramUsagePercent) or
                              nameof(GpuConfigurationItem.ParallelismMode) or
                              nameof(GpuConfigurationItem.ParallelismPlacement) or
+                             nameof(GpuConfigurationItem.ParallelTensor) or
                              nameof(GpuConfigurationItem.AssignedModelsText) or
                              nameof(GpuConfigurationItem.DisabledModelsText)))
             return;
@@ -853,6 +912,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
 
         SetComboByTag(GlobalParallelismModeBox, NormalizeParallelismMode(settings.ParallelismMode));
         SetComboByTag(GlobalParallelismPlacementBox, NormalizeParallelismPlacement(settings.ParallelismPlacement));
+        GlobalParallelTensorBox.IsChecked = settings.ParallelTensor;
         GlobalTargetDeviceIdsBox.Text = string.Join(", ", settings.TargetDeviceIds ?? []);
         GlobalMaxGpuLoadPercentBox.Text = ClampPercent(settings.MaxGpuLoadPercent).ToString(CultureInfo.InvariantCulture);
         GlobalMaxVramUsagePercentBox.Text = ClampPercent(settings.MaxVramUsagePercent).ToString(CultureInfo.InvariantCulture);
@@ -869,6 +929,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     {
         ParallelismMode = NormalizeParallelismMode(GlobalParallelismModeBox.SelectedItem is ComboBoxItem mode ? mode.Tag?.ToString() ?? "single" : "single"),
         ParallelismPlacement = NormalizeParallelismPlacement(GlobalParallelismPlacementBox.SelectedItem is ComboBoxItem placement ? placement.Tag?.ToString() ?? "local" : "local"),
+        ParallelTensor = GlobalParallelTensorBox.IsChecked.GetValueOrDefault() ||
+                         NormalizeParallelismMode(GlobalParallelismModeBox.SelectedItem is ComboBoxItem tensorMode ? tensorMode.Tag?.ToString() ?? "single" : "single") == "tensor_parallel",
         TargetDeviceIds = ParseDelimitedList(GlobalTargetDeviceIdsBox.Text),
         MaxGpuLoadPercent = ClampPercent(ParseInt(GlobalMaxGpuLoadPercentBox.Text, 100)),
         MaxVramUsagePercent = ClampPercent(ParseInt(GlobalMaxVramUsagePercentBox.Text, 100)),
@@ -919,7 +981,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             {
                 gpu.MaxGpuLoadPercent = global.MaxGpuLoadPercent;
                 gpu.MaxVramUsagePercent = global.MaxVramUsagePercent;
-                gpu.ParallelismMode = global.ParallelismMode;
+                gpu.ParallelTensor = global.ParallelTensor;
+                gpu.ParallelismMode = global.ParallelTensor ? "tensor_parallel" : global.ParallelismMode;
                 gpu.ParallelismPlacement = global.ParallelismPlacement;
             }
         }
@@ -966,7 +1029,11 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         if (overwrite || settings.TargetDeviceIds.Count == 0)
             settings.TargetDeviceIds = targetDevices.ToArray();
         if (overwrite || string.IsNullOrWhiteSpace(settings.ParallelismMode) || settings.ParallelismMode == "single")
-            settings.ParallelismMode = NormalizeParallelismMode(global.ParallelismMode);
+            settings.ParallelismMode = global.ParallelTensor ? "tensor_parallel" : NormalizeParallelismMode(global.ParallelismMode);
+        if (overwrite || !settings.ParallelTensor)
+            settings.ParallelTensor = global.ParallelTensor || NormalizeParallelismMode(settings.ParallelismMode) == "tensor_parallel";
+        if (settings.ParallelTensor)
+            settings.ParallelismMode = "tensor_parallel";
         if (overwrite || string.IsNullOrWhiteSpace(settings.ParallelismPlacement) || settings.ParallelismPlacement == "local")
             settings.ParallelismPlacement = NormalizeParallelismPlacement(global.ParallelismPlacement);
         if (overwrite || settings.MaxGpuLoadPercent == 100)
@@ -1107,13 +1174,21 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                 enabled = gpu?.Enabled ?? true,
                 max_gpu_load_percent = gpu?.MaxGpuLoadPercent ?? settings.MaxGpuLoadPercent,
                 max_vram_usage_percent = gpu?.MaxVramUsagePercent ?? settings.MaxVramUsagePercent,
-                parallelism_mode = NormalizeParallelismMode(gpu?.ParallelismMode ?? settings.ParallelismMode),
+                parallelism_mode = IsTensorParallelEnabled(gpu, settings) ? "tensor_parallel" : NormalizeParallelismMode(gpu?.ParallelismMode ?? settings.ParallelismMode),
                 parallelism_placement = NormalizeParallelismPlacement(gpu?.ParallelismPlacement ?? settings.ParallelismPlacement),
+                parallel_tensor = IsTensorParallelEnabled(gpu, settings),
+                tensor_parallel_size = GetTensorParallelSize(settings),
                 assigned_models = gpu == null ? [] : GetAssignedModelKeysForGpu(gpu)
             });
         }
 
         return policies;
+    }
+
+    private static bool IsTensorParallelEnabled(GpuConfigurationItem? gpu, ModelManagerLoadSettings settings)
+    {
+        string mode = NormalizeParallelismMode(gpu?.ParallelismMode ?? settings.ParallelismMode);
+        return (gpu?.ParallelTensor ?? settings.ParallelTensor) || mode == "tensor_parallel";
     }
 
     private void ApplyGpuConfigurationToModelSettings(bool showStatus = true)
@@ -1153,7 +1228,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                         ? (_settingsByModel.TryGetValue(key, out ModelManagerLoadSettings? existing) ? existing : new ModelManagerLoadSettings())
                         : GetSettings(model);
                     settings.Enabled = true;
-                    settings.ParallelismMode = NormalizeParallelismMode(gpu.ParallelismMode);
+                    settings.ParallelTensor = gpu.ParallelTensor || NormalizeParallelismMode(gpu.ParallelismMode) == "tensor_parallel";
+                    settings.ParallelismMode = settings.ParallelTensor ? "tensor_parallel" : NormalizeParallelismMode(gpu.ParallelismMode);
                     settings.ParallelismPlacement = NormalizeParallelismPlacement(gpu.ParallelismPlacement);
                     settings.MaxGpuLoadPercent = ClampPercent(gpu.MaxGpuLoadPercent);
                     settings.MaxVramUsagePercent = ClampPercent(gpu.MaxVramUsagePercent);
@@ -1485,7 +1561,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         ModelManagerLoadSettings settings = ModelManagerLoadSettings.CreateDefault(item);
         settings.Enabled = enableIfDownloaded && item.IsDownloaded && item.CanRequestLoad;
         ApplyGlobalModelPlacement(settings, _globalGpuSettings, ResolveGlobalTargetDeviceIds(_globalGpuSettings), overwrite: false);
-        return settings;
+        return ApplyVramFitTensorDefaults(item, settings);
     }
 
     private void TrackDownloadedModelForDefaultEnable(string path)
@@ -1583,7 +1659,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     private void ApplySettingsToPanel(ModelManagerLoadSettings settings)
     {
         SetComboByTag(BackendBox, settings.Backend);
-        SetComboByTag(ParallelismModeBox, NormalizeParallelismMode(settings.ParallelismMode));
+        SetComboByTag(ParallelismModeBox, settings.ParallelTensor ? "tensor_parallel" : NormalizeParallelismMode(settings.ParallelismMode));
         SetComboByTag(ParallelismPlacementBox, NormalizeParallelismPlacement(settings.ParallelismPlacement));
         ContextLengthBox.Text = settings.ContextLength.ToString();
         EvalBatchBox.Text = settings.EvalBatchSize.ToString();
@@ -1639,6 +1715,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             Backend = BackendBox.SelectedItem is ComboBoxItem backendItem ? backendItem.Tag?.ToString() ?? "auto" : "auto",
             ParallelismMode = NormalizeParallelismMode(ParallelismModeBox.SelectedItem is ComboBoxItem modeItem ? modeItem.Tag?.ToString() ?? "single" : "single"),
             ParallelismPlacement = NormalizeParallelismPlacement(ParallelismPlacementBox.SelectedItem is ComboBoxItem placementItem ? placementItem.Tag?.ToString() ?? "local" : "local"),
+            ParallelTensor = NormalizeParallelismMode(ParallelismModeBox.SelectedItem is ComboBoxItem tensorModeItem ? tensorModeItem.Tag?.ToString() ?? "single" : "single") == "tensor_parallel",
             ContextLength = ParseUInt(ContextLengthBox.Text, item.MaxContextLength > 0 ? item.MaxContextLength : 8192),
             EvalBatchSize = ParseInt(EvalBatchBox.Text, 512),
             GpuLayerCount = ParseInt(GpuLayersBox.Text, -1),
@@ -1691,10 +1768,93 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     private static double ClampPercent(double value) =>
         double.IsFinite(value) ? Math.Clamp(value, 0d, 100d) : 0d;
 
+    private static int GetTensorParallelSize(ModelManagerLoadSettings settings)
+    {
+        if (settings == null)
+            return 1;
+
+        bool tensorMode = settings.ParallelTensor || NormalizeParallelismMode(settings.ParallelismMode) == "tensor_parallel";
+        return tensorMode ? Math.Max(1, settings.TargetDeviceIds?.Count ?? 0) : 1;
+    }
+
+    private ModelManagerLoadSettings ApplyVramFitTensorDefaults(ModelManagerModelItem item, ModelManagerLoadSettings settings)
+    {
+        if (settings == null)
+            return new ModelManagerLoadSettings();
+        if (item == null)
+            return settings;
+
+        if (settings.ParallelTensor || NormalizeParallelismMode(settings.ParallelismMode) == "tensor_parallel")
+            return ApplyLargeModelOffloadBundle(settings, clone: false);
+
+        GpuConfigurationItem[] eligibleGpus = GetEligibleTensorParallelGpus(item, settings.TargetDeviceIds).ToArray();
+        if (eligibleGpus.Length < 2)
+            return settings;
+
+        long requiredBytes = item.RequiredMemoryBytes > 0 ? item.RequiredMemoryBytes : item.SizeBytes;
+        if (requiredBytes <= 0)
+            return settings;
+
+        long largestUsableBytes = eligibleGpus.Max(GetUsableVramBytes);
+        long pooledUsableBytes = eligibleGpus.Sum(GetUsableVramBytes);
+        if (largestUsableBytes <= 0 || pooledUsableBytes <= largestUsableBytes)
+            return settings;
+
+        if (requiredBytes <= largestUsableBytes * 0.90d || requiredBytes > pooledUsableBytes)
+            return settings;
+
+        ModelManagerLoadSettings next = settings.Clone();
+        next.TargetDeviceIds = eligibleGpus
+            .Select(gpu => gpu.DeviceId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        next.ParallelTensor = true;
+        next.ParallelismMode = "tensor_parallel";
+        return ApplyLargeModelOffloadBundle(next, clone: false);
+    }
+
+    private static ModelManagerLoadSettings ApplyLargeModelOffloadBundle(ModelManagerLoadSettings settings, bool clone)
+    {
+        ModelManagerLoadSettings next = clone ? settings.Clone() : settings;
+        next.GpuLayerCount = -1;
+        next.OffloadKvCacheToGpu = true;
+        next.VideoDeviceMap = "balanced";
+        next.VideoAllowCpuOffload = true;
+        next.VideoMemorySaving = true;
+        next.VideoCudaMemoryReserveMb = 1024;
+        next.DataParallelReplicaCount = 1;
+        next.PipelineStageCount = 1;
+        return next;
+    }
+
+    private IEnumerable<GpuConfigurationItem> GetEligibleTensorParallelGpus(ModelManagerModelItem item, IReadOnlyList<string> targetDeviceIds)
+    {
+        IReadOnlyList<string> configuredTargets = targetDeviceIds ?? [];
+        return _gpuConfigurations
+            .Where(gpu => gpu.Enabled && gpu.IsCudaSupported)
+            .Where(gpu => !ModelKeyInList(gpu.DisabledModelsText, item))
+            .Where(gpu => configuredTargets.Count == 0 || configuredTargets.Any(target => DeviceMatches(target, gpu.DeviceId)))
+            .Where(gpu => GetUsableVramBytes(gpu) > 0)
+            .OrderBy(gpu => gpu.DeviceSortKey, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static long GetUsableVramBytes(GpuConfigurationItem gpu)
+    {
+        long totalBytes = Math.Max(gpu.MemoryTotalBytes, gpu.DedicatedMemoryBytes);
+        if (totalBytes <= 0)
+            return 0;
+
+        return (long)Math.Floor(totalBytes * (ClampPercent(gpu.MaxVramUsagePercent) / 100d));
+    }
+
     private ModelManagerLoadSettings ApplyDefaultGpuTargets(ModelManagerModelItem item, ModelManagerLoadSettings settings)
     {
-        if (!settings.Enabled || settings.TargetDeviceIds.Count > 0 || _gpuConfigurations.Count == 0)
+        if (_gpuConfigurations.Count == 0)
             return settings;
+
+        if (!settings.Enabled || settings.TargetDeviceIds.Count > 0)
+            return ApplyVramFitTensorDefaults(item, settings);
 
         IReadOnlyList<string> globalTargetDeviceIds = _globalGpuSettings.TargetDeviceIds ?? [];
         GpuConfigurationItem[] eligibleGpus = _gpuConfigurations
@@ -1716,9 +1876,14 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         next.MaxGpuLoadPercent = ClampPercent(_globalGpuSettings.MaxGpuLoadPercent);
         next.MaxVramUsagePercent = ClampPercent(_globalGpuSettings.MaxVramUsagePercent);
         ApplyGlobalVideoSettings(next, _globalGpuSettings, overwrite: false);
+        next.ParallelTensor = _globalGpuSettings.ParallelTensor ||
+                              primary.ParallelTensor ||
+                              NormalizeParallelismMode(next.ParallelismMode) == "tensor_parallel";
+        if (next.ParallelTensor)
+            next.ParallelismMode = "tensor_parallel";
         next.DataParallelReplicaCount = next.ParallelismMode == "data_parallel" ? Math.Max(1, next.TargetDeviceIds.Count) : next.DataParallelReplicaCount;
         next.PipelineStageCount = next.ParallelismMode == "pipeline_parallel" ? Math.Max(1, next.TargetDeviceIds.Count) : next.PipelineStageCount;
-        return next;
+        return ApplyVramFitTensorDefaults(item, next);
     }
 
     private async Task LoadModelAsync(string? modelOverride = null)
@@ -1803,6 +1968,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             allow_backend_fallback = settings.AllowBackendFallback,
             parallelism_mode = settings.ParallelismMode,
             parallelism_placement = settings.ParallelismPlacement,
+            parallel_tensor = settings.ParallelTensor,
+            tensor_parallel_size = GetTensorParallelSize(settings),
             target_device_ids = settings.TargetDeviceIds,
             gpu_device_ids = settings.TargetDeviceIds,
             network_node_ids = settings.NetworkNodeIds,
@@ -2098,10 +2265,86 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     private async void RefreshGpuConfigButton_Click(object sender, RoutedEventArgs e)
     {
         await RefreshGpuConfigurationAsync().ConfigureAwait(true);
+        GpuPythonProcessSnapshot python = await TryFetchGpuPythonProcessSnapshotAsync().ConfigureAwait(true);
+        RefreshGpuPythonProcesses(python);
         SetStatus("GPU configuration refreshed.");
     }
 
     private void ApplyGpuConfigButton_Click(object sender, RoutedEventArgs e) => ApplyGpuConfigurationToModelSettings();
+
+    private async void StopPythonProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.CommandParameter == null)
+            return;
+        if (!int.TryParse(button.CommandParameter.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int pid) || pid <= 0)
+            return;
+
+        await StopGpuPythonProcessesAsync([pid], stopAll: false).ConfigureAwait(true);
+    }
+
+    private async void StopSelectedPythonProcessesButton_Click(object sender, RoutedEventArgs e)
+    {
+        int[] pids = _gpuPythonProcesses
+            .Where(process => process.IsSelectedForStop && process.IsStoppable)
+            .Select(process => process.Pid)
+            .Distinct()
+            .ToArray();
+        if (pids.Length == 0)
+        {
+            SetStatus("Select at least one Python GPU process to stop.");
+            return;
+        }
+
+        await StopGpuPythonProcessesAsync(pids, stopAll: false).ConfigureAwait(true);
+    }
+
+    private async void StopAllPythonProcessesButton_Click(object sender, RoutedEventArgs e) =>
+        await StopGpuPythonProcessesAsync([], stopAll: true).ConfigureAwait(true);
+
+    private async Task StopGpuPythonProcessesAsync(IReadOnlyList<int> pids, bool stopAll)
+    {
+        if (_stoppingGpuPythonProcess)
+            return;
+
+        string baseUrl = GetRuntimeBaseUrl();
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            SetStatus("Runtime endpoint unavailable; cannot stop Python GPU processes.");
+            return;
+        }
+
+        _stoppingGpuPythonProcess = true;
+        try
+        {
+            SetStatus(stopAll ? "Stopping all Python GPU process groups..." : "Stopping selected Python GPU process group(s)...");
+            object payload = stopAll ? new { all = true } : new { pids = pids.ToArray() };
+            using var content = new StringContent(JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8, "application/json");
+            using var response = await ApiClient.PostAsync(baseUrl.TrimEnd('/') + "/api/v1/runtime/gpu/processes/stop", content).ConfigureAwait(true);
+            string body = await response.Content.ReadAsStringAsync().ConfigureAwait(true);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                SetStatus("Python GPU process stop returned no status.");
+                return;
+            }
+
+            using JsonDocument document = JsonDocument.Parse(body);
+            JsonElement root = document.RootElement;
+            string message = ReadString(root, "message") ?? (response.IsSuccessStatusCode ? "Python GPU process stop completed." : "Python GPU process stop failed.");
+            if (root.TryGetProperty("snapshot", out JsonElement snapshotElement) && snapshotElement.ValueKind == JsonValueKind.Object)
+                RefreshGpuPythonProcesses(GpuPythonProcessSnapshot.FromJson(snapshotElement));
+            else
+                RefreshGpuPythonProcesses(await TryFetchGpuPythonProcessSnapshotAsync().ConfigureAwait(true));
+            SetStatus(message);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Python GPU process stop failed: " + ex.Message);
+        }
+        finally
+        {
+            _stoppingGpuPythonProcess = false;
+        }
+    }
 
     private void GpuSelectorComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateSelectedGpuConfiguration();
 
@@ -2119,7 +2362,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             gpu.Enabled = true;
             gpu.MaxGpuLoadPercent = ClampPercent(_globalGpuSettings.MaxGpuLoadPercent);
             gpu.MaxVramUsagePercent = ClampPercent(_globalGpuSettings.MaxVramUsagePercent);
-            gpu.ParallelismMode = NormalizeParallelismMode(_globalGpuSettings.ParallelismMode);
+            gpu.ParallelTensor = _globalGpuSettings.ParallelTensor;
+            gpu.ParallelismMode = _globalGpuSettings.ParallelTensor ? "tensor_parallel" : NormalizeParallelismMode(_globalGpuSettings.ParallelismMode);
             gpu.ParallelismPlacement = NormalizeParallelismPlacement(_globalGpuSettings.ParallelismPlacement);
             gpu.AssignedModelsText = "";
             gpu.DisabledModelsText = "";
@@ -2501,6 +2745,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         public int max_vram_usage_percent { get; init; } = 100;
         public string parallelism_mode { get; init; } = "single";
         public string parallelism_placement { get; init; } = "local";
+        public bool parallel_tensor { get; init; }
+        public int tensor_parallel_size { get; init; } = 1;
         public IReadOnlyList<string> assigned_models { get; init; } = [];
     }
 
@@ -2516,6 +2762,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         public string ParallelismMode { get; set; } = "single";
 
         public string ParallelismPlacement { get; set; } = "local";
+
+        public bool ParallelTensor { get; set; }
 
         public IReadOnlyList<string> TargetDeviceIds { get; set; } = [];
 
@@ -2618,6 +2866,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         private int _maxVramUsagePercent = 100;
         private string _parallelismMode = "single";
         private string _parallelismPlacement = "local";
+        private bool _parallelTensor;
         private string _assignedModelsText = "";
         private string _disabledModelsText = "";
         private string _activeModelsText = "";
@@ -2708,6 +2957,12 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             set => Set(ref _parallelismPlacement, NormalizeParallelismPlacement(value));
         }
 
+        public bool ParallelTensor
+        {
+            get => _parallelTensor || NormalizeParallelismMode(ParallelismMode) == "tensor_parallel";
+            set => Set(ref _parallelTensor, value);
+        }
+
         public string AssignedModelsText
         {
             get => _assignedModelsText;
@@ -2756,6 +3011,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
 
         public string StatusLine => (Enabled ? "Enabled" : "Disabled") + " | " +
                                     FormatParallelism(ParallelismMode, ParallelismPlacement) +
+                                    (ParallelTensor ? " | Tensor Parallel" : "") +
                                     " | thresholds GPU " + MaxGpuLoadPercent.ToString(CultureInfo.InvariantCulture) +
                                     "%, VRAM " + MaxVramUsagePercent.ToString(CultureInfo.InvariantCulture) + "%";
 
@@ -2803,6 +3059,145 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
         public override string ToString() => DisplayName;
+    }
+
+    private sealed class GpuPythonProcessSnapshot
+    {
+        public static GpuPythonProcessSnapshot Empty { get; } = new();
+
+        public string Message { get; init; } = "";
+        public int PythonProcessCount { get; init; }
+        public long TotalGpuMemoryBytes { get; init; }
+        public string TotalGpuMemoryText { get; init; } = "0 B";
+        public IReadOnlyList<ProcessSnapshot> Processes { get; init; } = [];
+
+        public static GpuPythonProcessSnapshot FromJson(JsonElement root)
+        {
+            var processes = new List<ProcessSnapshot>();
+            if (root.TryGetProperty("processes", out JsonElement processElements) && processElements.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement process in processElements.EnumerateArray())
+                    processes.Add(ProcessSnapshot.FromJson(process));
+            }
+
+            return new GpuPythonProcessSnapshot
+            {
+                Message = ReadString(root, "message") ?? "",
+                PythonProcessCount = (int)Math.Max(0, ReadInt64(root, "pythonProcessCount") ?? ReadInt64(root, "python_process_count") ?? processes.Count),
+                TotalGpuMemoryBytes = Math.Max(0, ReadInt64(root, "totalGpuMemoryBytes") ?? ReadInt64(root, "total_gpu_memory_bytes") ?? 0),
+                TotalGpuMemoryText = ReadString(root, "totalGpuMemoryText") ?? ReadString(root, "total_gpu_memory_text") ?? "",
+                Processes = processes
+            };
+        }
+
+        public sealed class ProcessSnapshot
+        {
+            public int Pid { get; init; }
+            public int ParentPid { get; init; }
+            public int ProcessGroupId { get; init; }
+            public string Name { get; init; } = "";
+            public string DisplayName { get; init; } = "";
+            public string CommandLine { get; init; } = "";
+            public string ExecutablePath { get; init; } = "";
+            public long GpuMemoryBytes { get; init; }
+            public string GpuMemoryText { get; init; } = "0 B";
+            public double GpuMemoryPercent { get; init; }
+            public double? CpuPercent { get; init; }
+            public string CpuPercentText { get; init; } = "";
+            public long RamBytes { get; init; }
+            public string RamText { get; init; } = "";
+            public double RamPercent { get; init; }
+            public string RamPercentText { get; init; } = "";
+            public string ResourceText { get; init; } = "";
+            public string GpuSummary { get; init; } = "";
+            public bool IsStoppable { get; init; }
+            public bool StopRecommended { get; init; }
+            public string StopReason { get; init; } = "";
+
+            public static ProcessSnapshot FromJson(JsonElement root) => new()
+            {
+                Pid = (int)Math.Max(0, ReadInt64(root, "pid") ?? 0),
+                ParentPid = (int)Math.Max(0, ReadInt64(root, "parentPid") ?? ReadInt64(root, "parent_pid") ?? 0),
+                ProcessGroupId = (int)Math.Max(0, ReadInt64(root, "processGroupId") ?? ReadInt64(root, "process_group_id") ?? 0),
+                Name = ReadString(root, "name") ?? "",
+                DisplayName = ReadString(root, "displayName") ?? ReadString(root, "display_name") ?? "",
+                CommandLine = ReadString(root, "commandLine") ?? ReadString(root, "command_line") ?? "",
+                ExecutablePath = ReadString(root, "executablePath") ?? ReadString(root, "executable_path") ?? "",
+                GpuMemoryBytes = Math.Max(0, ReadInt64(root, "gpuMemoryBytes") ?? ReadInt64(root, "gpu_memory_bytes") ?? 0),
+                GpuMemoryText = ReadString(root, "gpuMemoryText") ?? ReadString(root, "gpu_memory_text") ?? "",
+                GpuMemoryPercent = ClampPercent(ReadDouble(root, "gpuMemoryPercent") ?? ReadDouble(root, "gpu_memory_percent") ?? 0),
+                CpuPercent = ReadDouble(root, "cpuPercent") ?? ReadDouble(root, "cpu_percent"),
+                CpuPercentText = ReadString(root, "cpuPercentText") ?? ReadString(root, "cpu_percent_text") ?? "",
+                RamBytes = Math.Max(0, ReadInt64(root, "ramBytes") ?? ReadInt64(root, "ram_bytes") ?? 0),
+                RamText = ReadString(root, "ramText") ?? ReadString(root, "ram_text") ?? "",
+                RamPercent = ClampPercent(ReadDouble(root, "ramPercent") ?? ReadDouble(root, "ram_percent") ?? 0),
+                RamPercentText = ReadString(root, "ramPercentText") ?? ReadString(root, "ram_percent_text") ?? "",
+                ResourceText = ReadString(root, "resourceText") ?? ReadString(root, "resource_text") ?? "",
+                GpuSummary = ReadString(root, "gpuSummary") ?? ReadString(root, "gpu_summary") ?? "",
+                IsStoppable = ReadBool(root, "isStoppable") ?? ReadBool(root, "is_stoppable") ?? false,
+                StopRecommended = ReadBool(root, "stopRecommended") ?? ReadBool(root, "stop_recommended") ?? false,
+                StopReason = ReadString(root, "stopReason") ?? ReadString(root, "stop_reason") ?? ""
+            };
+        }
+    }
+
+    private sealed class GpuPythonProcessItem : INotifyPropertyChanged
+    {
+        private bool _isSelectedForStop;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public int Pid { get; init; }
+        public int ParentPid { get; init; }
+        public int ProcessGroupId { get; init; }
+        public string DisplayName { get; init; } = "";
+        public string CommandLine { get; init; } = "";
+        public string ResourceText { get; init; } = "";
+        public string GpuSummary { get; init; } = "";
+        public string GpuMemoryText { get; init; } = "";
+        public string CpuPercentText { get; init; } = "";
+        public string RamPercentText { get; init; } = "";
+        public bool IsStoppable { get; init; }
+        public bool StopRecommended { get; init; }
+        public string StopReason { get; init; } = "";
+
+        public bool IsSelectedForStop
+        {
+            get => _isSelectedForStop;
+            set
+            {
+                if (_isSelectedForStop == value)
+                    return;
+                _isSelectedForStop = value;
+                OnChanged(nameof(IsSelectedForStop));
+            }
+        }
+
+        public string SelectorLabel => DisplayName + " (" + Pid.ToString(CultureInfo.InvariantCulture) + ") - " + GpuMemoryText;
+
+        public string PidLine => "PID " + Pid.ToString(CultureInfo.InvariantCulture) +
+                                 (ParentPid > 0 ? " | parent " + ParentPid.ToString(CultureInfo.InvariantCulture) : "") +
+                                 (ProcessGroupId > 0 ? " | group " + ProcessGroupId.ToString(CultureInfo.InvariantCulture) : "");
+
+        public static GpuPythonProcessItem FromSnapshot(GpuPythonProcessSnapshot.ProcessSnapshot process) => new()
+        {
+            Pid = process.Pid,
+            ParentPid = process.ParentPid,
+            ProcessGroupId = process.ProcessGroupId,
+            DisplayName = FirstNonEmpty(process.DisplayName, process.Name, "python"),
+            CommandLine = FirstNonEmpty(process.CommandLine, process.ExecutablePath),
+            ResourceText = FirstNonEmpty(process.ResourceText, process.CpuPercentText + " | RAM " + process.RamPercentText + " | VRAM " + process.GpuMemoryText),
+            GpuSummary = process.GpuSummary,
+            GpuMemoryText = process.GpuMemoryText,
+            CpuPercentText = process.CpuPercentText,
+            RamPercentText = process.RamPercentText,
+            IsStoppable = process.IsStoppable,
+            StopRecommended = process.StopRecommended,
+            StopReason = process.StopReason
+        };
+
+        private void OnChanged(string propertyName) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
     private sealed class RuntimeHardwareSnapshot
@@ -3064,6 +3459,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         public string Quantization { get; init; } = "";
         public string ParamsString { get; init; } = "";
         public long SizeBytes { get; init; }
+        public long RequiredMemoryBytes { get; init; }
         public uint MaxContextLength { get; init; }
         public string LoadDisabledReason { get; init; } = "";
         public IReadOnlyList<string> Tags { get; init; } = [];
@@ -3097,6 +3493,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                 Quantization = ReadQuantization(root),
                 ParamsString = ReadString(root, "params_string") ?? ReadString(root, "paramsString") ?? "",
                 SizeBytes = ReadInt64(root, "size_bytes") ?? ReadInt64(root, "sizeBytes") ?? 0,
+                RequiredMemoryBytes = ReadInt64(root, "required_memory_bytes") ?? ReadInt64(root, "requiredMemoryBytes") ?? 0,
                 MaxContextLength = (uint)Math.Max(0, ReadInt64(root, "max_context_length") ?? ReadInt64(root, "maxContextLength") ?? 0),
                 LoadDisabledReason = ReadString(root, "load_disabled_reason") ?? ReadString(root, "loadDisabledReason") ?? ReadString(root, "description") ?? "",
                 Tags = ReadStringArray(root, "tags"),
@@ -3198,6 +3595,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         public string Quantization { get; init; } = "";
         public string ParamsString { get; init; } = "";
         public long SizeBytes { get; init; }
+        public long RequiredMemoryBytes { get; init; }
         public uint MaxContextLength { get; init; }
         public string LoadDisabledReason { get; init; } = "";
         public IReadOnlyList<string> Tags { get; init; } = [];
@@ -3382,6 +3780,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                 Quantization = model.QuantizationName ?? "",
                 ParamsString = model.ParamsString ?? "",
                 SizeBytes = model.SizeBytes,
+                RequiredMemoryBytes = runtime?.RequiredMemoryBytes ?? model.SizeBytes,
                 MaxContextLength = model.MaxContextLength ?? runtime?.MaxContextLength ?? 0,
                 LoadDisabledReason = runtime?.LoadDisabledReason ?? model.LoadDisabledReason ?? "",
                 Tags = model.Tags,
@@ -3418,6 +3817,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                 Quantization = runtime.Quantization,
                 ParamsString = runtime.ParamsString,
                 SizeBytes = runtime.SizeBytes,
+                RequiredMemoryBytes = runtime.RequiredMemoryBytes > 0 ? runtime.RequiredMemoryBytes : runtime.SizeBytes,
                 MaxContextLength = runtime.MaxContextLength,
                 LoadDisabledReason = runtime.LoadDisabledReason,
                 Tags = runtime.Tags,
@@ -3623,6 +4023,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             "data_parallel" => "Data Parallelism",
             "model_offload" => "Model Offloading",
             "pipeline_parallel" => "Pipeline Parallelism",
+            "tensor_parallel" => "Tensor Parallelism",
             _ => "Single"
         };
     }
@@ -3645,6 +4046,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             "data" or "dataparallel" or "data_parallelism" => "data_parallel",
             "offload" or "modeloffload" or "model_offloading" => "model_offload",
             "pipeline" or "pipelineparallel" or "pipeline_parallelism" => "pipeline_parallel",
+            "tensor" or "tensorparallel" or "tensor_parallelism" or "parallel_tensor" => "tensor_parallel",
             _ => string.IsNullOrWhiteSpace(value) ? "single" : value
         };
     }
@@ -3680,6 +4082,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             LlmParallelismMode.DataParallel => "data_parallel",
             LlmParallelismMode.ModelOffload => "model_offload",
             LlmParallelismMode.PipelineParallel => "pipeline_parallel",
+            LlmParallelismMode.TensorParallel => "tensor_parallel",
             _ => "single"
         };
 
@@ -3696,6 +4099,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         public string Backend { get; set; } = "auto";
         public string ParallelismMode { get; set; } = "single";
         public string ParallelismPlacement { get; set; } = "local";
+        public bool ParallelTensor { get; set; }
         public uint ContextLength { get; set; } = 8192;
         public int EvalBatchSize { get; set; } = 512;
         public int GpuLayerCount { get; set; } = -1;
@@ -3733,11 +4137,13 @@ public partial class ModelsManagerControl : UserControl, IDisposable
 
         public static ModelManagerLoadSettings FromRuntimeConfig(JsonElement root)
         {
+            string parallelismMode = NormalizeParallelismMode(ReadString(root, "parallelism_mode") ?? ReadString(root, "parallelismMode") ?? "single");
             return new ModelManagerLoadSettings
             {
                 Backend = ReadString(root, "backend") ?? "auto",
-                ParallelismMode = NormalizeParallelismMode(ReadString(root, "parallelism_mode") ?? ReadString(root, "parallelismMode") ?? "single"),
+                ParallelismMode = parallelismMode,
                 ParallelismPlacement = NormalizeParallelismPlacement(ReadString(root, "parallelism_placement") ?? ReadString(root, "parallelismPlacement") ?? "local"),
+                ParallelTensor = ReadBool(root, "parallel_tensor") ?? ReadBool(root, "parallelTensor") ?? parallelismMode == "tensor_parallel",
                 ContextLength = (uint)Math.Max(1, ReadInt64(root, "context_length") ?? ReadInt64(root, "contextLength") ?? 8192),
                 EvalBatchSize = (int)Math.Max(1, ReadInt64(root, "eval_batch_size") ?? ReadInt64(root, "evalBatchSize") ?? 512),
                 GpuLayerCount = (int)(ReadInt64(root, "gpu_layer_count") ?? ReadInt64(root, "gpuLayerCount") ?? -1),
@@ -3769,6 +4175,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                 Backend = config.Backend.ToString().ToLowerInvariant(),
                 ParallelismMode = ToParallelismModeName(config.ParallelismMode),
                 ParallelismPlacement = ToParallelismPlacementName(config.ParallelismPlacement),
+                ParallelTensor = config.ParallelTensor || config.ParallelismMode == LlmParallelismMode.TensorParallel,
                 ContextLength = config.ContextLength,
                 EvalBatchSize = config.EvalBatchSize,
                 GpuLayerCount = config.GpuLayerCount,
@@ -3800,6 +4207,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                 Backend = Backend,
                 ParallelismMode = ParallelismMode,
                 ParallelismPlacement = ParallelismPlacement,
+                ParallelTensor = ParallelTensor,
                 ContextLength = ContextLength,
                 EvalBatchSize = EvalBatchSize,
                 GpuLayerCount = GpuLayerCount,

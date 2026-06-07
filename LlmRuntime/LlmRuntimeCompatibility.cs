@@ -12,17 +12,25 @@ public sealed class LlmRuntimeCompatibilityService
     public const string CudaToolkitDownloadUrl = "https://developer.nvidia.com/cuda-downloads";
     public const string DefaultPytorchRepairMessage = "CUDA-capable GPU generation is disabled until Python has a compatible CUDA-enabled PyTorch build.";
     public const string DefaultLinuxPytorchCudaIndexUrl = "https://download.pytorch.org/whl/cu124";
+    public const string DefaultWindowsLegacyCudaPytorchIndexUrl = "https://download.pytorch.org/whl/cu118";
     public const string LinuxCudaPytorchInstallEndpoint = "/api/v1/runtime/compatibility/install-linux-cuda-pytorch";
     public const string LinuxCudaPytorchInstallScriptRelativePath = "install/linux/install-jackllm-cuda-pytorch.sh";
+    public const string WindowsLegacyCudaPythonVersion = "3.11.9";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
+    private static readonly SemaphoreSlim WindowsLegacyCudaRepairGate = new(1, 1);
 
     private readonly LlmRuntimeOptions _options;
     private readonly ILlmRuntimeCompatibilityProbe _probe;
+    private readonly object _statusCacheLock = new();
+    private LlmRuntimeCompatibilityStatus? _cachedStatus;
+    private DateTimeOffset _cachedStatusUtc = DateTimeOffset.MinValue;
+    private string _cachedStatusPython = "";
+    private static readonly TimeSpan StatusCacheTtl = TimeSpan.FromMinutes(10);
 
     public LlmRuntimeCompatibilityService(LlmRuntimeOptions? options = null, ILlmRuntimeCompatibilityProbe? probe = null)
     {
@@ -32,15 +40,28 @@ public sealed class LlmRuntimeCompatibilityService
 
     public string ConfigPath => ResolveCompatibilityConfigPath(_options);
 
-    public LlmRuntimeCompatibilityStatus GetStatus(string? pythonExecutable = null, CancellationToken cancellationToken = default)
+    public LlmRuntimeCompatibilityStatus GetStatus(string? pythonExecutable = null, CancellationToken cancellationToken = default, bool forceRefresh = false)
     {
+        string pythonPath = ResolvePythonExecutable(pythonExecutable);
+        if (!forceRefresh)
+        {
+            lock (_statusCacheLock)
+            {
+                if (_cachedStatus != null &&
+                    string.Equals(_cachedStatusPython, pythonPath, StringComparison.OrdinalIgnoreCase) &&
+                    DateTimeOffset.UtcNow - _cachedStatusUtc < StatusCacheTtl)
+                {
+                    return _cachedStatus;
+                }
+            }
+        }
+
         LlmRuntimeCompatibilityConfig config = LoadConfig();
         LlmRuntimeCompatibilityCatalog catalog = BuildCatalog(config);
         IReadOnlyList<LlmDetectedGpu> detectedGpus = _probe.DetectNvidiaGpus(cancellationToken);
         foreach (LlmDetectedGpu gpu in detectedGpus)
             PopulateGpuCatalogMatch(gpu, catalog);
 
-        string pythonPath = ResolvePythonExecutable(pythonExecutable);
         LlmPythonRuntimeStatus python = string.IsNullOrWhiteSpace(pythonPath)
             ? new LlmPythonRuntimeStatus { IsAvailable = false, Error = "No Python executable was configured or found." }
             : _probe.InspectPython(pythonPath, cancellationToken);
@@ -63,8 +84,9 @@ public sealed class LlmRuntimeCompatibilityService
         bool torchCudaAvailable = python.HasTorch && python.TorchCudaAvailable && torchCompatible;
         bool repairRequired = gpuDetected && (!python.HasTorch || !python.TorchCudaAvailable || !torchCompatible);
         bool generationDisabled = !torchCudaAvailable;
+        bool legacyCudaRepairAvailable = repairRequired && CanRepairWithWindowsLegacyCudaPython(detectedGpus, hasCudaDriver, config);
         string status = torchCudaAvailable ? "ok" : repairRequired ? "repair_required" : "cpu_only";
-        string message = BuildStatusMessage(gpuDetected, hasCudaDriver, python, torchCompatible, recommendation, missingCudaDependencies);
+        string message = BuildStatusMessage(gpuDetected, hasCudaDriver, python, torchCompatible, recommendation, missingCudaDependencies, legacyCudaRepairAvailable);
         string linuxInstallScriptPath = RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
             ? ResolveLinuxCudaPytorchInstallScriptPath()
             : "";
@@ -123,14 +145,16 @@ public sealed class LlmRuntimeCompatibilityService
                 Label = "Repair PyTorch",
                 Kind = "post",
                 Endpoint = "/api/v1/runtime/compatibility/repair-pytorch",
-                Enabled = config.AllowPytorchRepair && recommendation != null,
+                Enabled = config.AllowPytorchRepair && (recommendation != null || legacyCudaRepairAvailable),
                 Detail = recommendation == null
-                    ? "No compatible PyTorch CUDA wheel could be selected for this Python/GPU combination."
+                    ? legacyCudaRepairAvailable
+                        ? "Install JackLLM's Python " + WindowsLegacyCudaPythonVersion + " legacy CUDA runtime with torch 2.1/cu118 for this GPU."
+                        : "No compatible PyTorch CUDA wheel could be selected for this Python/GPU combination."
                     : "Install torch " + recommendation.PytorchVersion + " from " + recommendation.IndexUrl + "."
             });
         }
 
-        return new LlmRuntimeCompatibilityStatus
+        var statusPayload = new LlmRuntimeCompatibilityStatus
         {
             Status = status,
             Message = message,
@@ -152,6 +176,14 @@ public sealed class LlmRuntimeCompatibilityService
             },
             Actions = actions
         };
+        lock (_statusCacheLock)
+        {
+            _cachedStatus = statusPayload;
+            _cachedStatusUtc = DateTimeOffset.UtcNow;
+            _cachedStatusPython = pythonPath;
+        }
+
+        return statusPayload;
     }
 
     public LlmRuntimeCompatibilityConfig LoadConfig()
@@ -178,6 +210,7 @@ public sealed class LlmRuntimeCompatibilityService
         string path = ConfigPath;
         Directory.CreateDirectory(Path.GetDirectoryName(path) ?? Environment.CurrentDirectory);
         File.WriteAllText(path, JsonSerializer.Serialize(config, JsonOptions));
+        InvalidateStatusCache();
         return config;
     }
 
@@ -186,16 +219,30 @@ public sealed class LlmRuntimeCompatibilityService
         string path = ConfigPath;
         if (File.Exists(path))
             File.Delete(path);
+        InvalidateStatusCache();
+    }
+
+    private void InvalidateStatusCache()
+    {
+        lock (_statusCacheLock)
+        {
+            _cachedStatus = null;
+            _cachedStatusUtc = DateTimeOffset.MinValue;
+            _cachedStatusPython = "";
+        }
     }
 
     public async Task<LlmPytorchRepairResult> RepairPytorchAsync(string? pythonExecutable = null, CancellationToken cancellationToken = default)
     {
-        LlmRuntimeCompatibilityStatus status = GetStatus(pythonExecutable, cancellationToken);
+        LlmRuntimeCompatibilityStatus status = GetStatus(pythonExecutable, cancellationToken, forceRefresh: true);
+        if (!status.Config.AllowPytorchRepair)
+            throw new InvalidOperationException("PyTorch repair is disabled in LlmRuntime compatibility configuration.");
+        if (status.Diagnostics.RecommendedPytorch == null && CanRepairWithWindowsLegacyCudaPython(status))
+            return await RepairWindowsLegacyCudaPytorchAsync(cancellationToken).ConfigureAwait(false);
+
         string pythonPath = status.Diagnostics.Python.ExecutablePath;
         if (string.IsNullOrWhiteSpace(pythonPath) || !status.Diagnostics.Python.IsAvailable)
             throw new InvalidOperationException("No usable Python executable was found for PyTorch repair.");
-        if (!status.Config.AllowPytorchRepair)
-            throw new InvalidOperationException("PyTorch repair is disabled in LlmRuntime compatibility configuration.");
         if (status.Diagnostics.RecommendedPytorch == null)
             throw new InvalidOperationException("No compatible CUDA PyTorch wheel could be selected for this Python/GPU combination.");
 
@@ -220,7 +267,7 @@ public sealed class LlmRuntimeCompatibilityService
         if (run.ExitCode != 0)
             throw new InvalidOperationException("Failed to repair PyTorch. " + BuildProcessDetail(run));
 
-        LlmRuntimeCompatibilityStatus repaired = GetStatus(pythonPath, cancellationToken);
+        LlmRuntimeCompatibilityStatus repaired = GetStatus(pythonPath, cancellationToken, forceRefresh: true);
         return new LlmPytorchRepairResult
         {
             Status = repaired.IsGpuGenerationEnabled ? "repaired" : "failed",
@@ -230,6 +277,52 @@ public sealed class LlmRuntimeCompatibilityService
             IndexUrl = recommendation.IndexUrl,
             Message = repaired.IsGpuGenerationEnabled
                 ? "CUDA-enabled PyTorch is ready for GPU generation."
+                : repaired.Message,
+            Compatibility = repaired
+        };
+    }
+
+    private async Task<LlmPytorchRepairResult> RepairWindowsLegacyCudaPytorchAsync(CancellationToken cancellationToken)
+    {
+        string pythonPath = await EnsureWindowsLegacyCudaPythonAsync(cancellationToken).ConfigureAwait(false);
+        var args = new List<string>
+        {
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input",
+            "--upgrade",
+            "--force-reinstall",
+            "torch==2.1.*",
+            "torchvision==0.16.*",
+            "torchaudio==2.1.*",
+            "--index-url",
+            DefaultWindowsLegacyCudaPytorchIndexUrl
+        };
+
+        LlmProcessRunResult run = await _probe.RunPythonAsync(pythonPath, args, TimeSpan.FromMinutes(30), cancellationToken).ConfigureAwait(false);
+        if (run.ExitCode != 0)
+            throw new InvalidOperationException("Failed to install legacy CUDA PyTorch. " + BuildProcessDetail(run));
+
+        LlmProcessRunResult numpy = await _probe.RunPythonAsync(
+            pythonPath,
+            ["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "--force-reinstall", "numpy<2"],
+            TimeSpan.FromMinutes(8),
+            cancellationToken).ConfigureAwait(false);
+        if (numpy.ExitCode != 0)
+            throw new InvalidOperationException("Failed to pin NumPy for legacy CUDA PyTorch. " + BuildProcessDetail(numpy));
+
+        LlmRuntimeCompatibilityStatus repaired = GetStatus(pythonPath, cancellationToken, forceRefresh: true);
+        return new LlmPytorchRepairResult
+        {
+            Status = repaired.IsGpuGenerationEnabled ? "repaired" : "failed",
+            PythonExecutable = pythonPath,
+            PytorchVersion = repaired.Diagnostics.Python.TorchVersion,
+            TorchCudaVersion = repaired.Diagnostics.Python.TorchCudaVersion,
+            IndexUrl = DefaultWindowsLegacyCudaPytorchIndexUrl,
+            Message = repaired.IsGpuGenerationEnabled
+                ? "Legacy CUDA-enabled PyTorch is ready for GPU generation."
                 : repaired.Message,
             Compatibility = repaired
         };
@@ -248,7 +341,7 @@ public sealed class LlmRuntimeCompatibilityService
         if (string.IsNullOrWhiteSpace(scriptPath) || !File.Exists(scriptPath))
             throw new FileNotFoundException("The bundled Linux CUDA/PyTorch installer script was not found.", scriptPath);
 
-        LlmRuntimeCompatibilityStatus before = GetStatus(pythonExecutable, cancellationToken);
+        LlmRuntimeCompatibilityStatus before = GetStatus(pythonExecutable, cancellationToken, forceRefresh: true);
         string pythonPath = ResolvePythonExecutable(pythonExecutable);
         string indexUrl = FirstNonEmpty(
             torchIndexUrl,
@@ -281,7 +374,7 @@ public sealed class LlmRuntimeCompatibilityService
         }
 
         LlmProcessRunResult run = await RunProcessAsync("bash", args, TimeSpan.FromMinutes(45), cancellationToken).ConfigureAwait(false);
-        LlmRuntimeCompatibilityStatus after = GetStatus(pythonExecutable, cancellationToken);
+        LlmRuntimeCompatibilityStatus after = GetStatus(pythonExecutable, cancellationToken, forceRefresh: true);
         bool installed = run.ExitCode == 0 && after.IsGpuGenerationEnabled;
         return new LlmLinuxCudaPytorchInstallResult
         {
@@ -296,6 +389,100 @@ public sealed class LlmRuntimeCompatibilityService
                 : "Linux CUDA/PyTorch install finished with exit code " + run.ExitCode.ToString(CultureInfo.InvariantCulture) + ". " + after.Message,
             Compatibility = after
         };
+    }
+
+    private static async Task<string> EnsureWindowsLegacyCudaPythonAsync(CancellationToken cancellationToken)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            throw new PlatformNotSupportedException("The legacy CUDA Python repair is only available on Windows.");
+
+        string pythonPath = ResolveWindowsLegacyCudaPythonExecutable();
+        if (File.Exists(pythonPath))
+            return pythonPath;
+
+        await WindowsLegacyCudaRepairGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(pythonPath))
+                return pythonPath;
+
+            string directory = ResolveWindowsLegacyCudaPythonDirectory();
+            Directory.CreateDirectory(directory);
+            string installerFile = "python-" + WindowsLegacyCudaPythonVersion + "-" + GetWindowsPythonInstallerArchitecture() + ".exe";
+            string installerPath = Path.Combine(directory, installerFile);
+            if (!File.Exists(installerPath))
+            {
+                string installerUrl = "https://www.python.org/ftp/python/" + WindowsLegacyCudaPythonVersion + "/" + installerFile;
+                await DownloadFileAsync(installerUrl, installerPath, cancellationToken).ConfigureAwait(false);
+            }
+
+            LlmProcessRunResult install = await RunProcessAsync(
+                installerPath,
+                [
+                    "/quiet",
+                    "InstallAllUsers=0",
+                    "PrependPath=0",
+                    "Include_pip=1",
+                    "Include_test=0",
+                    "TargetDir=" + directory
+                ],
+                TimeSpan.FromMinutes(10),
+                cancellationToken).ConfigureAwait(false);
+            if (install.ExitCode != 0)
+                throw new InvalidOperationException("Legacy CUDA Python installer failed. " + BuildProcessDetail(install));
+            if (!File.Exists(pythonPath))
+                throw new InvalidOperationException("Legacy CUDA Python install completed but did not create " + pythonPath + ".");
+
+            var probe = new DefaultLlmRuntimeCompatibilityProbe();
+            LlmProcessRunResult pip = await probe.RunPythonAsync(
+                pythonPath,
+                ["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "pip", "setuptools", "wheel"],
+                TimeSpan.FromMinutes(8),
+                cancellationToken).ConfigureAwait(false);
+            if (pip.ExitCode != 0)
+                throw new InvalidOperationException("Legacy CUDA Python pip upgrade failed. " + BuildProcessDetail(pip));
+
+            return pythonPath;
+        }
+        finally
+        {
+            WindowsLegacyCudaRepairGate.Release();
+        }
+    }
+
+    private static string ResolveWindowsLegacyCudaPythonDirectory() =>
+        Path.Combine(AppContext.BaseDirectory, "PythonCudaLegacy");
+
+    private static string ResolveWindowsLegacyCudaPythonExecutable() =>
+        Path.Combine(ResolveWindowsLegacyCudaPythonDirectory(), "python.exe");
+
+    private static string GetWindowsPythonInstallerArchitecture() =>
+        RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.Arm64 => "arm64",
+            Architecture.X86 => "win32",
+            _ => "amd64"
+        };
+
+    private static async Task DownloadFileAsync(string url, string destinationPath, CancellationToken cancellationToken)
+    {
+        string? directory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        await using Stream source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using var destination = new FileStream(
+            destinationPath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            1 << 16,
+            useAsync: true);
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
     }
 
     public static string ResolveCompatibilityConfigPath(LlmRuntimeOptions options)
@@ -542,12 +729,12 @@ public sealed class LlmRuntimeCompatibilityService
             }
         }
 
-        string cudaLegacy = Path.Combine(AppContext.BaseDirectory, "PythonCudaLegacy", RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "Scripts\\python.exe" : "bin/python3");
-        if (File.Exists(cudaLegacy))
-            return cudaLegacy;
-        cudaLegacy = Path.Combine(AppContext.BaseDirectory, "PythonCudaLegacy", "bin", "python");
-        if (File.Exists(cudaLegacy))
-            return cudaLegacy;
+        string cudaLegacyRoot = Path.Combine(AppContext.BaseDirectory, "PythonCudaLegacy");
+        foreach (string candidate in EnumeratePythonExecutablesUnderRoot(cudaLegacyRoot))
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
         string bundled = Path.Combine(AppContext.BaseDirectory, "Python", RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python.exe" : "bin/python3");
         if (File.Exists(bundled))
             return bundled;
@@ -590,7 +777,8 @@ public sealed class LlmRuntimeCompatibilityService
         LlmPythonRuntimeStatus python,
         bool torchCompatible,
         LlmPytorchPackageRecommendation? recommendation,
-        IReadOnlyList<string> missingCudaDependencies)
+        IReadOnlyList<string> missingCudaDependencies,
+        bool legacyCudaRepairAvailable)
     {
         if (!gpuDetected)
             return "No NVIDIA CUDA GPU was detected. Local image generation should remain disabled instead of falling back silently to CPU.";
@@ -602,8 +790,10 @@ public sealed class LlmRuntimeCompatibilityService
             return "Python runtime is unavailable: " + python.Error;
         if (!python.HasTorch)
             return recommendation == null
-                ? "Python is available, but PyTorch is not installed and no compatible CUDA wheel was found."
-                : DefaultPytorchRepairMessage;
+                ? legacyCudaRepairAvailable
+                    ? "Python is available, but this GPU/Python pair needs JackLLM's legacy CUDA Python runtime. Use Repair PyTorch to install Python " + WindowsLegacyCudaPythonVersion + " with CUDA-enabled torch 2.1/cu118."
+                    : "Python is available, but PyTorch is not installed in JackLLM's image-generation Python environment. CUDA was detected, but JackLLM could not automatically select a matching PyTorch CUDA wheel for this Python/GPU pair."
+                : "Python is available, but PyTorch is not installed in JackLLM's image-generation Python environment. Use Repair PyTorch to install CUDA-enabled PyTorch.";
         if (string.IsNullOrWhiteSpace(python.TorchCudaVersion))
             return "Python has a CPU-only PyTorch build. Use Repair PyTorch to install a compatible CUDA wheel.";
         if (!python.TorchCudaAvailable)
@@ -622,6 +812,36 @@ public sealed class LlmRuntimeCompatibilityService
             return "Installed PyTorch/CUDA does not match this Python/GPU compatibility catalog. Use Repair PyTorch.";
         }
         return "CUDA-enabled PyTorch is compatible with this GPU.";
+    }
+
+    private static bool CanRepairWithWindowsLegacyCudaPython(LlmRuntimeCompatibilityStatus status)
+    {
+        if (status == null)
+            return false;
+        return CanRepairWithWindowsLegacyCudaPython(
+            status.Diagnostics.Gpus,
+            status.Diagnostics.HasCudaDriver,
+            status.Config);
+    }
+
+    private static bool CanRepairWithWindowsLegacyCudaPython(
+        IReadOnlyList<LlmDetectedGpu> gpus,
+        bool hasCudaDriver,
+        LlmRuntimeCompatibilityConfig config)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || !hasCudaDriver || config.AllowPytorchRepair == false)
+            return false;
+
+        LlmDetectedGpu? bestGpu = (gpus ?? [])
+            .Where(gpu => gpu.IsNvidia)
+            .OrderByDescending(gpu => ParseCapability(gpu.ComputeCapability))
+            .FirstOrDefault();
+        if (bestGpu == null || !TryParseCapability(bestGpu.ComputeCapability, out int major, out int minor))
+            return false;
+
+        if (major < 5)
+            return false;
+        return major < 7 || (major == 7 && minor < 5);
     }
 
     private static string BuildProcessDetail(LlmProcessRunResult run)

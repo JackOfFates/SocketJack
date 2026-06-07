@@ -76,6 +76,7 @@ public partial class MainWindow : Window {
     private const string CompleteModelRootEnvironmentVariable = "JACKLLM_COMPLETE_MODEL_ROOT";
     private const string RuntimeProviderLlmRuntime = "llmruntime";
     private const string RuntimeProviderLmStudio = "lmstudio";
+    private const string PersonaPlexInstallHeaderName = "X-JackLLM-Workstation-Install";
     private const int LinuxNativeProxyPort = 12434;
     private const int LinuxNativeDuplicatorPort = 12433;
     private const int LinuxNativeRuntimePort = 12435;
@@ -96,6 +97,7 @@ public partial class MainWindow : Window {
     private static readonly TimeSpan ShellRelayHealthCheckInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ShellRelayRecoveryNoAgentDelay = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan ShellRelayRecentAgentGrace = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan LocalRuntimeWarningRefreshInterval = TimeSpan.FromSeconds(30);
     private static readonly int[] ForwardedTcpPorts = { ChatServerPort, FtpServerPort };
 
     private SocketJack.Net.LmVsProxy _proxy = null!;
@@ -118,6 +120,7 @@ public partial class MainWindow : Window {
     private readonly ObservableCollection<ModelBenchmarkItem> _modelBenchmarkItems = new();
     private string _latestModelBenchmarksJson = "";
     private readonly ObservableCollection<ModelReconfigurationSuggestionItem> _modelReconfigurationItems = new();
+    private readonly List<ModelReconfigurationSuggestionItem> _dismissedNotificationInfoItems = new();
     private readonly ObservableCollection<RegistrationRequestItem> _registrationRequestItems = new();
     private readonly ObservableCollection<TokenRateRequestItem> _tokenRateRequestItems = new();
     private readonly ObservableCollection<ServerManagementRequestItem> _serverManagementRequestItems = new();
@@ -170,6 +173,7 @@ public partial class MainWindow : Window {
     private readonly BandwidthMetricTracker _chatBandwidthOutTracker = new("Outbound");
     private readonly BandwidthMetricTracker _networkUpTracker = new("Network Up");
     private readonly BandwidthMetricTracker _networkDownTracker = new("Network Down");
+    private readonly object _networkHealthSampleLock = new();
     private readonly RateMetricTracker _ioTracker = new("I/O");
     private readonly Queue<double> _tokenRateSamples = new();
     private readonly string _settingsPath = GetSettingsPath();
@@ -204,6 +208,22 @@ public partial class MainWindow : Window {
     private string _linuxNativeBackendWarningDetail = "";
     private string _linuxNativeBackendExecutablePath = "";
     private string _linuxNativeBackendLogPath = "";
+    private bool _imageRuntimeCompatibilityRefreshInProgress;
+    private bool _imageRuntimeCompatibilityWarningActive;
+    private string _imageRuntimeCompatibilityWarningSeverity = "WARN";
+    private string _imageRuntimeCompatibilityWarningSignal = "";
+    private string _imageRuntimeCompatibilityWarningRecommendation = "";
+    private bool _imageRuntimeCompatibilityCanRepair;
+    private bool _imageRuntimeCompatibilityCanInstallCuda;
+    private DateTimeOffset _lastImageRuntimeCompatibilityRefreshUtc = DateTimeOffset.MinValue;
+    private bool _personaPlexStatusRefreshInProgress;
+    private bool _personaPlexWarningActive;
+    private string _personaPlexWarningSeverity = "WARN";
+    private string _personaPlexWarningSignal = "";
+    private string _personaPlexWarningRecommendation = "";
+    private bool _personaPlexWarningCanInstall;
+    private bool _personaPlexWarningNeedsToken;
+    private DateTimeOffset _lastPersonaPlexStatusRefreshUtc = DateTimeOffset.MinValue;
     private readonly List<ShellRelay> _shellRelays = new();
     private DateTimeOffset? _startedAt;
     private long _logLines;
@@ -256,6 +276,9 @@ public partial class MainWindow : Window {
     private bool _sessionSearchRegexEnabled;
     private string _workspaceTreeSignature = "";
     private string _servicePanelSignature = "";
+    private string _selectedServiceDetailsSignature = "";
+    private string _selectedServiceLogSignature = "";
+    private int? _lastAppliedChatThroughputTokensPerSecond;
     private ServiceMetricItem? _selectedServiceMetric;
     private bool _updatingServiceSelection;
     private Storyboard? _pipelineStatusStoryboard;
@@ -315,6 +338,7 @@ public partial class MainWindow : Window {
     private DateTimeOffset _lastUpdaterStatusUtc = DateTimeOffset.MinValue;
     private DateTimeOffset _lastUpdaterCheckStartedUtc = DateTimeOffset.MinValue;
     private DateTimeOffset _lastUpdaterPromptUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastNetworkHealthRefreshStartedUtc = DateTimeOffset.MinValue;
     private bool _lastUpdateAvailableVisible;
     private bool _updatePromptVisible;
     private DateTimeOffset? _lastChatBandwidthSampleUtc;
@@ -323,10 +347,16 @@ public partial class MainWindow : Window {
     private DateTimeOffset? _lastTokenPerformanceSampleUtc;
     private DateTimeOffset _lastGpuHealthSampleUtc = DateTimeOffset.MinValue;
     private volatile bool _gpuHealthRefreshInProgress;
+    private volatile bool _networkHealthRefreshInProgress;
+    private bool _pendingNetworkHealthSampleAvailable;
+    private bool _pendingNetworkHealthSampleFailed;
     private long _lastChatBandwidthBytesIn;
     private long _lastChatBandwidthBytesOut;
     private long _lastNetworkBytesUp;
     private long _lastNetworkBytesDown;
+    private long _pendingNetworkHealthBytesUp;
+    private long _pendingNetworkHealthBytesDown;
+    private DateTimeOffset _pendingNetworkHealthSampleUtc = DateTimeOffset.MinValue;
     private long _lastTokenPerformanceTotal;
     private ulong _lastIoReadBytes;
     private ulong _lastIoWriteBytes;
@@ -372,6 +402,10 @@ public partial class MainWindow : Window {
     private DispatcherTimer? _wpfChatIntellisenseTimer;
     private string _wpfChatActiveStreamId = "";
     private string _lastWpfChatPromptText = "";
+    private Window? _personaPlexInstallToast;
+    private bool _personaPlexInstallNoticeShown;
+    private bool _personaPlexInstallInProgress;
+    private bool _personaPlexNeedsTokenNotice;
     private RemoteSessionFileCloneItem? _remoteCloneDragAnchor;
     private bool _remoteCloneDragSelecting;
 
@@ -885,10 +919,7 @@ public partial class MainWindow : Window {
         }
 
         try {
-            List<WebAuthUserItem> webAuthItems = await Task.Run(() =>
-                _proxy.GetWebAuthUserDiagnostics()
-                    .Select(WebAuthUserItem.FromSnapshot)
-                    .ToList(),
+            List<WebAuthUserItem> webAuthItems = await Task.Run(BuildServerManagementUserItems,
                 cancellationToken);
             _webAuthUserItems.Clear();
             foreach (WebAuthUserItem item in webAuthItems)
@@ -989,6 +1020,7 @@ public partial class MainWindow : Window {
                 try { toast.Close(); } catch { }
             }
             _registrationRequestToasts.Clear();
+            ClosePersonaPlexInstallToast();
             DisposeWpfChatVoice();
             try { StopShellMode(updateCheckbox: false); } catch { }
             StopLinuxNativeBackendSupervisor();
@@ -2736,11 +2768,14 @@ public partial class MainWindow : Window {
             WpfChatStreamResult result = await StreamWpfChatWithRetryAsync(requestJson, pendingAssistant);
             if (string.IsNullOrWhiteSpace(result.Content) && string.IsNullOrWhiteSpace(result.Reasoning))
                 result.Content = "(empty response)";
-            pendingAssistant.UpdateAssistant(result.VisibleContent, result.VisibleReasoning);
+            bool suppressReasoning = IsPlainWpfChatRequest(requestJson);
+            string visibleContent = result.VisibleContent;
+            string visibleReasoning = suppressReasoning ? "" : result.VisibleReasoning;
+            pendingAssistant.UpdateAssistant(visibleContent, visibleReasoning);
             _wpfChatHistory.Add(new WpfChatHistoryMessage("user", userDisplay));
-            _wpfChatHistory.Add(new WpfChatHistoryMessage("assistant", result.Content));
+            _wpfChatHistory.Add(new WpfChatHistoryMessage("assistant", visibleContent));
             WpfChatStatusText.Text = "Response received.";
-            SpeakWpfChatResponse(result.Content);
+            SpeakWpfChatResponse(visibleContent);
         } catch (Exception ex) {
             if (ex is OperationCanceledException) {
                 WpfChatStatusText.Text = "Generation stopped.";
@@ -2825,6 +2860,7 @@ public partial class MainWindow : Window {
         var result = new WpfChatStreamResult();
         var contentBuilder = new StringBuilder();
         var reasoningBuilder = new StringBuilder();
+        bool suppressReasoning = IsPlainWpfChatRequest(requestJson);
         var assistantUpdateStopwatch = Stopwatch.StartNew();
         var statusUpdateStopwatch = Stopwatch.StartNew();
         TimeSpan assistantUpdateInterval = TimeSpan.FromMilliseconds(90);
@@ -2837,7 +2873,7 @@ public partial class MainWindow : Window {
             result.Content = contentBuilder.ToString();
             result.Reasoning = reasoningBuilder.ToString();
             string visibleContent = result.VisibleContent;
-            string visibleReasoning = result.VisibleReasoning;
+            string visibleReasoning = suppressReasoning ? "" : result.VisibleReasoning;
             await Dispatcher.InvokeAsync(() => {
                 pendingAssistant.UpdateAssistant(visibleContent, visibleReasoning);
                 ScrollWpfChatToEnd();
@@ -2886,6 +2922,18 @@ public partial class MainWindow : Window {
 
         await PublishAssistantUpdateAsync(force: true).ConfigureAwait(false);
         return result;
+    }
+
+    private static bool IsPlainWpfChatRequest(string requestJson) {
+        if (string.IsNullOrWhiteSpace(requestJson))
+            return true;
+        try {
+            using JsonDocument document = JsonDocument.Parse(requestJson);
+            string service = GetJsonString(document.RootElement, "service", "");
+            return string.IsNullOrWhiteSpace(service);
+        } catch {
+            return true;
+        }
     }
 
     private string BuildWpfChatStreamRequestJson(string promptText, IReadOnlyList<WpfChatAttachmentItem> attachments, IReadOnlyList<WpfUploadedChatFile> uploadedFiles) {
@@ -4316,7 +4364,10 @@ public partial class MainWindow : Window {
             return;
 
         string provider = GetSelectedModelRuntimeProvider();
-        ApplyModelRuntimeProviderToProxy(provider, startEmbeddedRuntime: _proxy.IsListening);
+        ApplyModelRuntimeProviderToProxy(provider, startEmbeddedRuntime: false);
+        if (_proxy.IsListening &&
+            string.Equals(NormalizeModelRuntimeProvider(provider), RuntimeProviderLlmRuntime, StringComparison.OrdinalIgnoreCase))
+            StartSelectedEmbeddedLlmRuntimeInBackground("provider-selection");
         SaveSettingsIfReady();
         RefreshMetrics();
     }
@@ -4611,7 +4662,12 @@ public partial class MainWindow : Window {
 
     private void ApplyChatThroughputTokensPerSecondToProxy(int tokensPerSecond) {
         try {
-            _proxy.ConfigureChatThroughputTokensPerSecond(tokensPerSecond);
+            int normalizedTokensPerSecond = NormalizeHostThroughputTokensPerSecond(tokensPerSecond);
+            if (_lastAppliedChatThroughputTokensPerSecond.HasValue &&
+                _lastAppliedChatThroughputTokensPerSecond.Value == normalizedTokensPerSecond)
+                return;
+
+            _lastAppliedChatThroughputTokensPerSecond = _proxy.ConfigureChatThroughputTokensPerSecond(normalizedTokensPerSecond);
         } catch (Exception ex) {
             if (_uiReady && SettingsStatusText != null)
                 SettingsStatusText.Text = "Throughput setting failed: " + TrimForDisplay(ex.Message, 120);
@@ -5223,16 +5279,18 @@ public partial class MainWindow : Window {
 
             if (Dispatcher.CheckAccess()) {
                 SelectModelRuntimeProvider(RuntimeProviderLlmRuntime);
-                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true);
+                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
                 SaveSettingsIfReady();
+                await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("model-manager-embedded-runtime");
                 return;
             }
 
             await TryInvokeOnUiAsync(() => {
                 SelectModelRuntimeProvider(RuntimeProviderLlmRuntime);
-                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true);
+                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
                 SaveSettingsIfReady();
             }, "Model manager embedded runtime selection");
+            await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("model-manager-embedded-runtime");
         };
         ModelsManagerControl.ModelDownloaded += path => TryBeginOnUi(() => {
             AppendLog("Model downloaded: " + Path.GetFileName(path));
@@ -5267,7 +5325,8 @@ public partial class MainWindow : Window {
                 }
 
                 SelectModelRuntimeProvider(RuntimeProviderLlmRuntime);
-                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true);
+                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
+                await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("model-manager-chat-service");
                 await RefreshWpfChatServicesAsync();
                 SelectWpfChatService(service);
                 SaveSettingsIfReady();
@@ -5327,7 +5386,9 @@ public partial class MainWindow : Window {
         if (usingEmbeddedRuntime) {
             bool restart = _proxy?.IsListening == true || _embeddedLlmRuntime.IsListening;
             DisposeEmbeddedLlmRuntime();
-            ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: restart);
+            ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
+            if (restart)
+                StartSelectedEmbeddedLlmRuntimeInBackground("models-location-change");
         } else if (IsWineSafeWpfMode() || IsWineEnvironment()) {
             RestartLinuxNativeBackendForModelsLocationChange();
         }
@@ -5614,7 +5675,7 @@ public partial class MainWindow : Window {
                     continue;
                 }
 
-                RegisterLinuxNativeBackendFailure("Backend did not answer /api/v1/runtime/compatibility after startup.");
+                RegisterLinuxNativeBackendFailure("Backend did not answer /api/v1/models after startup.");
                 StopLinuxNativeBackendProcess(kill: true);
             } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
                 break;
@@ -5711,6 +5772,8 @@ public partial class MainWindow : Window {
             "export JACKONNX_PYTHON_HOME=\"$PYTHON_HOME\"\n" +
             "export JACKONNX_PYTHON=\"$PYTHON_EXE\"\n" +
             "export JACKONNX_AUTO_CUDA_TORCH=\"${JACKONNX_AUTO_CUDA_TORCH:-1}\"\n" +
+            "if [ -z \"${JACKLLM_VLLM_PYTHON:-}\" ] && [ -x /opt/vllm/venv/bin/python ]; then export JACKLLM_VLLM_PYTHON=/opt/vllm/venv/bin/python; fi\n" +
+            "export JACKLLM_VLLM_ARGS=\"${JACKLLM_VLLM_ARGS:---dtype auto --enforce-eager}\"\n" +
             "export HF_HOME=\"${HF_HOME:-$JACKLLM_MODELS_LOCATION/HuggingFace}\"\n" +
             "export HUGGINGFACE_HUB_CACHE=\"${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}\"\n" +
             "export TRANSFORMERS_CACHE=\"${TRANSFORMERS_CACHE:-$HF_HOME/transformers}\"\n" +
@@ -5766,7 +5829,7 @@ public partial class MainWindow : Window {
             }
 
             if (!await ProbeLinuxNativeBackendAsync(cancellationToken).ConfigureAwait(false)) {
-                RegisterLinuxNativeBackendFailure("Backend compatibility probe failed while running.");
+                RegisterLinuxNativeBackendFailure("Backend model-list probe failed while running.");
                 StopLinuxNativeBackendProcess(kill: true);
                 return;
             }
@@ -5797,9 +5860,9 @@ public partial class MainWindow : Window {
 
     private static async Task<bool> ProbeLinuxNativeBackendAsync(CancellationToken cancellationToken) {
         try {
-            using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(8));
+            using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(4));
             using HttpResponseMessage response = await client.GetAsync(
-                "http://127.0.0.1:" + LinuxNativeRuntimePort.ToString(CultureInfo.InvariantCulture) + "/api/v1/runtime/compatibility",
+                "http://127.0.0.1:" + LinuxNativeRuntimePort.ToString(CultureInfo.InvariantCulture) + "/api/v1/models",
                 cancellationToken).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         } catch {
@@ -5937,8 +6000,9 @@ public partial class MainWindow : Window {
             string runtimeBaseUrl = GetExternalModelManagerRuntimeBaseUrl();
             if (string.IsNullOrWhiteSpace(runtimeBaseUrl)) {
                 SelectModelRuntimeProvider(RuntimeProviderLlmRuntime);
-                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true);
+                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
                 SaveSettingsIfReady();
+                await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("downloaded-model-load");
                 runtimeBaseUrl = _proxy.LocalModelRuntime.OpenAiBaseUrl;
             } else {
                 SelectModelRuntimeProvider(RuntimeProviderLlmRuntime);
@@ -6073,7 +6137,7 @@ public partial class MainWindow : Window {
                     DefaultWorkspaceRoot = Environment.CurrentDirectory,
                     RuntimeConfigPath = Path.Combine(GetGuiUserDataRoot(), "LlmRuntime.config.json"),
                     CompatibilityConfigPath = Path.Combine(GetGuiUserDataRoot(), "LlmRuntime.compatibility.json"),
-                    RestoreLoadedModelsOnStartup = true,
+                    RestoreLoadedModelsOnStartup = false,
                     Port = LocalLmStudioProxyPort,
                     ServerName = "LlmRuntime"
                 },
@@ -6084,27 +6148,18 @@ public partial class MainWindow : Window {
         _proxy.LocalModelRuntime = _embeddedLlmRuntime;
         _proxy.EmergencyModelRuntimeFallbackEnabled = true;
         _proxy.EmergencyFallbackModelRuntime = _lmStudioRuntime;
-        if (startEmbeddedRuntime) {
-            try {
-                _embeddedLlmRuntime.EnsureStartedAsync().GetAwaiter().GetResult();
-            } catch (Exception ex) {
-                AppendLog("LlmRuntime critical startup failure: " + TrimForDisplay(ex.Message, 220) + ". Checking LM Studio emergency fallback.");
-                bool fallbackActivated = _proxy.TryActivateEmergencyModelRuntimeFallbackAsync("gui-start", ex.Message, ex).GetAwaiter().GetResult();
-                if (!fallbackActivated)
-                    throw;
-
-                ModelRuntimeProviderStatusText.Text = "Embedded LlmRuntime critically failed; LM Studio emergency fallback is active. SocketJack.com was notified when possible.";
-                _llmRuntimeCapabilityLine = "LlmRuntime failed; LM Studio emergency fallback active.";
-                ScheduleWpfChatPromptReadyGlowRefresh();
-                return;
-            }
-        }
+        if (startEmbeddedRuntime)
+            StartSelectedEmbeddedLlmRuntimeInBackground("provider-start");
 
         _llmRuntimeCapabilityLine = "JackONNX tools: " + _jackOnnxToolDefinitions.Count.ToString(CultureInfo.InvariantCulture) +
                                     " | SockJackDml tools: 7 | Total registered: " +
                                     embeddedToolDefinitions.Count.ToString(CultureInfo.InvariantCulture) + ".";
         ModelRuntimeProviderStatusText.Text = "Embedded LlmRuntime is the local provider at " + _embeddedLlmRuntime.OpenAiBaseUrl + ". " + _llmRuntimeCapabilityLine;
         ScheduleWpfChatPromptReadyGlowRefresh();
+    }
+
+    private void StartSelectedEmbeddedLlmRuntimeInBackground(string operation) {
+        _ = EnsureSelectedEmbeddedLlmRuntimeStartedAsync(string.IsNullOrWhiteSpace(operation) ? "background" : operation);
     }
 
     private async Task EnsureSelectedEmbeddedLlmRuntimeStartedAsync(string operation, CancellationToken cancellationToken = default) {
@@ -9454,6 +9509,7 @@ public partial class MainWindow : Window {
             cancellationToken.ThrowIfCancellationRequested();
             ReportStartup(startupProgress, 98.8, "Probing model runtime", "Checking the selected local model endpoint.");
             await ProbeLmStudioAsync();
+            _ = CheckPersonaPlexVoiceInstallNoticeAsync();
         } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
             throw;
         } catch (Exception ex) {
@@ -10290,8 +10346,11 @@ public partial class MainWindow : Window {
         _lmStatusBrush = Brushes.Orange;
         _lmLatencyText = useExternalRuntime ? "Provider: external LlmRuntime" : "Provider: LlmRuntime";
         try {
-            if (startRuntime || useExternalRuntime)
-                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: startRuntime && !useExternalRuntime);
+            if (startRuntime || useExternalRuntime) {
+                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
+                if (startRuntime && !useExternalRuntime)
+                    await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("runtime-probe");
+            }
 
             string endpoint = _proxy.LocalModelRuntime.OpenAiBaseUrl.TrimEnd('/') + "/api/v1/models";
             var stopwatch = Stopwatch.StartNew();
@@ -10603,6 +10662,10 @@ public partial class MainWindow : Window {
         var suggestions = new List<ModelReconfigurationSuggestionItem>();
         if (_linuxNativeBackendWarningActive)
             suggestions.Add(BuildLinuxNativeBackendWarningItem());
+        if (_imageRuntimeCompatibilityWarningActive)
+            suggestions.Add(BuildImageRuntimeCompatibilityWarningItem());
+        if (_personaPlexWarningActive)
+            suggestions.Add(BuildPersonaPlexWarningItem());
 
         foreach (string model in activeModels) {
             ModelBenchmarkItem? benchmark = FindModelBenchmark(model);
@@ -10640,11 +10703,38 @@ public partial class MainWindow : Window {
                 "Keep current LM Studio parameters; re-run benchmarks after changing model, context length, or GPU offload."));
         }
 
-        return suggestions
+        var visibleSuggestions = suggestions
             .OrderByDescending(item => item.SeverityRank)
             .ThenBy(item => item.ModelName, StringComparer.OrdinalIgnoreCase)
             .Take(6)
             .ToList();
+        foreach (ModelReconfigurationSuggestionItem item in _dismissedNotificationInfoItems.Take(4)) {
+            if (!visibleSuggestions.Any(existing => string.Equals(existing.Signature, item.Signature, StringComparison.Ordinal)))
+                visibleSuggestions.Add(item);
+        }
+
+        return visibleSuggestions;
+    }
+
+    private void RecordDismissedNotificationInfo(string title, string detail) {
+        if (!Dispatcher.CheckAccess()) {
+            TryBeginOnUi(() => RecordDismissedNotificationInfo(title, detail), "dismissed notification info");
+            return;
+        }
+
+        string cleanTitle = FirstNonEmpty(title, "Dismissed notification");
+        string cleanDetail = FirstNonEmpty(detail, "Notification dismissed.");
+        string dismissedAt = DateTimeOffset.Now.ToString("g", CultureInfo.CurrentCulture);
+        var item = new ModelReconfigurationSuggestionItem(
+            cleanTitle,
+            "INFO",
+            "Dismissed " + dismissedAt + ".",
+            cleanDetail);
+        _dismissedNotificationInfoItems.RemoveAll(existing => string.Equals(existing.ModelName, item.ModelName, StringComparison.OrdinalIgnoreCase));
+        _dismissedNotificationInfoItems.Insert(0, item);
+        while (_dismissedNotificationInfoItems.Count > 8)
+            _dismissedNotificationInfoItems.RemoveAt(_dismissedNotificationInfoItems.Count - 1);
+        RefreshModelReconfigurationSuggestions();
     }
 
     private ModelReconfigurationSuggestionItem BuildLinuxNativeBackendWarningItem() {
@@ -10659,6 +10749,37 @@ public partial class MainWindow : Window {
                 new WarningActionItem("Repair CUDA/PyTorch", () => _ = BeginRepairPytorchFromWarningAsync()),
                 new WarningActionItem("Open Models Location", OpenModelsLocationFromWarning)
             });
+    }
+
+    private ModelReconfigurationSuggestionItem BuildImageRuntimeCompatibilityWarningItem() {
+        var actions = new List<WarningActionItem>();
+        if (_imageRuntimeCompatibilityCanRepair)
+            actions.Add(new WarningActionItem("Repair PyTorch", () => _ = BeginRepairPytorchFromWarningAsync()));
+        if (_imageRuntimeCompatibilityCanInstallCuda)
+            actions.Add(new WarningActionItem("Install CUDA", OpenCudaInstallerPage));
+
+        return new ModelReconfigurationSuggestionItem(
+            "Local image generation",
+            _imageRuntimeCompatibilityWarningSeverity,
+            FirstNonEmpty(_imageRuntimeCompatibilityWarningSignal, "JackLLM's image-generation Python runtime is not ready."),
+            FirstNonEmpty(_imageRuntimeCompatibilityWarningRecommendation, "Use Repair PyTorch from Workstation so image generation can use CUDA."),
+            actions);
+    }
+
+    private ModelReconfigurationSuggestionItem BuildPersonaPlexWarningItem() {
+        var actions = new List<WarningActionItem>();
+        if (_personaPlexWarningNeedsToken)
+            actions.Add(new WarningActionItem("Add Token", ShowPersonaPlexTokenDialog));
+        if (_personaPlexWarningCanInstall)
+            actions.Add(new WarningActionItem(_personaPlexWarningNeedsToken ? "Reinstall" : "Install", () => _ = InstallPersonaPlexVoiceModeFromWorkstationAsync()));
+        actions.Add(new WarningActionItem("Model Page", OpenPersonaPlexModelPage));
+
+        return new ModelReconfigurationSuggestionItem(
+            "NVIDIA PersonaPlex Voice Mode",
+            _personaPlexWarningSeverity,
+            FirstNonEmpty(_personaPlexWarningSignal, "PersonaPlex is not ready on this workstation."),
+            FirstNonEmpty(_personaPlexWarningRecommendation, "Install Voice Mode from Workstation or add the Hugging Face token after accepting NVIDIA's model license."),
+            actions);
     }
 
     private void WarningActionButton_Click(object sender, RoutedEventArgs e) {
@@ -10834,6 +10955,7 @@ public partial class MainWindow : Window {
     private static int SeverityRank(string severity) {
         return severity.Equals("CRIT", StringComparison.OrdinalIgnoreCase) ? 3 :
                severity.Equals("WARN", StringComparison.OrdinalIgnoreCase) ? 2 :
+               severity.Equals("INFO", StringComparison.OrdinalIgnoreCase) ? 1 :
                severity.Equals("OK", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
     }
 
@@ -11044,9 +11166,10 @@ public partial class MainWindow : Window {
         }
 
         if (Dispatcher.CheckAccess())
-            ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true);
+            ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
         else
-            await TryInvokeOnUiAsync(() => ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true), "Benchmark embedded runtime selection");
+            await TryInvokeOnUiAsync(() => ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false), "Benchmark embedded runtime selection");
+        await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("benchmark-embedded-runtime");
 
         string baseUrl = FirstNonEmpty(
             _proxy.LocalModelRuntime?.OpenAiBaseUrl,
@@ -11188,9 +11311,10 @@ public partial class MainWindow : Window {
             }
 
             if (Dispatcher.CheckAccess())
-                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true);
+                ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
             else
-                await TryInvokeOnUiAsync(() => ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: true), "Completion benchmark embedded runtime selection");
+                await TryInvokeOnUiAsync(() => ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false), "Completion benchmark embedded runtime selection");
+            await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("completion-benchmark-embedded-runtime");
 
             string baseUrl = FirstNonEmpty(
                 _proxy.LocalModelRuntime?.OpenAiBaseUrl,
@@ -11444,10 +11568,19 @@ public partial class MainWindow : Window {
                 SupportsTools = item.SupportsTools || ModelNameLikelySupportsTools(item.ModelId),
                 SupportsImageGeneration = item.SupportsImageGeneration || ModelNameLikelySupportsImageGeneration(item.ModelId),
                 SupportsAudioGeneration = item.SupportsAudioGeneration || ModelNameLikelySupportsAudioGeneration(item.ModelId),
-                SupportsVideoGeneration = item.SupportsVideoGeneration || ModelNameLikelySupportsVideoGeneration(item.ModelId)
+                SupportsVideoGeneration = item.SupportsVideoGeneration || ModelNameLikelySupportsVideoGeneration(item.ModelId),
+                RequiresPayment = item.RequiresPayment,
+                StripePriceId = item.StripePriceId,
+                StripeAccount = item.StripeAccount,
+                StripeUnitAmountCents = item.StripeUnitAmountCents,
+                StripeCurrency = item.StripeCurrency,
+                PaymentStatus = item.PaymentStatus,
+                CheckoutConfigured = item.CheckoutConfigured
             })
             .ToList();
-        return capabilities.Count == 0 ? _detectedHostModelCapabilitiesJson : JsonSerializer.Serialize(capabilities);
+        foreach (ModelCapabilityInfo capability in capabilities)
+            ApplyHostPaymentDefaults(capability);
+        return capabilities.Count == 0 ? ApplyHostPaymentDefaultsToModelCapabilitiesJson(_detectedHostModelCapabilitiesJson) : JsonSerializer.Serialize(capabilities);
     }
 
     private static bool HasCompletedModelBenchmark(string json) {
@@ -11529,6 +11662,7 @@ public partial class MainWindow : Window {
             GetJsonString(model, "name", ""),
             GetJsonString(model, "path", ""));
         if (!string.IsNullOrWhiteSpace(modelName)) {
+            ReadModelPaymentInfo(model, out bool requiresPayment, out string stripePriceId, out string stripeAccount, out long unitAmountCents, out string stripeCurrency, out string paymentStatus);
             modelNames.Add(modelName);
             AddOrUpdateModelCapability(modelCapabilities, new ModelCapabilityInfo {
                 ModelId = modelName,
@@ -11536,7 +11670,14 @@ public partial class MainWindow : Window {
                 SupportsTools = ModelNameLikelySupportsTools(modelName) || JsonElementIndicatesCapability(model, "tool", "tools", "function", "function_calling", "tool_use"),
                 SupportsImageGeneration = ModelNameLikelySupportsImageGeneration(modelName) || JsonElementIndicatesMediaGeneration(model, "image"),
                 SupportsAudioGeneration = ModelNameLikelySupportsAudioGeneration(modelName) || JsonElementIndicatesMediaGeneration(model, "audio"),
-                SupportsVideoGeneration = ModelNameLikelySupportsVideoGeneration(modelName) || JsonElementIndicatesMediaGeneration(model, "video")
+                SupportsVideoGeneration = ModelNameLikelySupportsVideoGeneration(modelName) || JsonElementIndicatesMediaGeneration(model, "video"),
+                RequiresPayment = requiresPayment,
+                StripePriceId = stripePriceId,
+                StripeAccount = stripeAccount,
+                StripeUnitAmountCents = unitAmountCents,
+                StripeCurrency = stripeCurrency,
+                PaymentStatus = paymentStatus,
+                CheckoutConfigured = !string.IsNullOrWhiteSpace(stripePriceId) || unitAmountCents > 0
             });
         }
 
@@ -11571,6 +11712,7 @@ public partial class MainWindow : Window {
     private static void AddOrUpdateModelCapability(List<ModelCapabilityInfo> modelCapabilities, ModelCapabilityInfo capability) {
         if (modelCapabilities == null || capability == null || string.IsNullOrWhiteSpace(capability.ModelId))
             return;
+        NormalizeModelCapabilityPayment(capability);
 
         ModelCapabilityInfo? existing = modelCapabilities.FirstOrDefault(item => string.Equals(item.ModelId, capability.ModelId, StringComparison.OrdinalIgnoreCase));
         if (existing == null) {
@@ -11583,6 +11725,115 @@ public partial class MainWindow : Window {
         existing.SupportsImageGeneration = existing.SupportsImageGeneration || capability.SupportsImageGeneration;
         existing.SupportsAudioGeneration = existing.SupportsAudioGeneration || capability.SupportsAudioGeneration;
         existing.SupportsVideoGeneration = existing.SupportsVideoGeneration || capability.SupportsVideoGeneration;
+        existing.RequiresPayment = existing.RequiresPayment || capability.RequiresPayment;
+        existing.StripePriceId = FirstNonEmpty(existing.StripePriceId, capability.StripePriceId);
+        existing.StripeAccount = FirstNonEmpty(existing.StripeAccount, capability.StripeAccount);
+        if (existing.StripeUnitAmountCents <= 0)
+            existing.StripeUnitAmountCents = Math.Max(0L, capability.StripeUnitAmountCents);
+        existing.StripeCurrency = FirstNonEmpty(existing.StripeCurrency, capability.StripeCurrency, "usd").ToLowerInvariant();
+        existing.PaymentStatus = FirstNonEmpty(existing.PaymentStatus, capability.PaymentStatus);
+        existing.CheckoutConfigured = existing.CheckoutConfigured || capability.CheckoutConfigured || !string.IsNullOrWhiteSpace(existing.StripePriceId) || existing.StripeUnitAmountCents > 0;
+    }
+
+    private static void NormalizeModelCapabilityPayment(ModelCapabilityInfo capability) {
+        if (capability == null)
+            return;
+        capability.StripeCurrency = FirstNonEmpty(capability.StripeCurrency, "usd").ToLowerInvariant();
+        capability.StripeUnitAmountCents = Math.Max(0L, capability.StripeUnitAmountCents);
+        capability.CheckoutConfigured = capability.CheckoutConfigured || !string.IsNullOrWhiteSpace(capability.StripePriceId) || capability.StripeUnitAmountCents > 0;
+        capability.RequiresPayment = capability.RequiresPayment || capability.CheckoutConfigured;
+        capability.PaymentStatus = FirstNonEmpty(capability.PaymentStatus, capability.RequiresPayment ? "payment-required" : "");
+    }
+
+    private void ApplyHostPaymentDefaults(ModelCapabilityInfo capability) {
+        if (capability == null)
+            return;
+
+        bool hostRequiresPayment = HostRequiresPaymentCheckBox?.IsChecked.GetValueOrDefault(false) == true;
+        string hostPriceId = HostStripePriceIdTextBox?.Text ?? "";
+        string hostAccount = HostStripeAccountTextBox?.Text ?? "";
+        long hostUnitAmountCents = Math.Max(0L, ParseLong(HostStripeUnitAmountTextBox?.Text ?? "", 0));
+        string hostCurrency = FirstNonEmpty(HostStripeCurrencyTextBox?.Text, "usd").ToLowerInvariant();
+        if (!hostRequiresPayment && string.IsNullOrWhiteSpace(hostPriceId) && string.IsNullOrWhiteSpace(hostAccount) && hostUnitAmountCents <= 0) {
+            NormalizeModelCapabilityPayment(capability);
+            return;
+        }
+
+        capability.RequiresPayment = capability.RequiresPayment || hostRequiresPayment;
+        capability.StripePriceId = FirstNonEmpty(capability.StripePriceId, hostPriceId);
+        capability.StripeAccount = FirstNonEmpty(capability.StripeAccount, hostAccount);
+        if (capability.StripeUnitAmountCents <= 0)
+            capability.StripeUnitAmountCents = hostUnitAmountCents;
+        capability.StripeCurrency = FirstNonEmpty(capability.StripeCurrency, hostCurrency, "usd").ToLowerInvariant();
+        capability.PaymentStatus = FirstNonEmpty(capability.PaymentStatus, capability.RequiresPayment ? "payment-required" : "");
+        capability.CheckoutConfigured = capability.CheckoutConfigured || !string.IsNullOrWhiteSpace(capability.StripePriceId) || capability.StripeUnitAmountCents > 0;
+        NormalizeModelCapabilityPayment(capability);
+    }
+
+    private string ApplyHostPaymentDefaultsToModelCapabilitiesJson(string json) {
+        if (string.IsNullOrWhiteSpace(json))
+            return json ?? "";
+        bool hasHostPaymentDefaults =
+            HostRequiresPaymentCheckBox?.IsChecked.GetValueOrDefault(false) == true ||
+            !string.IsNullOrWhiteSpace(HostStripePriceIdTextBox?.Text) ||
+            !string.IsNullOrWhiteSpace(HostStripeAccountTextBox?.Text) ||
+            ParseLong(HostStripeUnitAmountTextBox?.Text ?? "", 0) > 0;
+        if (!hasHostPaymentDefaults)
+            return json;
+
+        try {
+            List<ModelCapabilityInfo>? capabilities = JsonSerializer.Deserialize<List<ModelCapabilityInfo>>(json);
+            if (capabilities == null || capabilities.Count == 0)
+                return json;
+            foreach (ModelCapabilityInfo capability in capabilities)
+                ApplyHostPaymentDefaults(capability);
+            return JsonSerializer.Serialize(capabilities);
+        } catch {
+            return json;
+        }
+    }
+
+    private static void ReadModelPaymentInfo(
+        JsonElement element,
+        out bool requiresPayment,
+        out string stripePriceId,
+        out string stripeAccount,
+        out long unitAmountCents,
+        out string stripeCurrency,
+        out string paymentStatus) {
+        JsonElement payment = element;
+        if (TryGetJsonProperty(element, "payment", out JsonElement paymentElement) &&
+            paymentElement.ValueKind == JsonValueKind.Object)
+            payment = paymentElement;
+
+        requiresPayment =
+            GetJsonBool(payment, "requiresPayment", GetJsonBool(payment, "paymentRequired", false)) ||
+            GetJsonBool(element, "requiresPayment", GetJsonBool(element, "paymentRequired", false));
+        stripePriceId = FirstNonEmpty(
+            GetJsonString(payment, "stripePriceId", ""),
+            GetJsonString(payment, "priceId", ""),
+            GetJsonString(element, "stripePriceId", ""),
+            GetJsonString(element, "priceId", ""));
+        stripeAccount = FirstNonEmpty(
+            GetJsonString(payment, "stripeAccount", ""),
+            GetJsonString(payment, "connectedAccount", ""),
+            GetJsonString(payment, "account", ""),
+            GetJsonString(element, "stripeAccount", ""),
+            GetJsonString(element, "connectedAccount", ""),
+            GetJsonString(element, "account", ""));
+        unitAmountCents = Math.Max(0L, Math.Max(
+            GetJsonLong(payment, "stripeUnitAmountCents", GetJsonLong(payment, "unitAmountCents", GetJsonLong(payment, "amountCents", 0))),
+            GetJsonLong(element, "stripeUnitAmountCents", GetJsonLong(element, "unitAmountCents", GetJsonLong(element, "amountCents", 0)))));
+        stripeCurrency = FirstNonEmpty(
+            GetJsonString(payment, "stripeCurrency", ""),
+            GetJsonString(payment, "currency", ""),
+            GetJsonString(element, "stripeCurrency", ""),
+            GetJsonString(element, "currency", ""),
+            "usd").ToLowerInvariant();
+        paymentStatus = FirstNonEmpty(
+            GetJsonString(payment, "paymentStatus", ""),
+            GetJsonString(payment, "status", ""),
+            GetJsonString(element, "paymentStatus", ""));
     }
 
     private static bool ModelNameLikelySupportsImages(string modelId) {
@@ -12198,9 +12449,7 @@ public partial class MainWindow : Window {
             string selectedOwnerKey = string.IsNullOrWhiteSpace(preferredOwnerKey)
                 ? (WebAuthUsersListBox?.SelectedItem as WebAuthUserItem)?.OwnerKey ?? ""
                 : preferredOwnerKey.Trim();
-            var items = _proxy.GetServerUserUsageDiagnostics()
-                .Select(WebAuthUserItem.FromSnapshot)
-                .ToList();
+            var items = BuildServerManagementUserItems();
             _suppressWebAuthUserSelectionChanged = true;
             try {
                 _webAuthUserItems.Clear();
@@ -12222,6 +12471,107 @@ public partial class MainWindow : Window {
             if (force && ServerManagementStatusText != null)
                 ServerManagementStatusText.Text = "Server user refresh failed: " + TrimForDisplay(ex.Message, 160);
         }
+    }
+
+    private List<WebAuthUserItem> BuildServerManagementUserItems() {
+        var map = new Dictionary<string, (WebAuthUserItem Item, int Priority)>(StringComparer.OrdinalIgnoreCase);
+
+        void Upsert(WebAuthUserItem? item, int priority) {
+            if (item == null || string.IsNullOrWhiteSpace(item.OwnerKey))
+                return;
+
+            string ownerKey = item.OwnerKey.Trim();
+            if (map.TryGetValue(ownerKey, out var existing)) {
+                int mergedPriority = Math.Max(existing.Priority, priority);
+                bool preferIncoming = priority >= existing.Priority;
+                map[ownerKey] = (MergeWebAuthUserItems(existing.Item, item, preferIncoming), mergedPriority);
+                return;
+            }
+
+            map[ownerKey] = (item, priority);
+        }
+
+        try {
+            foreach (ServerUserUsageDiagnosticsSnapshot snapshot in _proxy.GetServerUserUsageDiagnostics())
+                Upsert(WebAuthUserItem.FromSnapshot(snapshot), 10);
+        } catch (Exception ex) {
+            AppendLog("Server usage users unavailable: " + TrimForDisplay(ex.Message, 180));
+        }
+
+        try {
+            foreach (WebAuthUserDiagnosticsSnapshot snapshot in _proxy.GetWebAuthUserDiagnostics())
+                Upsert(WebAuthUserItem.FromSnapshot(snapshot), 20);
+        } catch (Exception ex) {
+            AppendLog("WebAuth users unavailable: " + TrimForDisplay(ex.Message, 180));
+        }
+
+        Upsert(BuildCurrentSocketJackUserItem(), 30);
+
+        return map.Values
+            .Select(entry => entry.Item)
+            .OrderByDescending(item => item.IsCurrentSocketJackUser)
+            .ThenByDescending(item => item.AccountManaged)
+            .ThenByDescending(item => item.ActiveSessionCount > 0)
+            .ThenBy(item => item.UserName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private WebAuthUserItem? BuildCurrentSocketJackUserItem() {
+        string userName = GetSocketJackUserName();
+        if (string.IsNullOrWhiteSpace(userName))
+            return null;
+
+        userName = userName.Trim();
+        string lastLoginUtc = _lastSocketJackAuthValidatedUtc == DateTimeOffset.MinValue
+            ? ""
+            : _lastSocketJackAuthValidatedUtc.ToString("O");
+        return new WebAuthUserItem {
+            UserName = userName,
+            OwnerKey = "webauth:" + userName.ToLowerInvariant(),
+            UserType = "signed-in",
+            AccountManaged = false,
+            Enabled = true,
+            LastLoginUtc = lastLoginUtc,
+            IsCurrentSocketJackUser = true
+        };
+    }
+
+    private static WebAuthUserItem MergeWebAuthUserItems(WebAuthUserItem existing, WebAuthUserItem incoming, bool preferIncoming) {
+        WebAuthUserItem primary = preferIncoming ? incoming : existing;
+        WebAuthUserItem secondary = preferIncoming ? existing : incoming;
+        return new WebAuthUserItem {
+            UserName = FirstNonEmpty(primary.UserName, secondary.UserName),
+            OwnerKey = FirstNonEmpty(primary.OwnerKey, secondary.OwnerKey),
+            UserType = FirstNonEmpty(primary.UserType, secondary.UserType),
+            AccountManaged = primary.AccountManaged || secondary.AccountManaged,
+            Enabled = primary.Enabled || secondary.Enabled,
+            IsAdministrator = primary.IsAdministrator || secondary.IsAdministrator,
+            LastClientIp = FirstNonEmpty(primary.LastClientIp, secondary.LastClientIp),
+            TokenLimit = Math.Max(primary.TokenLimit, secondary.TokenLimit),
+            TokensUsed = Math.Max(primary.TokensUsed, secondary.TokensUsed),
+            TokensRemaining = Math.Max(primary.TokensRemaining, secondary.TokensRemaining),
+            Unlimited = primary.Unlimited || secondary.Unlimited,
+            LastLoginUtc = FirstNonEmpty(primary.LastLoginUtc, secondary.LastLoginUtc),
+            MutedUntilUtc = FirstNonEmpty(primary.MutedUntilUtc, secondary.MutedUntilUtc),
+            BannedUntilUtc = FirstNonEmpty(primary.BannedUntilUtc, secondary.BannedUntilUtc),
+            MuteUntilEnabled = primary.MuteUntilEnabled || secondary.MuteUntilEnabled,
+            BanUntilEnabled = primary.BanUntilEnabled || secondary.BanUntilEnabled,
+            IsMuted = primary.IsMuted || secondary.IsMuted,
+            IsBanned = primary.IsBanned || secondary.IsBanned,
+            SessionCount = Math.Max(primary.SessionCount, secondary.SessionCount),
+            ActiveSessionCount = Math.Max(primary.ActiveSessionCount, secondary.ActiveSessionCount),
+            LastSessionUtc = FirstNonEmpty(primary.LastSessionUtc, secondary.LastSessionUtc),
+            GpuKw = Math.Max(primary.GpuKw, secondary.GpuKw),
+            CpuKw = Math.Max(primary.CpuKw, secondary.CpuKw),
+            GpuKwh = Math.Max(primary.GpuKwh, secondary.GpuKwh),
+            CpuKwh = Math.Max(primary.CpuKwh, secondary.CpuKwh),
+            TotalKwh = Math.Max(primary.TotalKwh, secondary.TotalKwh),
+            TotalCostUsd = Math.Max(primary.TotalCostUsd, secondary.TotalCostUsd),
+            StorageBytesUsed = Math.Max(primary.StorageBytesUsed, secondary.StorageBytesUsed),
+            StorageLimitBytes = Math.Max(primary.StorageLimitBytes, secondary.StorageLimitBytes),
+            StorageUnlimited = primary.StorageUnlimited || secondary.StorageUnlimited,
+            IsCurrentSocketJackUser = primary.IsCurrentSocketJackUser || secondary.IsCurrentSocketJackUser
+        };
     }
 
     private void ApplyServerManagementRequestDecision(object? tag, bool approved) {
@@ -12310,6 +12660,408 @@ public partial class MainWindow : Window {
         AppendLog("Model discovery notice: " + message);
         SetStatus("No local models found. Open the Models tab to download or load one.");
     }
+
+    private string PersonaPlexApiUrl(string path) {
+        string route = string.IsNullOrWhiteSpace(path) ? "/api/personaplex/status" : path;
+        if (!route.StartsWith("/", StringComparison.Ordinal))
+            route = "/" + route;
+        return _proxy.ChatServerUrl.TrimEnd('/') + route;
+    }
+
+    private void AddPersonaPlexInstallHeader(System.Net.Http.HttpRequestMessage request) {
+        request.Headers.TryAddWithoutValidation(PersonaPlexInstallHeaderName, _proxy.PersonaPlexInstallToken);
+    }
+
+    private async Task CheckPersonaPlexVoiceInstallNoticeAsync() {
+        if (_personaPlexInstallNoticeShown || _personaPlexInstallInProgress || _shutdownCompleted || _isStopping)
+            return;
+
+        try {
+            using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(8));
+            using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, PersonaPlexApiUrl("/api/personaplex/status"));
+            AddPersonaPlexInstallHeader(request);
+            using System.Net.Http.HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(json))
+                return;
+
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            bool installRequired = TryReadJsonBool(root, "installRequired");
+            bool canInstall = TryReadJsonBool(root, "canInstall");
+            bool localInstalled = root.TryGetProperty("install", out JsonElement install) && TryReadJsonBool(install, "localInstalled");
+            bool needsToken = localInstalled && TryReadJsonBool(install, "needsHuggingFaceToken");
+            if (!canInstall || ((!installRequired || localInstalled) && !needsToken))
+                return;
+
+            _personaPlexInstallNoticeShown = true;
+            _personaPlexNeedsTokenNotice = needsToken;
+            TryBeginOnUi(ShowPersonaPlexInstallToast, "PersonaPlex install notification", DispatcherPriority.ApplicationIdle);
+        } catch (Exception ex) {
+            TryBeginOnUi(() => AppendLog("PersonaPlex install notice check failed: " + TrimForDisplay(ex.Message, 180)), "PersonaPlex notice log");
+        }
+    }
+
+    private static bool TryReadJsonBool(JsonElement element, string name) {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out JsonElement value))
+            return false;
+        return value.ValueKind switch {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => bool.TryParse(value.GetString(), out bool parsed) && parsed,
+            JsonValueKind.Number => value.TryGetInt32(out int number) && number != 0,
+            _ => false
+        };
+    }
+
+    private static string TryReadJsonString(JsonElement element, string name) {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out JsonElement value))
+            return "";
+        return value.ValueKind == JsonValueKind.String ? (value.GetString() ?? "") : value.ToString();
+    }
+
+    private static int TryReadJsonInt(JsonElement element, string name) {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out JsonElement value))
+            return 0;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number))
+            return number;
+        return int.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) ? parsed : 0;
+    }
+
+    private void ShowPersonaPlexInstallToast() {
+        if (!Dispatcher.CheckAccess()) {
+            TryBeginOnUi(ShowPersonaPlexInstallToast, "PersonaPlex install toast");
+            return;
+        }
+        if (_personaPlexInstallToast != null)
+            return;
+
+        var toast = new Window {
+            Title = "Voice chat setup",
+            Owner = IsVisible ? this : null,
+            Width = 470,
+            SizeToContent = SizeToContent.Height,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            Topmost = true,
+            ShowActivated = false,
+            Background = new SolidColorBrush(Color.FromRgb(24, 32, 38)),
+            AllowsTransparency = false
+        };
+
+        var border = new Border {
+            Background = new SolidColorBrush(Color.FromRgb(24, 32, 38)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(64, 201, 162)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(14)
+        };
+
+        bool needsToken = _personaPlexNeedsTokenNotice;
+        var root = new StackPanel();
+        root.Children.Add(new TextBlock {
+            Text = needsToken ? "Finish NVIDIA PersonaPlex Voice Mode setup" : "Install NVIDIA PersonaPlex for Voice Mode?",
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 15,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap
+        });
+        root.Children.Add(new TextBlock {
+            Text = needsToken
+                ? "PersonaPlex is installed, but NVIDIA's model weights need Hugging Face access. Accept the nvidia/personaplex-7b-v1 license, then paste a token here so Workstation can start Voice Mode."
+                : "Optional voice chat uses NVIDIA PersonaPlex. JackLLM Workstation can download it, create the Python environment, and configure CUDA to use all detected NVIDIA GPUs.",
+            Foreground = new SolidColorBrush(Color.FromRgb(196, 205, 218)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 12)
+        });
+
+        var buttons = new WrapPanel();
+        AddPersonaPlexInstallToastButton(buttons, needsToken ? "Add Token" : "Install", () => {
+            ClosePersonaPlexInstallToast();
+            if (needsToken)
+                ShowPersonaPlexTokenDialog();
+            else
+                _ = InstallPersonaPlexVoiceModeFromWorkstationAsync();
+        });
+        AddPersonaPlexInstallToastButton(buttons, "Model Page", OpenPersonaPlexModelPage, new SolidColorBrush(Color.FromRgb(43, 52, 63)));
+        AddPersonaPlexInstallToastButton(buttons, "Not now", DismissPersonaPlexInstallToast, new SolidColorBrush(Color.FromRgb(43, 52, 63)));
+
+        root.Children.Add(buttons);
+        border.Child = root;
+        toast.Content = border;
+        toast.Closed += (_, _) => {
+            if (ReferenceEquals(_personaPlexInstallToast, toast))
+                _personaPlexInstallToast = null;
+        };
+        _personaPlexInstallToast = toast;
+        toast.Show();
+        PositionPersonaPlexInstallToast();
+    }
+
+    private void AddPersonaPlexInstallToastButton(WrapPanel panel, string label, Action action, Brush? background = null) {
+        var button = new Button {
+            Content = label,
+            Margin = new Thickness(0, 0, 6, 6),
+            Padding = new Thickness(10, 5, 10, 5),
+            Background = background ?? new SolidColorBrush(Color.FromRgb(30, 88, 72)),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(64, 201, 162))
+        };
+        button.Click += (_, _) => {
+            try {
+                action();
+            } catch (Exception ex) {
+                AppendLog("PersonaPlex install action failed: " + TrimForDisplay(ex.Message, 180));
+            }
+        };
+        panel.Children.Add(button);
+    }
+
+    private void OpenPersonaPlexModelPage() {
+        try {
+            Process.Start(new ProcessStartInfo("https://huggingface.co/nvidia/personaplex-7b-v1") {
+                UseShellExecute = true
+            });
+        } catch (Exception ex) {
+            AppendLog("Could not open PersonaPlex model page: " + TrimForDisplay(ex.Message, 180));
+        }
+    }
+
+    private void ShowPersonaPlexTokenDialog() {
+        if (!Dispatcher.CheckAccess()) {
+            TryBeginOnUi(ShowPersonaPlexTokenDialog, "PersonaPlex token dialog");
+            return;
+        }
+
+        var dialog = new Window {
+            Title = "PersonaPlex model access",
+            Owner = IsVisible ? this : null,
+            Width = 520,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Background = new SolidColorBrush(Color.FromRgb(24, 32, 38))
+        };
+
+        var root = new StackPanel {
+            Margin = new Thickness(16)
+        };
+        root.Children.Add(new TextBlock {
+            Text = "Paste a Hugging Face token with access to nvidia/personaplex-7b-v1.",
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 15,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap
+        });
+        root.Children.Add(new TextBlock {
+            Text = "Accept NVIDIA's PersonaPlex model license on Hugging Face first. Workstation stores the token locally for the PersonaPlex server process; it is not sent to the web chat UI.",
+            Foreground = new SolidColorBrush(Color.FromRgb(196, 205, 218)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 10)
+        });
+
+        var tokenBox = new PasswordBox {
+            Margin = new Thickness(0, 0, 0, 10),
+            MinWidth = 460
+        };
+        root.Children.Add(tokenBox);
+
+        var status = new TextBlock {
+            Foreground = new SolidColorBrush(Color.FromRgb(196, 205, 218)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        root.Children.Add(status);
+
+        var buttons = new WrapPanel();
+        var save = new Button {
+            Content = "Save & Start",
+            Margin = new Thickness(0, 0, 6, 6),
+            Padding = new Thickness(10, 5, 10, 5),
+            Background = new SolidColorBrush(Color.FromRgb(30, 88, 72)),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(64, 201, 162)),
+            IsEnabled = false
+        };
+        tokenBox.PasswordChanged += (_, _) => save.IsEnabled = !string.IsNullOrWhiteSpace(tokenBox.Password);
+        save.Click += async (_, _) => {
+            string token = tokenBox.Password.Trim();
+            if (string.IsNullOrWhiteSpace(token))
+                return;
+            save.IsEnabled = false;
+            status.Text = "Saving token...";
+            try {
+                dialog.Close();
+                await SavePersonaPlexTokenFromWorkstationAsync(token).ConfigureAwait(false);
+            } catch (Exception ex) {
+                TryBeginOnUi(() => {
+                    AppendLog("PersonaPlex token save failed: " + TrimForDisplay(ex.Message, 220));
+                    SetStatus("PersonaPlex token save failed: " + TrimForDisplay(ex.Message, 120));
+                }, "PersonaPlex token failure");
+            }
+        };
+        buttons.Children.Add(save);
+
+        AddPersonaPlexInstallToastButton(buttons, "Model Page", OpenPersonaPlexModelPage, new SolidColorBrush(Color.FromRgb(43, 52, 63)));
+        AddPersonaPlexInstallToastButton(buttons, "Cancel", () => dialog.Close(), new SolidColorBrush(Color.FromRgb(43, 52, 63)));
+        root.Children.Add(buttons);
+
+        dialog.Content = root;
+        dialog.Show();
+        tokenBox.Focus();
+    }
+
+    private void ClosePersonaPlexInstallToast() {
+        if (_personaPlexInstallToast == null)
+            return;
+        Window toast = _personaPlexInstallToast;
+        _personaPlexInstallToast = null;
+        try { toast.Close(); } catch { }
+    }
+
+    private void DismissPersonaPlexInstallToast() {
+        RecordDismissedNotificationInfo(
+            "PersonaPlex voice setup",
+            "PersonaPlex install notification was dismissed. You can reopen setup from Voice Mode when you want to install it or add a Hugging Face token.");
+        ClosePersonaPlexInstallToast();
+    }
+
+    private void PositionPersonaPlexInstallToast() {
+        if (_personaPlexInstallToast == null)
+            return;
+        try {
+            Rect workArea = SystemParameters.WorkArea;
+            _personaPlexInstallToast.UpdateLayout();
+            double height = _personaPlexInstallToast.ActualHeight > 0 ? _personaPlexInstallToast.ActualHeight : _personaPlexInstallToast.Height;
+            _personaPlexInstallToast.Left = Math.Max(workArea.Left + 8, workArea.Right - _personaPlexInstallToast.Width - 16);
+            _personaPlexInstallToast.Top = Math.Max(workArea.Top + 8, workArea.Bottom - height - 16);
+        } catch { }
+    }
+
+    private async Task SavePersonaPlexTokenFromWorkstationAsync(string token) {
+        token = (token ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            throw new InvalidOperationException("A Hugging Face token is required for NVIDIA PersonaPlex model access.");
+
+        TryBeginOnUi(() => SetStatus("Saving PersonaPlex model access token."), "PersonaPlex token status");
+        using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(30));
+        string body = JsonSerializer.Serialize(new {
+            token,
+            startAfterSave = false
+        });
+        using var content = new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json");
+        using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, PersonaPlexApiUrl("/api/personaplex/token")) {
+            Content = content
+        };
+        AddPersonaPlexInstallHeader(request);
+        using System.Net.Http.HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+        string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException("PersonaPlex token request failed: " + TrimForDisplay(json, 220));
+
+        bool localInstalled = false;
+        try {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            localInstalled = root.TryGetProperty("install", out JsonElement install) && TryReadJsonBool(install, "localInstalled");
+        } catch {
+        }
+
+        if (!localInstalled) {
+            TryBeginOnUi(() => {
+                AppendLog("PersonaPlex model access token saved. Installing NVIDIA PersonaPlex next.");
+                SetStatus("PersonaPlex token saved. Installing Voice Mode.");
+            }, "PersonaPlex token saved install");
+            await InstallPersonaPlexVoiceModeFromWorkstationAsync().ConfigureAwait(false);
+            return;
+        }
+
+        TryBeginOnUi(() => {
+            AppendLog("PersonaPlex model access token saved. Start Voice Mode from the web chat panel when you are ready.");
+            SetStatus("PersonaPlex token saved. Voice Mode is ready to start.");
+            _lastPersonaPlexStatusRefreshUtc = DateTimeOffset.MinValue;
+            RefreshPersonaPlexWarningIfDue();
+        }, "PersonaPlex token saved");
+    }
+
+    private async Task InstallPersonaPlexVoiceModeFromWorkstationAsync() {
+        if (_personaPlexInstallInProgress)
+            return;
+
+        _personaPlexInstallInProgress = true;
+        SetStatus("Installing NVIDIA PersonaPlex for Voice Mode.");
+        AppendLog("PersonaPlex install queued from JackLLM Workstation. CUDA will be configured for all detected NVIDIA GPUs.");
+        try {
+            using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(30));
+            using var content = new System.Net.Http.StringContent(
+                "{\"action\":\"install\",\"startAfterInstall\":false,\"cpuOffload\":false,\"allGpus\":true}",
+                Encoding.UTF8,
+                "application/json");
+            using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, PersonaPlexApiUrl("/api/personaplex/install")) {
+                Content = content
+            };
+            AddPersonaPlexInstallHeader(request);
+            using System.Net.Http.HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException("PersonaPlex install request failed: " + TrimForDisplay(json, 220));
+
+            await PollPersonaPlexInstallAsync().ConfigureAwait(false);
+        } catch (Exception ex) {
+            TryBeginOnUi(() => {
+                AppendLog("PersonaPlex install failed: " + TrimForDisplay(ex.Message, 220));
+                SetStatus("PersonaPlex install failed: " + TrimForDisplay(ex.Message, 120));
+            }, "PersonaPlex install failure");
+        } finally {
+            _personaPlexInstallInProgress = false;
+            TryBeginOnUi(() => {
+                _lastPersonaPlexStatusRefreshUtc = DateTimeOffset.MinValue;
+                RefreshPersonaPlexWarningIfDue();
+            }, "PersonaPlex warning refresh after install");
+        }
+    }
+
+    private async Task PollPersonaPlexInstallAsync() {
+        for (int i = 0; i < 240 && !_shutdownCompleted && !_isStopping; i++) {
+            await Task.Delay(TimeSpan.FromSeconds(i == 0 ? 1 : 3)).ConfigureAwait(false);
+            using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(10));
+            using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, PersonaPlexApiUrl("/api/personaplex/install"));
+            AddPersonaPlexInstallHeader(request);
+            using System.Net.Http.HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(json))
+                continue;
+
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (!root.TryGetProperty("install", out JsonElement install))
+                continue;
+
+            string status = TryReadJsonString(install, "status");
+            string message = TryReadJsonString(install, "message");
+            int progress = TryReadJsonInt(install, "progress");
+            TryBeginOnUi(() => SetStatus("Voice Mode install " + progress.ToString(CultureInfo.InvariantCulture) + "%: " + TrimForDisplay(message, 120)), "PersonaPlex install progress");
+
+            if (string.Equals(status, "installed", StringComparison.OrdinalIgnoreCase)) {
+                bool needsToken = TryReadJsonBool(install, "needsHuggingFaceToken");
+                TryBeginOnUi(() => {
+                    AppendLog("PersonaPlex installed for Voice Mode. " + (needsToken ? "Add the Hugging Face model access token from Workstation after accepting the NVIDIA PersonaPlex license." : "Start Voice Mode from the web chat panel when you are ready."));
+                    SetStatus(needsToken ? "PersonaPlex installed. Add the model access token from Workstation." : "PersonaPlex installed for Voice Mode.");
+                    if (needsToken) {
+                        _personaPlexNeedsTokenNotice = true;
+                        _personaPlexInstallNoticeShown = false;
+                        ShowPersonaPlexInstallToast();
+                    }
+                }, "PersonaPlex installed");
+                return;
+            }
+            if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase)) {
+                throw new InvalidOperationException(message);
+            }
+        }
+    }
+
 
     private static bool IsWineSafeWpfMode() {
         string? value = Environment.GetEnvironmentVariable("JACKLLM_WINE_SAFE_WPF");
@@ -13562,7 +14314,8 @@ public partial class MainWindow : Window {
         UpdateChatBandwidthMetrics();
         UpdateHealthMetrics();
         RefreshModelReconfigurationSuggestions();
-        RefreshSessionsPanel(false);
+        if (IsSessionsPanelVisible())
+            RefreshSessionsPanel(false);
         if (IsWorkspaceExplorerVisible())
             RefreshWorkspaceExplorer(false);
         RefreshRuntimeCapabilityStatusIfDue();
@@ -13674,8 +14427,249 @@ public partial class MainWindow : Window {
         return now.ToUniversalTime() - lastSeen.ToUniversalTime() <= ShellRelayRecentAgentGrace;
     }
 
+    private void RefreshImageRuntimeCompatibilityWarningIfDue() {
+        if (_imageRuntimeCompatibilityRefreshInProgress || _shutdownCompleted || _isStopping)
+            return;
+
+        if (GetSelectedModelRuntimeProvider() == RuntimeProviderLmStudio) {
+            ClearImageRuntimeCompatibilityWarning();
+            return;
+        }
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (now - _lastImageRuntimeCompatibilityRefreshUtc < LocalRuntimeWarningRefreshInterval)
+            return;
+
+        string runtimeBaseUrl = GetExternalModelManagerRuntimeBaseUrl();
+        if (string.IsNullOrWhiteSpace(runtimeBaseUrl))
+            runtimeBaseUrl = _proxy?.LocalModelRuntime?.OpenAiBaseUrl ?? "";
+        if (string.IsNullOrWhiteSpace(runtimeBaseUrl)) {
+            ClearImageRuntimeCompatibilityWarning();
+            return;
+        }
+
+        _lastImageRuntimeCompatibilityRefreshUtc = now;
+        _imageRuntimeCompatibilityRefreshInProgress = true;
+        _ = Task.Run(async () => {
+            try {
+                await RefreshImageRuntimeCompatibilityWarningAsync(runtimeBaseUrl.TrimEnd('/')).ConfigureAwait(false);
+            } finally {
+                _imageRuntimeCompatibilityRefreshInProgress = false;
+            }
+        });
+    }
+
+    private async Task RefreshImageRuntimeCompatibilityWarningAsync(string runtimeBaseUrl) {
+        try {
+            using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(12));
+            using HttpResponseMessage response = await client.GetAsync(runtimeBaseUrl + "/api/v1/runtime/compatibility").ConfigureAwait(false);
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(json))
+                return;
+
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            bool repairRequired = TryReadJsonBool(root, "requiresPytorchRepair");
+            bool generationDisabled = TryReadJsonBool(root, "generationDisabled");
+            bool gpuEnabled = TryReadJsonBool(root, "isGpuGenerationEnabled");
+            string status = TryReadJsonString(root, "status");
+            if (!repairRequired && !generationDisabled && (gpuEnabled || status.Equals("ok", StringComparison.OrdinalIgnoreCase))) {
+                TryBeginOnUi(ClearImageRuntimeCompatibilityWarning, "clear image runtime warning");
+                return;
+            }
+
+            string message = FirstNonEmpty(TryReadJsonString(root, "message"), "Local image generation is disabled.");
+            string pythonPath = TryReadNestedJsonString(root, "diagnostics", "python", "executablePath");
+            bool canRepair = HasCompatibilityAction(root, "repair_pytorch", requireEnabled: true) || repairRequired;
+            bool canInstallCuda = HasCompatibilityAction(root, "install_cuda", requireEnabled: false);
+            string signal = message;
+            if (!string.IsNullOrWhiteSpace(pythonPath))
+                signal += " Python: " + TrimForDisplay(pythonPath, 110) + ".";
+            string recommendation = canRepair
+                ? "Use Repair PyTorch from Workstation; CUDA can be installed while JackLLM's Python environment still lacks CUDA-enabled torch."
+                : canInstallCuda
+                    ? "Open the CUDA installer page, then run Repair PyTorch so JackLLM's image-generation Python can use CUDA."
+                    : "Repair or configure PyTorch in JackLLM's image-generation Python environment.";
+            string severity = repairRequired || generationDisabled ? "WARN" : "INFO";
+
+            TryBeginOnUi(() => {
+                _imageRuntimeCompatibilityWarningActive = true;
+                _imageRuntimeCompatibilityWarningSeverity = severity;
+                _imageRuntimeCompatibilityWarningSignal = TrimForDisplay(signal, 260);
+                _imageRuntimeCompatibilityWarningRecommendation = recommendation;
+                _imageRuntimeCompatibilityCanRepair = canRepair;
+                _imageRuntimeCompatibilityCanInstallCuda = canInstallCuda;
+                RefreshModelReconfigurationSuggestions();
+            }, "image runtime warning update");
+        } catch (Exception ex) {
+            TryBeginOnUi(() => AppendLog("Image runtime compatibility warning refresh failed: " + TrimForDisplay(ex.Message, 160)), "image runtime warning failure");
+        }
+    }
+
+    private void ClearImageRuntimeCompatibilityWarning() {
+        if (!_imageRuntimeCompatibilityWarningActive &&
+            string.IsNullOrWhiteSpace(_imageRuntimeCompatibilityWarningSignal))
+            return;
+
+        _imageRuntimeCompatibilityWarningActive = false;
+        _imageRuntimeCompatibilityWarningSeverity = "WARN";
+        _imageRuntimeCompatibilityWarningSignal = "";
+        _imageRuntimeCompatibilityWarningRecommendation = "";
+        _imageRuntimeCompatibilityCanRepair = false;
+        _imageRuntimeCompatibilityCanInstallCuda = false;
+        RefreshModelReconfigurationSuggestions();
+    }
+
+    private void RefreshPersonaPlexWarningIfDue() {
+        if (_personaPlexStatusRefreshInProgress || _shutdownCompleted || _isStopping)
+            return;
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (now - _lastPersonaPlexStatusRefreshUtc < LocalRuntimeWarningRefreshInterval)
+            return;
+
+        string statusUrl = PersonaPlexApiUrl("/api/personaplex/status");
+        string installToken = _proxy?.PersonaPlexInstallToken ?? "";
+        if (string.IsNullOrWhiteSpace(statusUrl) || string.IsNullOrWhiteSpace(installToken))
+            return;
+
+        _lastPersonaPlexStatusRefreshUtc = now;
+        _personaPlexStatusRefreshInProgress = true;
+        _ = Task.Run(async () => {
+            try {
+                await RefreshPersonaPlexWarningAsync(statusUrl, installToken).ConfigureAwait(false);
+            } finally {
+                _personaPlexStatusRefreshInProgress = false;
+            }
+        });
+    }
+
+    private async Task RefreshPersonaPlexWarningAsync(string statusUrl, string installToken) {
+        try {
+            using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(10));
+            using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, statusUrl);
+            request.Headers.TryAddWithoutValidation(PersonaPlexInstallHeaderName, installToken);
+            using HttpResponseMessage response = await client.SendAsync(request).ConfigureAwait(false);
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(json))
+                return;
+
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (!root.TryGetProperty("install", out JsonElement install) || install.ValueKind != JsonValueKind.Object) {
+                TryBeginOnUi(ClearPersonaPlexWarning, "clear PersonaPlex warning");
+                return;
+            }
+
+            bool canInstall = TryReadJsonBool(root, "canInstall");
+            bool ready = TryReadJsonBool(root, "ready");
+            bool localInstalled = TryReadJsonBool(install, "localInstalled");
+            bool serverRunning = TryReadJsonBool(install, "serverRunning");
+            bool hfTokenAvailable = TryReadJsonBool(install, "hfTokenAvailable");
+            bool needsToken = TryReadJsonBool(install, "needsHuggingFaceToken");
+            bool hfTokenRejected = TryReadJsonBool(install, "hfTokenRejected");
+            bool installFootprintFound = TryReadJsonBool(install, "installFootprintFound");
+            bool installIncomplete = TryReadJsonBool(install, "installIncomplete");
+            string installStatus = TryReadJsonString(install, "status");
+            string message = FirstNonEmpty(TryReadJsonString(install, "hfTokenError"), TryReadJsonString(install, "message"), TryReadJsonString(root, "error"));
+            bool failed = installStatus.Equals("failed", StringComparison.OrdinalIgnoreCase);
+            bool missingExpectedInstall = !localInstalled && (installIncomplete || installFootprintFound || hfTokenAvailable || failed || installStatus.Equals("missing", StringComparison.OrdinalIgnoreCase));
+            bool installedButNeedsToken = localInstalled && needsToken;
+            bool installedButStoppedAfterError = localInstalled && hfTokenAvailable && !ready && !serverRunning && !string.IsNullOrWhiteSpace(TryReadJsonString(root, "error"));
+
+            if (!missingExpectedInstall && !installedButNeedsToken && !failed && !installedButStoppedAfterError) {
+                TryBeginOnUi(ClearPersonaPlexWarning, "clear PersonaPlex warning");
+                return;
+            }
+
+            string missing = JoinJsonStringArray(install, "missingComponents");
+            string signal = failed
+                ? hfTokenRejected
+                    ? "PersonaPlex model access failed: " + FirstNonEmpty(message, "Hugging Face rejected the token") + "."
+                    : "PersonaPlex install failed: " + FirstNonEmpty(message, "unknown error") + "."
+                : missingExpectedInstall
+                    ? "PersonaPlex was configured before, but the local Voice Mode install is missing or incomplete" + (string.IsNullOrWhiteSpace(missing) ? "." : ": " + missing + ".")
+                    : installedButNeedsToken
+                        ? "PersonaPlex is installed, but the NVIDIA Hugging Face model token is missing."
+                        : "PersonaPlex is installed, but the local Voice Mode server is not ready: " + FirstNonEmpty(TryReadJsonString(root, "error"), message, "not running") + ".";
+            string recommendation = hfTokenRejected
+                ? "Accept the nvidia/personaplex-7b-v1 license on Hugging Face, then replace the token in Workstation."
+                : missingExpectedInstall || failed
+                ? "Reinstall Voice Mode from Workstation; use Model Page first if the NVIDIA license still needs acceptance."
+                : installedButNeedsToken
+                    ? "Accept the nvidia/personaplex-7b-v1 license on Hugging Face, then add the token in Workstation."
+                    : "Start Voice Mode again from the web chat panel or reinstall it from Workstation if startup keeps failing.";
+
+            TryBeginOnUi(() => {
+                _personaPlexWarningActive = true;
+                _personaPlexWarningSeverity = failed || missingExpectedInstall ? "WARN" : "INFO";
+                _personaPlexWarningSignal = TrimForDisplay(signal, 280);
+                _personaPlexWarningRecommendation = recommendation;
+                _personaPlexWarningCanInstall = canInstall;
+                _personaPlexWarningNeedsToken = installedButNeedsToken || hfTokenRejected;
+                RefreshModelReconfigurationSuggestions();
+            }, "PersonaPlex warning update");
+        } catch (Exception ex) {
+            TryBeginOnUi(() => AppendLog("PersonaPlex warning refresh failed: " + TrimForDisplay(ex.Message, 160)), "PersonaPlex warning failure");
+        }
+    }
+
+    private void ClearPersonaPlexWarning() {
+        if (!_personaPlexWarningActive &&
+            string.IsNullOrWhiteSpace(_personaPlexWarningSignal))
+            return;
+
+        _personaPlexWarningActive = false;
+        _personaPlexWarningSeverity = "WARN";
+        _personaPlexWarningSignal = "";
+        _personaPlexWarningRecommendation = "";
+        _personaPlexWarningCanInstall = false;
+        _personaPlexWarningNeedsToken = false;
+        RefreshModelReconfigurationSuggestions();
+    }
+
+    private static bool HasCompatibilityAction(JsonElement root, string actionId, bool requireEnabled) {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("actions", out JsonElement actions) ||
+            actions.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (JsonElement action in actions.EnumerateArray()) {
+            if (action.ValueKind != JsonValueKind.Object)
+                continue;
+            if (!string.Equals(TryReadJsonString(action, "id"), actionId, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return !requireEnabled || TryReadJsonBool(action, "enabled");
+        }
+
+        return false;
+    }
+
+    private static string TryReadNestedJsonString(JsonElement root, params string[] path) {
+        JsonElement current = root;
+        foreach (string segment in path ?? Array.Empty<string>()) {
+            if (current.ValueKind != JsonValueKind.Object ||
+                !current.TryGetProperty(segment, out current))
+                return "";
+        }
+        return current.ValueKind == JsonValueKind.String ? (current.GetString() ?? "") : current.ToString();
+    }
+
+    private static string JoinJsonStringArray(JsonElement root, string propertyName) {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(propertyName, out JsonElement value) ||
+            value.ValueKind != JsonValueKind.Array)
+            return "";
+
+        return string.Join(", ", value.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString())
+            .Where(item => !string.IsNullOrWhiteSpace(item)));
+    }
+
     private void RefreshRuntimeCapabilityStatusIfDue() {
         UpdateLlmRuntimeCapabilityLine();
+        RefreshImageRuntimeCompatibilityWarningIfDue();
+        RefreshPersonaPlexWarningIfDue();
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         if (_jackOnnxCapabilityRefreshInProgress ||
@@ -13835,6 +14829,9 @@ public partial class MainWindow : Window {
 
     private void RefreshSessionsPanel(bool force) {
         try {
+            if (!force && !IsSessionsPanelVisible())
+                return;
+
             DateTimeOffset now = DateTimeOffset.UtcNow;
             if (!force && now - _lastSessionsPanelRefreshUtc < TimeSpan.FromSeconds(4))
                 return;
@@ -13891,6 +14888,14 @@ public partial class MainWindow : Window {
     private bool IsWorkspaceExplorerVisible() {
         return WorkspaceTreeView?.IsVisible == true ||
                ServerWorkspaceTreeView?.IsVisible == true;
+    }
+
+    private bool IsSessionsPanelVisible() {
+        return SessionsListBox?.IsVisible == true ||
+               ServerSessionsListBox?.IsVisible == true ||
+               SessionsSummaryText?.IsVisible == true ||
+               ServerSessionsSummaryText?.IsVisible == true ||
+               IsSessionLogPanelVisible();
     }
 
     private bool IsSessionLogPanelVisible() {
@@ -14891,15 +15896,7 @@ public partial class MainWindow : Window {
         _ = ProbeCompanionStatusAsync();
         string? previouslySelectedService = _selectedServiceMetric?.Name;
         var services = BuildServiceMetricItems();
-        string signature = string.Join("|", services.Select(item => item.Signature));
-        if (!string.Equals(signature, _servicePanelSignature, StringComparison.Ordinal)) {
-            _updatingServiceSelection = true;
-            _serviceMetricItems.Clear();
-            foreach (ServiceMetricItem item in services)
-                _serviceMetricItems.Add(item);
-            _servicePanelSignature = signature;
-            _updatingServiceSelection = false;
-        }
+        UpdateServiceMetricItems(services);
 
         var pipeline = BuildPipelineItems();
         string pipelineSignature = string.Join("|", pipeline.Select(item => item.Signature));
@@ -14922,6 +15919,40 @@ public partial class MainWindow : Window {
 
         UpdateServiceDetailsPanel(nextService);
         PipelineSummaryText.Text = BuildPipelineSummary();
+    }
+
+    private void UpdateServiceMetricItems(IReadOnlyList<ServiceMetricItem> services) {
+        string namesSignature = string.Join("|", services.Select(item => NormalizeServiceName(item.Name)));
+        bool rebuild = !string.Equals(namesSignature, _servicePanelSignature, StringComparison.Ordinal) ||
+                       _serviceMetricItems.Count != services.Count;
+
+        if (!rebuild) {
+            for (int i = 0; i < services.Count; i++) {
+                if (!ServiceNameEquals(_serviceMetricItems[i].Name, services[i].Name)) {
+                    rebuild = true;
+                    break;
+                }
+            }
+        }
+
+        if (rebuild) {
+            _updatingServiceSelection = true;
+            try {
+                _serviceMetricItems.Clear();
+                foreach (ServiceMetricItem item in services)
+                    _serviceMetricItems.Add(item);
+            } finally {
+                _updatingServiceSelection = false;
+            }
+
+            _servicePanelSignature = namesSignature;
+            _selectedServiceDetailsSignature = "";
+            _selectedServiceLogSignature = "";
+            return;
+        }
+
+        for (int i = 0; i < services.Count; i++)
+            _serviceMetricItems[i].UpdateFrom(services[i]);
     }
 
     private void ServicesListBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
@@ -14950,22 +15981,30 @@ public partial class MainWindow : Window {
         _selectedServiceMetric = service;
         if (service == null) {
             ServiceDetailsPanel.Visibility = Visibility.Collapsed;
+            _selectedServiceDetailsSignature = "";
+            _selectedServiceLogSignature = "";
             return;
         }
 
         ServiceDetailsPanel.Visibility = Visibility.Visible;
         var selectedNames = GetSelectedServiceNames().ToList();
-        if (SelectedServiceNameText != null)
-            SelectedServiceNameText.Text = selectedNames.Count > 1
-                ? service.Name + " +" + (selectedNames.Count - 1).ToString(CultureInfo.InvariantCulture)
-                : service.Name;
-        if (SelectedServiceStatusText != null)
-            SelectedServiceStatusText.Text = service.Status + " | " + service.CountLine;
-        if (SelectedServiceDetailText != null)
-            SelectedServiceDetailText.Text = selectedNames.Count > 1
-                ? service.Detail + Environment.NewLine + "Logging: " + string.Join(", ", selectedNames)
-                : service.Detail;
-        RenderServiceOptions(service);
+        string selectedNamesSignature = string.Join("\u001F", selectedNames.Select(NormalizeServiceName));
+        string detailsSignature = service.Signature + "\u001E" + selectedNamesSignature;
+        if (!string.Equals(detailsSignature, _selectedServiceDetailsSignature, StringComparison.Ordinal)) {
+            _selectedServiceDetailsSignature = detailsSignature;
+            if (SelectedServiceNameText != null)
+                SelectedServiceNameText.Text = selectedNames.Count > 1
+                    ? service.Name + " +" + (selectedNames.Count - 1).ToString(CultureInfo.InvariantCulture)
+                    : service.Name;
+            if (SelectedServiceStatusText != null)
+                SelectedServiceStatusText.Text = service.Status + " | " + service.CountLine;
+            if (SelectedServiceDetailText != null)
+                SelectedServiceDetailText.Text = selectedNames.Count > 1
+                    ? service.Detail + Environment.NewLine + "Logging: " + string.Join(", ", selectedNames)
+                    : service.Detail;
+            RenderServiceOptions(service);
+        }
+
         RenderSelectedServiceEventLog();
     }
 
@@ -14987,11 +16026,30 @@ public partial class MainWindow : Window {
         if (ServicesListBox == null)
             return;
 
+        var desiredNames = new HashSet<string>(
+            _selectedServiceLogNames
+                .Select(NormalizeServiceName)
+                .Where(name => !string.IsNullOrWhiteSpace(name)),
+            StringComparer.OrdinalIgnoreCase);
+        var availableDesiredNames = new HashSet<string>(
+            _serviceMetricItems
+                .Select(item => NormalizeServiceName(item.Name))
+                .Where(name => desiredNames.Contains(name)),
+            StringComparer.OrdinalIgnoreCase);
+        var currentNames = new HashSet<string>(
+            ServicesListBox.SelectedItems
+                .OfType<ServiceMetricItem>()
+                .Select(item => NormalizeServiceName(item.Name))
+                .Where(name => !string.IsNullOrWhiteSpace(name)),
+            StringComparer.OrdinalIgnoreCase);
+        if (currentNames.SetEquals(availableDesiredNames))
+            return;
+
         _updatingServiceSelection = true;
         try {
             ServicesListBox.SelectedItems.Clear();
             foreach (ServiceMetricItem item in _serviceMetricItems) {
-                if (_selectedServiceLogNames.Contains(NormalizeServiceName(item.Name)))
+                if (availableDesiredNames.Contains(NormalizeServiceName(item.Name)))
                     ServicesListBox.SelectedItems.Add(item);
             }
         } finally {
@@ -15109,7 +16167,9 @@ public partial class MainWindow : Window {
             AddServiceActionRow(
                 CreateServiceActionButton("Use LlmRuntime", () => {
                     SelectModelRuntimeProvider(RuntimeProviderLlmRuntime);
-                    ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: _proxy.IsListening);
+                    ApplyModelRuntimeProviderToProxy(RuntimeProviderLlmRuntime, startEmbeddedRuntime: false);
+                    if (_proxy.IsListening)
+                        StartSelectedEmbeddedLlmRuntimeInBackground("service-panel-runtime-selection");
                     SaveSettingsIfReady();
                     RefreshMetrics();
                 }),
@@ -16186,16 +17246,24 @@ public partial class MainWindow : Window {
             return;
 
         var serviceNames = GetSelectedServiceNames().ToList();
+        var entries = serviceNames
+            .SelectMany(serviceName => GetServiceEventLog(serviceName).Select(line => new { ServiceName = serviceName, Line = line }))
+            .OrderBy(entry => entry.Line, StringComparer.Ordinal)
+            .ToList();
+        string logSignature =
+            string.Join("\u001F", serviceNames.Select(NormalizeServiceName)) +
+            "\u001E" +
+            string.Join("\u001F", entries.Select(entry => NormalizeServiceName(entry.ServiceName) + "\u001D" + entry.Line));
+        if (string.Equals(logSignature, _selectedServiceLogSignature, StringComparison.Ordinal))
+            return;
+
+        _selectedServiceLogSignature = logSignature;
         ServiceEventLogTextBox.Document.Blocks.Clear();
         var paragraph = new Paragraph {
             LineHeight = 16,
             Margin = new Thickness(0)
         };
 
-        var entries = serviceNames
-            .SelectMany(serviceName => GetServiceEventLog(serviceName).Select(line => new { ServiceName = serviceName, Line = line }))
-            .OrderBy(entry => entry.Line, StringComparer.Ordinal)
-            .ToList();
         int rendered = 0;
         foreach (var entry in entries) {
             string normalizedLine = TrimForDisplay(entry.Line, 1200);
@@ -16496,7 +17564,10 @@ public partial class MainWindow : Window {
 
     private void UpdateGpuHealthMetrics() {
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (!_gpuHealthRefreshInProgress && now - _lastGpuHealthSampleUtc >= TimeSpan.FromSeconds(4)) {
+        TimeSpan refreshInterval = IsLinuxWorkstationHardwareBridgeMode()
+            ? TimeSpan.FromSeconds(12)
+            : TimeSpan.FromSeconds(4);
+        if (!_gpuHealthRefreshInProgress && now - _lastGpuHealthSampleUtc >= refreshInterval) {
             _lastGpuHealthSampleUtc = now;
             _gpuHealthRefreshInProgress = true;
             _ = Task.Run(RefreshGpuHealthSnapshot)
@@ -16830,16 +17901,21 @@ public partial class MainWindow : Window {
     }
 
     private void UpdateNetworkHealthMetrics() {
-        if (!TryGetNetworkByteTotals(out long bytesUp, out long bytesDown)) {
+        ScheduleNetworkHealthSampleIfDue();
+        if (!TryConsumeNetworkHealthSample(out long bytesUp, out long bytesDown, out DateTimeOffset sampleUtc, out bool failed)) {
+            ApplyNetworkHealthText();
+            return;
+        }
+
+        if (failed) {
             ResetNetworkHealthMetrics();
             return;
         }
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
         if (!_lastNetworkSampleUtc.HasValue ||
             bytesUp < _lastNetworkBytesUp ||
             bytesDown < _lastNetworkBytesDown) {
-            _lastNetworkSampleUtc = now;
+            _lastNetworkSampleUtc = sampleUtc;
             _lastNetworkBytesUp = Math.Max(0, bytesUp);
             _lastNetworkBytesDown = Math.Max(0, bytesDown);
             _networkUpSnapshot = _networkUpTracker.Update(0, bytesUp);
@@ -16848,18 +17924,72 @@ public partial class MainWindow : Window {
             return;
         }
 
-        double elapsedSeconds = Math.Max(0.001, (now - _lastNetworkSampleUtc.Value).TotalSeconds);
+        double elapsedSeconds = Math.Max(0.001, (sampleUtc - _lastNetworkSampleUtc.Value).TotalSeconds);
         long upDelta = Math.Max(0, bytesUp - _lastNetworkBytesUp);
         long downDelta = Math.Max(0, bytesDown - _lastNetworkBytesDown);
         double upKbps = Math.Max(0, upDelta * 8.0 / elapsedSeconds / 1000.0);
         double downKbps = Math.Max(0, downDelta * 8.0 / elapsedSeconds / 1000.0);
 
-        _lastNetworkSampleUtc = now;
+        _lastNetworkSampleUtc = sampleUtc;
         _lastNetworkBytesUp = bytesUp;
         _lastNetworkBytesDown = bytesDown;
         _networkUpSnapshot = _networkUpTracker.Update(upKbps, bytesUp);
         _networkDownSnapshot = _networkDownTracker.Update(downKbps, bytesDown);
         ApplyNetworkHealthText();
+    }
+
+    private void ScheduleNetworkHealthSampleIfDue() {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (_networkHealthRefreshInProgress ||
+            now - _lastNetworkHealthRefreshStartedUtc < TimeSpan.FromSeconds(2))
+            return;
+
+        _lastNetworkHealthRefreshStartedUtc = now;
+        _networkHealthRefreshInProgress = true;
+        _ = Task.Run(() => {
+                bool ok = TryGetNetworkByteTotals(out long bytesUp, out long bytesDown);
+                DateTimeOffset sampleUtc = DateTimeOffset.UtcNow;
+                lock (_networkHealthSampleLock) {
+                    _pendingNetworkHealthBytesUp = bytesUp;
+                    _pendingNetworkHealthBytesDown = bytesDown;
+                    _pendingNetworkHealthSampleUtc = sampleUtc;
+                    _pendingNetworkHealthSampleFailed = !ok;
+                    _pendingNetworkHealthSampleAvailable = true;
+                }
+            })
+            .ContinueWith(task => {
+                if (task.IsFaulted) {
+                    lock (_networkHealthSampleLock) {
+                        _pendingNetworkHealthBytesUp = 0;
+                        _pendingNetworkHealthBytesDown = 0;
+                        _pendingNetworkHealthSampleUtc = DateTimeOffset.UtcNow;
+                        _pendingNetworkHealthSampleFailed = true;
+                        _pendingNetworkHealthSampleAvailable = true;
+                    }
+                }
+
+                _networkHealthRefreshInProgress = false;
+                TryBeginOnUi(UpdateNetworkHealthMetrics, "Network health refresh", DispatcherPriority.Background);
+            }, TaskScheduler.Default);
+    }
+
+    private bool TryConsumeNetworkHealthSample(out long bytesUp, out long bytesDown, out DateTimeOffset sampleUtc, out bool failed) {
+        lock (_networkHealthSampleLock) {
+            if (!_pendingNetworkHealthSampleAvailable) {
+                bytesUp = 0;
+                bytesDown = 0;
+                sampleUtc = DateTimeOffset.MinValue;
+                failed = false;
+                return false;
+            }
+
+            bytesUp = _pendingNetworkHealthBytesUp;
+            bytesDown = _pendingNetworkHealthBytesDown;
+            sampleUtc = _pendingNetworkHealthSampleUtc == DateTimeOffset.MinValue ? DateTimeOffset.UtcNow : _pendingNetworkHealthSampleUtc;
+            failed = _pendingNetworkHealthSampleFailed;
+            _pendingNetworkHealthSampleAvailable = false;
+            return true;
+        }
     }
 
     private void ResetNetworkHealthMetrics() {
@@ -17477,6 +18607,10 @@ public partial class MainWindow : Window {
     }
 
     private void InstallCudaButton_Click(object sender, RoutedEventArgs e) {
+        OpenCudaInstallerPage();
+    }
+
+    private void OpenCudaInstallerPage() {
         try {
             Process.Start(new ProcessStartInfo {
                 FileName = LlmRuntimeCompatibilityService.CudaToolkitDownloadUrl,
@@ -17505,17 +18639,67 @@ public partial class MainWindow : Window {
             var service = new LlmRuntimeCompatibilityService(new LlmRuntimeOptions {
                 CompatibilityConfigPath = Path.Combine(GetGuiUserDataRoot(), "LlmRuntime.compatibility.json")
             });
-            LlmPytorchRepairResult result = await service.RepairPytorchAsync(
-                JackOnnxPythonDiffusersImageRunner.DefaultPreferredImageGenerationPythonExecutable).ConfigureAwait(false);
-            TryBeginOnUi(() => SetImagePipelineIdle(result.Message), "PyTorch repair result");
+            string pythonExecutable = JackOnnxPythonDiffusersImageRunner.DefaultPreferredImageGenerationPythonExecutable;
+            LlmRuntimeCompatibilityStatus before = service.GetStatus(pythonExecutable, CancellationToken.None, forceRefresh: true);
+            if (before.RequiresPytorchRepair && before.Diagnostics.RecommendedPytorch == null && RuntimeCompatibilityNeedsLegacyCudaPython(before)) {
+                var progress = new InlineProgress<string>(status => TryBeginOnUi(() => UpdateImagePipelineStatus(status, true), "legacy PyTorch repair progress"));
+                string legacyPython = await JackOnnxPythonDiffusersImageRunner.EnsureCudaLegacyPythonRuntimeAsync(CancellationToken.None, progress).ConfigureAwait(false);
+                LlmRuntimeCompatibilityStatus repaired = service.GetStatus(legacyPython, CancellationToken.None, forceRefresh: true);
+                string message = repaired.IsGpuGenerationEnabled
+                    ? "Legacy CUDA-enabled PyTorch is ready for image generation at " + legacyPython + "."
+                    : repaired.Message;
+                TryBeginOnUi(() => SetImagePipelineIdle(message), "legacy PyTorch repair result");
+            } else {
+                LlmPytorchRepairResult result = await service.RepairPytorchAsync(pythonExecutable).ConfigureAwait(false);
+                TryBeginOnUi(() => SetImagePipelineIdle(result.Message), "PyTorch repair result");
+            }
         } catch (Exception ex) {
             TryBeginOnUi(() => UpdateImagePipelineStatus("PyTorch repair failed: " + TrimForDisplay(ex.Message, 260), false), "PyTorch repair failure");
         } finally {
             TryBeginOnUi(() => {
                 if (RepairPytorchButton != null)
                     RepairPytorchButton.IsEnabled = true;
+                _lastImageRuntimeCompatibilityRefreshUtc = DateTimeOffset.MinValue;
+                RefreshImageRuntimeCompatibilityWarningIfDue();
             }, "PyTorch repair button reset");
         }
+    }
+
+    private static bool RuntimeCompatibilityNeedsLegacyCudaPython(LlmRuntimeCompatibilityStatus status) {
+        if (status == null)
+            return false;
+
+        string pythonVersion = status.Diagnostics?.Python?.Version ?? "";
+        bool pythonTooNewForLegacyCuda = TryParseMajorMinorVersion(pythonVersion, out Version? version) &&
+                                         version != null &&
+                                         version.Major == 3 &&
+                                         version.Minor >= 12;
+        bool legacyGpu = false;
+        foreach (LlmDetectedGpu gpu in status.Diagnostics?.Gpus ?? Array.Empty<LlmDetectedGpu>()) {
+            if (!gpu.IsNvidia)
+                continue;
+            if (!double.TryParse(gpu.ComputeCapability, NumberStyles.Float, CultureInfo.InvariantCulture, out double capability))
+                continue;
+            if (capability > 0 && capability < 7.5) {
+                legacyGpu = true;
+                break;
+            }
+        }
+
+        return pythonTooNewForLegacyCuda && legacyGpu;
+    }
+
+    private static bool TryParseMajorMinorVersion(string value, out Version? version) {
+        version = null;
+        Match match = Regex.Match(value ?? "", @"(\d+)\.(\d+)(?:\.(\d+))?");
+        if (!match.Success)
+            return false;
+
+        int major = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+        int minor = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+        int patch = match.Groups[3].Success ? int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture) : 0;
+        version = new Version(major, minor, patch);
+        return true;
     }
 
     private static string TryReadJsonString(string json, string propertyName) {
@@ -18485,10 +19669,13 @@ public partial class MainWindow : Window {
         public long StorageBytesUsed { get; init; }
         public long StorageLimitBytes { get; init; }
         public bool StorageUnlimited { get; init; }
+        public bool IsCurrentSocketJackUser { get; init; }
 
         public string NameLine {
             get {
                 string flags = "";
+                if (IsCurrentSocketJackUser)
+                    flags += " | signed in";
                 if (AccountManaged)
                     flags += " | account";
                 else if (!string.IsNullOrWhiteSpace(UserType))
@@ -18943,7 +20130,7 @@ public partial class MainWindow : Window {
         }
     }
 
-    private sealed class ServiceMetricItem {
+    private sealed class ServiceMetricItem : INotifyPropertyChanged {
         public ServiceMetricItem(string name, string status, string countLine, string detail, bool isPulsing, BandwidthMetricSnapshot bandwidthIn, BandwidthMetricSnapshot bandwidthOut, bool hasBandwidth) {
             Name = name;
             Status = string.IsNullOrWhiteSpace(status) ? "-" : status;
@@ -18961,21 +20148,66 @@ public partial class MainWindow : Window {
             BandwidthOutText = hasBandwidth ? bandwidthOut.ToolTip : "Outbound: -";
         }
 
+        public event PropertyChangedEventHandler? PropertyChanged;
+
         public string Name { get; }
-        public string Status { get; }
-        public string CountLine { get; }
-        public string Detail { get; }
-        public bool IsPulsing { get; }
-        public Visibility BandwidthVisibility { get; }
-        public double BandwidthInMinimum { get; }
-        public double BandwidthInMaximum { get; }
-        public double BandwidthInValue { get; }
-        public double BandwidthOutMinimum { get; }
-        public double BandwidthOutMaximum { get; }
-        public double BandwidthOutValue { get; }
-        public string BandwidthInText { get; }
-        public string BandwidthOutText { get; }
+        public string Status { get => _status; private set => SetProperty(ref _status, value, nameof(Status)); }
+        public string CountLine { get => _countLine; private set => SetProperty(ref _countLine, value, nameof(CountLine)); }
+        public string Detail { get => _detail; private set => SetProperty(ref _detail, value, nameof(Detail)); }
+        public bool IsPulsing { get => _isPulsing; private set => SetProperty(ref _isPulsing, value, nameof(IsPulsing)); }
+        public Visibility BandwidthVisibility { get => _bandwidthVisibility; private set => SetProperty(ref _bandwidthVisibility, value, nameof(BandwidthVisibility)); }
+        public double BandwidthInMinimum { get => _bandwidthInMinimum; private set => SetProperty(ref _bandwidthInMinimum, value, nameof(BandwidthInMinimum)); }
+        public double BandwidthInMaximum { get => _bandwidthInMaximum; private set => SetProperty(ref _bandwidthInMaximum, value, nameof(BandwidthInMaximum)); }
+        public double BandwidthInValue { get => _bandwidthInValue; private set => SetProperty(ref _bandwidthInValue, value, nameof(BandwidthInValue)); }
+        public double BandwidthOutMinimum { get => _bandwidthOutMinimum; private set => SetProperty(ref _bandwidthOutMinimum, value, nameof(BandwidthOutMinimum)); }
+        public double BandwidthOutMaximum { get => _bandwidthOutMaximum; private set => SetProperty(ref _bandwidthOutMaximum, value, nameof(BandwidthOutMaximum)); }
+        public double BandwidthOutValue { get => _bandwidthOutValue; private set => SetProperty(ref _bandwidthOutValue, value, nameof(BandwidthOutValue)); }
+        public string BandwidthInText { get => _bandwidthInText; private set => SetProperty(ref _bandwidthInText, value, nameof(BandwidthInText)); }
+        public string BandwidthOutText { get => _bandwidthOutText; private set => SetProperty(ref _bandwidthOutText, value, nameof(BandwidthOutText)); }
         public string Signature => Name + "\u001F" + Status + "\u001F" + CountLine + "\u001F" + Detail + "\u001F" + IsPulsing + "\u001F" + BandwidthVisibility + "\u001F" + BandwidthInMinimum + "\u001F" + BandwidthInMaximum + "\u001F" + BandwidthInValue + "\u001F" + BandwidthOutMinimum + "\u001F" + BandwidthOutMaximum + "\u001F" + BandwidthOutValue + "\u001F" + BandwidthInText + "\u001F" + BandwidthOutText;
+
+        public void UpdateFrom(ServiceMetricItem source) {
+            if (source == null || !string.Equals(Name, source.Name, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            SetProperty(ref _status, source.Status, nameof(Status));
+            SetProperty(ref _countLine, source.CountLine, nameof(CountLine));
+            SetProperty(ref _detail, source.Detail, nameof(Detail));
+            SetProperty(ref _isPulsing, source.IsPulsing, nameof(IsPulsing));
+            SetProperty(ref _bandwidthVisibility, source.BandwidthVisibility, nameof(BandwidthVisibility));
+            SetProperty(ref _bandwidthInMinimum, source.BandwidthInMinimum, nameof(BandwidthInMinimum));
+            SetProperty(ref _bandwidthInMaximum, source.BandwidthInMaximum, nameof(BandwidthInMaximum));
+            SetProperty(ref _bandwidthInValue, source.BandwidthInValue, nameof(BandwidthInValue));
+            SetProperty(ref _bandwidthOutMinimum, source.BandwidthOutMinimum, nameof(BandwidthOutMinimum));
+            SetProperty(ref _bandwidthOutMaximum, source.BandwidthOutMaximum, nameof(BandwidthOutMaximum));
+            SetProperty(ref _bandwidthOutValue, source.BandwidthOutValue, nameof(BandwidthOutValue));
+            SetProperty(ref _bandwidthInText, source.BandwidthInText, nameof(BandwidthInText));
+            SetProperty(ref _bandwidthOutText, source.BandwidthOutText, nameof(BandwidthOutText));
+        }
+
+        private string _status = "";
+        private string _countLine = "";
+        private string _detail = "";
+        private bool _isPulsing;
+        private Visibility _bandwidthVisibility = Visibility.Collapsed;
+        private double _bandwidthInMinimum;
+        private double _bandwidthInMaximum;
+        private double _bandwidthInValue;
+        private double _bandwidthOutMinimum;
+        private double _bandwidthOutMaximum;
+        private double _bandwidthOutValue;
+        private string _bandwidthInText = "";
+        private string _bandwidthOutText = "";
+
+        private bool SetProperty<T>(ref T field, T value, string propertyName) {
+            if (Equals(field, value))
+                return false;
+
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Signature)));
+            return true;
+        }
     }
 
     private sealed class ServiceConfigRowItem {
@@ -19724,6 +20956,13 @@ public partial class MainWindow : Window {
         public bool SupportsImageGeneration { get; set; }
         public bool SupportsAudioGeneration { get; set; }
         public bool SupportsVideoGeneration { get; set; }
+        public bool RequiresPayment { get; set; }
+        public string StripePriceId { get; set; } = "";
+        public string StripeAccount { get; set; } = "";
+        public long StripeUnitAmountCents { get; set; }
+        public string StripeCurrency { get; set; } = "usd";
+        public string PaymentStatus { get; set; } = "";
+        public bool CheckoutConfigured { get; set; }
     }
 
     private sealed class ModelBenchmarkResult {
@@ -19733,6 +20972,13 @@ public partial class MainWindow : Window {
         public bool SupportsImageGeneration { get; set; }
         public bool SupportsAudioGeneration { get; set; }
         public bool SupportsVideoGeneration { get; set; }
+        public bool RequiresPayment { get; set; }
+        public string StripePriceId { get; set; } = "";
+        public string StripeAccount { get; set; } = "";
+        public long StripeUnitAmountCents { get; set; }
+        public string StripeCurrency { get; set; } = "usd";
+        public string PaymentStatus { get; set; } = "";
+        public bool CheckoutConfigured { get; set; }
         public double TokensPerSecond { get; set; }
         public double TokensPerHour { get; set; }
         public int OutputTokens { get; set; }
@@ -19764,6 +21010,7 @@ public partial class MainWindow : Window {
         public IReadOnlyList<WarningActionItem> Actions { get; }
         public Visibility ActionsVisibility => Actions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         public string ModelLine => ModelName;
+        public string SeverityDisplay => Severity.Equals("INFO", StringComparison.OrdinalIgnoreCase) ? "(I)" : Severity;
         public int SeverityRank => MainWindow.SeverityRank(Severity);
         public string Signature => ModelName + "\u001f" + Severity + "\u001f" + SignalLine + "\u001f" + RecommendationLine + "\u001f" + string.Join(",", Actions.Select(action => action.Label));
         public Brush SeverityBrush {
@@ -19772,6 +21019,8 @@ public partial class MainWindow : Window {
                     return new SolidColorBrush(Color.FromRgb(255, 92, 122));
                 if (Severity.Equals("WARN", StringComparison.OrdinalIgnoreCase))
                     return new SolidColorBrush(Color.FromRgb(250, 204, 21));
+                if (Severity.Equals("INFO", StringComparison.OrdinalIgnoreCase))
+                    return new SolidColorBrush(Color.FromRgb(96, 165, 250));
                 return new SolidColorBrush(Color.FromRgb(123, 231, 186));
             }
         }
@@ -19781,6 +21030,8 @@ public partial class MainWindow : Window {
                     return new SolidColorBrush(Color.FromRgb(255, 92, 122));
                 if (Severity.Equals("WARN", StringComparison.OrdinalIgnoreCase))
                     return new SolidColorBrush(Color.FromRgb(217, 119, 6));
+                if (Severity.Equals("INFO", StringComparison.OrdinalIgnoreCase))
+                    return new SolidColorBrush(Color.FromRgb(59, 130, 246));
                 return new SolidColorBrush(Color.FromRgb(51, 78, 94));
             }
         }
@@ -19790,6 +21041,8 @@ public partial class MainWindow : Window {
                     return new SolidColorBrush(Color.FromArgb(142, 74, 22, 38));
                 if (Severity.Equals("WARN", StringComparison.OrdinalIgnoreCase))
                     return new SolidColorBrush(Color.FromArgb(132, 68, 50, 22));
+                if (Severity.Equals("INFO", StringComparison.OrdinalIgnoreCase))
+                    return new SolidColorBrush(Color.FromArgb(128, 21, 42, 75));
                 return new SolidColorBrush(Color.FromArgb(136, 17, 25, 36));
             }
         }
@@ -19820,6 +21073,13 @@ public partial class MainWindow : Window {
         private bool _supportsImageGeneration;
         private bool _supportsAudioGeneration;
         private bool _supportsVideoGeneration;
+        private bool _requiresPayment;
+        private string _stripePriceId = "";
+        private string _stripeAccount = "";
+        private long _stripeUnitAmountCents;
+        private string _stripeCurrency = "usd";
+        private string _paymentStatus = "";
+        private bool _checkoutConfigured;
         private string _status = "Not benchmarked";
         private string _benchmarkKind = "";
         private string _benchmarkPrompt = "";
@@ -19922,6 +21182,39 @@ public partial class MainWindow : Window {
                 _supportsVideoGeneration = value;
                 OnChanged(nameof(SupportsVideoGeneration));
             }
+        }
+        public bool RequiresPayment {
+            get => _requiresPayment;
+            private set {
+                if (_requiresPayment == value)
+                    return;
+                _requiresPayment = value;
+                OnChanged(nameof(RequiresPayment));
+            }
+        }
+        public string StripePriceId {
+            get => _stripePriceId;
+            private set { _stripePriceId = value ?? ""; OnChanged(nameof(StripePriceId)); }
+        }
+        public string StripeAccount {
+            get => _stripeAccount;
+            private set { _stripeAccount = value ?? ""; OnChanged(nameof(StripeAccount)); }
+        }
+        public long StripeUnitAmountCents {
+            get => _stripeUnitAmountCents;
+            private set { _stripeUnitAmountCents = Math.Max(0L, value); OnChanged(nameof(StripeUnitAmountCents)); }
+        }
+        public string StripeCurrency {
+            get => _stripeCurrency;
+            private set { _stripeCurrency = FirstNonEmpty(value, "usd").ToLowerInvariant(); OnChanged(nameof(StripeCurrency)); }
+        }
+        public string PaymentStatus {
+            get => _paymentStatus;
+            private set { _paymentStatus = value ?? ""; OnChanged(nameof(PaymentStatus)); }
+        }
+        public bool CheckoutConfigured {
+            get => _checkoutConfigured;
+            private set { _checkoutConfigured = value; OnChanged(nameof(CheckoutConfigured)); }
         }
         public string Status {
             get => _status;
@@ -20027,6 +21320,7 @@ public partial class MainWindow : Window {
             SupportsImageGeneration = SupportsImageGeneration || result.SupportsImageGeneration || ModelNameLikelySupportsImageGeneration(result.ModelId);
             SupportsAudioGeneration = SupportsAudioGeneration || result.SupportsAudioGeneration || ModelNameLikelySupportsAudioGeneration(result.ModelId);
             SupportsVideoGeneration = SupportsVideoGeneration || result.SupportsVideoGeneration || ModelNameLikelySupportsVideoGeneration(result.ModelId);
+            ApplyPayment(result.RequiresPayment, result.StripePriceId, result.StripeAccount, result.StripeUnitAmountCents, result.StripeCurrency, result.PaymentStatus, result.CheckoutConfigured);
             IsRunning = false;
             Status = "Done: " + FormatBenchmarkRate(BenchmarkKind, TokensPerSecond, TokensPerHour) + ", score " + Rating.ToString(CultureInfo.InvariantCulture) + "/100";
             OnChanged(nameof(DetailLine));
@@ -20055,6 +21349,7 @@ public partial class MainWindow : Window {
             SupportsImageGeneration = SupportsImageGeneration || capability.SupportsImageGeneration || ModelNameLikelySupportsImageGeneration(ModelId);
             SupportsAudioGeneration = SupportsAudioGeneration || capability.SupportsAudioGeneration || ModelNameLikelySupportsAudioGeneration(ModelId);
             SupportsVideoGeneration = SupportsVideoGeneration || capability.SupportsVideoGeneration || ModelNameLikelySupportsVideoGeneration(ModelId);
+            ApplyPayment(capability.RequiresPayment, capability.StripePriceId, capability.StripeAccount, capability.StripeUnitAmountCents, capability.StripeCurrency, capability.PaymentStatus, capability.CheckoutConfigured);
         }
 
         public ModelBenchmarkResult ToResult() {
@@ -20065,6 +21360,13 @@ public partial class MainWindow : Window {
                 SupportsImageGeneration = SupportsImageGeneration,
                 SupportsAudioGeneration = SupportsAudioGeneration,
                 SupportsVideoGeneration = SupportsVideoGeneration,
+                RequiresPayment = RequiresPayment,
+                StripePriceId = StripePriceId,
+                StripeAccount = StripeAccount,
+                StripeUnitAmountCents = StripeUnitAmountCents,
+                StripeCurrency = StripeCurrency,
+                PaymentStatus = PaymentStatus,
+                CheckoutConfigured = CheckoutConfigured,
                 TokensPerSecond = TokensPerSecond,
                 TokensPerHour = TokensPerHour,
                 OutputTokens = OutputTokens,
@@ -20074,6 +21376,17 @@ public partial class MainWindow : Window {
                 BenchmarkKind = BenchmarkKind,
                 BenchmarkPrompt = BenchmarkPrompt
             };
+        }
+
+        private void ApplyPayment(bool requiresPayment, string stripePriceId, string stripeAccount, long unitAmountCents, string stripeCurrency, string paymentStatus, bool checkoutConfigured) {
+            RequiresPayment = RequiresPayment || requiresPayment;
+            StripePriceId = FirstNonEmpty(StripePriceId, stripePriceId);
+            StripeAccount = FirstNonEmpty(StripeAccount, stripeAccount);
+            if (StripeUnitAmountCents <= 0)
+                StripeUnitAmountCents = unitAmountCents;
+            StripeCurrency = FirstNonEmpty(StripeCurrency, stripeCurrency, "usd");
+            PaymentStatus = FirstNonEmpty(PaymentStatus, paymentStatus);
+            CheckoutConfigured = CheckoutConfigured || checkoutConfigured || !string.IsNullOrWhiteSpace(StripePriceId) || StripeUnitAmountCents > 0;
         }
 
         private void OnChanged(string propertyName) {
@@ -20667,13 +21980,52 @@ public partial class MainWindow : Window {
         private static (string content, string reasoning) SplitThinkTags(string text) {
             text ??= "";
             var reasoning = new StringBuilder();
-            string content = Regex.Replace(text, "<think>([\\s\\S]*?)</think>", match => {
+            string content = Regex.Replace(text, "<(think|thinking|thought|analysis)\\b[^>]*>([\\s\\S]*?)</\\1>", match => {
                 if (reasoning.Length > 0)
                     reasoning.AppendLine().AppendLine();
-                reasoning.Append(match.Groups[1].Value.Trim());
+                reasoning.Append(match.Groups[2].Value.Trim());
                 return "";
             }, RegexOptions.IgnoreCase);
-            return (content.Trim(), reasoning.ToString().Trim());
+            return SplitPlainReasoningHeading(content, reasoning.ToString());
+        }
+
+        private static (string content, string reasoning) SplitPlainReasoningHeading(string content, string reasoning) {
+            content ??= "";
+            reasoning ??= "";
+            MatchCollection matches = Regex.Matches(content, "(?im)(?:^|\\n)\\s*(?:\\*\\*)?\\s*(?<label>thought\\s+process|chain\\s+of\\s+thought|reasoning|analysis|thinking)\\s*:?\\s*(?:\\*\\*)?\\s*(?:\\n|$)");
+            foreach (Match match in matches) {
+                string before = content.Substring(0, match.Index);
+                string after = content.Substring(match.Index + match.Length);
+                if (!LooksSubstantiveAssistantAnswer(before))
+                    continue;
+                string label = Regex.Replace(match.Groups["label"].Value ?? "", "\\s+", " ").Trim();
+                bool privateHeading = label.Equals("thought process", StringComparison.OrdinalIgnoreCase) ||
+                                      label.Equals("chain of thought", StringComparison.OrdinalIgnoreCase);
+                if (!privateHeading && !LooksLikeReasoningLeak(after))
+                    continue;
+                string nextReasoning = string.Join("\n\n", new[] { reasoning.Trim(), after.Trim() }.Where(part => !string.IsNullOrWhiteSpace(part)));
+                return (before.TrimEnd(), nextReasoning.Trim());
+            }
+            return (content.Trim(), reasoning.Trim());
+        }
+
+        private static bool LooksSubstantiveAssistantAnswer(string text) {
+            string normalized = Regex.Replace(text ?? "", "</?(?:final_answer|answer|response)\\b[^>]*>", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            normalized = Regex.Replace(normalized, "\\s+", " ").Trim();
+            return normalized.Length >= 12 && !normalized.Equals("final answer", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LooksLikeReasoningLeak(string text) {
+            string lower = (text ?? "").TrimStart().ToLowerInvariant();
+            return lower.StartsWith("the user ") ||
+                   lower.StartsWith("i need") ||
+                   lower.StartsWith("i should") ||
+                   lower.StartsWith("we need") ||
+                   lower.StartsWith("let me") ||
+                   lower.StartsWith("analysis") ||
+                   lower.StartsWith("thought") ||
+                   lower.Contains("tool returned") ||
+                   lower.Contains("browser_open tool");
         }
     }
 

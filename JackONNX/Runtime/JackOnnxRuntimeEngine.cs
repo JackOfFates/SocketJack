@@ -11,6 +11,7 @@ public sealed class JackOnnxRuntimeEngine : IJackOnnxRuntimeCatalog
     private readonly object _progressLock = new();
     private readonly List<IJackOnnxExecutionProvider> _providers;
     private readonly List<JackOnnxJobSnapshot> _jobs = new();
+    private readonly Dictionary<string, CancellationTokenSource> _jobCancellations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<JackOnnxProgress>> _progressHistory = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<Action<JackOnnxProgress>>> _progressSubscribers = new(StringComparer.OrdinalIgnoreCase);
 
@@ -164,6 +165,8 @@ public sealed class JackOnnxRuntimeEngine : IJackOnnxRuntimeCatalog
         if (string.IsNullOrWhiteSpace(jobId))
             return Task.FromResult<JackOnnxJobSnapshot?>(null);
 
+        JackOnnxJobSnapshot? snapshot = null;
+        CancellationTokenSource? jobCancellation = null;
         lock (_jobsLock)
         {
             var job = _jobs.FirstOrDefault(item => string.Equals(item.Id, jobId, StringComparison.OrdinalIgnoreCase));
@@ -178,9 +181,18 @@ public sealed class JackOnnxRuntimeEngine : IJackOnnxRuntimeCatalog
                 job.CompletedAtUtc = DateTimeOffset.UtcNow;
                 ReportProgressLocked(CloneProgress(job));
             }
-
-            return Task.FromResult<JackOnnxJobSnapshot?>(CloneJob(job));
+            _jobCancellations.TryGetValue(jobId, out jobCancellation);
+            snapshot = CloneJob(job);
         }
+
+        try
+        {
+            jobCancellation?.Cancel();
+        }
+        catch
+        {
+        }
+        return Task.FromResult<JackOnnxJobSnapshot?>(snapshot);
     }
 
     public JackOnnxJobSnapshot CreateJob(JackOnnxMediaKind kind, JackOnnxGenerationRequest request)
@@ -218,6 +230,58 @@ public sealed class JackOnnxRuntimeEngine : IJackOnnxRuntimeCatalog
         }
 
         return snapshot;
+    }
+
+    public JackOnnxJobCancellationScope CreateJobCancellationScope(string jobId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_jobsLock)
+        {
+            var job = _jobs.FirstOrDefault(item => string.Equals(item.Id, jobId, StringComparison.OrdinalIgnoreCase));
+            if (job != null && job.State == JackOnnxJobState.Cancelled)
+                linked.Cancel();
+            if (_jobCancellations.TryGetValue(jobId, out var existing))
+                existing.Dispose();
+            _jobCancellations[jobId] = linked;
+        }
+
+        return new JackOnnxJobCancellationScope(this, jobId, linked);
+    }
+
+    private void DisposeJobCancellationScope(string jobId, CancellationTokenSource source)
+    {
+        lock (_jobsLock)
+        {
+            if (_jobCancellations.TryGetValue(jobId, out var current) && ReferenceEquals(current, source))
+                _jobCancellations.Remove(jobId);
+        }
+        source.Dispose();
+    }
+
+    public sealed class JackOnnxJobCancellationScope : IDisposable
+    {
+        private readonly JackOnnxRuntimeEngine _runtime;
+        private readonly string _jobId;
+        private CancellationTokenSource? _source;
+
+        internal JackOnnxJobCancellationScope(JackOnnxRuntimeEngine runtime, string jobId, CancellationTokenSource source)
+        {
+            _runtime = runtime;
+            _jobId = jobId;
+            _source = source;
+        }
+
+        public CancellationToken Token => _source?.Token ?? CancellationToken.None;
+
+        public void Dispose()
+        {
+            var source = Interlocked.Exchange(ref _source, null);
+            if (source != null)
+                _runtime.DisposeJobCancellationScope(_jobId, source);
+        }
     }
 
     public void UpdateJobProgress(string jobId, JackOnnxProgress progress)

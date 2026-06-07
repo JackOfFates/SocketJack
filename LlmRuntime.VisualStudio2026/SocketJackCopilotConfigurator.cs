@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using LlmRuntime.VisualStudio;
 using Microsoft.VisualStudio.Extensibility;
@@ -115,11 +116,12 @@ internal sealed class SocketJackCopilotConfigurator
         }
 
         OllamaByomWriteResult ollamaResult = new VisualStudioOllamaByomConfigWriter().Write(server, model, modelAccessUrl);
+        SocketJackCopilotSelectionStore.Save(server, model, ollamaResult.CustomUrl);
         string duplicatorMessage = await this.TryConfigureLocalDuplicatorAsync(server, model, modelAccessUrl, cancellationToken);
 
         return new SocketJackConfigureResult(
             server.DisplayName,
-            model.DisplayName,
+            model.Id,
             mcpResult.Path,
             mcpResult.ServerKey,
             ollamaResult.Path,
@@ -245,7 +247,7 @@ internal sealed class SocketJackCopilotConfigurator
                 ["serverEndpoint"] = server.EffectiveEndpoint,
                 ["modelAccessUrl"] = modelAccessUrl,
                 ["modelId"] = model.Id,
-                ["modelDisplayName"] = model.DisplayName,
+                ["modelDisplayName"] = model.Id,
             };
 
             using HttpResponseMessage response = await this.httpClient.PostAsJsonAsync("http://127.0.0.1:11436/api/copilot-duplicator", payload, cancellationToken);
@@ -304,6 +306,307 @@ internal sealed class SocketJackCopilotConfigurator
         int fallbackPort = ((IPEndPoint)fallback.LocalEndpoint).Port;
         fallback.Stop();
         return fallbackPort;
+    }
+}
+
+internal static class SocketJackCopilotSelectionStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true
+    };
+
+    public static string DefaultPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "SocketJack",
+        "VisualStudio",
+        "CopilotSelection.json");
+
+    public static void Save(SocketJackServerCandidate server, SocketJackModelCandidate model, string modelAccessUrl)
+    {
+        if (server == null)
+        {
+            throw new ArgumentNullException(nameof(server));
+        }
+
+        if (model == null)
+        {
+            throw new ArgumentNullException(nameof(model));
+        }
+
+        string path = DefaultPath;
+        string? directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        JsonObject root = new()
+        {
+            ["version"] = 1,
+            ["serverEndpoint"] = server.EffectiveEndpoint,
+            ["serverId"] = server.Id,
+            ["serverName"] = server.DisplayName,
+            ["modelId"] = model.Id,
+            ["modelDisplayName"] = model.Id,
+            ["modelAccessUrl"] = modelAccessUrl.TrimEnd('/'),
+            ["updatedUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        };
+
+        File.WriteAllText(path, root.ToJsonString(JsonOptions));
+    }
+
+    public static SocketJackStoredCopilotSelection Load()
+    {
+        string path = DefaultPath;
+        if (!File.Exists(path))
+        {
+            return new SocketJackStoredCopilotSelection();
+        }
+
+        try
+        {
+            JsonObject root = JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? new JsonObject();
+            return new SocketJackStoredCopilotSelection
+            {
+                ServerEndpoint = FirstString(root, "serverEndpoint"),
+                ServerId = FirstString(root, "serverId"),
+                ServerName = FirstString(root, "serverName"),
+                ModelId = FirstString(root, "modelId"),
+                ModelDisplayName = FirstString(root, "modelDisplayName"),
+                ModelAccessUrl = FirstString(root, "modelAccessUrl"),
+            };
+        }
+        catch (Exception)
+        {
+            return new SocketJackStoredCopilotSelection();
+        }
+    }
+
+    private static string FirstString(JsonObject root, string name)
+    {
+        return root[name]?.ToString()?.Trim() ?? "";
+    }
+}
+
+internal sealed class SocketJackStoredCopilotSelection
+{
+    public string ServerEndpoint { get; init; } = "";
+
+    public string ServerId { get; init; } = "";
+
+    public string ServerName { get; init; } = "";
+
+    public string ModelId { get; init; } = "";
+
+    public string ModelDisplayName { get; init; } = "";
+
+    public string ModelAccessUrl { get; init; } = "";
+
+    public bool HasLocalProxy =>
+        !string.IsNullOrWhiteSpace(this.ModelAccessUrl) &&
+        Uri.TryCreate(this.ModelAccessUrl, UriKind.Absolute, out Uri? uri) &&
+        (string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)) &&
+        uri.Port > 0;
+
+    public int LocalProxyPort
+    {
+        get
+        {
+            if (!Uri.TryCreate(this.ModelAccessUrl, UriKind.Absolute, out Uri? uri))
+            {
+                return 0;
+            }
+
+            return uri.Port > 0 ? uri.Port : 0;
+        }
+    }
+}
+
+internal static class SocketJackLocalProxySupervisor
+{
+    private static readonly object Sync = new();
+    private static bool startQueued;
+
+    public static void StartBestEffortFromStoredSelection()
+    {
+        lock (Sync)
+        {
+            if (startQueued)
+            {
+                return;
+            }
+
+            startQueued = true;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await EnsureActiveProxyFromStoredSelectionAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
+            finally
+            {
+                lock (Sync)
+                {
+                    startQueued = false;
+                }
+            }
+        });
+    }
+
+    internal static async Task<bool> EnsureActiveProxyFromStoredSelectionAsync(CancellationToken cancellationToken)
+    {
+        SocketJackStoredCopilotSelection selection = SocketJackCopilotSelectionStore.Load();
+        if (!selection.HasLocalProxy ||
+            string.IsNullOrWhiteSpace(selection.ServerEndpoint) ||
+            string.IsNullOrWhiteSpace(selection.ModelId))
+        {
+            return false;
+        }
+
+        int port = selection.LocalProxyPort;
+        if (port <= 0)
+        {
+            return false;
+        }
+
+        if (await IsMatchingProxyHealthyAsync(port, selection.ModelId, cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        if (IsTcpPortListening(port))
+        {
+            return false;
+        }
+
+        string? bridgeDllPath = ResolveBridgeDllPath();
+        if (string.IsNullOrWhiteSpace(bridgeDllPath))
+        {
+            return false;
+        }
+
+        SocketJackAuthState authState = new SocketJackVisualStudioAuthService().Load();
+        var server = new SocketJackServerCandidate
+        {
+            Id = string.IsNullOrWhiteSpace(selection.ServerId) ? selection.ServerName : selection.ServerId,
+            DisplayName = string.IsNullOrWhiteSpace(selection.ServerName) ? selection.ServerId : selection.ServerName,
+            Endpoint = selection.ServerEndpoint
+        };
+        var model = new SocketJackModelCandidate
+        {
+            Id = selection.ModelId,
+            DisplayName = string.IsNullOrWhiteSpace(selection.ModelDisplayName) ? selection.ModelId : selection.ModelDisplayName
+        };
+        BridgeLaunchInfo launch = SocketJackBridgeLaunchBuilder.CreateHttpProxyLaunchFromDll(
+            bridgeDllPath,
+            server,
+            model,
+            port,
+            authState.AccessToken,
+            authState.UserName);
+
+        var info = new ProcessStartInfo
+        {
+            FileName = launch.Command,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+        };
+
+        foreach (string argument in launch.Arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
+
+        using Process? _ = Process.Start(info);
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (await IsMatchingProxyHealthyAsync(port, selection.ModelId, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> IsMatchingProxyHealthyAsync(int port, string modelId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(2)
+            };
+            using HttpResponseMessage response = await client.GetAsync(
+                "http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture) + "/socketjack-proxy-health",
+                cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            string json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            JsonObject root = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+            string selectedModel = root["selectedModel"]?.ToString() ?? "";
+            return string.IsNullOrWhiteSpace(modelId) ||
+                string.Equals(selectedModel, modelId, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsTcpPortListening(int port)
+    {
+        try
+        {
+            using TcpClient client = new();
+            IAsyncResult pending = client.BeginConnect(IPAddress.Loopback, port, null, null);
+            bool connected = pending.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(200));
+            if (!connected)
+            {
+                return false;
+            }
+
+            client.EndConnect(pending);
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    private static string? ResolveBridgeDllPath()
+    {
+        string baseDirectory = AppContext.BaseDirectory;
+        string assemblyDirectory = Path.GetDirectoryName(typeof(SocketJackLocalProxySupervisor).Assembly.Location) ?? baseDirectory;
+        string[] candidates =
+        [
+            Path.Combine(assemblyDirectory, "Bridge", "SocketJack.CopilotMcpBridge.dll"),
+            Path.Combine(assemblyDirectory, "SocketJack.CopilotMcpBridge.dll"),
+            Path.Combine(baseDirectory, "Bridge", "SocketJack.CopilotMcpBridge.dll"),
+            Path.Combine(baseDirectory, "SocketJack.CopilotMcpBridge.dll"),
+        ];
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 }
 

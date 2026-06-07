@@ -12,7 +12,8 @@
         <RowDefinition Height="Auto" />
       </Grid.RowDefinitions>
 
-      <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,8">
+      <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,8"
+                 IsEnabled="{Binding SessionControlsEnabled}">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
           <Button Content="Refresh"
                   MinWidth="72"
@@ -23,6 +24,7 @@
                   MinWidth="64"
                   Margin="4,0,0,0"
                   Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                  IsEnabled="{Binding CanPull}"
                   Command="{Binding PullCommand}" />
           <Button Content="Push"
                   MinWidth="64"
@@ -37,6 +39,7 @@
           <TextBox MinWidth="260"
                    MinHeight="26"
                    Margin="0,0,8,0"
+                   IsReadOnly="True"
                    Text="{Binding SessionId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                    Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
           <TextBlock Text="{Binding EndpointSummary}"
@@ -49,6 +52,7 @@
                 Background="#303030"
                 BorderBrush="#585858"
                 Foreground="#E8E8E8"
+                IsEnabled="{Binding SessionControlsEnabled}"
                 ItemsSource="{Binding TreeItems}">
         <TreeView.Resources>
           <Style TargetType="{x:Type TreeViewItem}">
@@ -146,6 +150,26 @@
                    TextWrapping="Wrap"
                    Foreground="#D6D6D6" />
       </StackPanel>
+
+      <Grid Grid.RowSpan="3" Background="#CC202020">
+        <Grid.Style>
+          <Style TargetType="{x:Type Grid}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding IsSessionBootstrapVisible}" Value="True">
+                <Setter Property="Visibility" Value="Visible" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Grid.Style>
+        <Button Content="{Binding CreateSessionButtonText}"
+                MinWidth="220"
+                MinHeight="34"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                Command="{Binding CreateSessionCommand}" />
+      </Grid>
 
       <Grid Grid.RowSpan="3" Background="#DD202020">
         <Grid.Style>

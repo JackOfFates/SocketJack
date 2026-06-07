@@ -445,6 +445,17 @@
             Default database name
             </summary>
         </member>
+        <member name="P:SocketJack.Net.Database.DataServer.SqlAdminIpWhitelistDatabaseName">
+            <summary>
+            Database that stores the SQL Admin IP whitelist table. When blank,
+            <see cref="P:SocketJack.Net.Database.DataServer.DefaultDatabase"/> is used.
+            </summary>
+        </member>
+        <member name="F:SocketJack.Net.Database.DataServer.SqlAdminIpWhitelistTableName">
+            <summary>
+            Table used to persist SQL/Admin IP whitelist entries.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.Database.DataServer.ServerName">
             <summary>
             Server name to report to clients
@@ -504,7 +515,9 @@
         <member name="P:SocketJack.Net.Database.DataServer.AllowedSqlLoginIpAddresses">
             <summary>
             Remote IP addresses allowed to authenticate to SQL when
-            <see cref="P:SocketJack.Net.Database.DataServer.EnforceSqlLoginIpAllowList"/> is enabled.
+            <see cref="P:SocketJack.Net.Database.DataServer.EnforceSqlLoginIpAllowList"/> is enabled. Values are also
+            mirrored into <see cref="F:SocketJack.Net.Database.DataServer.SqlAdminIpWhitelistTableName"/> when added
+            through <see cref="M:SocketJack.Net.Database.DataServer.AllowSqlLoginIpAddress(System.String[])"/>.
             </summary>
         </member>
         <member name="P:SocketJack.Net.Database.DataServer.Databases">
@@ -526,8 +539,18 @@
         </member>
         <member name="P:SocketJack.Net.Database.DataServer.AutoSave">
             <summary>
-            When <see langword="true"/>, every data mutation (table/row add/remove) is
-            automatically flushed to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            When <see langword="true"/>, every dirty data mutation (table/row add/remove)
+            schedules a verified flush to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.HasUnsavedChanges">
+            <summary>
+            Indicates whether a mutation has been scheduled but not yet persisted.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.Database.DataServer.LastPersistedHash">
+            <summary>
+            SHA-256 hash of the last successfully persisted logical database snapshot.
             </summary>
         </member>
         <member name="P:SocketJack.Net.Database.DataServer.EnableCacheOptimizing">
@@ -606,6 +629,21 @@
         <member name="M:SocketJack.Net.Database.DataServer.SaveAsync(System.Threading.CancellationToken)">
             <summary>
             Asynchronously saves the current server state (users, databases, tables, rows) to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.SaveIfDirty">
+            <summary>
+            Saves the current server state only when a mutation has marked it dirty.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.SaveIfDirtyAsync">
+            <summary>
+            Asynchronously saves the current server state only when a mutation has marked it dirty.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.Database.DataServer.SaveIfDirtyAsync(System.Threading.CancellationToken)">
+            <summary>
+            Asynchronously saves the current server state only when a mutation has marked it dirty.
             </summary>
         </member>
         <member name="M:SocketJack.Net.Database.DataServer.Load">
@@ -787,6 +825,11 @@
             length as <see cref="P:SocketJack.Net.Database.QueryResult.Columns"/>.  Supported values:
             <c>0xE7</c> = NVARCHAR (default), <c>0x38</c> = INT (4-byte LE).
             If <see langword="null"/>, all columns default to NVARCHAR.
+            </summary>
+        </member>
+        <member name="T:SocketJack.Net.Database.SqlAdminSessionContext">
+            <summary>
+            Carries authenticated SQL Admin session values used by the Admin suite.
             </summary>
         </member>
         <member name="T:SocketJack.Net.Database.SqlAdminPanel">
@@ -1773,6 +1816,25 @@
             Removes a previously mapped file route.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.HttpServer.MapDocumentRoot(System.String,SocketJack.Net.HttpDocumentRootResolver)">
+            <summary>
+            Maps a URL prefix to a virtual document root resolved by application code.
+            Resolvers can serve SQL-backed, sandboxed, or other non-disk content while
+            reusing SocketJack's HTTP MIME, header, and route ordering behavior.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.MapDocumentRoot(System.String,System.String)">
+            <summary>
+            Maps a disk directory as an explicit document root. Disk roots delegate to
+            <see cref="M:SocketJack.Net.HttpServer.MapDirectory(System.String,System.String)"/> so the existing path containment and .htaccess
+            protections remain authoritative.
+            </summary>
+        </member>
+        <member name="M:SocketJack.Net.HttpServer.RemoveDocumentRootMapping(System.String)">
+            <summary>
+            Removes a virtual document root mapping.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.HttpServer.MapHostDirectory(System.String,System.String,System.String)">
             <summary>
             Maps a local directory to a URL prefix for a specific Host header.
@@ -2118,6 +2180,19 @@
             <see cref="E:SocketJack.Net.NetworkBase.OnReceive"/> event and registered callbacks.
             </summary>
         </member>
+        <member name="P:SocketJack.Net.MutableTcpServer.AdminSuiteEnabled">
+            <summary>
+            Gets or sets whether the unified SocketJack Admin Suite is enabled.
+            The suite is served at <c>/Admin</c> and keeps the legacy SQL Admin
+            surface available at <c>/sql</c> for compatibility and authentication.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.MutableTcpServer.AdminSuite">
+            <summary>
+            Returns the <see cref="T:SocketJack.Net.Database.AdminSuite"/> instance, or
+            <see langword="null"/> when <see cref="P:SocketJack.Net.MutableTcpServer.AdminSuiteEnabled"/> is false.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.MutableTcpServer.WebSocket">
             <summary>
             Returns the built-in <see cref="T:SocketJack.Net.WebSocketProtocolHandler"/> for configuring
@@ -2418,6 +2493,15 @@
         </member>
         <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveFileMapping(System.String)">
             <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveFileMapping(System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapDocumentRoot(System.String,SocketJack.Net.HttpDocumentRootResolver)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapDocumentRoot(System.String,SocketJack.Net.HttpDocumentRootResolver)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.MapDocumentRoot(System.String,System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.MapDocumentRoot(System.String,System.String)"/>
+        </member>
+        <member name="M:SocketJack.Net.HttpProtocolHandler.RemoveDocumentRootMapping(System.String)">
+            <inheritdoc cref="M:SocketJack.Net.HttpServer.RemoveDocumentRootMapping(System.String)"/>
         </member>
         <member name="M:SocketJack.Net.HttpProtocolHandler.MapHostDirectory(System.String,System.String,System.String)">
             <inheritdoc cref="M:SocketJack.Net.HttpServer.MapHostDirectory(System.String,System.String,System.String)"/>

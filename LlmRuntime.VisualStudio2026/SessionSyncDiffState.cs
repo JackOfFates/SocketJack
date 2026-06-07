@@ -45,4 +45,51 @@ internal static class SessionSyncDiffState
             previousSizeBytes != nextSizeBytes;
         return timeChanged || sizeChanged;
     }
+
+    public static bool LocalMetadataChanged(
+        DateTimeOffset previousUtc,
+        long previousSizeBytes,
+        string previousSha256,
+        DateTimeOffset nextUtc,
+        long nextSizeBytes,
+        string nextSha256)
+    {
+        if (!HasLocalBaseline(previousUtc, previousSizeBytes, previousSha256))
+        {
+            return true;
+        }
+
+        if (KnownHashesEqual(previousSha256, nextSha256))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(previousSha256) && !string.IsNullOrWhiteSpace(nextSha256))
+        {
+            return true;
+        }
+
+        bool timeChanged = previousUtc > DateTimeOffset.MinValue &&
+            nextUtc > DateTimeOffset.MinValue &&
+            Math.Abs((nextUtc - previousUtc).TotalMilliseconds) > 999;
+        bool sizeChanged = previousSizeBytes != nextSizeBytes;
+        return timeChanged || sizeChanged;
+    }
+
+    public static bool HasUnpushedLocalChange(
+        bool localExists,
+        DateTimeOffset previousUtc,
+        long previousSizeBytes,
+        string previousSha256,
+        DateTimeOffset nextUtc,
+        long nextSizeBytes,
+        string nextSha256)
+    {
+        if (!localExists)
+        {
+            return HasLocalBaseline(previousUtc, previousSizeBytes, previousSha256);
+        }
+
+        return LocalMetadataChanged(previousUtc, previousSizeBytes, previousSha256, nextUtc, nextSizeBytes, nextSha256);
+    }
 }

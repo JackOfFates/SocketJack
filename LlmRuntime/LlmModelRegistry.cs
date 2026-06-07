@@ -60,11 +60,21 @@ public sealed class LlmModelRegistry : IDisposable
         ReturnSpecialDirectories = false
     };
 
+    private static readonly EnumerationOptions DirectorySizeEnumerationOptions = new()
+    {
+        RecurseSubdirectories = true,
+        IgnoreInaccessible = true,
+        ReturnSpecialDirectories = false,
+        AttributesToSkip = 0
+    };
+
     private static readonly string[] ModelFileSearchPatterns =
     [
         "*.gguf",
         "*.jackonnx.json",
-        "manifest.json"
+        "manifest.json",
+        "model.safetensors.index.json",
+        "config.json"
     ];
 
     private readonly LlmRuntimeOptions _options;
@@ -181,11 +191,14 @@ public sealed class LlmModelRegistry : IDisposable
         IReadOnlyList<string> resolvedTargetDeviceIds = NormalizeDeviceIds(targetDeviceIds, resolvedDeviceId);
         IReadOnlyList<string> resolvedNetworkNodeIds = NormalizeStringList(networkNodeIds);
         LlmParallelismMode resolvedParallelismMode = ResolveParallelismMode(parallelismMode, resolvedTargetDeviceIds, resolvedNetworkNodeIds);
+        ValidateTensorParallelTargets(resolvedParallelismMode, resolvedTargetDeviceIds);
         LlmParallelismPlacement resolvedParallelismPlacement = ResolveParallelismPlacement(parallelismPlacement, resolvedNetworkNodeIds);
         string resolvedInstanceId = ResolveLoadInstanceId(info.Key, resolvedDeviceId, instanceId);
         int resolvedConcurrencyLimit = Math.Max(1, concurrencyLimit ?? 1);
         var requestedBackend = backend ?? _options.DefaultBackend;
-        var effectiveBackend = IsChatLoadableModel(info)
+        var effectiveBackend = IsVllmChatLoadableModel(info)
+            ? LlmBackendKind.Vllm
+            : IsChatLoadableModel(info)
             ? LlmBackendAutoSelector.Resolve(requestedBackend, _options.RequireGpuForAutoBackend)
             : requestedBackend;
         bool effectiveBackendFallback = ResolveAllowBackendFallback(effectiveBackend, allowBackendFallback, _options.AllowBackendFallback, _options.PreventCpuBackendFallback);
@@ -210,6 +223,8 @@ public sealed class LlmModelRegistry : IDisposable
             MaxVramUsagePercent = ClampPercent(maxVramUsagePercent ?? 100),
             PipelineStageCount = Math.Max(1, pipelineStageCount ?? (resolvedParallelismMode == LlmParallelismMode.PipelineParallel ? Math.Max(1, resolvedTargetDeviceIds.Count) : 1)),
             DataParallelReplicaCount = Math.Max(1, dataParallelReplicaCount ?? (resolvedParallelismMode == LlmParallelismMode.DataParallel ? Math.Max(1, resolvedTargetDeviceIds.Count) : 1)),
+            ParallelTensor = resolvedParallelismMode == LlmParallelismMode.TensorParallel,
+            TensorParallelSize = ResolveTensorParallelSize(resolvedParallelismMode, resolvedTargetDeviceIds),
             VideoDeviceMap = ResolveDefaultMediaDeviceMap(info, videoDeviceMap),
             VideoAllowCpuOffload = ResolveDefaultMediaCpuOffload(info, videoAllowCpuOffload),
             VideoOffloadFolder = (videoOffloadFolder ?? "").Trim(),
@@ -517,7 +532,20 @@ public sealed class LlmModelRegistry : IDisposable
     private bool WarmPromptPipelineAfterLoad(LlmModelInfo info, ILlmBackend backend, string requestedModel, string instanceId, bool emitProgress, CancellationToken cancellationToken)
     {
         if (backend.IsPromptPipelineReady)
+        {
+            if (emitProgress)
+            {
+                ReportModelLoadProgress(
+                    requestedModel,
+                    instanceId,
+                    100,
+                    "ready",
+                    "Loaded model " + info.DisplayName + " and prompt pipeline is ready.",
+                    false);
+            }
+
             return true;
+        }
 
         if (emitProgress)
             ReportModelLoadProgress(requestedModel, instanceId, 92, "warming_prompt_pipeline", "Warming prompt pipeline for " + info.DisplayName + ".", false);
@@ -758,12 +786,25 @@ public sealed class LlmModelRegistry : IDisposable
     }
 
     public static bool IsChatLoadableModel(LlmModelInfo? model) =>
+        IsGgufChatLoadableModel(model) || IsVllmChatLoadableModel(model);
+
+    private static bool IsGgufChatLoadableModel(LlmModelInfo? model) =>
         model != null &&
         string.Equals(model.Format, "gguf", StringComparison.OrdinalIgnoreCase) &&
         string.IsNullOrWhiteSpace(model.LoadDisabledReason) &&
         !string.IsNullOrWhiteSpace(model.Architecture) &&
         IsChatCompletionModelType(model.Type) &&
         !IsAuxiliaryModelFile(model.FilePath);
+
+    private static bool IsVllmChatLoadableModel(LlmModelInfo? model) =>
+        model != null &&
+        string.IsNullOrWhiteSpace(model.LoadDisabledReason) &&
+        HasTag(model, "vllm") &&
+        (string.Equals(model.Format, "safetensors", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(model.Format, "pytorch", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(model.Format, "torch", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(model.Format, "gptq", StringComparison.OrdinalIgnoreCase)) &&
+        IsChatCompletionModelType(model.Type);
 
     public static bool IsRuntimeLoadableModel(LlmModelInfo? model) =>
         model != null &&
@@ -845,6 +886,27 @@ public sealed class LlmModelRegistry : IDisposable
         return LlmParallelismMode.Single;
     }
 
+    private static void ValidateTensorParallelTargets(LlmParallelismMode mode, IReadOnlyList<string> targetDeviceIds)
+    {
+        if (mode != LlmParallelismMode.TensorParallel)
+            return;
+
+        int targetCount = targetDeviceIds
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        if (targetCount < 2)
+            throw new LlmRuntimeException(
+                "Tensor parallelism requires at least two target GPUs.",
+                "invalid_request_error",
+                "unsupported_tensor_parallel_targets");
+    }
+
+    private static int ResolveTensorParallelSize(LlmParallelismMode mode, IReadOnlyList<string> targetDeviceIds) =>
+        mode == LlmParallelismMode.TensorParallel
+            ? Math.Max(2, targetDeviceIds.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).Count())
+            : 1;
+
     private static LlmParallelismPlacement ResolveParallelismPlacement(LlmParallelismPlacement? requested, IReadOnlyList<string> networkNodeIds)
     {
         if (requested.HasValue)
@@ -864,7 +926,13 @@ public sealed class LlmModelRegistry : IDisposable
     {
         uint fallback = configuredDefault == 0 ? 8192u : configuredDefault;
         if (info.MaxContextLength.HasValue && info.MaxContextLength.Value > 0)
-            return Math.Min(info.MaxContextLength.Value, fallback);
+        {
+            uint modelMax = info.MaxContextLength.Value;
+            if (IsVllmChatLoadableModel(info))
+                return Math.Clamp(modelMax, 512u, 131072u);
+
+            return Math.Min(modelMax, fallback);
+        }
 
         return fallback;
     }
@@ -991,6 +1059,10 @@ public sealed class LlmModelRegistry : IDisposable
         MaxVramUsagePercent = source.MaxVramUsagePercent,
         PipelineStageCount = source.PipelineStageCount,
         DataParallelReplicaCount = source.DataParallelReplicaCount,
+        ParallelTensor = source.ParallelTensor || source.ParallelismMode == LlmParallelismMode.TensorParallel,
+        TensorParallelSize = source.ParallelismMode == LlmParallelismMode.TensorParallel
+            ? Math.Max(source.TensorParallelSize, ResolveTensorParallelSize(source.ParallelismMode, source.TargetDeviceIds))
+            : 1,
         VideoDeviceMap = source.VideoDeviceMap,
         VideoAllowCpuOffload = source.VideoAllowCpuOffload,
         VideoOffloadFolder = source.VideoOffloadFolder,
@@ -1019,6 +1091,8 @@ public sealed class LlmModelRegistry : IDisposable
             return "audio_generation";
         if (type == "image" || HasTag(model, "image"))
             return "image_generation";
+        if (IsVllmChatLoadableModel(model))
+            return "chat_completion";
         if (IsChatLoadableModel(model))
             return "chat_completion";
         return "";
@@ -1048,6 +1122,7 @@ public sealed class LlmModelRegistry : IDisposable
         LlmBackendKind.Cuda12 => "cuda",
         LlmBackendKind.Vulkan => "vulkan",
         LlmBackendKind.DirectML => "directml",
+        LlmBackendKind.Vllm => "vllm",
         _ => "auto"
     };
 
@@ -1055,6 +1130,10 @@ public sealed class LlmModelRegistry : IDisposable
     {
         if (model == null)
             return "Model metadata is missing.";
+        if (IsVllmChatLoadableModel(model))
+            return null;
+        if (HasTag(model, "vllm"))
+            return "Hugging Face safetensors/GPTQ chat bundles require the vLLM backend.";
         if (!string.Equals(model.Format, "gguf", StringComparison.OrdinalIgnoreCase))
             return $"Model format '{model.Format}' is listed but cannot be loaded by the GGUF chat backend yet.";
         if (!string.IsNullOrWhiteSpace(model.LoadDisabledReason))
@@ -1566,10 +1645,26 @@ public sealed class LlmModelRegistry : IDisposable
 
         var models = new List<LlmModelInfo>();
         var usedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedCompleteBundleDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (ModelDirectory directory in modelDirectories)
         {
             foreach (string filePath in EnumerateModelFiles(directory.Path))
             {
+                if (TryResolveHuggingFaceSafetensorsBundle(filePath, directory, out string bundleDirectory) &&
+                    usedCompleteBundleDirectories.Add(bundleDirectory))
+                {
+                    try
+                    {
+                        models.Add(CreateHuggingFaceSafetensorsModelInfo(bundleDirectory, directory, usedKeys));
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine("Failed to read Hugging Face safetensors metadata for " + bundleDirectory + ": " + ex.Message);
+                    }
+
+                    continue;
+                }
+
                 if (!IsCompleteModelFile(filePath))
                     continue;
 
@@ -1848,6 +1943,81 @@ public sealed class LlmModelRegistry : IDisposable
         }
     }
 
+    private bool TryResolveHuggingFaceSafetensorsBundle(string filePath, ModelDirectory directory, out string bundleDirectory)
+    {
+        bundleDirectory = "";
+        if (!IsCompleteModelDirectory(directory) || string.IsNullOrWhiteSpace(filePath))
+            return false;
+
+        string fileName = Path.GetFileName(filePath);
+        if (!fileName.Equals("config.json", StringComparison.OrdinalIgnoreCase) &&
+            !fileName.Equals("model.safetensors.index.json", StringComparison.OrdinalIgnoreCase) &&
+            !fileName.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string? candidateDirectory = Path.GetDirectoryName(Path.GetFullPath(filePath));
+        if (string.IsNullOrWhiteSpace(candidateDirectory))
+            return false;
+
+        string configPath = Path.Combine(candidateDirectory, "config.json");
+        if (!File.Exists(configPath))
+            return false;
+
+        try
+        {
+            if (!Directory.EnumerateFiles(candidateDirectory, "*.safetensors", SearchOption.TopDirectoryOnly).Any())
+                return false;
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (!IsHuggingFaceChatSafetensorsConfig(configPath))
+            return false;
+
+        bundleDirectory = NormalizeDirectory(candidateDirectory);
+        return true;
+    }
+
+    private static bool IsHuggingFaceChatSafetensorsConfig(string configPath)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(configPath));
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return false;
+
+            string architectureText = ReadJsonStringArray(root, "architectures");
+            string modelType = TryReadStringProperty(root, "model_type") ?? "";
+            bool hasCausalLmArchitecture =
+                architectureText.Contains("CausalLM", StringComparison.OrdinalIgnoreCase) ||
+                architectureText.Contains("ForConditionalGeneration", StringComparison.OrdinalIgnoreCase);
+            bool knownTextModelType = ContainsAny(
+                modelType,
+                "llama",
+                "qwen",
+                "mistral",
+                "mixtral",
+                "gemma",
+                "phi",
+                "deepseek",
+                "starcoder",
+                "falcon",
+                "gpt");
+            bool hasQuantization = root.TryGetProperty("quantization_config", out JsonElement quantization) &&
+                                   quantization.ValueKind == JsonValueKind.Object;
+            return hasCausalLmArchitecture || knownTextModelType && hasQuantization;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool IsOnnxManifestFile(string filePath)
     {
         return filePath.EndsWith(".jackonnx.json", StringComparison.OrdinalIgnoreCase) ||
@@ -2116,6 +2286,94 @@ public sealed class LlmModelRegistry : IDisposable
         };
     }
 
+    private LlmModelInfo CreateHuggingFaceSafetensorsModelInfo(string modelDirectory, ModelDirectory directory, HashSet<string> usedKeys)
+    {
+        string configPath = Path.Combine(modelDirectory, "config.json");
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(configPath));
+        JsonElement root = document.RootElement;
+        string directoryName = Path.GetFileName(modelDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        string displayName = FirstNonEmpty(
+            TryReadStringProperty(root, "_name_or_path"),
+            directoryName);
+        string architecture = FirstNonEmpty(
+            ReadFirstJsonString(root, "architectures"),
+            TryReadStringProperty(root, "model_type"));
+        string quantization = ReadQuantizationName(root);
+        uint? contextLength = ResolveHuggingFaceContextLength(root, modelDirectory);
+        var aliases = BuildModelAliases(configPath, directory, displayName, directoryName).ToList();
+        AddAlias(aliases, directoryName);
+        AddAlias(aliases, modelDirectory);
+        string key = BuildModelKey(configPath, directory, displayName, aliases, usedKeys);
+        IReadOnlyList<string> tags = AddDirectoryTags(
+            new[]
+            {
+                "chat",
+                "text",
+                "safetensors",
+                "pytorch",
+                "vllm"
+            }
+            .Concat(string.IsNullOrWhiteSpace(quantization) ? [] : new[] { quantization.ToLowerInvariant() })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray(),
+            directory);
+
+        return new LlmModelInfo
+        {
+            Key = key,
+            DisplayName = displayName,
+            FilePath = modelDirectory,
+            FileName = directoryName,
+            Type = "llm",
+            Publisher = directory.Publisher,
+            Architecture = architecture,
+            QuantizationName = string.IsNullOrWhiteSpace(quantization) ? "safetensors" : quantization,
+            BitsPerWeight = ModelHeuristics.EstimateBitsPerWeight(quantization),
+            SizeBytes = EstimateDirectoryBytes(modelDirectory),
+            ParamsString = InferParameterSummary(directoryName),
+            MaxContextLength = contextLength,
+            Format = "safetensors",
+            Tags = tags,
+            Aliases = aliases,
+            LoadedInstances = GetLoadedInstances(key, "llm", tags)
+        };
+    }
+
+    private static uint? ResolveHuggingFaceContextLength(JsonElement root, string modelDirectory)
+    {
+        var values = new List<uint>();
+        AddIfPositive(values, TryReadUInt32(root, "max_position_embeddings"));
+        AddIfPositive(values, TryReadUInt32(root, "seq_length"));
+        AddIfPositive(values, TryReadUInt32(root, "n_positions"));
+        AddIfPositive(values, TryReadUInt32(root, "model_max_length"));
+        AddIfPositive(values, TryReadUInt32(root, "sliding_window"));
+
+        string tokenizerConfigPath = Path.Combine(modelDirectory, "tokenizer_config.json");
+        if (File.Exists(tokenizerConfigPath))
+        {
+            try
+            {
+                using JsonDocument tokenizerDocument = JsonDocument.Parse(File.ReadAllText(tokenizerConfigPath));
+                JsonElement tokenizerRoot = tokenizerDocument.RootElement;
+                AddIfPositive(values, TryReadUInt32(tokenizerRoot, "model_max_length"));
+                AddIfPositive(values, TryReadUInt32(tokenizerRoot, "max_position_embeddings"));
+                AddIfPositive(values, TryReadUInt32(tokenizerRoot, "seq_length"));
+                AddIfPositive(values, TryReadUInt32(tokenizerRoot, "n_positions"));
+            }
+            catch
+            {
+            }
+        }
+
+        return values.Count == 0 ? null : values.Max();
+    }
+
+    private static void AddIfPositive(List<uint> values, uint? value)
+    {
+        if (value.HasValue && value.Value > 0)
+            values.Add(value.Value);
+    }
+
     private string? GetGgufLoadDisabledReason(
         GgufMetadataReader? metadata,
         string? architecture,
@@ -2317,6 +2575,45 @@ public sealed class LlmModelRegistry : IDisposable
         return total;
     }
 
+    private static long EstimateDirectoryBytes(string directory)
+    {
+        long total = 0;
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(directory, "*", DirectorySizeEnumerationOptions))
+            {
+                try { total += GetFileLengthFollowingLinks(file); } catch { }
+            }
+        }
+        catch
+        {
+        }
+
+        return total;
+    }
+
+    private static long GetFileLengthFollowingLinks(string file)
+    {
+        var info = new FileInfo(file);
+        if (!info.Exists)
+            return 0;
+
+        if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            try
+            {
+                FileSystemInfo? target = info.ResolveLinkTarget(returnFinalTarget: true);
+                if (target is FileInfo targetFile && targetFile.Exists)
+                    return targetFile.Length;
+            }
+            catch
+            {
+            }
+        }
+
+        return info.Length;
+    }
+
     private static IReadOnlyList<string> BuildManifestTags(string format, string type, string precision)
     {
         var tags = new List<string> { NormalizeManifestFormat(format) };
@@ -2378,6 +2675,73 @@ public sealed class LlmModelRegistry : IDisposable
         return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
                value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
                value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsAny(string text, params string[] values)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        return values.Any(value => !string.IsNullOrWhiteSpace(value) && text.Contains(value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ReadJsonStringArray(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out JsonElement value))
+            return "";
+        if (value.ValueKind == JsonValueKind.String)
+            return value.GetString() ?? "";
+        if (value.ValueKind != JsonValueKind.Array)
+            return "";
+        return string.Join(" ", value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString() ?? ""));
+    }
+
+    private static string ReadFirstJsonString(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out JsonElement value))
+            return "";
+        if (value.ValueKind == JsonValueKind.String)
+            return value.GetString() ?? "";
+        if (value.ValueKind != JsonValueKind.Array)
+            return "";
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                return item.GetString()!;
+        }
+
+        return "";
+    }
+
+    private static uint? TryReadUInt32(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out JsonElement value) || value.ValueKind != JsonValueKind.Number)
+            return null;
+        return value.TryGetUInt32(out uint result) ? result : null;
+    }
+
+    private static string ReadQuantizationName(JsonElement root)
+    {
+        if (!root.TryGetProperty("quantization_config", out JsonElement quantization) ||
+            quantization.ValueKind != JsonValueKind.Object)
+        {
+            return "";
+        }
+
+        return FirstNonEmpty(
+            TryReadStringProperty(quantization, "quant_method"),
+            TryReadStringProperty(quantization, "quantization_method"),
+            TryReadStringProperty(quantization, "load_in"),
+            TryReadStringProperty(quantization, "bits"));
+    }
+
+    private static string InferParameterSummary(string text)
+    {
+        Match match = Regex.Match(text ?? "", @"(?<value>\d+(?:\.\d+)?)\s*(?<unit>[bm])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success
+            ? match.Groups["value"].Value + match.Groups["unit"].Value.ToUpperInvariant()
+            : "";
     }
 
     private static IEnumerable<string> SplitMetadataValues(string? value)
@@ -2500,9 +2864,14 @@ public sealed class LlmModelRegistry : IDisposable
 
     private static LlmLoadConfig EnsureLoadConfigIdentity(LlmLoadConfig config, string modelKey, string instanceId)
     {
+        bool tensorMode = config.ParallelismMode == LlmParallelismMode.TensorParallel;
+        int tensorParallelSize = tensorMode
+            ? Math.Max(config.TensorParallelSize, ResolveTensorParallelSize(config.ParallelismMode, config.TargetDeviceIds))
+            : 1;
         if (string.Equals(config.ModelKey, modelKey, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(config.InstanceId, instanceId, StringComparison.OrdinalIgnoreCase) &&
-            config.ConcurrencyLimit > 0)
+            config.ConcurrencyLimit > 0 &&
+            (!tensorMode || config.ParallelTensor && config.TensorParallelSize == tensorParallelSize))
             return config;
 
         return new LlmLoadConfig
@@ -2526,6 +2895,8 @@ public sealed class LlmModelRegistry : IDisposable
             MaxVramUsagePercent = config.MaxVramUsagePercent,
             PipelineStageCount = config.PipelineStageCount,
             DataParallelReplicaCount = config.DataParallelReplicaCount,
+            ParallelTensor = config.ParallelTensor || tensorMode,
+            TensorParallelSize = tensorParallelSize,
             VideoDeviceMap = config.VideoDeviceMap,
             VideoAllowCpuOffload = config.VideoAllowCpuOffload,
             VideoOffloadFolder = config.VideoOffloadFolder,

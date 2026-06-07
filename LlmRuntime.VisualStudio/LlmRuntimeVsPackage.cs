@@ -143,7 +143,7 @@ public sealed class LlmRuntimeVsPackage : AsyncPackage
             McpConfigWriteResult result = new VisualStudioMcpConfigWriter().Write(solutionDirectory, server, model, launch);
             return "Created SocketJack MCP config at " + result.Path + Environment.NewLine +
                 "Server: " + server.DisplayName + Environment.NewLine +
-                "Model: " + model.DisplayName + Environment.NewLine +
+                "Model: " + model.Id + Environment.NewLine +
                 "Entry: " + result.ServerKey;
         }
         catch (Exception ex)

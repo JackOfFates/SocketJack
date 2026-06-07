@@ -53,6 +53,38 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
+    public void ChatRequestFromJson_PreservesNonEmptyToolResultCallId()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "model": "ToolChat-Q4_0",
+          "messages": [
+            { "role": "user", "content": "inspect the project" },
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [{
+                "id": "call_vs_read",
+                "type": "function",
+                "function": {
+                  "name": "vs_read_file",
+                  "arguments": "{\"path\":\"App.xaml.cs\"}"
+                }
+              }]
+            },
+            { "role": "tool", "tool_call_id": "call_vs_read", "content": "class App {}" }
+          ],
+          "tools": []
+        }
+        """);
+
+        LlmChatRequest request = LlmChatRequest.FromJson(document.RootElement);
+
+        StringAssert.Contains(request.Messages[2].Content, "call_vs_read");
+        StringAssert.Contains(request.Messages[2].Content, "class App {}");
+    }
+
+    [TestMethod]
     public void ChatRequestFromJson_UsesLongAutoBudgetAndAcceptsMaxOutputTokens()
     {
         using var autoDocument = JsonDocument.Parse("""
@@ -664,6 +696,85 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
+    public async Task LoadModel_ParallelTensorTargetsLoadSingleShardedGpuInstance()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "TensorParallel-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("tensor"));
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var loadResponse = await client.PostAsync(
+                $"http://127.0.0.1:{port}/api/v1/models/load",
+                new StringContent(
+                    "{\"model\":\"TensorParallel-Q4_0\",\"parallel_tensor\":true,\"target_device_ids\":[\"cuda:0\",\"cuda:1\"],\"echo_load_config\":true}",
+                    Encoding.UTF8,
+                    "application/json"));
+            loadResponse.EnsureSuccessStatusCode();
+
+            string loadBody = await loadResponse.Content.ReadAsStringAsync();
+            using JsonDocument loadDocument = JsonDocument.Parse(loadBody);
+            JsonElement rootElement = loadDocument.RootElement;
+            Assert.AreEqual("tensor-sharded-runtime-instance", rootElement.GetProperty("parallelism").GetProperty("execution").GetString());
+            Assert.IsTrue(rootElement.GetProperty("parallelism").GetProperty("parallel_tensor").GetBoolean());
+            Assert.AreEqual(2, rootElement.GetProperty("parallelism").GetProperty("tensor_parallel_size").GetInt32());
+            Assert.AreEqual(1, rootElement.GetProperty("instances").GetArrayLength());
+            Assert.AreEqual("tensor_parallel", rootElement.GetProperty("load_config").GetProperty("parallelism_mode").GetString());
+            Assert.IsTrue(rootElement.GetProperty("load_config").GetProperty("parallel_tensor").GetBoolean());
+            Assert.AreEqual(2, rootElement.GetProperty("load_config").GetProperty("tensor_parallel_size").GetInt32());
+            CollectionAssert.AreEquivalent(
+                new[] { "cuda:0", "cuda:1" },
+                rootElement.GetProperty("load_config").GetProperty("target_device_ids").EnumerateArray().Select(device => device.GetString()).ToArray());
+
+            string statusBody = await client.GetStringAsync($"http://127.0.0.1:{port}/api/v1/scheduler/status");
+            using JsonDocument statusDocument = JsonDocument.Parse(statusBody);
+            JsonElement instances = statusDocument.RootElement.GetProperty("instances");
+            Assert.AreEqual(1, instances.GetArrayLength());
+            Assert.IsTrue(instances[0].GetProperty("parallel_tensor").GetBoolean());
+            Assert.AreEqual(2, instances[0].GetProperty("tensor_parallel_size").GetInt32());
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task LoadModel_ParallelTensorRequiresAtLeastTwoGpuTargets()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "TensorParallelInvalid-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("tensor"));
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var loadResponse = await client.PostAsync(
+                $"http://127.0.0.1:{port}/api/v1/models/load",
+                new StringContent(
+                    "{\"model\":\"TensorParallelInvalid-Q4_0\",\"parallelism_mode\":\"tensor_parallel\",\"target_device_ids\":[\"cuda:0\"],\"echo_load_config\":true}",
+                    Encoding.UTF8,
+                    "application/json"));
+
+            string body = await loadResponse.Content.ReadAsStringAsync();
+            using JsonDocument document = JsonDocument.Parse(body);
+            Assert.AreEqual(HttpStatusCode.BadRequest, loadResponse.StatusCode);
+            Assert.AreEqual("unsupported_tensor_parallel_targets", document.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
     public async Task LoadModel_DataParallelReturnsPartialSuccessWhenOneGpuInstanceLoads()
     {
         string root = LlmModelRegistryTests.CreateTempDirectory();
@@ -749,6 +860,74 @@ public sealed class LlmRuntimeHostEndpointTests
             Assert.AreEqual("", message.GetProperty("content").GetString());
             Assert.AreEqual("vendor_lookup", message.GetProperty("tool_calls")[0].GetProperty("function").GetProperty("name").GetString());
             Assert.AreEqual("{\"id\":\"abc\"}", message.GetProperty("tool_calls")[0].GetProperty("function").GetProperty("arguments").GetString());
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ChatCompletion_DoesNotRepeatCompletedToolCallWithMultilineArguments()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "RepeatTool-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory(
+                "{\"tool_calls\":[{\"id\":\"call_repeat\",\"name\":\"get_state\",\"arguments\":{\"path\":\"fkkvs.Vb\"}}]}",
+                "The state was already read; continuing from the existing result."));
+            registry.Load("RepeatTool-Q4_0");
+
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            string request = """
+            {
+              "model": "RepeatTool-Q4_0",
+              "messages": [
+                { "role": "user", "content": "Implement the plan" },
+                {
+                  "role": "assistant",
+                  "content": null,
+                  "tool_calls": [{
+                    "id": "call_done",
+                    "type": "function",
+                    "function": {
+                      "name": "get_state",
+                      "arguments": "{\n  \"path\": \"fkkvs.Vb\"\n}"
+                    }
+                  }]
+                },
+                {
+                  "role": "tool",
+                  "tool_call_id": "call_done",
+                  "content": ""
+                }
+              ],
+              "tools": [{
+                "type": "function",
+                "function": {
+                  "name": "get_state",
+                  "description": "Gets state.",
+                  "parameters": { "type": "object", "properties": { "path": { "type": "string" } } }
+                }
+              }]
+            }
+            """;
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/chat/completions",
+                new StringContent(request, Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            var choice = document.RootElement.GetProperty("choices")[0];
+            var message = choice.GetProperty("message");
+            Assert.AreEqual("stop", choice.GetProperty("finish_reason").GetString());
+            Assert.IsFalse(message.TryGetProperty("tool_calls", out _));
+            StringAssert.Contains(message.GetProperty("content").GetString(), "already read");
         }
         finally
         {
@@ -897,6 +1076,59 @@ public sealed class LlmRuntimeHostEndpointTests
             Assert.AreEqual("tool_calls", choice.GetProperty("finish_reason").GetString());
             Assert.AreEqual("vs_write_file", toolCall.GetProperty("function").GetProperty("name").GetString());
             Assert.AreEqual("{\"path\":\"rescued.html\",\"content\":\"tool rescue ok\",\"overwrite\":false}", toolCall.GetProperty("function").GetProperty("arguments").GetString());
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ChatCompletion_RejectsRepairPlaceholderAndRescuesNamedReadFileIntent()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "ReadRescueTool-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory(
+                "I will use read_file with {\"path\":\"Project.csproj\" but the JSON is malformed.",
+                "{\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"tool_name\",\"arguments\":{}}]}"));
+            registry.Load("ReadRescueTool-Q4_0");
+
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            string request = """
+            {
+              "model": "ReadRescueTool-Q4_0",
+              "messages": [{ "role": "user", "content": "Inspect the project file before editing." }],
+              "tools": [{
+                "type": "function",
+                "function": {
+                  "name": "read_file",
+                  "description": "Reads a file.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } },
+                    "required": ["path"]
+                  }
+                }
+              }]
+            }
+            """;
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/chat/completions",
+                new StringContent(request, Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            var choice = document.RootElement.GetProperty("choices")[0];
+            var toolCall = choice.GetProperty("message").GetProperty("tool_calls")[0];
+            Assert.AreEqual("tool_calls", choice.GetProperty("finish_reason").GetString());
+            Assert.AreEqual("read_file", toolCall.GetProperty("function").GetProperty("name").GetString());
+            Assert.AreEqual("{\"path\":\"Project.csproj\"}", toolCall.GetProperty("function").GetProperty("arguments").GetString());
         }
         finally
         {

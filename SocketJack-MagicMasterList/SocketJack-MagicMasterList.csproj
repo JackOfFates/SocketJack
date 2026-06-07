@@ -21,6 +21,9 @@
     <EmbeddedResource Include="html\*.ico">
       <LogicalName>SocketJack.MagicMasterList.Html.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="..\SocketJack\SocketJackIcon.png">
+      <LogicalName>SocketJack.MagicMasterList.Html.SocketJackIcon.png</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <PropertyGroup>

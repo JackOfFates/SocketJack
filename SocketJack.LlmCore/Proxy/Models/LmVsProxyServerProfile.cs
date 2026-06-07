@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 
 namespace SocketJack.Net {
     public sealed class LmVsProxyServerProfile {
@@ -103,6 +104,8 @@ namespace SocketJack.Net {
                 UptimeSeconds = 0;
             StatusText = NormalizeText(StatusText);
             CostFactor = ClampCostFactor(CostFactor);
+            if (!RequiresPayment && ModelInventoryHasPaymentConfiguration())
+                RequiresPayment = true;
             if (string.IsNullOrWhiteSpace(UpdatedUtc))
                 UpdatedUtc = DateTimeOffset.UtcNow.ToString("O");
             if (!RequiresPayment)
@@ -123,6 +126,99 @@ namespace SocketJack.Net {
 
         private static string NormalizeText(string value) {
             return (value ?? "").Trim();
+        }
+
+        private bool ModelInventoryHasPaymentConfiguration() {
+            return ModelInventoryHasPaymentConfiguration(ModelCapabilitiesJson) ||
+                   ModelInventoryHasPaymentConfiguration(ModelBenchmarksJson);
+        }
+
+        private static bool ModelInventoryHasPaymentConfiguration(string json) {
+            if (string.IsNullOrWhiteSpace(json))
+                return false;
+
+            try {
+                using JsonDocument document = JsonDocument.Parse(json);
+                return ElementHasPaymentConfiguration(document.RootElement, 0);
+            } catch {
+                return false;
+            }
+        }
+
+        private static bool ElementHasPaymentConfiguration(JsonElement element, int depth) {
+            if (depth > 8)
+                return false;
+
+            if (element.ValueKind == JsonValueKind.Array) {
+                foreach (JsonElement item in element.EnumerateArray()) {
+                    if (ElementHasPaymentConfiguration(item, depth + 1))
+                        return true;
+                }
+                return false;
+            }
+
+            if (element.ValueKind != JsonValueKind.Object)
+                return false;
+
+            if (ReadBool(element, "requiresPayment") ||
+                ReadBool(element, "paymentRequired") ||
+                !string.IsNullOrWhiteSpace(ReadString(element, "stripePriceId")) ||
+                !string.IsNullOrWhiteSpace(ReadString(element, "priceId")) ||
+                ReadLong(element, "stripeUnitAmountCents") > 0 ||
+                ReadLong(element, "unitAmountCents") > 0)
+                return true;
+
+            if (TryGetObject(element, "payment", out JsonElement payment) &&
+                ElementHasPaymentConfiguration(payment, depth + 1))
+                return true;
+
+            foreach (JsonProperty property in element.EnumerateObject()) {
+                if (ElementHasPaymentConfiguration(property.Value, depth + 1))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetObject(JsonElement element, string name, out JsonElement value) {
+            if (element.ValueKind == JsonValueKind.Object) {
+                foreach (JsonProperty property in element.EnumerateObject()) {
+                    if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase) &&
+                        property.Value.ValueKind == JsonValueKind.Object) {
+                        value = property.Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = default;
+            return false;
+        }
+
+        private static string ReadString(JsonElement element, string name) {
+            if (element.ValueKind != JsonValueKind.Object)
+                return "";
+            foreach (JsonProperty property in element.EnumerateObject()) {
+                if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return property.Value.ValueKind == JsonValueKind.String
+                    ? property.Value.GetString() ?? ""
+                    : property.Value.ToString();
+            }
+
+            return "";
+        }
+
+        private static bool ReadBool(JsonElement element, string name) {
+            string value = ReadString(element, name);
+            return bool.TryParse(value, out bool parsed) && parsed ||
+                   string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static long ReadLong(JsonElement element, string name) {
+            string value = ReadString(element, name);
+            return long.TryParse(value, out long parsed) ? parsed : 0;
         }
 
         private void ClearModelInventoryForFreeServer() {

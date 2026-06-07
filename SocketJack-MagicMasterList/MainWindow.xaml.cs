@@ -1590,7 +1590,10 @@ internal sealed class MasterListViewModel : INotifyPropertyChanged {
     }
 
     private static string ReadEnvironment(string name) {
-        return Environment.GetEnvironmentVariable(name) ?? "";
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Process),
+            Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User),
+            Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine));
     }
 
     private static string ResolveWebsitePublicUrl(JsonObject? section) {

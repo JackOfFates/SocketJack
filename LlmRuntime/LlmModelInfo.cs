@@ -131,6 +131,10 @@ public sealed class LlmLoadConfig
 
     public int DataParallelReplicaCount { get; init; } = 1;
 
+    public bool ParallelTensor { get; init; }
+
+    public int TensorParallelSize { get; init; } = 1;
+
     public string VideoDeviceMap { get; init; } = "";
 
     public bool VideoAllowCpuOffload { get; init; }
@@ -151,7 +155,8 @@ public enum LlmParallelismMode
     Single,
     DataParallel,
     ModelOffload,
-    PipelineParallel
+    PipelineParallel,
+    TensorParallel
 }
 
 public enum LlmParallelismPlacement

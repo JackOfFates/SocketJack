@@ -32,6 +32,8 @@ public sealed class JackOnnxImagePipeline
         request.GuidanceScale = Math.Clamp(request.GuidanceScale, 0.1, 30);
 
         var job = _runtime.CreateJob(JackOnnxMediaKind.Image, request);
+        using var jobCancellation = _runtime.CreateJobCancellationScope(job.Id, cancellationToken);
+        cancellationToken = jobCancellation.Token;
         Report(job.Id, JackOnnxJobState.LoadingModel, 5, "Resolving local image generation model.", progress);
 
         var manifest = await ResolveImageModelAsync(request, cancellationToken).ConfigureAwait(false);

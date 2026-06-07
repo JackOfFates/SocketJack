@@ -1354,12 +1354,20 @@
                         <Border Background="{TemplateBinding Background}"
                                 CornerRadius="5"
                                 Padding="2">
-                            <Grid x:Name="PART_Track">
+                            <Grid x:Name="PART_Track"
+                                  ClipToBounds="True">
                                 <Border x:Name="PART_Indicator"
-                                        Background="{TemplateBinding Foreground}"
                                         CornerRadius="4"
                                         HorizontalAlignment="Stretch"
-                                        VerticalAlignment="Bottom"/>
+                                        VerticalAlignment="Bottom"
+                                        ClipToBounds="True">
+                                    <Border Background="{TemplateBinding Foreground}"
+                                            Width="{Binding ActualWidth, ElementName=PART_Track}"
+                                            Height="{Binding ActualHeight, ElementName=PART_Track}"
+                                            HorizontalAlignment="Stretch"
+                                            VerticalAlignment="Bottom"
+                                            CornerRadius="4"/>
+                                </Border>
                             </Grid>
                         </Border>
                     </ControlTemplate>
@@ -1381,12 +1389,20 @@
                         <Border Background="{TemplateBinding Background}"
                                 CornerRadius="3"
                                 SnapsToDevicePixels="True">
-                            <Grid x:Name="PART_Track">
+                            <Grid x:Name="PART_Track"
+                                  ClipToBounds="True">
                                 <Border x:Name="PART_Indicator"
-                                        Background="{TemplateBinding Foreground}"
                                         CornerRadius="3"
                                         HorizontalAlignment="Left"
-                                        VerticalAlignment="Stretch"/>
+                                        VerticalAlignment="Stretch"
+                                        ClipToBounds="True">
+                                    <Border Background="{TemplateBinding Foreground}"
+                                            Width="{Binding ActualWidth, ElementName=PART_Track}"
+                                            Height="{Binding ActualHeight, ElementName=PART_Track}"
+                                            HorizontalAlignment="Left"
+                                            VerticalAlignment="Stretch"
+                                            CornerRadius="3"/>
+                                </Border>
                             </Grid>
                         </Border>
                     </ControlTemplate>

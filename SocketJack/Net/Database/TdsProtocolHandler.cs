@@ -56,7 +56,7 @@ namespace SocketJack.Net.Database {
         /// Use this when the handler is registered on a <see cref="MutableTcpServer"/>.
         /// </summary>
         public TdsProtocolHandler() {
-            _dataServer = new DataServer("DataServer", hosted: true, loadFromDisk: false);
+            _dataServer = new DataServer("DataServer", hosted: true, loadFromDisk: true);
         }
 
         /// <summary>

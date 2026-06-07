@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SocketJack Admin</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0f14;--panel:#121922;--panel2:#17212d;--line:#2a3948;--text:#eef5fb;--muted:#9badbd;--blue:#5aa9e8;--green:#6bd6a5;--amber:#e7bc65;--red:#f07178}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{background:var(--bg);color:var(--text);font:13px/1.45 "Segoe UI",Arial,sans-serif}
+button,input,textarea,select{font:inherit}button{border:1px solid var(--line);border-radius:6px;background:#172231;color:var(--text);min-height:30px;padding:5px 10px;font-weight:700;cursor:pointer}button:hover{border-color:var(--blue)}button.primary{background:#123024;border-color:#2a7f5b}button.warn{background:#332714;border-color:#7f6227}button.danger{background:#361923;border-color:#8f3548}button:disabled{opacity:.45;cursor:not-allowed}
+input,textarea,select{width:100%;border:1px solid var(--line);border-radius:6px;background:#0d131b;color:var(--text);padding:7px 8px;outline:none}textarea{min-height:150px;resize:vertical}label{display:grid;gap:5px;color:#d7e5f1;font-weight:700}
+.app{height:100%;display:grid;grid-template-rows:48px minmax(0,1fr)}.top{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--line);background:#101720}.brand{font-weight:900;color:#d9f8ff}.nav{display:flex;gap:6px;align-items:center}.nav a,.tab{display:inline-flex;align-items:center;min-height:30px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;color:var(--text);text-decoration:none;background:#141d28;font-weight:800}.tab.active{border-color:#2a7f5b;background:#13261f}.user{margin-left:auto;color:var(--muted);font:700 12px Consolas,monospace}
+.main{min-height:0;display:grid;grid-template-columns:260px minmax(0,1fr);overflow:hidden}.side{border-right:1px solid var(--line);background:#0f151d;padding:10px;overflow:auto}.content{min-width:0;min-height:0;overflow:auto;padding:12px}.section{display:none}.section.active{display:block}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.grid{display:grid;gap:10px}.split{display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:12px}.list{display:grid;gap:7px}.item{border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:9px;cursor:pointer}.item.active{border-color:var(--green)}.item b{display:block}.item span{color:var(--muted);font-size:12px}.editor{border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:12px}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.full{grid-column:1/-1}.pill{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:2px 7px;color:#c9d6e2;background:#111a24;font:700 11px Consolas,monospace}.status{white-space:pre-wrap;color:var(--muted);font:12px Consolas,monospace}.warnline{color:var(--amber)}.bad{color:var(--red)}.ok{color:var(--green)}
+@media(max-width:860px){.main,.split,.fields{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--line)}.user{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">SocketJack Admin</div>
+    <nav class="nav">
+      <a href="$BasePath">Admin</a>
+      <a href="$SqlPath">SQL</a>
+      <a href="/Dev">Dev</a>
+    </nav>
+    <button class="tab active" data-tab="pages">Pages</button>
+    <button class="tab" data-tab="controls">Controls</button>
+    <button class="tab" data-tab="crud">CRUD</button>
+    <button class="tab" data-tab="settings">Settings</button>
+    <div class="user">$Username $CurrentDatabase</div>
+  </header>
+  <main class="main">
+    <aside class="side">
+      <div class="grid">
+        <button class="primary" id="newPageBtn">New Page</button>
+        <button id="refreshBtn">Refresh</button>
+        <div id="sideList" class="list"></div>
+      </div>
+    </aside>
+    <section class="content">
+      <div id="pages" class="section active">
+        <div class="split">
+          <div class="editor">
+            <div class="row"><span class="pill">Page</span><span id="pageState" class="status"></span></div>
+            <div class="fields">
+              <input type="hidden" id="pageId">
+              <label>Route<input id="pageRoute" placeholder="index.html"></label>
+              <label>Title<input id="pageTitle" placeholder="Dashboard"></label>
+              <label>Storage<select id="pageStorage"><option value="sql">SQL</option><option value="disk">Disk</option></select></label>
+              <label>Disk path<input id="pageDisk" placeholder="C:\\site-root"></label>
+              <label class="full">HTML<textarea id="pageHtml" spellcheck="false"></textarea></label>
+              <label class="full">CSS<textarea id="pageCss" spellcheck="false"></textarea></label>
+              <label class="full">JavaScript<textarea id="pageJs" spellcheck="false"></textarea></label>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button class="primary" id="savePageBtn">Save Page</button>
+              <button id="openPageBtn">Open</button>
+              <button class="danger" id="deletePageBtn">Delete</button>
+            </div>
+          </div>
+          <div class="editor">
+            <div class="row"><span class="pill">Assets</span><button id="saveAssetBtn">Save Asset</button></div>
+            <div class="fields">
+              <input type="hidden" id="assetId">
+              <label>Name<input id="assetName" placeholder="app.js"></label>
+              <label>Type<input id="assetType" placeholder="application/javascript"></label>
+              <label>Storage<select id="assetStorage"><option value="sql">SQL</option><option value="disk">Disk</option></select></label>
+              <label>Disk path<input id="assetDisk"></label>
+              <label class="full">Content<textarea id="assetContent" spellcheck="false"></textarea></label>
+            </div>
+            <div id="assetList" class="list" style="margin-top:10px"></div>
+          </div>
+        </div>
+      </div>
+      <div id="controls" class="section">
+        <div class="split">
+          <div class="editor">
+            <div class="row" id="palette"></div>
+            <div class="fields" style="margin-top:10px">
+              <input type="hidden" id="controlId">
+              <label>Type<select id="controlType"></select></label>
+              <label>Name<input id="controlName"></label>
+              <label class="full">Schema<textarea id="controlSchema" spellcheck="false">{}</textarea></label>
+              <label class="full">Binding<textarea id="controlBinding" spellcheck="false">{}</textarea></label>
+            </div>
+            <button class="primary" id="saveControlBtn" style="margin-top:10px">Save Control</button>
+          </div>
+          <div id="controlList" class="list"></div>
+        </div>
+      </div>
+      <div id="crud" class="section">
+        <div class="split">
+          <div class="editor">
+            <div class="fields">
+              <input type="hidden" id="crudId">
+              <label>Name<input id="crudName"></label>
+              <label>Route<input id="crudRoute" placeholder="users"></label>
+              <label>Database<input id="crudDatabase" value="db"></label>
+              <label>Table<input id="crudTable"></label>
+              <label>Key column<input id="crudKey"></label>
+              <label>Scopes<input id="crudScopes" value="sql:read,sql:write"></label>
+              <label class="full">Input schema<textarea id="crudSchema" spellcheck="false"></textarea></label>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button class="primary" id="saveCrudBtn">Save CRUD</button>
+              <button id="clientCrudBtn">Client JS</button>
+              <button class="danger" id="deleteCrudBtn">Delete</button>
+            </div>
+          </div>
+          <div id="crudList" class="list"></div>
+        </div>
+      </div>
+      <div id="settings" class="section">
+        <div class="editor grid">
+          <label>Default page storage<select id="defaultStorage"><option value="sql">SQL</option><option value="disk">Disk</option></select></label>
+          <div class="row">
+            <button class="primary" id="saveSettingsBtn">Save Settings</button>
+            <button class="warn" id="previewOverrideBtn">Preview Override All</button>
+            <button class="danger" id="applyOverrideBtn" disabled>Override All</button>
+          </div>
+          <div id="overrideStatus" class="status"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+const BASE='$BasePath';
+const SQL_PATH='$SqlPath';
+const state={tab:'pages',pages:[],assets:[],controls:[],crud:[],palette:[],settings:{}};
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function api(path,body){const init={credentials:'include',headers:{'Content-Type':'application/json'}};if(body!==undefined){init.method='POST';init.body=JSON.stringify(body)}const r=await fetch(BASE+path,init);const text=await r.text();let data={};try{data=JSON.parse(text)}catch(e){data={text}}if(!r.ok)throw new Error(data.error||('HTTP '+r.status));return data}
+function setTab(tab){state.tab=tab;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));document.querySelectorAll('.section').forEach(s=>s.classList.toggle('active',s.id===tab));renderSide()}
+function renderSide(){const list=$('sideList');list.innerHTML='';const source=state.tab==='crud'?state.crud:state.tab==='controls'?state.controls:state.pages;source.forEach(item=>{const div=document.createElement('div');div.className='item';div.innerHTML='<b>'+esc(item.title||item.name||item.route||item.id)+'</b><span>'+esc(item.route||item.type||item.storageMode||'')+'</span>';div.onclick=()=>selectItem(item);list.appendChild(div)})}
+function selectItem(item){if(state.tab==='pages')fillPage(item);else if(state.tab==='controls')fillControl(item);else if(state.tab==='crud')fillCrud(item)}
+async function refresh(){try{const [pages,assets,controls,crud,settings]=await Promise.all([api('/api/pages/list'),api('/api/assets/list'),api('/api/controls/list'),api('/api/crud/list'),api('/api/settings')]);state.pages=pages.pages||[];state.assets=assets.assets||[];state.controls=controls.controls||[];state.palette=controls.palette||[];state.crud=crud.endpoints||[];state.settings=settings;renderSide();renderAssets();renderControls();renderCrud();renderPalette();$('defaultStorage').value=settings.defaultStorageMode||'sql'}catch(e){$('sideList').innerHTML='<div class="bad">'+esc(e.message)+'</div>'}}
+function newPage(){fillPage({storageMode:state.settings.defaultStorageMode||'sql',route:'index.html',html:'<!doctype html>\\n<html>\\n<head><title>$PageRoute</title></head>\\n<body>$Username</body>\\n</html>'})}
+function fillPage(p){$('pageId').value=p.id||'';$('pageRoute').value=p.route||'';$('pageTitle').value=p.title||'';$('pageStorage').value=p.storageMode||'sql';$('pageDisk').value=p.directoryPath||'';$('pageHtml').value=p.sqlHtml||p.html||'';$('pageCss').value=p.css||'';$('pageJs').value=p.js||'';$('pageState').textContent=p.id||'new'}
+async function savePage(){const page={id:$('pageId').value,route:$('pageRoute').value,title:$('pageTitle').value,storageMode:$('pageStorage').value,directoryPath:$('pageDisk').value,html:$('pageHtml').value,css:$('pageCss').value,js:$('pageJs').value};const r=await api('/api/pages/save',page);fillPage(r.page);await refresh()}
+async function deletePage(){if(!$('pageId').value)return;await api('/api/pages/delete',{id:$('pageId').value});newPage();await refresh()}
+function openPage(){const route=$('pageRoute').value||'index.html';window.open(BASE+'/pages/'+route,'_blank')}
+function renderAssets(){const list=$('assetList');list.innerHTML='';state.assets.forEach(a=>{const div=document.createElement('div');div.className='item';div.innerHTML='<b>'+esc(a.name)+'</b><span>'+esc(a.contentType||a.storageMode)+'</span>';div.onclick=()=>fillAsset(a);list.appendChild(div)})}
+function fillAsset(a){$('assetId').value=a.id||'';$('assetName').value=a.name||'';$('assetType').value=a.contentType||'';$('assetStorage').value=a.storageMode||'sql';$('assetDisk').value=a.directoryPath||'';$('assetContent').value=a.content||''}
+async function saveAsset(){await api('/api/assets/save',{id:$('assetId').value,name:$('assetName').value,contentType:$('assetType').value,storageMode:$('assetStorage').value,directoryPath:$('assetDisk').value,content:$('assetContent').value});await refresh()}
+function renderPalette(){const sel=$('controlType');sel.innerHTML='';$('palette').innerHTML='';(state.palette||[]).forEach(p=>{const opt=document.createElement('option');opt.value=p.type;opt.textContent=p.label;sel.appendChild(opt);const b=document.createElement('button');b.textContent=p.label;b.onclick=()=>{$('controlType').value=p.type;$('controlName').value=p.label};$('palette').appendChild(b)})}
+function renderControls(){const list=$('controlList');list.innerHTML='';state.controls.forEach(c=>{const div=document.createElement('div');div.className='item';div.innerHTML='<b>'+esc(c.name)+'</b><span>'+esc(c.type)+'</span>';div.onclick=()=>fillControl(c);list.appendChild(div)})}
+function fillControl(c){$('controlId').value=c.id||'';$('controlType').value=c.type||'form';$('controlName').value=c.name||'';$('controlSchema').value=c.schemaJson||'{}';$('controlBinding').value=c.bindingJson||'{}'}
+async function saveControl(){await api('/api/controls/save',{id:$('controlId').value,type:$('controlType').value,name:$('controlName').value,schemaJson:$('controlSchema').value,bindingJson:$('controlBinding').value});await refresh()}
+function renderCrud(){const list=$('crudList');list.innerHTML='';state.crud.forEach(c=>{const div=document.createElement('div');div.className='item';div.innerHTML='<b>'+esc(c.name)+'</b><span>'+esc(c.database+'.'+c.table+' / '+c.route)+'</span>';div.onclick=()=>fillCrud(c);list.appendChild(div)})}
+function fillCrud(c){$('crudId').value=c.id||'';$('crudName').value=c.name||'';$('crudRoute').value=c.route||'';$('crudDatabase').value=c.database||'db';$('crudTable').value=c.table||'';$('crudKey').value=c.keyColumn||'';$('crudScopes').value=c.scopes||'sql:read,sql:write';$('crudSchema').value=c.inputSchema||''}
+async function saveCrud(){await api('/api/crud/save',{id:$('crudId').value,name:$('crudName').value,route:$('crudRoute').value,database:$('crudDatabase').value,table:$('crudTable').value,keyColumn:$('crudKey').value,scopes:$('crudScopes').value,inputSchema:$('crudSchema').value,enabled:true});await refresh()}
+async function deleteCrud(){if(!$('crudId').value)return;await api('/api/crud/delete',{id:$('crudId').value});fillCrud({});await refresh()}
+function clientCrud(){if($('crudId').value)window.open(BASE+'/api/crud/client/'+encodeURIComponent($('crudId').value)+'.js','_blank')}
+async function saveSettings(){await api('/api/settings/save',{defaultStorageMode:$('defaultStorage').value});await refresh()}
+async function previewOverride(){const d=await api('/api/settings/override-all/preview',{targetStorageMode:$('defaultStorage').value});let out='Affected: '+d.affectedCount+'\\n';(d.pages||[]).forEach(p=>{out+=p.route+' '+p.from+' -> '+p.to+'\\nsource: '+p.source+'\\ntarget: '+p.target+(p.missingTarget?'\\nmissing target':'')+'\\n\\n'});$('overrideStatus').textContent=out;let n=3;$('applyOverrideBtn').disabled=true;$('applyOverrideBtn').textContent='Override All ('+n+')';const timer=setInterval(()=>{n--;$('applyOverrideBtn').textContent=n>0?'Override All ('+n+')':'Override All';if(n<=0){clearInterval(timer);$('applyOverrideBtn').disabled=false}},1000)}
+async function applyOverride(){await api('/api/settings/override-all/apply',{targetStorageMode:$('defaultStorage').value});$('applyOverrideBtn').disabled=true;await refresh()}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+$('refreshBtn').onclick=refresh;$('newPageBtn').onclick=newPage;$('savePageBtn').onclick=()=>savePage().catch(alert);$('deletePageBtn').onclick=()=>deletePage().catch(alert);$('openPageBtn').onclick=openPage;$('saveAssetBtn').onclick=()=>saveAsset().catch(alert);$('saveControlBtn').onclick=()=>saveControl().catch(alert);$('saveCrudBtn').onclick=()=>saveCrud().catch(alert);$('deleteCrudBtn').onclick=()=>deleteCrud().catch(alert);$('clientCrudBtn').onclick=clientCrud;$('saveSettingsBtn').onclick=()=>saveSettings().catch(alert);$('previewOverrideBtn').onclick=()=>previewOverride().catch(alert);$('applyOverrideBtn').onclick=()=>applyOverride().catch(alert);
+refresh().then(newPage);
+</script>
+</body>
+</html>

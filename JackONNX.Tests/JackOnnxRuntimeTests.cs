@@ -1,5 +1,6 @@
 using System.Text.Json;
 using JackONNX;
+using JackONNX.Audio;
 using JackONNX.Cuda;
 using JackONNX.DirectML;
 using JackONNX.LlmRuntime;
@@ -228,6 +229,126 @@ public sealed class JackOnnxRuntimeTests
             TryDeleteDirectory(artifactRoot);
             TryDeleteDirectory(modelRoot);
         }
+    }
+
+    [TestMethod]
+    public async Task LlmRuntimeTool_AudioSpeechCreatesTrackableFailedJobWhenNoManifestIsRegistered()
+    {
+        string toolRoot = CreateTempDirectory();
+        try
+        {
+            var runtime = JackOnnxRuntimeEngine.Create();
+            var registry = new LlmToolRegistry(new LlmRuntimeOptions { ToolRoot = toolRoot });
+            registry.RegisterJackOnnxTools(new JackOnnxLlmRuntimeToolOptions
+            {
+                GenerationApprovalMode = LlmToolApprovalMode.AlwaysAllow
+            });
+            var invoker = new LlmToolInvoker(registry, builtInTools: JackOnnxLlmRuntimeToolRegistration.CreateJackOnnxBuiltInTools(runtime));
+
+            var result = await invoker.InvokeAsync(new LlmToolInvocationRequest
+            {
+                ToolId = "jackonnx_audio_speech",
+                Approved = true,
+                Input = JsonDocument.Parse("""{"text":"hello from audio tests"}""").RootElement.Clone()
+            });
+
+            Assert.IsFalse(result.Success);
+            StringAssert.Contains(result.Error, "No JackONNX speech-capable audio model manifest is registered");
+            Assert.IsFalse(result.Error.Contains("model execution is not implemented", StringComparison.OrdinalIgnoreCase), result.Error);
+            Assert.IsNotNull(result.OutputJson);
+            string jobId = result.OutputJson.Value.GetProperty("jobId").GetString() ?? "";
+            Assert.IsFalse(string.IsNullOrWhiteSpace(jobId));
+
+            var status = await invoker.InvokeAsync(new LlmToolInvocationRequest
+            {
+                ToolId = "jackonnx_jobs_status",
+                Input = JsonSerializer.SerializeToElement(new { jobId })
+            });
+
+            Assert.IsTrue(status.Success, status.Error);
+            Assert.AreEqual("Failed", status.OutputJson!.Value.GetProperty("job").GetProperty("state").GetString());
+        }
+        finally
+        {
+            TryDeleteDirectory(toolRoot);
+        }
+    }
+
+    [TestMethod]
+    public async Task AudioPipeline_SavesArtifactWhenSpeechRunnerReturnsWavBytes()
+    {
+        string artifactRoot = CreateTempDirectory();
+        string modelRoot = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(modelRoot, "config.json"), "{}");
+            File.WriteAllBytes(Path.Combine(modelRoot, "pytorch_model.bin"), [1, 2, 3, 4]);
+            string manifestPath = Path.Combine(modelRoot, "manifest.jackonnx.json");
+            File.WriteAllText(manifestPath, """
+{
+  "id": "fake-tts",
+  "name": "Fake TTS",
+  "type": "audio.text-to-speech",
+  "format": "pytorch",
+  "components": {
+    "config": "config.json",
+    "model": "pytorch_model.bin"
+  },
+  "recommendedProviders": [
+    "Cpu"
+  ]
+}
+""");
+            var runtime = JackOnnxRuntimeEngine.Create(new JackOnnxOptions
+            {
+                ArtifactRoot = artifactRoot,
+                ModelManifestPaths = [manifestPath]
+            });
+            var pipeline = new JackOnnxAudioPipeline(runtime, new FakeSpeechRunner());
+
+            var result = await pipeline.GenerateSpeechAsync(new SpeechGenerationRequest
+            {
+                ModelId = "fake-tts",
+                Text = "artifact please",
+                Voice = "test",
+                Speed = 1.25,
+                SampleRate = 24000,
+                Seed = 123
+            });
+
+            Assert.IsTrue(result.Success, result.Message);
+            Assert.AreEqual(1, result.Artifacts.Count);
+            Assert.AreEqual("audio/wav", result.Artifacts[0].MediaType);
+            Assert.AreEqual("fake-tts", result.Artifacts[0].Metadata["modelId"]);
+            Assert.AreEqual("test.fake.speech", result.Artifacts[0].Metadata["runner"]);
+            Assert.AreEqual("24000", result.Artifacts[0].Metadata["sampleRate"]);
+            Assert.AreEqual("test", result.Artifacts[0].Metadata["voice"]);
+
+            var content = await runtime.ReadArtifactAsync(result.Artifacts[0].Id);
+            Assert.IsNotNull(content);
+            CollectionAssert.AreEqual(FakeWavBytes, content.Data);
+        }
+        finally
+        {
+            TryDeleteDirectory(artifactRoot);
+            TryDeleteDirectory(modelRoot);
+        }
+    }
+
+    [TestMethod]
+    public void PythonAudioRunner_UsesBomSafeJsonHandoffAndSpeechPipeline()
+    {
+        var runnerType = typeof(JackOnnxPythonAudioRunner);
+        var scriptField = runnerType.GetField("PythonRunnerScript", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.IsNotNull(scriptField);
+        string script = (string)(scriptField.GetRawConstantValue() ?? "");
+
+        StringAssert.Contains(script, "encoding=\"utf-8-sig\"");
+        StringAssert.Contains(script, "text-to-speech");
+        StringAssert.Contains(script, "text-to-audio");
+        StringAssert.Contains(script, "PiperVoice");
+        StringAssert.Contains(script, "AudioLDM2Pipeline");
+        StringAssert.Contains(script, "Moshi/Moshiko");
     }
 
     [TestMethod]
@@ -705,6 +826,23 @@ public sealed class JackOnnxRuntimeTests
         0x0D, 0x0A, 0x1A, 0x0A
     ];
 
+    private static readonly byte[] FakeWavBytes =
+    [
+        0x52, 0x49, 0x46, 0x46,
+        0x24, 0x00, 0x00, 0x00,
+        0x57, 0x41, 0x56, 0x45,
+        0x66, 0x6D, 0x74, 0x20,
+        0x10, 0x00, 0x00, 0x00,
+        0x01, 0x00,
+        0x01, 0x00,
+        0xC0, 0x5D, 0x00, 0x00,
+        0x80, 0xBB, 0x00, 0x00,
+        0x02, 0x00,
+        0x10, 0x00,
+        0x64, 0x61, 0x74, 0x61,
+        0x00, 0x00, 0x00, 0x00
+    ];
+
     private sealed class FakeImageRunner : JackONNX.Image.IJackOnnxImageModelRunner
     {
         public Task<JackONNX.Image.JackOnnxImageModelOutput> GenerateAsync(
@@ -721,6 +859,27 @@ public sealed class JackOnnxRuntimeTests
                 MediaType = "image/png",
                 Message = "Fake image generated.",
                 Runner = "test.fake"
+            });
+        }
+    }
+
+    private sealed class FakeSpeechRunner : IJackOnnxSpeechModelRunner
+    {
+        public Task<JackOnnxAudioModelOutput> GenerateSpeechAsync(
+            JackOnnxModelManifest manifest,
+            SpeechGenerationRequest request,
+            string jobId,
+            JackOnnxOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new JackOnnxAudioModelOutput
+            {
+                Data = FakeWavBytes,
+                FileName = "fake.wav",
+                MediaType = "audio/wav",
+                Message = "Fake speech generated.",
+                Runner = "test.fake.speech",
+                SampleRate = request.SampleRate
             });
         }
     }

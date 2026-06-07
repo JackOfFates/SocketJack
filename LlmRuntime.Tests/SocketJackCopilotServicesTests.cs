@@ -37,6 +37,56 @@ public sealed class SocketJackCopilotServicesTests
     }
 
     [TestMethod]
+    public void ModelDiscoveryUsesMasterListCapabilityArrayStringForToolsSupport()
+    {
+        string capabilities = """
+        [
+          {
+            "id": "qwen-tools",
+            "type": "text-generation",
+            "supportsTools": true,
+            "isLoaded": true,
+            "enabled": true,
+            "disabled": false,
+            "dynamicLoadEnabled": true
+          },
+          {
+            "id": "video-model",
+            "type": "video-generation",
+            "supportsTools": false,
+            "isLoaded": false,
+            "enabled": true,
+            "disabled": false,
+            "dynamicLoadEnabled": true
+          }
+        ]
+        """;
+        string json = new JsonObject
+        {
+            ["servers"] = new JsonArray(new JsonObject
+            {
+                ["id"] = "TitanX",
+                ["title"] = "TitanX",
+                ["endpoint"] = "https://socketjack.com/proxy/TitanX",
+                ["hostResponding"] = true,
+                ["toolsAllowed"] = "LlmRuntime chat, VS_tools, VS bridge",
+                ["availableModels"] = "qwen-tools, video-model",
+                ["modelCapabilitiesJson"] = capabilities
+            })
+        }.ToJsonString();
+
+        SocketJackServerCandidate server = SocketJackMasterListClient.ParseServers(json).Single();
+        IReadOnlyList<SocketJackModelCandidate> models = SocketJackModelDiscoveryService.ParseAndMergeModels(null, null, server);
+
+        SocketJackModelCandidate qwen = models.Single(model => model.Id == "qwen-tools");
+        SocketJackModelCandidate video = models.Single(model => model.Id == "video-model");
+        Assert.IsTrue(qwen.SupportsTools);
+        Assert.IsTrue(qwen.IsSelectable, qwen.EligibilityReason);
+        Assert.IsFalse(video.SupportsTools);
+        Assert.IsFalse(video.IsSelectable);
+    }
+
+    [TestMethod]
     public void ModelDiscoveryMergesCompactAndRuntimeEligibility()
     {
         string compact = """
@@ -90,6 +140,92 @@ public sealed class SocketJackCopilotServicesTests
         Assert.IsTrue(qwen.IsSelectable, qwen.EligibilityReason);
         Assert.IsFalse(embed.IsSelectable);
         Assert.AreEqual("embeddings only", embed.DisabledReason);
+    }
+
+    [TestMethod]
+    public void ModelDiscoveryKeepsLoadedPolicyDisabledModelSelectable()
+    {
+        string compact = """
+        {
+          "models": [
+            {
+              "id": "qwen-loaded",
+              "supportsTools": true,
+              "supportsVision": true,
+              "isLoaded": true,
+              "enabled": false,
+              "disabled": false,
+              "status": "loaded-disabled",
+              "loadDisabledReason": "Enable this model in Workstation's Models tab, or enable the global web chat model-load API in Diagnostics."
+            }
+          ]
+        }
+        """;
+        string runtime = """
+        {
+          "models": [
+            {
+              "key": "qwen-loaded",
+              "type": "text-generation",
+              "loaded_instances": [
+                { "id": "active" }
+              ],
+              "enabled": false,
+              "isEnabled": false,
+              "disabled": false,
+              "load_disabled_reason": "Enable this model in Workstation's Models tab, or enable the global web chat model-load API in Diagnostics.",
+              "capabilities": {
+                "chat_completion": true,
+                "runtime_load": true,
+                "trained_for_tool_use": true,
+                "web_chat_dynamic_load": false
+              }
+            }
+          ]
+        }
+        """;
+
+        IReadOnlyList<SocketJackModelCandidate> models = SocketJackModelDiscoveryService.ParseAndMergeModels(compact, runtime);
+
+        SocketJackModelCandidate qwen = models.Single(model => model.Id == "qwen-loaded");
+        Assert.IsTrue(qwen.IsLoaded);
+        Assert.IsTrue(qwen.Enabled);
+        Assert.AreEqual("", qwen.DisabledReason);
+        Assert.IsTrue(qwen.IsSelectable, qwen.EligibilityReason);
+    }
+
+    [TestMethod]
+    public void ModelDiscoveryPrefersLoadedModelOverDisabledStaleSelection()
+    {
+        string compact = """
+        {
+          "models": [
+            {
+              "id": "Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF",
+              "supportsTools": true,
+              "supportsVision": true,
+              "isLoaded": true,
+              "enabled": true,
+              "disabled": false,
+              "dynamicLoadEnabled": true
+            },
+            {
+              "id": "Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
+              "supportsTools": true,
+              "supportsVision": true,
+              "isLoaded": false,
+              "enabled": false,
+              "disabled": true,
+              "loadDisabledReason": "Enable this model in Workstation's Models tab, or enable the global web chat model-load API in Diagnostics."
+            }
+          ]
+        }
+        """;
+
+        IReadOnlyList<SocketJackModelCandidate> models = SocketJackModelDiscoveryService.ParseAndMergeModels(compact, null);
+
+        Assert.AreEqual("Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF", models.First(model => model.IsSelectable).Id);
+        Assert.IsFalse(models.Single(model => model.Id == "Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF").IsSelectable);
     }
 
     [TestMethod]

@@ -1285,7 +1285,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         SaveCurrentPage();
 
         if (TryOpenExternalBrowser(url, out string detail))
-            SetStatus("Opened " + url + " in the Linux browser.");
+            SetStatus("Opened " + url + " in the native Linux browser.");
         else
             SetStatus("Could not open external browser for " + url + ". " + detail);
     }
@@ -1312,6 +1312,14 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
                 if (process.Start())
                 {
+                    if (command.VerifyExitCode &&
+                        process.WaitForExit(1500) &&
+                        process.ExitCode != 0)
+                    {
+                        errors.Add(command.FileName + ": exited with code " + process.ExitCode.ToString(CultureInfo.InvariantCulture));
+                        continue;
+                    }
+
                     detail = "";
                     return true;
                 }
@@ -1328,33 +1336,103 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
     private static IEnumerable<ExternalBrowserCommand> BuildExternalBrowserCommands(string url)
     {
-        if (IsWineRuntime())
+        bool linux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
+        bool wine = IsWineRuntime();
+
+        if (linux || wine)
+        {
+            foreach (ExternalBrowserCommand command in BuildLinuxDesktopBrowserCommands(url, wine))
+                yield return command;
+        }
+
+        if (wine)
         {
             yield return new ExternalBrowserCommand("winebrowser", [url], false);
             yield return new ExternalBrowserCommand("winebrowser.exe", [url], false);
             yield return new ExternalBrowserCommand("cmd", ["/c", "start", "", url], false);
+            yield return new ExternalBrowserCommand("explorer.exe", [url], false);
         }
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || IsWineRuntime())
+        if (linux || wine)
         {
             foreach (string linuxPath in new[]
                      {
                          "/usr/bin/xdg-open",
                          "/usr/local/bin/xdg-open",
-                         "/usr/bin/waterfox",
-                         "/usr/local/bin/waterfox",
+                         "/usr/bin/gio",
+                         "/usr/local/bin/gio",
+                         "/usr/bin/sensible-browser",
+                         "/usr/local/bin/sensible-browser",
+                         "/usr/bin/gnome-open",
+                         "/usr/local/bin/gnome-open",
+                         "/usr/bin/kde-open5",
+                         "/usr/local/bin/kde-open5",
+                         "/usr/bin/kde-open",
+                         "/usr/local/bin/kde-open",
                          "/usr/bin/firefox",
+                         "/usr/local/bin/firefox",
                          "/usr/bin/chromium",
-                         "/usr/bin/google-chrome"
+                         "/usr/local/bin/chromium",
+                         "/usr/bin/chromium-browser",
+                         "/usr/local/bin/chromium-browser",
+                         "/usr/bin/google-chrome",
+                         "/usr/local/bin/google-chrome",
+                         "/usr/bin/brave-browser",
+                         "/usr/local/bin/brave-browser",
+                         "/usr/bin/microsoft-edge",
+                         "/usr/local/bin/microsoft-edge",
+                         "/usr/bin/waterfox",
+                         "/usr/local/bin/waterfox"
                      })
             {
-                yield return new ExternalBrowserCommand(linuxPath, [url], false);
-                if (IsWineRuntime())
-                    yield return new ExternalBrowserCommand(ToWineUnixPath(linuxPath), [url], false);
+                IReadOnlyList<string> arguments = linuxPath.EndsWith("/gio", StringComparison.OrdinalIgnoreCase)
+                    ? ["open", url]
+                    : [url];
+                yield return new ExternalBrowserCommand(linuxPath, arguments, false, true);
+                if (wine)
+                    yield return new ExternalBrowserCommand(ToWineUnixPath(linuxPath), arguments, false, true);
             }
         }
 
         yield return new ExternalBrowserCommand(url, [], true);
+    }
+
+    private static IEnumerable<ExternalBrowserCommand> BuildLinuxDesktopBrowserCommands(string url, bool wine)
+    {
+        const string openerScript = """
+url="$1"
+if [ -z "$url" ]; then
+    exit 2
+fi
+
+for opener in xdg-open sensible-browser gnome-open kde-open5 kde-open; do
+    if command -v "$opener" >/dev/null 2>&1; then
+        nohup "$opener" "$url" >/dev/null 2>&1 &
+        exit 0
+    fi
+done
+
+if command -v gio >/dev/null 2>&1; then
+    nohup gio open "$url" >/dev/null 2>&1 &
+    exit 0
+fi
+
+for browser in firefox google-chrome chromium chromium-browser brave-browser microsoft-edge waterfox; do
+    if command -v "$browser" >/dev/null 2>&1; then
+        nohup "$browser" "$url" >/dev/null 2>&1 &
+        exit 0
+    fi
+done
+
+exit 1
+""";
+
+        foreach (string shellPath in new[] { "/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash" })
+        {
+            yield return new ExternalBrowserCommand(shellPath, ["-lc", openerScript, "jackllm-open-url", url], false, true);
+            if (wine)
+                yield return new ExternalBrowserCommand(ToWineUnixPath(shellPath), ["-lc", openerScript, "jackllm-open-url", url], false, true);
+        }
     }
 
     private static bool IsWineRuntime()
@@ -1917,7 +1995,11 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
     private sealed record HuggingFaceAuthContext(string Cookies, string BearerToken);
 
-    private sealed record ExternalBrowserCommand(string FileName, IReadOnlyList<string> Arguments, bool UseShellExecute);
+    private sealed record ExternalBrowserCommand(
+        string FileName,
+        IReadOnlyList<string> Arguments,
+        bool UseShellExecute,
+        bool VerifyExitCode = false);
 
     private static IReadOnlyDictionary<string, string> BuildBundleMetadata(DownloadQueueItem item)
     {

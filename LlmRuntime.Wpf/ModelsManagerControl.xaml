@@ -299,44 +299,53 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ProgressBar">
                         <Grid ClipToBounds="True">
-                            <Border x:Name="PART_Track"
-                                    Background="{TemplateBinding Background}"
+                            <Border Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="6" />
-                            <Border x:Name="PART_Indicator"
-                                    HorizontalAlignment="Left"
-                                    CornerRadius="6"
-                                    Margin="1">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                        <GradientStop Color="#60A5FA" Offset="0.00" />
-                                        <GradientStop Color="#22D3EE" Offset="0.38" />
-                                        <GradientStop Color="#A78BFA" Offset="0.72" />
-                                        <GradientStop Color="#F472B6" Offset="1.00" />
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                                <Border.Triggers>
-                                    <EventTrigger RoutedEvent="FrameworkElement.Loaded">
-                                        <BeginStoryboard>
-                                            <Storyboard RepeatBehavior="Forever" AutoReverse="True">
-                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[0].(GradientStop.Color)"
-                                                                To="#22D3EE"
-                                                                Duration="0:0:1.8" />
-                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[1].(GradientStop.Color)"
-                                                                To="#A78BFA"
-                                                                Duration="0:0:1.8" />
-                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[2].(GradientStop.Color)"
-                                                                To="#F472B6"
-                                                                Duration="0:0:1.8" />
-                                                <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[3].(GradientStop.Color)"
-                                                                To="#60A5FA"
-                                                                Duration="0:0:1.8" />
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </EventTrigger>
-                                </Border.Triggers>
-                            </Border>
+                            <Grid x:Name="PART_Track"
+                                  Margin="1"
+                                  ClipToBounds="True">
+                                <Border x:Name="PART_Indicator"
+                                        HorizontalAlignment="Left"
+                                        CornerRadius="5"
+                                        ClipToBounds="True">
+                                    <Border x:Name="IndicatorGradientLayer"
+                                            Width="{Binding ActualWidth, ElementName=PART_Track}"
+                                            Height="{Binding ActualHeight, ElementName=PART_Track}"
+                                            HorizontalAlignment="Left"
+                                            CornerRadius="5">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#60A5FA" Offset="0.00" />
+                                                <GradientStop Color="#22D3EE" Offset="0.38" />
+                                                <GradientStop Color="#A78BFA" Offset="0.72" />
+                                                <GradientStop Color="#F472B6" Offset="1.00" />
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <Border.Triggers>
+                                            <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                                                <BeginStoryboard>
+                                                    <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                                        <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[0].(GradientStop.Color)"
+                                                                        To="#22D3EE"
+                                                                        Duration="0:0:1.8" />
+                                                        <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[1].(GradientStop.Color)"
+                                                                        To="#A78BFA"
+                                                                        Duration="0:0:1.8" />
+                                                        <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[2].(GradientStop.Color)"
+                                                                        To="#F472B6"
+                                                                        Duration="0:0:1.8" />
+                                                        <ColorAnimation Storyboard.TargetProperty="(Border.Background).(GradientBrush.GradientStops)[3].(GradientStop.Color)"
+                                                                        To="#60A5FA"
+                                                                        Duration="0:0:1.8" />
+                                                    </Storyboard>
+                                                </BeginStoryboard>
+                                            </EventTrigger>
+                                        </Border.Triggers>
+                                    </Border>
+                                </Border>
+                            </Grid>
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>
@@ -348,23 +357,31 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ProgressBar">
                         <Grid ClipToBounds="True">
-                            <Border x:Name="PART_Track"
-                                    Background="{TemplateBinding Background}"
+                            <Border Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="6" />
-                            <Border x:Name="PART_Indicator"
-                                    HorizontalAlignment="Left"
-                                    CornerRadius="6"
-                                    Margin="1">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                        <GradientStop Color="#34D399" Offset="0" />
-                                        <GradientStop Color="#FBBF24" Offset="0.58" />
-                                        <GradientStop Color="#FB7185" Offset="1" />
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                            </Border>
+                            <Grid x:Name="PART_Track"
+                                  Margin="1"
+                                  ClipToBounds="True">
+                                <Border x:Name="PART_Indicator"
+                                        HorizontalAlignment="Left"
+                                        CornerRadius="5"
+                                        ClipToBounds="True">
+                                    <Border Width="{Binding ActualWidth, ElementName=PART_Track}"
+                                            Height="{Binding ActualHeight, ElementName=PART_Track}"
+                                            HorizontalAlignment="Left"
+                                            CornerRadius="5">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#34D399" Offset="0" />
+                                                <GradientStop Color="#FBBF24" Offset="0.58" />
+                                                <GradientStop Color="#FB7185" Offset="1" />
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+                                </Border>
+                            </Grid>
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>
@@ -884,6 +901,7 @@
                                                     <ComboBoxItem Content="CUDA 12" Tag="cuda12" />
                                                     <ComboBoxItem Content="Vulkan" Tag="vulkan" />
                                                     <ComboBoxItem Content="DirectML" Tag="directml" />
+                                                    <ComboBoxItem Content="vLLM" Tag="vllm" />
                                                 </ComboBox>
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" Margin="6,0,0,0">
@@ -904,6 +922,7 @@
                                                     <ComboBoxItem Content="Data Parallelism" Tag="data_parallel" />
                                                     <ComboBoxItem Content="Model Offloading" Tag="model_offload" />
                                                     <ComboBoxItem Content="Pipeline Parallelism" Tag="pipeline_parallel" />
+                                                    <ComboBoxItem Content="Tensor Parallelism" Tag="tensor_parallel" />
                                                 </ComboBox>
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" Margin="6,0,0,0">
@@ -1107,6 +1126,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
@@ -1143,6 +1163,109 @@
                     </Border>
 
                     <Border Grid.Row="1"
+                            Background="{StaticResource ManagerPanelBrush}"
+                            BorderBrush="{StaticResource ManagerBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="10"
+                            Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Python GPU Processes" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock x:Name="GpuPythonProcessStatusText"
+                                           Text="Checking for Python generators..."
+                                           Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                           FontSize="11"
+                                           Margin="0,2,0,0"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <ComboBox x:Name="GpuPythonProcessSelectorBox"
+                                          Width="380"
+                                          MaxDropDownHeight="280"
+                                          Margin="0,0,8,0"
+                                          ToolTip="Select one or more Python GPU processes to stop.">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsSelectedForStop, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      IsEnabled="{Binding IsStoppable}"
+                                                      ToolTip="{Binding StopReason}">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding SelectorLabel}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding ResourceText}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="10" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </CheckBox>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <Button Content="Stop Selected"
+                                        Click="StopSelectedPythonProcessesButton_Click"
+                                        Margin="0,0,8,0"
+                                        ToolTip="Stop the checked Python GPU process groups." />
+                                <Button Content="Stop All"
+                                        Click="StopAllPythonProcessesButton_Click"
+                                        ToolTip="Stop all stoppable Python GPU process groups." />
+                            </StackPanel>
+
+                            <ListView x:Name="GpuPythonProcessListView"
+                                      Grid.Row="1"
+                                      Grid.ColumnSpan="2"
+                                      Margin="0,10,0,0"
+                                      MaxHeight="168"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="32" />
+                                                <ColumnDefinition Width="1.2*" MinWidth="180" />
+                                                <ColumnDefinition Width="1.5*" MinWidth="240" />
+                                                <ColumnDefinition Width="1.2*" MinWidth="210" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox IsChecked="{Binding IsSelectedForStop, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      IsEnabled="{Binding IsStoppable}"
+                                                      VerticalAlignment="Center"
+                                                      ToolTip="{Binding StopReason}" />
+                                            <StackPanel Grid.Column="1" Margin="4,0,12,0">
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding PidLine}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding CommandLine}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="10"
+                                                       Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                                       TextWrapping="Wrap" />
+                                            <StackPanel Grid.Column="3" Margin="12,0,12,0">
+                                                <TextBlock Text="{Binding ResourceText}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding GpuSummary}" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="10" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <Button Grid.Column="4"
+                                                    Content="Stop"
+                                                    Click="StopPythonProcessButton_Click"
+                                                    CommandParameter="{Binding Pid}"
+                                                    IsEnabled="{Binding IsStoppable}"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip="{Binding StopReason}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="2"
                             Background="{StaticResource ManagerPanelBrush}"
                             BorderBrush="{StaticResource ManagerBorderBrush}"
                             BorderThickness="1"
@@ -1217,7 +1340,7 @@
                         </ItemsControl>
                     </Border>
 
-                    <Border Grid.Row="2"
+                    <Border Grid.Row="3"
                             Background="{StaticResource ManagerPanelBrush}"
                             BorderBrush="{StaticResource ManagerBorderBrush}"
                             BorderThickness="1"
@@ -1238,13 +1361,18 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Margin="0,0,10,0">
                                 <TextBlock Text="Global mode" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
-                                <ComboBox x:Name="GlobalParallelismModeBox" SelectedValuePath="Tag" SelectedIndex="0">
-                                    <ComboBoxItem Content="Single" Tag="single" />
-                                    <ComboBoxItem Content="Data Parallelism" Tag="data_parallel" />
-                                    <ComboBoxItem Content="Model Offloading" Tag="model_offload" />
-                                    <ComboBoxItem Content="Pipeline Parallelism" Tag="pipeline_parallel" />
-                                </ComboBox>
-                            </StackPanel>
+                                    <ComboBox x:Name="GlobalParallelismModeBox" SelectedValuePath="Tag" SelectedIndex="0">
+                                        <ComboBoxItem Content="Single" Tag="single" />
+                                        <ComboBoxItem Content="Data Parallelism" Tag="data_parallel" />
+                                        <ComboBoxItem Content="Model Offloading" Tag="model_offload" />
+                                        <ComboBoxItem Content="Pipeline Parallelism" Tag="pipeline_parallel" />
+                                        <ComboBoxItem Content="Tensor Parallelism" Tag="tensor_parallel" />
+                                    </ComboBox>
+                                    <CheckBox x:Name="GlobalParallelTensorBox"
+                                              Content="Parallel Tensor"
+                                              Margin="0,6,0,0"
+                                              ToolTip="Enable tensor-parallel model splitting by default when multiple GPUs are eligible." />
+                                </StackPanel>
                             <StackPanel Grid.Column="1" Margin="0,0,10,0">
                                 <TextBlock Text="Global placement" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
                                 <ComboBox x:Name="GlobalParallelismPlacementBox" SelectedValuePath="Tag" SelectedIndex="0">
@@ -1322,7 +1450,7 @@
                         </Grid>
                     </Border>
 
-                    <Grid Grid.Row="3">
+                    <Grid Grid.Row="4">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
@@ -1381,6 +1509,11 @@
                                               VerticalAlignment="Center"
                                               Margin="0,8,0,0"
                                               ToolTip="Enable this GPU as an eligible target for models assigned below." />
+                                    <CheckBox Content="Parallel Tensor"
+                                              IsChecked="{Binding ParallelTensor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              VerticalAlignment="Center"
+                                              Margin="0,6,0,0"
+                                              ToolTip="Use this GPU as part of tensor-parallel model splitting when assigned models target multiple GPUs." />
                                 </StackPanel>
 
                                 <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,12,0">
@@ -1411,6 +1544,7 @@
                                         <ComboBoxItem Content="Data Parallelism" Tag="data_parallel" />
                                         <ComboBoxItem Content="Model Offloading" Tag="model_offload" />
                                         <ComboBoxItem Content="Pipeline Parallelism" Tag="pipeline_parallel" />
+                                        <ComboBoxItem Content="Tensor Parallelism" Tag="tensor_parallel" />
                                     </ComboBox>
                                 </StackPanel>
 

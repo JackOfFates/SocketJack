@@ -1,0 +1,24 @@
+0.2.36
+
+- Fixes VS 2026 Insiders installation by packaging the extension with an explicit Visual Studio 18.x preview target range.
+- Keeps the VSIX amd64-only and preserves Community, Pro, and Enterprise installation targets in the generated manifest.
+- Fixes MasterList fallback model discovery when live runtime model endpoints are unavailable and `modelCapabilitiesJson` is served as a JSON array string.
+- Includes the current SocketJack Copilot MCP bridge build with stale-model fallback and hidden-reasoning cleanup.
+
+0.2.35
+
+- Fixes duplicated VS Copilot LLM responses by removing repeated assistant-text snapshots from terminal Responses API stream events.
+- Keeps visible assistant text on the live `response.output_text.delta` path so Copilot receives each generated answer once.
+- Includes the current SocketJack Copilot MCP bridge build and regression coverage for Responses API duplicate-output handling.
+
+0.2.34
+
+- Fixes a VS Copilot bridge path where a SocketJack/Sable OpenAI-compatible stream could end with no assistant text and make Visual Studio finish the prompt empty.
+- Prefers the controlled SocketJack chat-stream adapter before raw OpenAI fallback routes so tool/session traffic gets normalized for Visual Studio.
+- Emits a normal markdown fallback reply when an upstream model stream completes without visible assistant text.
+
+0.2.33
+
+- Adds Marketplace-ready SocketJack branding, tags, icon, preview image, overview, and publishing metadata.
+- Uses the Marketplace-supported Visual Studio 17.14+ API compatibility range required for VS 2026 extension submissions.
+- Includes the current SocketJack Copilot Servers, Session Sync, sign-in, MCP, and Ollama BYOM workflows.

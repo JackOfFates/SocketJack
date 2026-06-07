@@ -271,9 +271,9 @@ body.light-theme ::-webkit-scrollbar-thumb{background:#c0c0c0;border-color:#f5f5
 body.light-theme ::-webkit-scrollbar-thumb:hover{background:#a0a0a0}
 
 /* Progress bar */
-.progress-bar{height:3px;background:#3c3c3c;position:relative;overflow:hidden;border-radius:2px}
-.progress-bar .progress{height:100%;background:linear-gradient(90deg,#569cd6,#4ec9b0);border-radius:2px;transition:width .3s ease}
-.progress-bar.indeterminate .progress{width:30%;animation:shimmer 1.5s infinite;background:linear-gradient(90deg,transparent,#569cd6,transparent);background-size:200% 100%}
+.progress-bar{--progress-fill:0%;height:3px;background:#3c3c3c;position:relative;overflow:hidden;border-radius:2px}
+.progress-bar .progress{height:100%;width:100%;background:linear-gradient(90deg,#569cd6,#4ec9b0);border-radius:2px;clip-path:inset(0 calc(100% - var(--progress-fill,0%)) 0 0 round 2px);transition:clip-path .3s ease}
+.progress-bar.indeterminate .progress{width:30%;clip-path:none;animation:shimmer 1.5s infinite;background:linear-gradient(90deg,transparent,#569cd6,transparent);background-size:200% 100%}
 
 /* Execute button throbber */
 .exec-throbber{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .5s linear infinite;vertical-align:middle;margin-right:4px}
@@ -869,6 +869,7 @@ body.light-theme .status-bar{background:#0066b8}
   <span>Connected</span>
  </div>
  <select id="dbSelect" onchange="onDbChange()" title="Current Database"></select>
+ <a href="/Admin" style="border:1px solid #3c3c3c;border-radius:4px;padding:5px 10px;color:#9cdcfe;background:#1e1e1e;text-decoration:none;font-size:12px;font-weight:600" title="Open SocketJack Admin Suite">Admin Suite</a>
  <button onclick="openApiCreator()" style="background:linear-gradient(180deg,#3c3c3c,#333);color:#4ec9b0;border:none;border-radius:4px;padding:5px 14px;font-size:12px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px" title="API Creator" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform='none'">&#128279; API Creator</button>
  <button onclick="openQueryBuilder()" style="background:linear-gradient(180deg,#3c3c3c,#333);color:#dcdcaa;border:none;border-radius:4px;padding:5px 14px;font-size:12px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px" title="Visual Query Builder" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform='none'">&#128295; Query Builder</button>
  <button onclick="openEventsEditor()" style="background:linear-gradient(180deg,#3c3c3c,#333);color:#ffa726;border:none;border-radius:4px;padding:5px 14px;font-size:12px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px" title="Events Editor" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform='none'">&#9889; Events</button>
@@ -1353,6 +1354,61 @@ body.light-theme .status-bar{background:#0066b8}
     var sqlRouteApplying = false;
     var sqlRouteUrlMuted = false;
     var sqlRouteHydrated = false;
+
+    (function () {
+        var nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+        if (!nativeFetch) return;
+
+        function sqlAdminMutationMethod(method) {
+            method = (method || 'GET').toUpperCase();
+            return method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+        }
+
+        function sqlAdminRequestPath(input) {
+            try {
+                var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+                return url ? new URL(url, window.location.href).pathname : '';
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function sqlAdminShouldAttachCsrf(input, init) {
+            var method = (init && init.method) || (input && input.method) || 'GET';
+            if (!sqlAdminMutationMethod(method)) return false;
+            var basePath = (BASE || '/sql').replace(/\/+$/, '') || '/sql';
+            var path = sqlAdminRequestPath(input);
+            return path === basePath || path.indexOf(basePath + '/') === 0;
+        }
+
+        function sqlAdminApplyCsrf(input, init) {
+            if (!sqlAdminShouldAttachCsrf(input, init)) return init;
+            var next = {};
+            if (init) {
+                Object.keys(init).forEach(function (key) { next[key] = init[key] });
+            }
+            var headers = new Headers((init && init.headers) || (input && input.headers) || {});
+            if (SQL_ADMIN_CSRF && !headers.has('X-SqlAdmin-Csrf')) {
+                headers.set('X-SqlAdmin-Csrf', SQL_ADMIN_CSRF);
+            }
+            next.headers = headers;
+            return next;
+        }
+
+        window.fetch = function (input, init) {
+            var nextInit = sqlAdminApplyCsrf(input, init || {});
+            return nativeFetch(input, nextInit).then(function (response) {
+                if (response.status !== 403 || !sqlAdminShouldAttachCsrf(input, nextInit)) return response;
+                return response.clone().json().then(function (data) {
+                    if (!data || !data.csrfRequired || !data.csrfToken) return response;
+                    SQL_ADMIN_CSRF = data.csrfToken;
+                    return nativeFetch(input, sqlAdminApplyCsrf(input, nextInit || {}));
+                }).catch(function () {
+                    return response;
+                });
+            });
+        };
+    })();
 
     // ---- URL page map ----
     function sqlRouteParam(name) {

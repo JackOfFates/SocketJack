@@ -1,8 +1,11 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Runtime.CompilerServices;
 using LLama;
+using LLama.Abstractions;
 using LLama.Common;
+using LLama.Native;
 using LLama.Sampling;
 using LLama.Transformers;
 
@@ -24,9 +27,12 @@ public sealed class LlmBackendFactory : ILlmBackendFactory
     }
 
     public ILlmBackend Create(string instanceId, string modelPath, LlmLoadConfig loadConfig) =>
-        loadConfig.Backend == LlmBackendKind.DirectML
-            ? new DirectMlGgufBackend(instanceId, modelPath, loadConfig, DirectMlGgufRunnerDiscovery.ResolveRunnerPath(_options), _options.DirectMlGgufRunnerArguments)
-            : new LlamaSharpBackend(instanceId, modelPath, loadConfig);
+        loadConfig.Backend switch
+        {
+            LlmBackendKind.DirectML => new DirectMlGgufBackend(instanceId, modelPath, loadConfig, DirectMlGgufRunnerDiscovery.ResolveRunnerPath(_options), _options.DirectMlGgufRunnerArguments),
+            LlmBackendKind.Vllm => new VllmBackend(instanceId, modelPath, loadConfig, _options),
+            _ => new LlamaSharpBackend(instanceId, modelPath, loadConfig)
+        };
 }
 
 public sealed class LlamaSharpBackend : ILlmBackend
@@ -88,12 +94,16 @@ public sealed class LlamaSharpBackend : ILlmBackend
                 NoKqvOffload = !LoadConfig.OffloadKvCacheToGpu,
                 GpuLayerCount = GetEffectiveGpuLayerCount(LoadConfig)
             };
+            ApplyTensorParallelSettings(parameters, LoadConfig);
 
             _weights = LLamaWeights.LoadFromFile(parameters);
             _parameters = parameters;
             LlamaSharpBackendSelector.ValidateLoadedBackend(LoadConfig.Backend);
-            _promptPipelineStatus = "cold";
-            _promptPipelineDetail = "Model weights are loaded; prompt pipeline is not warmed yet.";
+            _promptPipelineReady = true;
+            _promptPipelineStatus = "ready";
+            _promptPipelineDetail = "Model weights are loaded; prompt contexts are created per request.";
+            _promptPipelineReadyAtUtc = DateTimeOffset.UtcNow;
+            _promptPipelineWarmupSeconds = 0;
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -102,7 +112,6 @@ public sealed class LlamaSharpBackend : ILlmBackend
         if (_promptPipelineReady)
             return;
 
-        var stopwatch = Stopwatch.StartNew();
         using var operation = _lifetime.Enter();
         await _inferenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -111,45 +120,11 @@ public sealed class LlamaSharpBackend : ILlmBackend
                 return;
 
             ThrowIfNotLoaded();
-            _promptPipelineStatus = "warming";
-            _promptPipelineDetail = "Warming prompt context and executor.";
-
-            using var context = _weights!.CreateContext(_parameters!);
-            var executor = new InteractiveExecutor(context);
-            var request = CreateWarmupRequest();
-            var parameters = CreateInferenceParams(request);
-            string prompt = BuildPrompt(_weights!, request.Messages);
-
-            await foreach (string text in executor.InferAsync(prompt, parameters, cancellationToken).ConfigureAwait(false))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!string.IsNullOrEmpty(text))
-                    break;
-            }
-
-            stopwatch.Stop();
             _promptPipelineReady = true;
             _promptPipelineStatus = "ready";
-            _promptPipelineDetail = "Prompt pipeline warmed and ready.";
+            _promptPipelineDetail = "Model weights are loaded; prompt contexts are created per request.";
             _promptPipelineReadyAtUtc = DateTimeOffset.UtcNow;
-            _promptPipelineWarmupSeconds = stopwatch.Elapsed.TotalSeconds;
-        }
-        catch (OperationCanceledException)
-        {
-            _promptPipelineReady = false;
-            _promptPipelineStatus = "cold";
-            _promptPipelineDetail = "Prompt pipeline warmup was canceled.";
-            _promptPipelineWarmupSeconds = stopwatch.Elapsed.TotalSeconds;
-            throw;
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            _promptPipelineReady = false;
-            _promptPipelineStatus = "failed";
-            _promptPipelineDetail = TrimPromptPipelineDetail(ex.Message);
-            _promptPipelineWarmupSeconds = stopwatch.Elapsed.TotalSeconds;
-            throw;
+            _promptPipelineWarmupSeconds = 0;
         }
         finally
         {
@@ -234,20 +209,6 @@ public sealed class LlamaSharpBackend : ILlmBackend
         };
     }
 
-    private LlmChatRequest CreateWarmupRequest() => new()
-    {
-        Model = InstanceId,
-        Messages =
-        [
-            new LlmChatMessage("system", "Warm the prompt pipeline. Reply with one token.")
-        ],
-        MaxTokens = 1,
-        MaxTokensSpecified = true,
-        Temperature = 0,
-        TopP = 1,
-        Stop = []
-    };
-
     private static string BuildPrompt(LLamaWeights weights, IReadOnlyList<LlmChatMessage> messages)
     {
         try
@@ -272,6 +233,52 @@ public sealed class LlamaSharpBackend : ILlmBackend
 
     private static int GetEffectiveGpuLayerCount(LlmLoadConfig loadConfig) =>
         LlmBackendAutoSelector.Resolve(loadConfig.Backend) == LlmBackendKind.Cpu ? 0 : loadConfig.GpuLayerCount;
+
+    internal static LlamaSharpTensorParallelSettings ResolveTensorParallelSettings(LlmLoadConfig loadConfig)
+    {
+        if (loadConfig == null ||
+            loadConfig.ParallelismMode != LlmParallelismMode.TensorParallel ||
+            loadConfig.TargetDeviceIds.Count < 2)
+        {
+            return LlamaSharpTensorParallelSettings.Disabled;
+        }
+
+        int[] gpuIndices = loadConfig.TargetDeviceIds
+            .Select(ParseGpuDeviceIndex)
+            .Where(index => index >= 0)
+            .Distinct()
+            .OrderBy(index => index)
+            .ToArray();
+        if (gpuIndices.Length < 2)
+            gpuIndices = Enumerable.Range(0, Math.Max(2, loadConfig.TensorParallelSize)).ToArray();
+
+        float[] splits = new float[gpuIndices.Max() + 1];
+        foreach (int index in gpuIndices)
+            splits[index] = 1f;
+
+        return new LlamaSharpTensorParallelSettings(true, GPUSplitMode.Tensor, gpuIndices[0], splits);
+    }
+
+    internal static void ApplyTensorParallelSettings(ModelParams parameters, LlmLoadConfig loadConfig)
+    {
+        LlamaSharpTensorParallelSettings settings = ResolveTensorParallelSettings(loadConfig);
+        if (!settings.Enabled)
+            return;
+
+        parameters.SplitMode = settings.SplitMode;
+        parameters.MainGpu = settings.MainGpu;
+        parameters.TensorSplits = new TensorSplitsCollection(settings.TensorSplits);
+    }
+
+    private static int ParseGpuDeviceIndex(string value)
+    {
+        string text = (value ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return -1;
+
+        Match match = Regex.Match(text, @"(?:cuda|gpu)?\s*:?\s*(\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success && int.TryParse(match.Groups[1].Value, out int index) ? index : -1;
+    }
 
     private static string BuildPlainPrompt(IReadOnlyList<LlmChatMessage> messages)
     {
@@ -320,14 +327,6 @@ public sealed class LlamaSharpBackend : ILlmBackend
         return text;
     }
 
-    private static string TrimPromptPipelineDetail(string detail)
-    {
-        detail = (detail ?? "").Trim();
-        if (detail.Length <= 240)
-            return detail;
-        return detail[..240] + "...";
-    }
-
     public void Dispose()
     {
         if (!_lifetime.BeginDisposeAndWait())
@@ -350,5 +349,10 @@ public sealed class LlamaSharpBackend : ILlmBackend
     {
         Dispose();
         return ValueTask.CompletedTask;
+    }
+
+    internal sealed record LlamaSharpTensorParallelSettings(bool Enabled, GPUSplitMode SplitMode, int MainGpu, float[] TensorSplits)
+    {
+        public static LlamaSharpTensorParallelSettings Disabled { get; } = new(false, GPUSplitMode.None, 0, []);
     }
 }

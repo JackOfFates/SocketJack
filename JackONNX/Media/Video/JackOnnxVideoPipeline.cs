@@ -42,6 +42,8 @@ public sealed class JackOnnxVideoPipeline
         string timingAdjustment = BuildTimingAdjustmentMessage(requestedFrameCount, request.Frames.Value, request.Fps);
 
         var job = _runtime.CreateJob(JackOnnxMediaKind.Video, request);
+        using var jobCancellation = _runtime.CreateJobCancellationScope(job.Id, cancellationToken);
+        cancellationToken = jobCancellation.Token;
         Report(job.Id, JackOnnxJobState.LoadingModel, 5, "Resolving local video generation model.", progress);
 
         var manifest = await ResolveVideoModelAsync(request, cancellationToken).ConfigureAwait(false);

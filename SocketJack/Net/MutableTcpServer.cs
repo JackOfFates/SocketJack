@@ -73,6 +73,7 @@ namespace SocketJack.Net {
         private readonly WebSocketProtocolHandler _webSocketHandler;
         private readonly RtmpDelegateHandler _rtmpDelegateHandler = new RtmpDelegateHandler();
         private SocketJack.Net.Database.SqlAdminPanel _sqlAdminPanel;
+        private SocketJack.Net.Database.AdminSuite _adminSuite;
 
         #endregion
 
@@ -154,6 +155,33 @@ namespace SocketJack.Net {
         /// <see cref="NetworkBase.OnReceive"/> event and registered callbacks.
         /// </summary>
         public SocketJackProtocolHandler SocketJack => _socketJackHandler;
+
+        /// <summary>
+        /// Gets or sets whether the unified SocketJack Admin Suite is enabled.
+        /// The suite is served at <c>/Admin</c> and keeps the legacy SQL Admin
+        /// surface available at <c>/sql</c> for compatibility and authentication.
+        /// </summary>
+        public bool AdminSuiteEnabled {
+            get => _adminSuite != null;
+            set {
+                if (value && _adminSuite == null) {
+                    GetOrCreateDataServer();
+                    if (!SqlAdminPanelEnabled)
+                        SqlAdminPanelEnabled = true;
+                    _adminSuite = new SocketJack.Net.Database.AdminSuite(this);
+                    _adminSuite.Register();
+                } else if (!value && _adminSuite != null) {
+                    _adminSuite.Unregister();
+                    _adminSuite = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns the <see cref="Database.AdminSuite"/> instance, or
+        /// <see langword="null"/> when <see cref="AdminSuiteEnabled"/> is false.
+        /// </summary>
+        internal SocketJack.Net.Database.AdminSuite AdminSuite => _adminSuite;
 
         /// <summary>
         /// Returns the built-in <see cref="WebSocketProtocolHandler"/> for configuring
@@ -531,7 +559,7 @@ namespace SocketJack.Net {
         /// its backing <see cref="DataServer"/>, or <see langword="null"/> if no
         /// TDS handler has been registered.
         /// </summary>
-        private DataServer FindDataServer() {
+        internal DataServer FindDataServer() {
             for (int i = 0; i < _handlers.Count; i++) {
                 if (_handlers[i] is TdsProtocolHandler tds)
                     return tds.Server;
@@ -544,7 +572,7 @@ namespace SocketJack.Net {
         /// <see cref="TdsProtocolHandler"/>, automatically registering a
         /// hosted-mode handler if one has not yet been added.
         /// </summary>
-        private DataServer GetOrCreateDataServer() {
+        internal DataServer GetOrCreateDataServer() {
             var ds = FindDataServer();
             if (ds == null) {
                 var tds = new TdsProtocolHandler();
@@ -611,6 +639,8 @@ namespace SocketJack.Net {
         protected override void Dispose(bool disposing) {
             this.OnReceive -= RouteReceive;
             this.ClientDisconnected -= OnClientDisconnected_Cleanup;
+            _adminSuite?.Unregister();
+            _adminSuite = null;
             _sqlAdminPanel?.Unregister();
             _sqlAdminPanel = null;
             _connectionHandlers.Clear();
@@ -1886,6 +1916,23 @@ namespace SocketJack.Net {
             return _server.RemoveFileMapping(urlPath);
         }
 
+        /// <inheritdoc cref="HttpServer.MapDocumentRoot(string, HttpDocumentRootResolver)"/>
+        public void MapDocumentRoot(string urlPrefix, HttpDocumentRootResolver resolver) {
+            EnsureServer();
+            _server.MapDocumentRoot(urlPrefix, resolver);
+        }
+
+        /// <inheritdoc cref="HttpServer.MapDocumentRoot(string, string)"/>
+        public void MapDocumentRoot(string urlPrefix, string localDirectory) {
+            EnsureServer();
+            _server.MapDocumentRoot(urlPrefix, localDirectory);
+        }
+
+        /// <inheritdoc cref="HttpServer.RemoveDocumentRootMapping"/>
+        public bool RemoveDocumentRootMapping(string urlPrefix) {
+            EnsureServer();
+            return _server.RemoveDocumentRootMapping(urlPrefix);
+        }
         /// <inheritdoc cref="HttpServer.MapHostDirectory(string, string, string)"/>
         public void MapHostDirectory(string hostName, string urlPrefix, string localDirectory) {
             EnsureServer();

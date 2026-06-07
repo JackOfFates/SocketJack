@@ -1267,10 +1267,12 @@ body.agent-mode .live-changed {
 }
 .hardware-summary-meter span {
     display: block;
-    width: 0%;
+    width: 100%;
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, #40c9a2, #7dd3fc);
+    clip-path: inset(0 calc(100% - var(--progress-fill, 0%)) 0 0 round 999px);
+    transition: clip-path 220ms var(--surface-ease);
 }
 .hardware-summary-metric.hot .hardware-summary-meter span {
     background: linear-gradient(90deg, #facc15, #fb7185);
@@ -1290,11 +1292,23 @@ body.agent-mode .live-changed {
 }
 .hardware-chip-top {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 8px;
     min-width: 0;
 }
+.hardware-chip-label {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.hardware-chip.cpu .hardware-summary-symbol { background: #40c9a2; }
+.hardware-chip.ram .hardware-summary-symbol { background: #7dd3fc; }
+.hardware-chip.gpu .hardware-summary-symbol { background: #facc15; }
+.hardware-chip.vram .hardware-summary-symbol { background: #fb7185; }
+.hardware-chip.net .hardware-summary-symbol { background: #c084fc; }
+.hardware-chip.io .hardware-summary-symbol { background: #f59e0b; }
 .hardware-label {
     color: rgba(229, 237, 247, 0.58);
     font-size: 0.58rem;
@@ -1319,11 +1333,12 @@ body.agent-mode .live-changed {
 }
 .hardware-meter span {
     display: block;
-    width: 0%;
+    width: 100%;
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, #40c9a2, #7dd3fc);
-    transition: width 220ms var(--surface-ease);
+    clip-path: inset(0 calc(100% - var(--progress-fill, 0%)) 0 0 round 999px);
+    transition: clip-path 220ms var(--surface-ease);
 }
 .hardware-chip.hot .hardware-meter span {
     background: linear-gradient(90deg, #facc15, #fb7185);
@@ -1394,11 +1409,12 @@ body.agent-mode .live-changed {
 }
 .usage-fill {
     display: block;
-    width: 0%;
+    width: 100%;
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, #16a34a, #40c9a2);
-    transition: width 180ms var(--surface-ease), background 180ms var(--surface-ease), box-shadow 180ms var(--surface-ease);
+    clip-path: inset(0 calc(100% - var(--progress-fill, 0%)) 0 0 round 999px);
+    transition: clip-path 180ms var(--surface-ease), background 180ms var(--surface-ease), box-shadow 180ms var(--surface-ease);
 }
 .usage-summary.token-meter-low .usage-fill {
     background: linear-gradient(90deg, #f97316, #facc15);
@@ -3914,12 +3930,13 @@ body.agent-mode .session-item.recent .session-activity-dot {
 }
 .session-depth span {
     display: block;
-    width: var(--session-depth, 8%);
+    width: 100%;
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    clip-path: inset(0 calc(100% - var(--session-depth, 8%)) 0 0 round 999px);
     opacity: 0.82;
-    transition: width 220ms var(--surface-ease);
+    transition: clip-path 220ms var(--surface-ease);
 }
 body.agent-mode .session-depth span {
     background: linear-gradient(90deg, var(--agent-red), #f97316);
@@ -4239,11 +4256,12 @@ body.agent-mode .solution-explorer {
 }
 .solution-storage-fill {
     display: block;
-    width: 0%;
+    width: 100%;
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, #40c9a2, #7dd3fc);
-    transition: width 180ms var(--surface-ease);
+    clip-path: inset(0 calc(100% - var(--progress-fill, 0%)) 0 0 round 999px);
+    transition: clip-path 180ms var(--surface-ease);
 }
 .solution-controls {
     display: grid;
@@ -4524,9 +4542,155 @@ body.agent-mode .solution-node-row.active-file {
     min-height: 0;
     min-width: 0;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 12px;
     overflow: hidden;
+}
+.personaplex-panel {
+    min-height: 0;
+    border: 1px solid rgba(64, 201, 162, 0.28);
+    border-radius: 12px;
+    padding: 10px;
+    display: grid;
+    grid-template-rows: auto auto auto minmax(54px, 104px);
+    gap: 9px;
+    background:
+        linear-gradient(135deg, rgba(64, 201, 162, 0.10), transparent 46%),
+        rgba(2, 6, 23, 0.46);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    font-family: var(--ui-font);
+}
+.personaplex-panel[hidden] {
+    display: none;
+}
+.personaplex-head {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
+}
+.personaplex-title {
+    color: #d9fff4;
+    font-size: 0.86rem;
+    font-weight: 900;
+}
+.personaplex-status {
+    margin-top: 2px;
+    color: rgba(148, 163, 184, 0.86);
+    font-size: 0.68rem;
+    overflow-wrap: anywhere;
+}
+.personaplex-status.ready {
+    color: #bbf7d0;
+}
+.personaplex-status.error {
+    color: #fecdd3;
+}
+.personaplex-actions,
+.personaplex-run {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+.personaplex-actions button,
+.personaplex-run button {
+    min-height: 30px;
+    border-radius: 9px;
+    padding: 0 10px;
+    font: 900 0.68rem var(--ui-font);
+}
+.personaplex-panel button:disabled {
+    cursor: not-allowed;
+}
+.personaplex-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+}
+.personaplex-field {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+    color: rgba(229, 237, 247, 0.72);
+    font: 900 0.62rem var(--ui-font);
+    text-transform: uppercase;
+}
+.personaplex-field input,
+.personaplex-field select,
+.personaplex-field textarea {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 9px;
+    color: rgba(229, 237, 247, 0.94);
+    background: rgba(2, 6, 23, 0.50);
+    padding: 7px 8px;
+    font: 0.76rem var(--ui-font);
+}
+.personaplex-field[hidden] {
+    display: none;
+}
+.personaplex-field textarea {
+    min-height: 54px;
+    resize: vertical;
+    font-family: "Segoe UI", sans-serif;
+    line-height: 1.32;
+    text-transform: none;
+}
+.personaplex-wide {
+    grid-column: 1 / -1;
+}
+.personaplex-run {
+    justify-content: space-between;
+    color: rgba(148, 163, 184, 0.86);
+    font-size: 0.68rem;
+}
+.personaplex-run-left {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+#personaPlexStart {
+    min-width: 116px;
+}
+.personaplex-install {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    border: 1px solid rgba(251, 191, 36, 0.24);
+    border-radius: 10px;
+    padding: 8px;
+    background: rgba(36, 25, 8, 0.30);
+}
+.personaplex-install[hidden] {
+    display: none;
+}
+.personaplex-install button {
+    min-height: 32px;
+    border-radius: 9px;
+    padding: 0 10px;
+    font: 900 0.69rem var(--ui-font);
+}
+.personaplex-install-status {
+    color: rgba(254, 240, 138, 0.86);
+    font-size: 0.68rem;
+    line-height: 1.32;
+    overflow-wrap: anywhere;
+}
+.personaplex-transcript {
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 10px;
+    padding: 8px;
+    background: rgba(2, 6, 23, 0.38);
+    color: rgba(229, 237, 247, 0.90);
+    font: 0.78rem/1.42 "Segoe UI", sans-serif;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 .share-comments {
     min-height: 0;
@@ -4954,10 +5118,10 @@ body.agent-mode .message.user:hover {
     box-shadow: 0 18px 56px rgba(127, 29, 29, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 .message.queued-prompt {
-    padding-right: 132px;
+    padding-right: 178px;
 }
 .message.queued-prompt .message-copy-button {
-    right: 76px;
+    right: 122px;
 }
 .queued-message-actions {
     position: absolute;
@@ -4968,7 +5132,7 @@ body.agent-mode .message.user:hover {
     align-items: center;
     gap: 6px;
 }
-.queued-message-steer {
+.queued-message-button {
     min-width: 54px;
     min-height: 26px;
     border: 1px solid rgba(254, 205, 211, 0.42);
@@ -4979,15 +5143,24 @@ body.agent-mode .message.user:hover {
     letter-spacing: 0;
     cursor: pointer;
 }
-.queued-message-steer:hover,
-.queued-message-steer:focus-visible {
+.queued-message-button:hover,
+.queued-message-button:focus-visible {
     border-color: rgba(254, 205, 211, 0.78);
     background: rgba(127, 29, 29, 0.48);
     outline: none;
 }
-.queued-message-steer:disabled {
+.queued-message-button:disabled {
     cursor: default;
     opacity: 0.58;
+}
+.queued-message-edit {
+    border-color: rgba(125, 211, 252, 0.46);
+    color: #e0f2fe;
+}
+.queued-message-edit:hover,
+.queued-message-edit:focus-visible {
+    border-color: rgba(186, 230, 253, 0.78);
+    background: rgba(14, 116, 144, 0.40);
 }
 .queued-message-state {
     color: rgba(255, 228, 230, 0.74);
@@ -5112,6 +5285,12 @@ body.agent-mode .message.assistant {
     min-width: 0;
 }
 .prompt-processing.compact .prompt-processing-controls {
+    display: flex;
+    gap: 4px;
+    padding-top: 1px;
+}
+.prompt-processing.compact .prompt-processing-skip,
+.prompt-processing.compact .prompt-processing-speed {
     display: none;
 }
 .prompt-processing-control {
@@ -5146,6 +5325,60 @@ body.agent-mode .message.assistant {
 }
 .prompt-processing-skip {
     flex: 0 1 auto;
+}
+.prompt-processing-action[hidden] {
+    display: none;
+}
+.prompt-processing-action {
+    min-width: 58px;
+}
+.prompt-processing-stop {
+    border-color: rgba(251, 113, 133, 0.62);
+    color: #fff1f2;
+    background: rgba(127, 29, 29, 0.58);
+}
+.prompt-processing-stop:hover,
+.prompt-processing-stop:focus-visible {
+    border-color: rgba(254, 202, 202, 0.86);
+    background: rgba(190, 18, 60, 0.64);
+}
+@media (max-width: 700px) {
+    .prompt-processing {
+        grid-template-columns: 14px minmax(0, 1fr) auto;
+        gap: 6px;
+        padding: 6px 7px;
+    }
+    .prompt-processing-track,
+    .prompt-processing-usage,
+    .prompt-processing.compact .prompt-processing-track,
+    .prompt-processing.compact .prompt-processing-usage {
+        grid-column: 1 / 4;
+    }
+    .prompt-processing-controls,
+    .prompt-processing.compact .prompt-processing-controls {
+        grid-column: 1 / 4;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        gap: 4px;
+        overflow-x: auto;
+        padding-bottom: 1px;
+        scrollbar-width: none;
+    }
+    .prompt-processing-controls::-webkit-scrollbar {
+        display: none;
+    }
+    .prompt-processing-skip,
+    .prompt-processing-speed {
+        display: none;
+    }
+    .prompt-processing-control {
+        min-height: 26px;
+        padding: 4px 7px;
+    }
+    .prompt-processing-action {
+        min-width: 52px;
+        flex: 0 0 auto;
+    }
 }
 .prompt-token-delta {
     color: #a7f3d0;
@@ -5190,6 +5423,9 @@ body.agent-mode .message.assistant {
 .prompt-processing.has-progress .prompt-processing-fill {
     animation: none;
     transform: none;
+    width: 100%;
+    clip-path: inset(0 calc(100% - var(--progress-fill, 0%)) 0 0 round 999px);
+    transition: clip-path 180ms var(--surface-ease), transform 180ms var(--surface-ease);
 }
 body.agent-mode .prompt-processing {
     border-color: rgba(248, 113, 113, 0.28);
@@ -6098,9 +6334,22 @@ body.agent-mode .artifact-source {
 .voice-controls {
     grid-area: voice;
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: 1fr 1fr;
     gap: 6px;
     min-width: 0;
+}
+.voice-controls.personaplex-hidden {
+    grid-template-columns: minmax(0, 1fr);
+}
+.voice-controls.voice-hidden {
+    display: none !important;
+}
+.voice-toggle {
+    grid-column: 1 / -1;
+}
+.voice-controls.personaplex-hidden .voice-toggle {
+    grid-column: 1;
 }
 .prompt-wrap {
     grid-area: prompt;
@@ -7662,6 +7911,9 @@ body.payouts-open .payouts-dashboard {
             "preview preview preview preview";
     }
     #send { width: 84px; min-width: 84px; }
+    .personaplex-grid {
+        grid-template-columns: 1fr;
+    }
     .retry-controls { grid-template-rows: 1fr; }
     .retry-toggle, .voice-button { min-height: 46px; }
     .context-toggle {
@@ -11885,6 +12137,70 @@ body.portrait-layout .chat-browser-panel {
     display: none;
 }
 
+body.portrait-layout.browser-panel-open:not(.shared-view) .workspace,
+body.portrait-layout.browser-panel-open:not(.shared-view) .workspace.comments-collapsed,
+body.portrait-layout.browser-panel-open:not(.shared-view) .workspace.has-artifact,
+body.portrait-layout.browser-panel-open:not(.shared-view) .workspace.has-artifact.comments-collapsed {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-auto-rows: minmax(0, 1fr);
+    gap: 8px;
+}
+
+body.portrait-layout.browser-panel-open:not(.shared-view) .chat-column,
+body.portrait-layout.browser-panel-open:not(.shared-view) .chat-browser-panel {
+    grid-column: 1;
+    min-height: 0;
+    height: 100%;
+}
+
+body.portrait-layout.browser-panel-open:not(.shared-view) .chat-column {
+    order: 0;
+}
+
+body.portrait-layout.browser-panel-open:not(.shared-view) .chat-browser-panel {
+    display: grid;
+    order: 1;
+    grid-template-columns: 0 minmax(0, 1fr);
+}
+
+body.portrait-layout.browser-panel-open:not(.shared-view) .chat-browser-resize {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    body.browser-panel-open:not(.shared-view) .workspace,
+    body.browser-panel-open:not(.shared-view) .workspace.comments-collapsed,
+    body.browser-panel-open:not(.shared-view) .workspace.has-artifact,
+    body.browser-panel-open:not(.shared-view) .workspace.has-artifact.comments-collapsed {
+        grid-template-columns: 1fr !important;
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        grid-auto-rows: minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    body.browser-panel-open:not(.shared-view) .chat-column,
+    body.browser-panel-open:not(.shared-view) .chat-browser-panel {
+        grid-column: 1;
+        min-height: 0;
+        height: 100%;
+    }
+
+    body.browser-panel-open:not(.shared-view) .chat-column {
+        order: 0;
+    }
+
+    body.browser-panel-open:not(.shared-view) .chat-browser-panel {
+        display: grid;
+        order: 1;
+        grid-template-columns: 0 minmax(0, 1fr);
+    }
+
+    body.browser-panel-open:not(.shared-view) .chat-browser-resize {
+        display: none;
+    }
+}
+
 body.browser-panel-resizing,
 body.browser-panel-resizing * {
     cursor: col-resize !important;
@@ -12137,46 +12453,102 @@ body:not(.portrait-layout) .session-item.has-selection .session-open {
 
 /* Minimal composer controls: model, settings, and mode controls live with the send box. */
 .composer {
-    grid-template-columns: 64px 64px 52px 88px minmax(260px, 1fr) minmax(190px, 0.34fr) 44px 84px 54px 104px;
-    grid-template-rows: auto auto auto;
+    --composer-attach-width: 64px;
+    --composer-source-width: 52px;
+    --composer-send-width: 64px;
+    --composer-control-width: 76px;
+    --composer-mode-width: calc((var(--composer-send-width) * 2) + 4px);
+    grid-template-columns: var(--composer-attach-width) var(--composer-source-width) minmax(300px, 1fr) minmax(260px, 0.55fr) var(--composer-send-width) var(--composer-control-width) var(--composer-mode-width);
+    grid-template-rows: minmax(34px, auto) minmax(34px, auto) auto;
     grid-template-areas:
-        "image file source voice prompt model settings retry mode mode"
-        "image file source voice prompt model settings retry context send"
-        "preview preview preview preview preview preview preview preview preview preview";
+        "attach source prompt model settings retry mode"
+        "attach source prompt model send context mode"
+        "preview preview preview preview preview preview preview";
     align-items: stretch;
 }
 
-.composer.no-image-attach {
-    grid-template-columns: 64px 52px 88px minmax(260px, 1fr) minmax(190px, 0.34fr) 44px 84px 54px 104px;
+.composer.no-image-attach,
+.composer.no-file-attach,
+.composer.voice-hidden,
+.composer.no-image-attach.voice-hidden,
+.composer.no-file-attach.voice-hidden {
+    grid-template-columns: var(--composer-attach-width) var(--composer-source-width) minmax(300px, 1fr) minmax(260px, 0.55fr) var(--composer-send-width) var(--composer-control-width) var(--composer-mode-width);
     grid-template-areas:
-        "file source voice prompt model settings retry mode mode"
-        "file source voice prompt model settings retry context send"
-        "preview preview preview preview preview preview preview preview preview";
+        "attach source prompt model settings retry mode"
+        "attach source prompt model send context mode"
+        "preview preview preview preview preview preview preview";
 }
 
-.composer.no-media-source {
-    grid-template-columns: 64px 64px 88px minmax(260px, 1fr) minmax(190px, 0.34fr) 44px 84px 54px 104px;
+.composer.no-media-source,
+.composer.no-image-attach.no-media-source,
+.composer.no-file-attach.no-media-source,
+.composer.no-media-source.voice-hidden,
+.composer.no-image-attach.no-media-source.voice-hidden,
+.composer.no-file-attach.no-media-source.voice-hidden {
+    grid-template-columns: var(--composer-attach-width) minmax(300px, 1fr) minmax(260px, 0.55fr) var(--composer-send-width) var(--composer-control-width) var(--composer-mode-width);
     grid-template-areas:
-        "image file voice prompt model settings retry mode mode"
-        "image file voice prompt model settings retry context send"
-        "preview preview preview preview preview preview preview preview preview";
+        "attach prompt model settings retry mode"
+        "attach prompt model send context mode"
+        "preview preview preview preview preview preview";
 }
 
-.composer.no-image-attach.no-media-source {
-    grid-template-columns: 64px 88px minmax(260px, 1fr) minmax(190px, 0.34fr) 44px 84px 54px 104px;
+.composer.no-attach-controls,
+.composer.no-attach-controls.voice-hidden {
+    grid-template-columns: var(--composer-source-width) minmax(300px, 1fr) minmax(260px, 0.55fr) var(--composer-send-width) var(--composer-control-width) var(--composer-mode-width);
     grid-template-areas:
-        "file voice prompt model settings retry mode mode"
-        "file voice prompt model settings retry context send"
-        "preview preview preview preview preview preview preview preview";
+        "source prompt model settings retry mode"
+        "source prompt model send context mode"
+        "preview preview preview preview preview preview";
+}
+
+.composer.no-attach-controls.no-media-source,
+.composer.no-attach-controls.no-media-source.voice-hidden {
+    grid-template-columns: minmax(300px, 1fr) minmax(260px, 0.55fr) var(--composer-send-width) var(--composer-control-width) var(--composer-mode-width);
+    grid-template-areas:
+        "prompt model settings retry mode"
+        "prompt model send context mode"
+        "preview preview preview preview preview";
 }
 
 body.shared-view .composer,
-body.shared-view .composer.no-image-attach {
-    grid-template-columns: 88px minmax(260px, 1fr) minmax(180px, 0.36fr) 44px 54px 104px;
+body.shared-view .composer.no-image-attach,
+body.shared-view .composer.no-file-attach,
+body.shared-view .composer.voice-hidden,
+body.shared-view .composer.no-image-attach.voice-hidden,
+body.shared-view .composer.no-file-attach.voice-hidden {
+    grid-template-columns: minmax(300px, 1fr) minmax(240px, 0.48fr) var(--composer-send-width) var(--composer-control-width) var(--composer-mode-width);
     grid-template-areas:
-        "voice prompt model settings mode mode"
-        "voice prompt model settings context send"
-        "preview preview preview preview preview preview";
+        "prompt model settings retry mode"
+        "prompt model send context mode"
+        "preview preview preview preview preview";
+}
+
+.composer-attach-stack {
+    grid-area: attach;
+    display: grid;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    min-width: 0;
+    min-height: 0;
+}
+
+.composer-attach-stack.single-attach {
+    grid-template-rows: minmax(0, 1fr);
+}
+
+.composer-attach-stack[hidden],
+.composer.no-attach-controls .composer-attach-stack,
+body.shared-view .composer-attach-stack {
+    display: none !important;
+}
+
+.composer-attach-stack #imageAttach,
+.composer-attach-stack #fileAttach {
+    grid-area: auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
 }
 
 .composer-model-controls {
@@ -12191,9 +12563,11 @@ body.shared-view .composer.no-image-attach {
     position: relative;
     min-width: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(20px, auto);
+    align-content: center;
+    align-items: stretch;
+    gap: 4px;
     min-height: 100%;
     padding: 6px;
     border: 1px solid rgba(125, 211, 252, 0.22);
@@ -12213,7 +12587,9 @@ body.shared-view .composer.no-image-attach {
 }
 
 .composer-model-field .model-capability-icons {
-    max-width: 118px;
+    max-width: 100%;
+    min-height: 20px;
+    justify-content: flex-start;
     overflow: hidden;
 }
 
@@ -12227,15 +12603,16 @@ body.shared-view .composer.no-image-attach {
     grid-area: settings;
     position: relative;
     display: grid;
-    align-items: end;
+    align-items: stretch;
     min-width: 0;
 }
 
 .generation-settings-toggle {
-    align-self: end;
-    width: 42px;
-    min-width: 42px;
-    min-height: 36px;
+    align-self: stretch;
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
     padding: 0;
     font: 900 0.9rem/1 var(--ui-font);
 }
@@ -12279,26 +12656,550 @@ body.shared-view .composer.no-image-attach {
     right: auto !important;
     bottom: auto !important;
     left: auto !important;
-    align-self: end;
-    justify-self: end;
+    align-self: stretch;
+    justify-self: stretch;
     width: 100%;
     display: grid;
-    justify-content: end;
+    align-items: stretch;
+    justify-content: stretch;
+    overflow: hidden;
     opacity: 1;
     pointer-events: auto;
     z-index: 1;
 }
 
 .chat-mode-strip {
+    width: 100%;
+    max-width: 100%;
+    min-height: calc((34px * 2) + 4px);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(34px, 1fr);
+    align-items: stretch;
     transform: none;
     opacity: 1;
     pointer-events: auto;
-    justify-content: end;
+    justify-content: stretch;
+    gap: 4px;
+    overflow: visible;
+}
+
+.chat-mode-button {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    height: 100%;
+    font-size: 0.72rem;
+}
+
+.chat-mode-media-button {
+    font: 900 0.58rem/1 var(--ui-font);
+    letter-spacing: 0;
 }
 
 .context-toggle,
 #send {
-    align-self: start;
+    align-self: stretch;
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+.retry-controls {
+    grid-template-rows: minmax(0, 1fr);
+}
+
+.retry-toggle {
+    min-height: 0;
+    padding: 0 6px;
+}
+
+.context-toggle {
+    height: auto;
+}
+
+@media (max-width: 700px) {
+    .composer,
+    .composer.no-image-attach,
+    .composer.no-media-source,
+    .composer.no-image-attach.no-media-source,
+    body.shared-view .composer,
+    body.shared-view .composer.no-image-attach,
+    body.portrait-layout .composer,
+    body.portrait-layout .composer.no-image-attach,
+    body.portrait-layout .composer.no-media-source,
+    body.portrait-layout .composer.no-image-attach.no-media-source,
+    body.portrait-layout.shared-view .composer,
+    body.portrait-layout.shared-view .composer.no-image-attach {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        grid-template-rows: auto auto auto auto auto;
+        gap: 6px;
+        padding: 8px;
+        border-radius: 16px;
+    }
+    .composer,
+    body.portrait-layout .composer {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach source retry context mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-image-attach,
+    .composer.no-file-attach,
+    body.portrait-layout .composer.no-image-attach {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach source retry context mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-media-source,
+    body.portrait-layout .composer.no-media-source {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach retry context mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-image-attach.no-media-source,
+    .composer.no-file-attach.no-media-source,
+    body.portrait-layout .composer.no-image-attach.no-media-source {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach retry context mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-attach-controls,
+    body.portrait-layout .composer.no-attach-controls {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "source retry context mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-attach-controls.no-media-source,
+    body.portrait-layout .composer.no-attach-controls.no-media-source {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "retry context mode mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    body.shared-view .composer,
+    body.shared-view .composer.no-image-attach,
+    body.shared-view .composer.no-file-attach,
+    body.portrait-layout.shared-view .composer,
+    body.portrait-layout.shared-view .composer.no-image-attach {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "retry context mode mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.voice-hidden,
+    .composer.no-image-attach.voice-hidden,
+    .composer.no-file-attach.voice-hidden,
+    .composer.no-media-source.voice-hidden,
+    .composer.no-image-attach.no-media-source.voice-hidden,
+    .composer.no-file-attach.no-media-source.voice-hidden,
+    .composer.no-attach-controls.voice-hidden,
+    .composer.no-attach-controls.no-media-source.voice-hidden,
+    body.shared-view .composer.voice-hidden,
+    body.shared-view .composer.no-image-attach.voice-hidden,
+    body.shared-view .composer.no-file-attach.voice-hidden,
+    body.portrait-layout .composer.voice-hidden,
+    body.portrait-layout .composer.no-image-attach.voice-hidden,
+    body.portrait-layout .composer.no-file-attach.voice-hidden,
+    body.portrait-layout .composer.no-media-source.voice-hidden,
+    body.portrait-layout .composer.no-image-attach.no-media-source.voice-hidden,
+    body.portrait-layout .composer.no-file-attach.no-media-source.voice-hidden,
+    body.portrait-layout .composer.no-attach-controls.voice-hidden,
+    body.portrait-layout .composer.no-attach-controls.no-media-source.voice-hidden,
+    body.portrait-layout.shared-view .composer.voice-hidden,
+    body.portrait-layout.shared-view .composer.no-image-attach.voice-hidden {
+        grid-template-rows: auto auto auto auto;
+    }
+    .composer.voice-hidden,
+    body.portrait-layout .composer.voice-hidden {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach source retry context mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-image-attach.voice-hidden,
+    .composer.no-file-attach.voice-hidden,
+    body.portrait-layout .composer.no-image-attach.voice-hidden {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach source retry context mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-media-source.voice-hidden,
+    body.portrait-layout .composer.no-media-source.voice-hidden {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach retry context mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-image-attach.no-media-source.voice-hidden,
+    .composer.no-file-attach.no-media-source.voice-hidden,
+    body.portrait-layout .composer.no-image-attach.no-media-source.voice-hidden {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "attach retry context mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-attach-controls.voice-hidden,
+    body.portrait-layout .composer.no-attach-controls.voice-hidden {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "source retry context mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer.no-attach-controls.no-media-source.voice-hidden,
+    body.portrait-layout .composer.no-attach-controls.no-media-source.voice-hidden {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "retry context mode mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    body.shared-view .composer.voice-hidden,
+    body.shared-view .composer.no-image-attach.voice-hidden,
+    body.shared-view .composer.no-file-attach.voice-hidden,
+    body.portrait-layout.shared-view .composer.voice-hidden,
+    body.portrait-layout.shared-view .composer.no-image-attach.voice-hidden {
+        grid-template-areas:
+            "prompt prompt prompt prompt settings send"
+            "model model model model model model"
+            "retry context mode mode mode mode"
+            "preview preview preview preview preview preview";
+    }
+    .composer #prompt,
+    body.portrait-layout #prompt {
+        min-height: 62px;
+        max-height: min(26vh, 160px);
+        padding: 9px 10px;
+        border-radius: 12px;
+    }
+    .composer-model-controls,
+    .composer-attach-stack,
+    .generation-settings,
+    .retry-controls,
+    .chat-mode-dock {
+        align-self: stretch;
+        justify-self: stretch;
+    }
+    .composer-model-field {
+        min-height: auto;
+        padding: 5px;
+    }
+    .composer-model-field select {
+        min-height: 34px;
+        font-size: 0.68rem;
+    }
+    .composer-model-field .model-capability-icons {
+        min-height: 18px;
+        gap: 4px;
+    }
+    .attach,
+    .generation-settings-toggle,
+    .context-toggle,
+    #send {
+        width: 100%;
+        min-width: 0;
+        min-height: 40px;
+        padding: 0 4px;
+        border-radius: 10px;
+        font-size: 0.58rem;
+        align-self: stretch;
+        justify-self: stretch;
+    }
+    .retry-toggle {
+        min-height: 40px;
+        gap: 4px;
+        padding: 0 3px;
+        border-radius: 10px;
+        font-size: 0.54rem;
+    }
+    .retry-toggle input {
+        width: 30px;
+        height: 18px;
+        flex-basis: 30px;
+    }
+    .retry-toggle input::before {
+        top: 3px;
+        left: 3px;
+        width: 10px;
+        height: 10px;
+    }
+    .retry-toggle input:checked::before {
+        transform: translateX(12px);
+    }
+    .voice-controls,
+    body.portrait-layout .voice-controls {
+        display: flex;
+        grid-template-columns: none;
+        grid-template-rows: none;
+        align-self: stretch;
+        min-height: 40px;
+        gap: 4px;
+    }
+    .voice-button,
+    .voice-toggle,
+    body.portrait-layout .voice-button,
+    body.portrait-layout .voice-toggle {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 40px;
+        padding: 0 4px;
+        border-radius: 10px;
+        font-size: 0.58rem;
+    }
+    .voice-toggle,
+    body.portrait-layout .voice-toggle {
+        font-size: 0;
+    }
+    .voice-toggle input {
+        width: 14px;
+        height: 14px;
+    }
+    .chat-mode-dock {
+        overflow: hidden;
+        justify-content: stretch;
+    }
+    .chat-mode-strip {
+        width: 100%;
+        max-width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: minmax(40px, 1fr);
+        justify-content: stretch;
+        gap: 4px;
+        overflow: visible;
+    }
+    .chat-mode-button {
+        flex: none;
+        width: 100%;
+        min-width: 0;
+        min-height: 40px;
+        padding: 0;
+        font-size: 0.68rem;
+    }
+    .chat-mode-media-button {
+        font-size: 0.56rem;
+    }
+
+    .composer.mobile-compact-composer,
+    .composer.mobile-compact-composer.no-image-attach,
+    .composer.mobile-compact-composer.no-media-source,
+    .composer.mobile-compact-composer.no-image-attach.no-media-source,
+    .composer.mobile-compact-composer.voice-hidden,
+    .composer.mobile-compact-composer.no-image-attach.voice-hidden,
+    .composer.mobile-compact-composer.no-media-source.voice-hidden,
+    .composer.mobile-compact-composer.no-image-attach.no-media-source.voice-hidden,
+    body.portrait-layout .composer.mobile-compact-composer,
+    body.portrait-layout .composer.mobile-compact-composer.no-image-attach,
+    body.portrait-layout .composer.mobile-compact-composer.no-media-source,
+    body.portrait-layout .composer.mobile-compact-composer.no-image-attach.no-media-source,
+    body.portrait-layout .composer.mobile-compact-composer.voice-hidden,
+    body.portrait-layout .composer.mobile-compact-composer.no-image-attach.voice-hidden,
+    body.portrait-layout .composer.mobile-compact-composer.no-media-source.voice-hidden,
+    body.portrait-layout .composer.mobile-compact-composer.no-image-attach.no-media-source.voice-hidden {
+        --mobile-composer-height: clamp(54px, var(--chat-input-height, 72px), 78px);
+        grid-template-columns: minmax(0, 1fr) 42px 54px;
+        grid-template-rows: 100%;
+        grid-template-areas: "prompt settings send";
+        height: var(--mobile-composer-height);
+        min-height: var(--mobile-composer-height);
+        max-height: var(--mobile-composer-height);
+        gap: 6px;
+        padding: 0;
+        border-radius: 12px;
+        overflow: visible;
+    }
+
+    .composer.mobile-compact-composer.has-premium-hint,
+    body.portrait-layout .composer.mobile-compact-composer.has-premium-hint {
+        margin-top: 0;
+    }
+
+    .composer.mobile-compact-composer > .composer-attach-stack,
+    .composer.mobile-compact-composer > #mediaSourceAttach,
+    .composer.mobile-compact-composer > .voice-controls,
+    .composer.mobile-compact-composer > #composerModelControls,
+    .composer.mobile-compact-composer > #chatModeDock,
+    .composer.mobile-compact-composer > .retry-controls,
+    .composer.mobile-compact-composer > #contextToggle {
+        display: none !important;
+    }
+
+    .composer.mobile-compact-composer .prompt-wrap,
+    body.portrait-layout .composer.mobile-compact-composer .prompt-wrap {
+        height: 100%;
+        min-height: 0;
+        align-self: stretch;
+    }
+
+    .composer.mobile-compact-composer #prompt,
+    body.portrait-layout .composer.mobile-compact-composer #prompt {
+        height: 100% !important;
+        min-height: 0;
+        max-height: 100%;
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 0.86rem;
+        line-height: 1.25;
+        resize: none;
+    }
+
+    .composer.mobile-compact-composer .generation-settings,
+    body.portrait-layout .composer.mobile-compact-composer .generation-settings {
+        align-self: stretch;
+        justify-self: stretch;
+        min-height: 0;
+    }
+
+    .composer.mobile-compact-composer .generation-settings-toggle,
+    .composer.mobile-compact-composer #send,
+    body.portrait-layout .composer.mobile-compact-composer .generation-settings-toggle,
+    body.portrait-layout .composer.mobile-compact-composer #send {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        padding: 0;
+        border-radius: 10px;
+        font-size: 0.68rem;
+        align-self: stretch;
+        justify-self: stretch;
+    }
+
+    .composer.mobile-compact-composer .generation-settings-panel,
+    body.portrait-layout .composer.mobile-compact-composer .generation-settings-panel {
+        position: fixed;
+        left: 8px;
+        right: 8px;
+        bottom: calc(var(--mobile-composer-height) + env(safe-area-inset-bottom, 0px) + 12px);
+        width: auto;
+        max-width: none;
+        max-height: min(66vh, calc(var(--runtime-viewport-height, 100vh) - var(--mobile-composer-height) - 28px));
+        overflow: auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+        padding: 9px;
+        border-radius: 12px;
+        z-index: 6200;
+    }
+
+    .composer.mobile-compact-composer .generation-settings-panel[hidden],
+    body.portrait-layout .composer.mobile-compact-composer .generation-settings-panel[hidden] {
+        display: none;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+        min-width: 0;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls[hidden] {
+        display: none;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls > * {
+        grid-area: auto !important;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .composer-model-controls,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-dock,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .context-expander,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .preview-tray {
+        grid-column: 1 / -1 !important;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .composer-model-controls,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-dock {
+        display: grid;
+        align-self: stretch;
+        justify-self: stretch;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .composer-model-field {
+        min-height: 0;
+        padding: 5px;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .model-capability-icons {
+        min-height: 18px;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-strip {
+        justify-content: flex-start;
+        overflow-x: auto;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .composer-attach-stack,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .attach,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .voice-button,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .voice-toggle,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .context-toggle {
+        width: 100%;
+        min-width: 0;
+        min-height: 36px;
+        padding: 0 5px;
+        border-radius: 9px;
+        font-size: 0.58rem;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .composer-attach-stack {
+        display: grid;
+        min-height: 36px;
+        gap: 5px;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .voice-controls {
+        display: flex;
+        min-height: 36px;
+        gap: 5px;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .voice-controls.voice-hidden {
+        display: none !important;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .retry-controls {
+        display: grid;
+    }
+
+    .composer.mobile-compact-composer .mobile-composer-more-controls .context-expander {
+        position: static;
+        width: 100%;
+        max-height: min(46vh, 420px);
+        overflow: auto;
+    }
+
+    .composer.mobile-compact-composer .generation-settings-panel .param-field {
+        grid-template-columns: 54px minmax(0, 1fr);
+        min-height: 34px;
+    }
+
+    .composer.mobile-compact-composer .param-hint,
+    body.portrait-layout .composer.mobile-compact-composer .param-hint {
+        display: none !important;
+    }
 }
 
 body:not(.portrait-layout) .compact-runtime-controls > div:first-child {
@@ -12398,7 +13299,7 @@ body:not(.portrait-layout) .compact-runtime-controls .header-controls.access-ope
 }
 
 .hardware-glance-panel .server-hardware-grid {
-    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 5px;
 }
 
@@ -12406,8 +13307,8 @@ body:not(.portrait-layout) .compact-runtime-controls .header-controls.access-ope
     padding: 5px 6px;
 }
 
-.hardware-glance-panel .hardware-summary-metrics {
-    gap: 7px;
+.hardware-glance-panel #hardwareIoChip {
+    grid-column: auto;
 }
 
 body:not(.portrait-layout) .compact-runtime-controls {
@@ -12717,7 +13618,8 @@ body.agent-mode .model-picker .service-model-match {
 }
 
 body:not(.portrait-layout) .session-panel-toggle,
-body:not(.portrait-layout) .solution-panel-toggle {
+body:not(.portrait-layout) .solution-panel-toggle,
+body:not(.portrait-layout) .comments-panel-toggle {
     width: 34px !important;
     min-width: 34px !important;
     height: 54px !important;
@@ -12734,6 +13636,7 @@ body:not(.portrait-layout) .solution-panel-toggle {
     text-align: center;
     transition:
         left 420ms var(--surface-ease),
+        right 420ms var(--surface-ease),
         top 420ms var(--surface-ease),
         transform 180ms var(--surface-ease),
         border-color 180ms var(--surface-ease),
@@ -12741,7 +13644,8 @@ body:not(.portrait-layout) .solution-panel-toggle {
 }
 
 body:not(.portrait-layout) .session-panel-toggle::after,
-body:not(.portrait-layout) .solution-panel-toggle::after {
+body:not(.portrait-layout) .solution-panel-toggle::after,
+body:not(.portrait-layout) .comments-panel-toggle::after {
     display: none !important;
 }
 
@@ -12754,7 +13658,12 @@ body:not(.portrait-layout) .solution-panel-toggle:hover,
 body:not(.portrait-layout) .solution-panel-toggle:focus-visible,
 body.solution-panel-open:not(.portrait-layout) .solution-panel-toggle,
 body.solution-panel-open:not(.portrait-layout) .solution-panel-toggle:hover,
-body.solution-panel-open:not(.portrait-layout) .solution-panel-toggle:focus-visible {
+body.solution-panel-open:not(.portrait-layout) .solution-panel-toggle:focus-visible,
+body:not(.portrait-layout) .comments-panel-toggle:hover,
+body:not(.portrait-layout) .comments-panel-toggle:focus-visible,
+body.comments-panel-open:not(.portrait-layout) .comments-panel-toggle,
+body.comments-panel-open:not(.portrait-layout) .comments-panel-toggle:hover,
+body.comments-panel-open:not(.portrait-layout) .comments-panel-toggle:focus-visible {
     width: 34px !important;
     min-width: 34px !important;
     transform: translateY(-1px);
@@ -12770,6 +13679,10 @@ body.solution-panel-open:not(.portrait-layout):not(.sessions-panel-open) .soluti
 
 body.sessions-panel-open.solution-panel-open:not(.portrait-layout) .solution-panel-toggle {
     left: calc(var(--sessions-drawer-width) + var(--files-drawer-width)) !important;
+}
+
+body.comments-panel-open:not(.portrait-layout) .comments-panel-toggle {
+    right: var(--comments-drawer-width) !important;
 }
 
 .edge-panel-icon {
@@ -12816,8 +13729,10 @@ body.sessions-panel-open.solution-panel-open:not(.portrait-layout) .chat-browser
 
 body.portrait-layout .session-panel-toggle,
 body.portrait-layout .solution-panel-toggle,
+body.portrait-layout .comments-panel-toggle,
 body.shared-view .session-panel-toggle,
-body.shared-view .solution-panel-toggle {
+body.shared-view .solution-panel-toggle,
+body.shared-view .comments-panel-toggle {
     display: none !important;
 }
 </style>
@@ -12868,6 +13783,9 @@ body.shared-view .solution-panel-toggle {
     </button>
     <button id="solutionPanelEdgeToggle" class="edge-panel-toggle solution-panel-toggle" type="button" aria-controls="solutionExplorer" aria-expanded="false" aria-label="Show files" title="Show files">
         <svg class="edge-panel-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path><path d="M3.5 10h17"></path></svg>
+    </button>
+    <button id="commentsPanelEdgeToggle" class="edge-panel-toggle comments-panel-toggle" type="button" aria-controls="shareComments" aria-expanded="true" aria-label="Hide comments" title="Hide comments">
+        <svg class="edge-panel-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5h14a1.5 1.5 0 0 1 1.5 1.5v7.5A1.5 1.5 0 0 1 19 17H9l-4.5 3v-12A1.5 1.5 0 0 1 5 6.5z"></path><path d="M8 10h8M8 13.5h5.5"></path></svg>
     </button>
     <header id="runtimeControls" class="topbar compact-runtime-controls">
         <div>
@@ -12963,46 +13881,33 @@ body.shared-view .solution-panel-toggle {
                 </div>
             </div>
             <div id="serverHardwarePanel" class="server-hardware-panel hardware-glance-panel" aria-live="polite">
-                <div class="hardware-glance-head">
-                    <span class="top-panel-symbol" aria-hidden="true">H</span>
-                    <strong>Hardware</strong>
-                    <span id="hardwareSummaryMetrics" class="hardware-summary-metrics">
-                        <span id="hardwareSummaryCpuMetric" class="hardware-summary-metric cpu"><span class="hardware-summary-symbol">C</span><span id="hardwareSummaryCpuText">--</span><span class="hardware-summary-meter"><span id="hardwareSummaryCpuFill"></span></span></span>
-                        <span id="hardwareSummaryRamMetric" class="hardware-summary-metric ram"><span class="hardware-summary-symbol">M</span><span id="hardwareSummaryRamText">--</span><span class="hardware-summary-meter"><span id="hardwareSummaryRamFill"></span></span></span>
-                        <span id="hardwareSummaryGpuMetric" class="hardware-summary-metric gpu"><span class="hardware-summary-symbol">G</span><span id="hardwareSummaryGpuText">--</span><span class="hardware-summary-meter"><span id="hardwareSummaryGpuFill"></span></span></span>
-                        <span id="hardwareSummaryVramMetric" class="hardware-summary-metric vram"><span class="hardware-summary-symbol">V</span><span id="hardwareSummaryVramText">--</span><span class="hardware-summary-meter"><span id="hardwareSummaryVramFill"></span></span></span>
-                        <span id="hardwareSummaryDownMetric" class="hardware-summary-metric net"><span class="hardware-summary-symbol">D</span><span id="hardwareSummaryDownText">--</span><span class="hardware-summary-meter"><span id="hardwareSummaryDownFill"></span></span></span>
-                        <span id="hardwareSummaryUpMetric" class="hardware-summary-metric net"><span class="hardware-summary-symbol">U</span><span id="hardwareSummaryUpText">--</span><span class="hardware-summary-meter"><span id="hardwareSummaryUpFill"></span></span></span>
-                        <span id="hardwareSummaryIoMetric" class="hardware-summary-metric io"><span class="hardware-summary-symbol">I</span><span id="hardwareSummaryIoText">--</span><span class="hardware-summary-meter"><span id="hardwareSummaryIoFill"></span></span></span>
-                    </span>
-                </div>
                 <div class="server-hardware-grid">
-                    <div id="hardwareCpuChip" class="hardware-chip" title="Server CPU utilization">
-                        <div class="hardware-chip-top"><span class="hardware-label">CPU</span><span id="hardwareCpuText" class="hardware-value">--</span></div>
+                    <div id="hardwareCpuChip" class="hardware-chip cpu" title="Server CPU utilization">
+                        <div class="hardware-chip-top"><span class="hardware-chip-label"><span class="hardware-summary-symbol" aria-hidden="true">C</span><span class="hardware-label">CPU</span></span><span id="hardwareCpuText" class="hardware-value">--</span></div>
                         <span class="hardware-meter"><span id="hardwareCpuFill"></span></span>
                     </div>
-                    <div id="hardwareRamChip" class="hardware-chip" title="Server RAM usage">
-                        <div class="hardware-chip-top"><span class="hardware-label">RAM</span><span id="hardwareRamText" class="hardware-value">--</span></div>
+                    <div id="hardwareRamChip" class="hardware-chip ram" title="Server RAM usage">
+                        <div class="hardware-chip-top"><span class="hardware-chip-label"><span class="hardware-summary-symbol" aria-hidden="true">M</span><span class="hardware-label">RAM</span></span><span id="hardwareRamText" class="hardware-value">--</span></div>
                         <span class="hardware-meter"><span id="hardwareRamFill"></span></span>
                     </div>
-                    <div id="hardwareGpuChip" class="hardware-chip" title="Server GPU utilization">
-                        <div class="hardware-chip-top"><span class="hardware-label">GPU</span><span id="hardwareGpuText" class="hardware-value">--</span></div>
+                    <div id="hardwareGpuChip" class="hardware-chip gpu" title="Server GPU utilization">
+                        <div class="hardware-chip-top"><span class="hardware-chip-label"><span class="hardware-summary-symbol" aria-hidden="true">G</span><span class="hardware-label">GPU</span></span><span id="hardwareGpuText" class="hardware-value">--</span></div>
                         <span class="hardware-meter"><span id="hardwareGpuFill"></span></span>
                     </div>
-                    <div id="hardwareVramChip" class="hardware-chip" title="Server VRAM usage">
-                        <div class="hardware-chip-top"><span class="hardware-label">VRAM</span><span id="hardwareVramText" class="hardware-value">--</span></div>
+                    <div id="hardwareVramChip" class="hardware-chip vram" title="Server VRAM usage">
+                        <div class="hardware-chip-top"><span class="hardware-chip-label"><span class="hardware-summary-symbol" aria-hidden="true">V</span><span class="hardware-label">VRAM</span></span><span id="hardwareVramText" class="hardware-value">--</span></div>
                         <span class="hardware-meter"><span id="hardwareVramFill"></span></span>
                     </div>
-                    <div id="hardwareNetDownChip" class="hardware-chip" title="Server network download throughput">
-                        <div class="hardware-chip-top"><span class="hardware-label">NET &#8595;</span><span id="hardwareNetDownText" class="hardware-value">--</span></div>
+                    <div id="hardwareNetDownChip" class="hardware-chip net" title="Server network download throughput">
+                        <div class="hardware-chip-top"><span class="hardware-chip-label"><span class="hardware-summary-symbol" aria-hidden="true">D</span><span class="hardware-label">NET &#8595;</span></span><span id="hardwareNetDownText" class="hardware-value">--</span></div>
                         <span class="hardware-meter"><span id="hardwareNetDownFill"></span></span>
                     </div>
-                    <div id="hardwareNetUpChip" class="hardware-chip" title="Server network upload throughput">
-                        <div class="hardware-chip-top"><span class="hardware-label">NET &#8593;</span><span id="hardwareNetUpText" class="hardware-value">--</span></div>
+                    <div id="hardwareNetUpChip" class="hardware-chip net" title="Server network upload throughput">
+                        <div class="hardware-chip-top"><span class="hardware-chip-label"><span class="hardware-summary-symbol" aria-hidden="true">U</span><span class="hardware-label">NET &#8593;</span></span><span id="hardwareNetUpText" class="hardware-value">--</span></div>
                         <span class="hardware-meter"><span id="hardwareNetUpFill"></span></span>
                     </div>
-                    <div id="hardwareIoChip" class="hardware-chip" title="JackLLM process disk I/O">
-                        <div class="hardware-chip-top"><span class="hardware-label">I/O</span><span id="hardwareIoText" class="hardware-value">--</span></div>
+                    <div id="hardwareIoChip" class="hardware-chip io" title="JackLLM process disk I/O">
+                        <div class="hardware-chip-top"><span class="hardware-chip-label"><span class="hardware-summary-symbol" aria-hidden="true">I</span><span class="hardware-label">I/O</span></span><span id="hardwareIoText" class="hardware-value">--</span></div>
                         <span class="hardware-meter"><span id="hardwareIoFill"></span></span>
                     </div>
                 </div>
@@ -13132,6 +14037,36 @@ body.shared-view .solution-panel-toggle {
             <section id="messages" class="messages">
                 <div class="empty loading-empty"><span class="mini-throbber" aria-hidden="true"></span>Loading chat</div>
             </section>
+            <section id="personaPlexPanel" class="personaplex-panel" aria-live="polite" hidden>
+                <div class="personaplex-head">
+                    <div>
+                        <div class="personaplex-title">Voice Mode</div>
+                        <div id="personaPlexStatus" class="personaplex-status">Idle</div>
+                    </div>
+                    <div class="personaplex-actions">
+                        <button id="personaPlexRefresh" class="ghost" type="button" title="Refresh Voice Mode">R</button>
+                        <button id="personaPlexSave" class="ghost" type="button" title="Save Voice Mode settings" hidden>Save</button>
+                        <button id="personaPlexClose" class="ghost" type="button" title="Close Voice Mode">x</button>
+                    </div>
+                </div>
+                <div class="personaplex-grid">
+                    <label class="personaplex-field personaplex-wide">Profile <select id="personaPlexProfileSelect"></select></label>
+                    <label id="personaPlexCustomPersonaField" class="personaplex-field personaplex-wide" hidden>Custom instructions <textarea id="personaPlexPersonaPrompt" spellcheck="true"></textarea></label>
+                    <input id="personaPlexServerUrl" type="hidden" value="ws://localhost:8998">
+                    <input id="personaPlexVoicePrompt" type="hidden" value="NATF0.pt">
+                </div>
+                <div class="personaplex-run">
+                    <div class="personaplex-run-left">
+                        <button id="personaPlexStart" class="ghost" type="button">Start Voice</button>
+                    </div>
+                    <span id="personaPlexTransportStatus">Idle</span>
+                </div>
+                <div id="personaPlexInstallPanel" class="personaplex-install" hidden>
+                    <button id="personaPlexInstall" class="ghost" type="button">Install Voice Mode</button>
+                    <div id="personaPlexInstallStatus" class="personaplex-install-status"></div>
+                </div>
+                <div id="personaPlexTranscript" class="personaplex-transcript">No transcript yet.</div>
+            </section>
         </section>
         <aside id="chatBrowserPanel" class="chat-browser-panel" aria-label="In-chat browser">
             <div id="chatBrowserResize" class="chat-browser-resize" role="separator" aria-orientation="vertical" aria-label="Resize browser panel" tabindex="0" aria-valuemin="300" aria-valuemax="720" aria-valuenow="440"></div>
@@ -13208,22 +14143,21 @@ body.shared-view .solution-panel-toggle {
         </aside>
     </section>
     <form id="composer" class="composer no-media-source">
-        <label id="imageAttach" class="attach" title="Load images">
-            IMG
-            <input id="imageInput" type="file" accept="image/*" multiple>
-        </label>
-        <label id="fileAttach" class="attach" title="Load files">
-            FILE
-            <input id="fileInput" type="file" multiple>
-        </label>
+        <span id="mobileComposerControlsAnchor" hidden></span>
+        <div id="composerAttachStack" class="composer-attach-stack" aria-label="Attachment controls">
+            <label id="imageAttach" class="attach" title="Load images">
+                IMG
+                <input id="imageInput" type="file" accept="image/*" multiple>
+            </label>
+            <label id="fileAttach" class="attach" title="Load files">
+                FILE
+                <input id="fileInput" type="file" multiple>
+            </label>
+        </div>
         <label id="mediaSourceAttach" class="attach media-source-attach" title="Add source media for generation" hidden>
             +
             <input id="mediaSourceInput" type="file" accept="image/*">
         </label>
-        <div class="voice-controls" aria-label="Voice controls">
-            <button id="voiceInput" class="ghost voice-button" type="button" title="Dictate a message">MIC</button>
-            <label id="ttsToggleLabel" class="voice-toggle" title="Speak assistant responses with the browser's free built-in voice"><input id="ttsEnabled" type="checkbox">Voice</label>
-        </div>
         <div class="prompt-wrap">
             <textarea id="prompt" placeholder="Type a message. Shift+Enter makes a new line."></textarea>
             <div id="promptIntellisense" class="intellisense-panel" role="listbox" aria-label="Prompt completions"></div>
@@ -13255,13 +14189,13 @@ body.shared-view .solution-panel-toggle {
         <div id="generationSettings" class="generation-settings">
             <button id="generationSettingsToggle" class="generation-settings-toggle" type="button" aria-controls="generationSettingsPanel" aria-expanded="false" aria-label="Generation settings" title="Generation settings">...</button>
             <div id="generationSettingsPanel" class="generation-settings-panel" hidden>
+                <div id="mobileComposerMoreControls" class="mobile-composer-more-controls" aria-label="More composer controls" hidden></div>
                 <label class="param-field">Temp <input id="temperatureInput" type="number" min="0" max="2" step="0.05" value="0.7"><span class="param-hint" role="tooltip"><strong>Temperature</strong><span>Controls randomness. Lower values like 0.1 make answers steadier and more repeatable. Higher values make the model more exploratory, creative, and occasionally less predictable.</span></span></label>
                 <label class="param-field">Top P <input id="topPInput" type="number" min="0" max="1" step="0.05" value="1"><span class="param-hint" role="tooltip"><strong>Top P</strong><span>Limits token choices to the smallest probability pool whose combined weight reaches this value. Keep it near 1 for natural breadth; lower it to make responses more conservative without changing temperature as much.</span></span></label>
                 <label class="param-field">Max <input id="maxTokensInput" type="number" min="1" step="1" placeholder="auto"><span class="param-hint" role="tooltip"><strong>Max Tokens</strong><span>Caps how much text the model may generate in one response. Leave it on auto to let LM Studio choose. Set a number when you need short replies or want to prevent very long generations.</span></span></label>
             </div>
         </div>
         <button id="send" type="submit">Send</button>
-        <button id="streamAction" class="stream-action" type="button" aria-hidden="true" tabindex="-1">Interrupt / Next</button>
         <section id="contextExpander" class="context-expander" aria-label="Current chat context" hidden>
             <div class="context-expander-head">
                 <strong>Context</strong>
@@ -13438,6 +14372,24 @@ const premiumTokenLogin = document.getElementById('premiumTokenLogin');
 const send = document.getElementById('send');
 const streamAction = document.getElementById('streamAction');
 const voiceInput = document.getElementById('voiceInput');
+const personaPlexToggle = document.getElementById('personaPlexToggle');
+const personaPlexPanel = document.getElementById('personaPlexPanel');
+const personaPlexStatus = document.getElementById('personaPlexStatus');
+const personaPlexRefresh = document.getElementById('personaPlexRefresh');
+const personaPlexSave = document.getElementById('personaPlexSave');
+const personaPlexClose = document.getElementById('personaPlexClose');
+const personaPlexProfileSelect = document.getElementById('personaPlexProfileSelect');
+const personaPlexCustomPersonaField = document.getElementById('personaPlexCustomPersonaField');
+const personaPlexServerUrl = document.getElementById('personaPlexServerUrl');
+const personaPlexVoicePrompt = document.getElementById('personaPlexVoicePrompt');
+const personaPlexPersonaPrompt = document.getElementById('personaPlexPersonaPrompt');
+const personaPlexStart = document.getElementById('personaPlexStart');
+const personaPlexStop = document.getElementById('personaPlexStop');
+const personaPlexTransportStatus = document.getElementById('personaPlexTransportStatus');
+const personaPlexTranscript = document.getElementById('personaPlexTranscript');
+const personaPlexInstallPanel = document.getElementById('personaPlexInstallPanel');
+const personaPlexInstall = document.getElementById('personaPlexInstall');
+const personaPlexInstallStatus = document.getElementById('personaPlexInstallStatus');
 const ttsEnabled = document.getElementById('ttsEnabled');
 const ttsToggleLabel = document.getElementById('ttsToggleLabel');
 const retryPrompt = document.getElementById('retryPrompt');
@@ -13480,6 +14432,7 @@ const sessionPanelToggle = document.getElementById('sessionPanelToggle');
 const solutionPanelToggle = document.getElementById('solutionPanelToggle');
 const sessionPanelEdgeToggle = document.getElementById('sessionPanelEdgeToggle');
 const solutionPanelEdgeToggle = document.getElementById('solutionPanelEdgeToggle');
+const commentsPanelEdgeToggle = document.getElementById('commentsPanelEdgeToggle');
 const shareComments = document.getElementById('shareComments');
 const commentsToggle = document.getElementById('commentsToggle');
 const commentsPanelToggle = document.getElementById('commentsPanelToggle');
@@ -13548,6 +14501,11 @@ const toolAvailability = document.getElementById('toolAvailability');
 const generationSettingsWrap = document.getElementById('generationSettings');
 const generationSettingsToggle = document.getElementById('generationSettingsToggle');
 const generationSettingsPanel = document.getElementById('generationSettingsPanel');
+const mobileComposerControlsAnchor = document.getElementById('mobileComposerControlsAnchor');
+const mobileComposerMoreControls = document.getElementById('mobileComposerMoreControls');
+const composerAttachStack = document.getElementById('composerAttachStack');
+const composerModelControls = document.getElementById('composerModelControls');
+const retryControls = document.querySelector('.retry-controls');
 const remoteAdminToggle = document.getElementById('remoteAdminToggle');
 const refreshModels = document.getElementById('refreshModels');
 const heartbeatStatus = document.getElementById('heartbeatStatus');
@@ -13829,6 +14787,7 @@ function applyRuntimeViewportMode() {
     document.body.classList.toggle('landscape-layout', !portrait);
     root.dataset.viewportMode = mode;
     document.body.dataset.viewportMode = mode;
+    syncMobileComposerControls();
     if (portrait) {
         document.body.classList.remove('chat-mode-fading');
         if (chatModeFadeTimer) {
@@ -13847,6 +14806,47 @@ function queueRuntimeViewportModeUpdate() {
         runtimeViewportUpdateFrame = window.requestAnimationFrame(applyRuntimeViewportMode);
     } else {
         applyRuntimeViewportMode();
+    }
+}
+
+function mobileComposerCompactActive() {
+    if (document.body && document.body.classList.contains('portrait-layout'))
+        return true;
+    const width = Math.max(0, Math.round((window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0));
+    return width > 0 && width <= 700;
+}
+
+function mobileComposerControlElements() {
+    return [
+        composerModelControls,
+        composerAttachStack,
+        mediaSourceAttach,
+        chatModeDock,
+        retryControls,
+        contextToggle,
+        contextExpander,
+        previewTray
+    ].filter(Boolean);
+}
+
+function syncMobileComposerControls() {
+    if (!form || !mobileComposerControlsAnchor || !mobileComposerMoreControls) return;
+    const compact = mobileComposerCompactActive();
+    form.classList.toggle('mobile-compact-composer', compact);
+    mobileComposerMoreControls.hidden = !compact;
+    const controls = mobileComposerControlElements();
+    if (compact) {
+        controls.forEach(control => {
+            if (control.parentNode !== mobileComposerMoreControls)
+                mobileComposerMoreControls.appendChild(control);
+        });
+    } else {
+        const reference = mobileComposerControlsAnchor.nextSibling;
+        controls.forEach(control => {
+            if (control.parentNode !== form)
+                form.insertBefore(control, reference);
+        });
+        mobileComposerMoreControls.hidden = true;
     }
 }
 
@@ -14037,6 +15037,7 @@ let modelOptionRuntimeLoadEnabled = {};
 let runtimeModelServices = {};
 let runtimeModelInfos = [];
 let runtimeCompatibilityStatus = null;
+let runtimeCompatibilityStatusLoadedAt = 0;
 let runtimeCompatibilityWarningShown = false;
 let modeOpenModelRefreshInFlight = false;
 let lastMissingModelWarningKey = '';
@@ -14186,17 +15187,11 @@ function renderChatModeStrip() {
     const current = selectedService();
     const strip = chatModeStrip;
     strip.textContent = '';
-    const modeSpec = [
-        baseChatMode,
-        { id: 'agent', symbol: '🤖', title: 'Use Agent mode for tool-driven workflow.' },
-        { id: browserSkillServiceId, symbol: '🌐', title: 'Use Browser skill mode for live web browsing with screenshots and HTML observations.' },
-        { id: 'companion', symbol: '🫂', title: 'Use Companion mode for assistant-like context guidance.' }
-    ];
-    modeSpec.filter(spec => spec.id !== browserSkillServiceId).forEach(spec => {
+    const appendModeButton = (spec, className) => {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'chat-mode-button';
-        button.textContent = spec.symbol;
+        button.className = ['chat-mode-button', className || ''].filter(Boolean).join(' ');
+        button.textContent = spec.symbol || spec.label || chatModeButtonLabel(spec.id);
         button.setAttribute('aria-label', spec.title || chatModeButtonLabel(spec.id));
         button.setAttribute('title', spec.title || chatModeButtonLabel(spec.id));
         button.setAttribute('aria-pressed', current === spec.id ? 'true' : 'false');
@@ -14211,32 +15206,18 @@ function renderChatModeStrip() {
             });
         }
         strip.appendChild(button);
-    });
+    };
 
-    const availableMedia = getAvailableMediaServiceIds();
-    const mediaServiceId = preferredMediaService();
-    const mediaSymbol = mediaServiceId ? mediaModeSymbolByService[mediaServiceId] : 'M';
-    const hasMedia = availableMedia.length > 0;
-    const mediaTitle = hasMedia && availableMedia.length === 1
-        ? chatModeButtonLabel(mediaServiceId)
-        : 'Cycle supported media generation modes';
-    const mediaButton = document.createElement('button');
-    mediaButton.type = 'button';
-    mediaButton.className = 'chat-mode-button';
-    mediaButton.textContent = mediaSymbol;
-    mediaButton.setAttribute('aria-label', mediaTitle);
-    mediaButton.setAttribute('title', mediaTitle);
-    mediaButton.setAttribute('aria-pressed', isMediaGenerationService(current) ? 'true' : 'false');
-    mediaButton.disabled = !hasMedia;
-    if (hasMedia) {
-        mediaButton.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (mediaServiceId) syncMediaModeIndexForService(mediaServiceId);
-            cycleMediaMode();
-        });
-    }
-    strip.appendChild(mediaButton);
+    [
+        { id: 'image_generation', symbol: 'IMG', title: 'Use Image generation mode.' },
+        { id: 'video_generation', symbol: 'VID', title: 'Use Video generation mode.' }
+    ].forEach(spec => appendModeButton(spec, 'chat-mode-media-button'));
+
+    [
+        baseChatMode,
+        { id: 'agent', symbol: 'A', title: 'Use Agent mode for tool-driven workflow.' }
+    ].forEach(spec => appendModeButton(spec, 'chat-mode-primary-button'));
+
     syncMediaModeIndexForService(current);
     positionChatModeDock();
 }
@@ -14307,6 +15288,7 @@ let queuedPrompts = [];
 let queuedPromptIdCounter = 0;
 let isProcessingQueue = false;
 let stoppedPromptSessionIds = new Set();
+let locallyStoppedPromptSessionIds = new Set();
 let lastPromptReplay = null;
 let speechRecognizer = null;
 let speechListening = false;
@@ -14314,6 +15296,69 @@ let speechBasePromptText = '';
 let speechFinalTranscript = '';
 let speechVoices = [];
 let speechPermissionPending = false;
+const personaPlexProfiles = [
+    {
+        id: 'teacher',
+        label: 'Friendly teacher',
+        prompt: 'You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.'
+    },
+    {
+        id: 'coding-partner',
+        label: 'Coding partner',
+        prompt: 'You are a calm senior engineering partner. Explain tradeoffs clearly, ask only useful questions, and help the user make steady progress.'
+    },
+    {
+        id: 'coach',
+        label: 'Calm coach',
+        prompt: 'You are a warm, practical coach. Help the user think clearly, stay grounded, and choose the next useful step.'
+    },
+    {
+        id: 'storyteller',
+        label: 'Storyteller',
+        prompt: 'You are an imaginative storyteller with a vivid voice. Make scenes feel alive while staying responsive to the user.'
+    },
+    {
+        id: 'support',
+        label: 'Support desk',
+        prompt: 'You are a concise technical support specialist. Diagnose the issue, explain what matters, and guide the user through fixes one step at a time.'
+    },
+    {
+        id: 'brief',
+        label: 'Brief assistant',
+        prompt: 'You are a crisp assistant. Keep answers short, direct, and useful unless the user asks for detail.'
+    },
+    {
+        id: 'custom',
+        label: 'Custom',
+        prompt: ''
+    }
+];
+const personaPlexDefaultProfileId = 'teacher';
+const personaPlexDefaultProfile = personaPlexProfiles.find(profile => profile.id === personaPlexDefaultProfileId) || personaPlexProfiles[0];
+const personaPlexSettingsKey = 'jackllm.personaplex.config.v1';
+const personaPlexDefaultConfig = {
+    enabled: true,
+    profileId: personaPlexDefaultProfile.id,
+    serverUrl: 'ws://localhost:8998',
+    voicePrompt: 'NATF0.pt',
+    personaPrompt: personaPlexDefaultProfile.prompt
+};
+let personaPlexConfig = { ...personaPlexDefaultConfig };
+let personaPlexReady = false;
+let personaPlexSocket = null;
+let personaPlexRecorder = null;
+let personaPlexRecorderMode = '';
+let personaPlexMicStream = null;
+let personaPlexAudioQueue = Promise.resolve();
+let personaPlexTranscriptText = '';
+let personaPlexTranscriptMessage = null;
+let personaPlexTranscriptSaveTimer = 0;
+let personaPlexStatusTimer = 0;
+let personaPlexInstallState = null;
+let personaPlexInstallPollTimer = 0;
+let personaPlexLastStatusData = null;
+let personaPlexStartAttemptId = 0;
+let personaPlexStartPending = false;
 let currentArtifact = null;
 let activeParamField = null;
 let remoteAdminVisible = false;
@@ -14374,11 +15419,11 @@ function canUseSocketJackLoginRedirect() {
 }
 
 function socketJackLoginRedirectUrl() {
-    return socketJackAuthUrl('/Login?returnUrl=' + encodeURIComponent(window.location.href));
+    return socketJackAuthUrl('/login?returnUrl=' + encodeURIComponent(window.location.href));
 }
 
 function socketJackRegisterRedirectUrl() {
-    return socketJackLoginRedirectUrl();
+    return socketJackAuthUrl('/register?returnUrl=' + encodeURIComponent(window.location.href));
 }
 
 function redirectToSocketJackLogin() {
@@ -14403,13 +15448,32 @@ function apiPath(path) {
     if (!path.startsWith('/api/')) return path;
     if (shouldUseRootApiEndpoint(path))
         return path;
-    return localApiPrefix ? localApiPrefix + path : path;
+    return shouldUseExplicitLocalApiPrefix() ? localApiPrefix + path : path;
+}
+
+function normalizedLocalPath(path) {
+    if (!path || typeof path !== 'string') return path;
+    return path.startsWith('/') ? path : '/' + path;
+}
+
+function shouldUseExplicitLocalApiPrefix() {
+    return !!localApiPrefix && !(window.__socketJackProxy && typeof window.__socketJackProxy.proxyUrlFor === 'function');
+}
+
+function explicitLocalRoutePath(path) {
+    const normalized = normalizedLocalPath(path);
+    if (!normalized) return normalized;
+    if (localApiPrefix && (normalized === localApiPrefix || normalized.startsWith(localApiPrefix + '/')))
+        return normalized;
+    return localApiPrefix ? localApiPrefix + normalized : normalized;
 }
 
 function localRoutePath(path) {
-    if (!path || typeof path !== 'string') return path;
-    const normalized = path.startsWith('/') ? path : '/' + path;
-    return localApiPrefix ? localApiPrefix + normalized : normalized;
+    const normalized = normalizedLocalPath(path);
+    if (!normalized) return normalized;
+    if (!shouldUseExplicitLocalApiPrefix())
+        return normalized.startsWith(localApiPrefix + '/') ? normalized.slice(localApiPrefix.length) || '/' : normalized;
+    return explicitLocalRoutePath(normalized);
 }
 
 function normalizeLocalApiResource(resource) {
@@ -14593,7 +15657,7 @@ function shouldUseRootApiEndpoint(path) {
 let webChatApiTransport = null;
 
 function webChatWebSocketUrl() {
-    const url = new URL(localRoutePath('/api/web-chat/ws'), window.location.href);
+    const url = new URL(explicitLocalRoutePath('/api/web-chat/ws'), window.location.href);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return url.href;
 }
@@ -15372,6 +16436,21 @@ function applyUsageEvent(event, parts) {
         scheduleFinanceLoad();
 }
 
+function setFixedGradientProgressFill(fillElement, percent) {
+    if (!fillElement) return;
+    const numeric = typeof percent === 'string' ? parseFloat(percent) : Number(percent);
+    const clamped = Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
+    fillElement.style.width = '';
+    fillElement.style.setProperty('--progress-fill', clamped.toFixed(2) + '%');
+}
+
+function fixedGradientProgressPercent(fillElement) {
+    if (!fillElement) return 0;
+    const value = fillElement.style.getPropertyValue('--progress-fill') || fillElement.style.width || '0%';
+    const numeric = parseFloat(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
+}
+
 function setHardwareMetric(chip, textElement, fillElement, metric, fallbackText) {
     const available = !!(metric && metric.available);
     const percent = metric && typeof metric.percent === 'number' && isFinite(metric.percent)
@@ -15383,7 +16462,7 @@ function setHardwareMetric(chip, textElement, fillElement, metric, fallbackText)
     else if (textElement) textElement.removeAttribute('title');
     if (chip && title) chip.title = title;
     else if (chip) chip.removeAttribute('title');
-    if (fillElement) fillElement.style.width = percent === null ? '0%' : percent.toFixed(1) + '%';
+    setFixedGradientProgressFill(fillElement, percent === null ? 0 : percent);
     if (chip) {
         chip.classList.toggle('unavailable', !available);
         chip.classList.toggle('hot', percent !== null && percent >= 80);
@@ -15444,7 +16523,7 @@ function setHardwareThroughputMetric(chip, textElement, fillElement, text, value
     const number = Math.max(0, Number(value || 0));
     const percent = Math.max(0, Math.min(100, number / Math.max(1, Number(scale || 1)) * 100));
     if (textElement) textElement.textContent = text || '--';
-    if (fillElement) fillElement.style.width = available ? percent.toFixed(1) + '%' : '0%';
+    setFixedGradientProgressFill(fillElement, available ? percent : 0);
     if (chip) {
         chip.classList.toggle('unavailable', !available);
         chip.classList.toggle('hot', !!available && percent >= 80);
@@ -15463,8 +16542,7 @@ function syncHardwareSummaryMetric(summaryMetric, summaryText, summaryFill, sour
         if (title) summaryMetric.title = title;
         else summaryMetric.removeAttribute('title');
     }
-    if (summaryFill)
-        summaryFill.style.width = sourceFill && sourceFill.style.width ? sourceFill.style.width : '0%';
+    setFixedGradientProgressFill(summaryFill, fixedGradientProgressPercent(sourceFill));
     if (summaryMetric && sourceChip) {
         summaryMetric.classList.toggle('unavailable', sourceChip.classList.contains('unavailable'));
         summaryMetric.classList.toggle('hot', sourceChip.classList.contains('hot'));
@@ -15603,9 +16681,7 @@ function updateUsagePanel(tokenDelta) {
         usageTokenText.classList.toggle('free-token-meter', !tokensRequired);
         usageTokenText.title = !tokensRequired ? 'Free server: prompts do not spend this token balance.' : 'Token balance remaining.';
     }
-    if (usageFill) {
-        usageFill.style.width = meter.percent.toFixed(2) + '%';
-    }
+    setFixedGradientProgressFill(usageFill, meter.percent);
     if (usagePanelToggle) {
         const lowMeter = meter.hasFiniteLimit && meter.percent <= 25 && meter.percent > 10;
         const criticalMeter = meter.hasFiniteLimit && meter.percent <= 10 && meter.percent > 0;
@@ -15818,7 +16894,8 @@ async function startTokenCheckout(product) {
         if (!response.ok || !data.ok) throw new Error(data.error || data.detail || 'Checkout could not be created.');
         const url = data.url || (data.checkout && data.checkout.url);
         if (!url) throw new Error('Stripe did not return a Checkout URL.');
-        window.location.href = url;
+        if (!openStripeCheckoutAtTopLevel(url))
+            window.location.href = url;
     } catch (error) {
         tokenPurchaseLoading = false;
         updateTokenRateUi();
@@ -17407,8 +18484,14 @@ function isLocalStreamForSession(sessionId) {
     return !!(sessionId && activeStreamState && activeStreamState.sessionId === sessionId && activeAbortController);
 }
 
+function queuedPromptCountForSession(sessionId) {
+    const key = queueSessionKey(sessionId);
+    if (!key) return 0;
+    return queuedPrompts.filter(item => item && queueSessionKey(item.sessionId) === key).length;
+}
+
 function hasQueuedPromptForSession(sessionId) {
-    return !!(sessionId && queuedPrompts.some(item => item && (!item.sessionId || item.sessionId === sessionId)));
+    return queuedPromptCountForSession(sessionId) > 0;
 }
 
 function currentSessionStreamState() {
@@ -17434,6 +18517,29 @@ function clearQueueStopForSession(sessionId) {
     const key = queueSessionKey(sessionId);
     if (key)
         stoppedPromptSessionIds.delete(key);
+}
+
+function markSessionLocallyStopped(sessionId) {
+    const key = queueSessionKey(sessionId);
+    if (!key) return;
+    locallyStoppedPromptSessionIds.add(key);
+    window.setTimeout(() => {
+        locallyStoppedPromptSessionIds.delete(key);
+        if (queueSessionKey(currentSessionId) === key)
+            setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0 || activeChatSessions.length > 0);
+        renderSessionList();
+    }, 30000);
+}
+
+function clearLocalStopForSession(sessionId) {
+    const key = queueSessionKey(sessionId);
+    if (key)
+        locallyStoppedPromptSessionIds.delete(key);
+}
+
+function isSessionLocallyStopped(sessionId) {
+    const key = queueSessionKey(sessionId);
+    return !!(key && locallyStoppedPromptSessionIds.has(key));
 }
 
 function removeQueuedPromptsForSession(sessionId) {
@@ -17478,9 +18584,12 @@ function renderActiveStreamForCurrentSession() {
 
 function activeSessionForCurrentSession() {
     if (!currentSessionId) return null;
+    if (isQueueStopRequestedForSession(currentSessionId) || isSessionLocallyStopped(currentSessionId)) return null;
     return activeChatSessions.find(active =>
         active &&
         active.sessionId === currentSessionId &&
+        !isQueueStopRequestedForSession(active.sessionId) &&
+        !isSessionLocallyStopped(active.sessionId) &&
         (!active.ownerKey || !currentSessionOwnerKey || active.ownerKey === currentSessionOwnerKey)) || null;
 }
 
@@ -17636,6 +18745,7 @@ function stopCurrentGeneration() {
     if (!streamState) return;
     const stopSessionId = streamState.sessionId || currentSessionId || '';
     requestQueueStopForSession(stopSessionId);
+    markSessionLocallyStopped(stopSessionId);
     removeQueuedPromptsForSession(stopSessionId);
     const stopStreamId = streamState.streamId || activeStreamId;
     if (stopStreamId) {
@@ -17680,38 +18790,52 @@ function interruptCurrentGenerationForNext() {
     markLmStudioIdle(queuedPrompts.length > 0 ? 'Moving to the next queued prompt.' : 'LM Studio request was interrupted.');
 }
 
-function updateStreamAction(isStreaming) {
-    if (!streamAction) return;
-    const streaming = !!isStreaming && !!currentSessionStreamState();
-    const agentMode = !sharedView && selectedService() === 'agent';
-    const canSteer = streaming && agentMode && hasTypedPromptText();
-    const showInterrupt = streaming && !agentMode;
-    const visible = canSteer || showInterrupt;
-    streamAction.textContent = canSteer ? 'Steer Conversation' : 'Interrupt / Next';
-    streamAction.title = canSteer
-        ? 'Steer the running agent turn at the next tool call or natural break'
-        : 'Interrupt this response and move to the next queued prompt';
-    streamAction.classList.toggle('visible', visible);
-    streamAction.setAttribute('aria-hidden', visible ? 'false' : 'true');
-    streamAction.tabIndex = visible ? 0 : -1;
+function interruptCurrentGenerationWithDraft() {
+    if (!currentSessionStreamState()) return false;
+    const hasDraft = hasDraftPromptContent();
+    interruptCurrentGenerationForNext();
+    if (hasDraft) {
+        window.setTimeout(() => {
+            sendMessage().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+        }, 0);
+    }
+    return true;
+}
+
+function updateStreamAction() {
+}
+
+function currentSessionQueuedPromptCount() {
+    return queuedPromptCountForSession(currentSessionId);
+}
+
+function currentSessionHasPromptActivity() {
+    return !!currentSessionStreamState() ||
+        !!activeSessionForCurrentSession() ||
+        currentSessionQueuedPromptCount() > 0;
 }
 
 function setSendButtonStreaming(isStreaming) {
     send.disabled = !!sharedPromptDisabledReason();
-    document.body.classList.toggle('prompt-active', !!isStreaming);
+    const currentPromptActivity = currentSessionHasPromptActivity();
+    document.body.classList.toggle('prompt-active', currentPromptActivity);
     const canQueueDraft = hasDraftPromptContent();
     const currentStreamActive = !!currentSessionStreamState();
-    const shouldStop = currentStreamActive && !canQueueDraft;
-    send.textContent = isStreaming
-        ? (currentStreamActive ? (shouldStop ? 'Stop' : 'Queue') : (canQueueDraft ? 'Queue' : 'Send'))
-        : 'Send';
-    send.classList.toggle('stop', shouldStop);
-    send.title = isStreaming
+    const currentRemoteActive = !currentStreamActive && !!activeSessionForCurrentSession();
+    const currentQueuedCount = currentSessionQueuedPromptCount();
+    send.textContent = currentPromptActivity && canQueueDraft ? 'Queue' : 'Send';
+    send.classList.remove('stop');
+    send.title = currentPromptActivity
         ? (currentStreamActive
-            ? (shouldStop ? 'Stop the current response' : 'Queue this prompt after the current response')
-            : (canQueueDraft ? 'Queue this prompt after the running response' : 'A different session is still responding.'))
+            ? (canQueueDraft ? 'Queue this prompt after the current response' : 'Send a prompt or use Stop on the active response')
+            : currentRemoteActive
+                ? (canQueueDraft ? 'Queue this prompt after the current shared response' : 'This chat is still responding in another browser.')
+                : currentQueuedCount > 0
+                    ? (canQueueDraft ? 'Queue this prompt after the queued prompt for this chat' : 'This chat has a queued prompt.')
+                    : 'Send message')
         : 'Send message';
     updateStreamAction(isStreaming);
+    refreshActivePromptProcessingActions();
     refreshQueuedPromptActions();
     renderSessionList();
 }
@@ -17901,6 +19025,50 @@ function speechSynthesisAvailable() {
     return !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
 }
 
+function selectedModelSupportsVoiceButton() {
+    if (sharedView) return false;
+    const modelId = selectedModel();
+    const runtimeModel = findRuntimeModelInfo(modelId);
+    const text = [
+        modelId,
+        modelOptionDisplayNames[modelId],
+        runtimeModel ? runtimeModelLabel(runtimeModel) : '',
+        runtimeModel ? safeStringifyModelInfo(runtimeModel) : ''
+    ].filter(Boolean).join(' ').toLowerCase();
+    return text.includes('personaplex') || (text.includes('nvidia') && /\b(voice|speech|audio)\b/.test(text));
+}
+
+function syncPersonaPlexPanelForSelectedModel() {
+    const showPersonaPlex = !sharedView && selectedModelSupportsVoiceButton();
+    if (personaPlexClose)
+        personaPlexClose.hidden = showPersonaPlex;
+    if (showPersonaPlex) {
+        setPersonaPlexPanelOpen(true);
+    } else {
+        setPersonaPlexPanelOpen(false);
+    }
+}
+
+function updateVoiceButtonVisibility() {
+    if (form)
+        form.classList.add('voice-hidden');
+    if (voiceInput) {
+        voiceInput.hidden = true;
+        voiceInput.setAttribute('aria-hidden', 'true');
+        voiceInput.tabIndex = -1;
+    }
+    if (personaPlexToggle) {
+        personaPlexToggle.hidden = true;
+        personaPlexToggle.setAttribute('aria-hidden', 'true');
+        personaPlexToggle.tabIndex = -1;
+    }
+    if (ttsToggleLabel) {
+        ttsToggleLabel.hidden = true;
+        ttsToggleLabel.setAttribute('aria-hidden', 'true');
+    }
+    syncPersonaPlexPanelForSelectedModel();
+}
+
 function configureVoiceControls() {
     const Recognition = speechRecognitionConstructor();
     if (voiceInput) {
@@ -17921,6 +19089,7 @@ function configureVoiceControls() {
                 : 'Text to speech is not available in this browser.';
         }
     }
+    updateVoiceButtonVisibility();
     refreshSpeechVoices();
 }
 
@@ -18102,6 +19271,659 @@ async function startVoiceInput() {
         speechListening = false;
         configureVoiceControls();
         addMessage('error', voiceInputPermissionMessage(error, 'not-allowed'));
+    }
+}
+
+function personaPlexLocalOverrides() {
+    try {
+        const raw = localStorage.getItem(personaPlexSettingsKey);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function savePersonaPlexLocalOverrides(config) {
+    try {
+        localStorage.setItem(personaPlexSettingsKey, JSON.stringify(config || {}));
+    } catch { }
+}
+
+function personaPlexProfileById(id) {
+    const value = String(id || '').trim();
+    return personaPlexProfiles.find(profile => profile.id === value) || null;
+}
+
+function inferPersonaPlexProfileId(prompt, fallbackId) {
+    const normalizedPrompt = String(prompt || '').trim();
+    const match = personaPlexProfiles.find(profile =>
+        profile.id !== 'custom' &&
+        String(profile.prompt || '').trim() === normalizedPrompt);
+    return match ? match.id : (fallbackId || personaPlexDefaultProfileId);
+}
+
+function renderPersonaPlexProfileOptions(selectedId) {
+    if (!personaPlexProfileSelect) return;
+    if (personaPlexProfileSelect.options.length !== personaPlexProfiles.length) {
+        personaPlexProfileSelect.textContent = '';
+        personaPlexProfiles.forEach(profile => {
+            const option = document.createElement('option');
+            option.value = profile.id;
+            option.textContent = profile.label;
+            personaPlexProfileSelect.appendChild(option);
+        });
+    }
+    const profile = personaPlexProfileById(selectedId) || personaPlexDefaultProfile;
+    personaPlexProfileSelect.value = profile.id;
+}
+
+function normalizePersonaPlexConfig(config) {
+    const source = config && typeof config === 'object' ? config : {};
+    const sourcePrompt = String(source.personaPrompt || source.persona_prompt || source.textPrompt || source.text_prompt || personaPlexDefaultConfig.personaPrompt).trim();
+    let profileId = String(source.profileId || source.profile_id || '').trim();
+    if (!personaPlexProfileById(profileId))
+        profileId = inferPersonaPlexProfileId(sourcePrompt, personaPlexDefaultConfig.profileId);
+    const profile = personaPlexProfileById(profileId) || personaPlexDefaultProfile;
+    const personaPrompt = profile.id === 'custom'
+        ? (sourcePrompt || personaPlexDefaultConfig.personaPrompt)
+        : profile.prompt;
+    return {
+        enabled: source.enabled !== false,
+        profileId,
+        serverUrl: personaPlexDefaultConfig.serverUrl,
+        voicePrompt: personaPlexDefaultConfig.voicePrompt,
+        personaPrompt
+    };
+}
+
+function readPersonaPlexConfigInputs() {
+    const selectedProfileId = personaPlexProfileSelect ? personaPlexProfileSelect.value : personaPlexConfig.profileId;
+    const selectedProfile = personaPlexProfileById(selectedProfileId) || personaPlexDefaultProfile;
+    const personaPrompt = selectedProfile.id === 'custom'
+        ? (personaPlexPersonaPrompt ? personaPlexPersonaPrompt.value : personaPlexConfig.personaPrompt)
+        : selectedProfile.prompt;
+    return normalizePersonaPlexConfig({
+        enabled: true,
+        profileId: selectedProfile.id,
+        serverUrl: personaPlexServerUrl ? personaPlexServerUrl.value : personaPlexConfig.serverUrl,
+        voicePrompt: personaPlexVoicePrompt ? personaPlexVoicePrompt.value : personaPlexConfig.voicePrompt,
+        personaPrompt
+    });
+}
+
+function applyPersonaPlexConfig(config) {
+    personaPlexConfig = normalizePersonaPlexConfig(config);
+    renderPersonaPlexProfileOptions(personaPlexConfig.profileId);
+    if (personaPlexServerUrl) personaPlexServerUrl.value = personaPlexConfig.serverUrl;
+    if (personaPlexVoicePrompt) personaPlexVoicePrompt.value = personaPlexConfig.voicePrompt;
+    if (personaPlexPersonaPrompt) personaPlexPersonaPrompt.value = personaPlexConfig.personaPrompt;
+    if (personaPlexCustomPersonaField)
+        personaPlexCustomPersonaField.hidden = personaPlexConfig.profileId !== 'custom';
+}
+
+function setPersonaPlexStatus(text, kind) {
+    if (personaPlexStatus) {
+        personaPlexStatus.textContent = text || '';
+        personaPlexStatus.classList.toggle('ready', kind === 'ready');
+        personaPlexStatus.classList.toggle('error', kind === 'error');
+    }
+}
+
+function setPersonaPlexTransportStatus(text) {
+    if (personaPlexTransportStatus)
+        personaPlexTransportStatus.textContent = text || '';
+}
+
+function personaPlexInstallActive(state) {
+    const status = String(state && state.status || '').toLowerCase();
+    return status === 'queued' || status === 'running';
+}
+
+function voiceModeInstallMessage(message) {
+    return String(message || '')
+        .replace(/PersonaPlex/g, 'Voice Mode')
+        .replace(/HF_TOKEN/g, 'Hugging Face token')
+        .replace(/NVIDIA Voice Mode model license/g, 'model license');
+}
+
+function setPersonaPlexInstallState(state, showInstall) {
+    personaPlexInstallState = state && typeof state === 'object' ? state : null;
+    const active = personaPlexInstallActive(personaPlexInstallState);
+    const installed = !!(personaPlexInstallState && personaPlexInstallState.localInstalled);
+    const visible = false;
+    if (personaPlexInstallPanel)
+        personaPlexInstallPanel.hidden = !visible;
+    if (personaPlexInstall) {
+        personaPlexInstall.textContent = installed ? 'Voice Mode installed' : 'Install Voice Mode';
+        personaPlexInstall.disabled = personaPlexReady || active || installed;
+    }
+    if (personaPlexInstallStatus) {
+        if (!visible) {
+            personaPlexInstallStatus.textContent = '';
+        } else if (active) {
+            const progress = Number(personaPlexInstallState.progress || 0);
+            personaPlexInstallStatus.textContent = voiceModeInstallMessage(personaPlexInstallState.message || 'Voice Mode install is queued.') + (progress > 0 ? ' ' + Math.round(progress) + '%' : '');
+        } else if (installed && personaPlexInstallState.needsHuggingFaceToken) {
+            personaPlexInstallStatus.textContent = 'Installed. Add your Hugging Face token after accepting the model license, then refresh.';
+        } else if (installed) {
+            personaPlexInstallStatus.textContent = voiceModeInstallMessage(personaPlexInstallState.message || 'Voice Mode is installed on this workstation.');
+        } else {
+            personaPlexInstallStatus.textContent = 'Adds the local voice model runtime to this workstation.';
+        }
+    }
+}
+
+function personaPlexIsRunning() {
+    return !!(personaPlexSocket && personaPlexSocket.readyState === WebSocket.OPEN) ||
+        !!personaPlexRecorder ||
+        !!personaPlexMicStream;
+}
+
+function personaPlexCanAttemptStart() {
+    if (personaPlexInstallActive(personaPlexInstallState))
+        return false;
+    if (personaPlexReady)
+        return true;
+    if (!personaPlexInstallState)
+        return true;
+    if (personaPlexInstallState.needsHuggingFaceToken)
+        return false;
+    return !!personaPlexInstallState.localInstalled;
+}
+
+function updatePersonaPlexControls() {
+    const running = personaPlexIsRunning();
+    const canAttemptStart = personaPlexCanAttemptStart();
+    if (personaPlexStart) {
+        personaPlexStart.disabled = !running && !personaPlexStartPending && !canAttemptStart;
+        personaPlexStart.textContent = running ? 'Stop Voice' : (personaPlexStartPending ? 'Cancel Start' : 'Start Voice');
+        personaPlexStart.title = running ? 'Stop Voice Mode' : (personaPlexStartPending ? 'Cancel Voice Mode startup' : 'Start Voice Mode');
+        personaPlexStart.setAttribute('aria-pressed', running ? 'true' : 'false');
+    }
+    if (personaPlexStop) {
+        personaPlexStop.hidden = true;
+        personaPlexStop.disabled = true;
+    }
+    if (personaPlexToggle)
+        personaPlexToggle.classList.toggle('listening', running || !!personaPlexRecorder);
+    updateVoiceButtonVisibility();
+    if (personaPlexInstall)
+        personaPlexInstall.disabled = personaPlexReady ||
+            personaPlexInstallActive(personaPlexInstallState) ||
+            !!(personaPlexInstallState && personaPlexInstallState.localInstalled);
+}
+
+function personaPlexRouteUrl(path, config, explicitPrefix) {
+    const url = new URL(explicitPrefix ? explicitLocalRoutePath(path) : localRoutePath(path), window.location.href);
+    const nextConfig = normalizePersonaPlexConfig(config || personaPlexConfig);
+    url.searchParams.set('serverUrl', nextConfig.serverUrl);
+    url.searchParams.set('voicePrompt', nextConfig.voicePrompt);
+    url.searchParams.set('personaPrompt', nextConfig.personaPrompt);
+    if (currentSessionId)
+        url.searchParams.set('sessionId', currentSessionId);
+    return url;
+}
+
+function personaPlexWebSocketUrl(config) {
+    const url = personaPlexRouteUrl('/api/personaplex/ws', config, true);
+    url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return url.toString();
+}
+
+async function loadPersonaPlexConfig() {
+    const response = await fetch(localRoutePath('/api/personaplex/config'));
+    const data = await readJsonResponse(response, null);
+    if (!response.ok || !data || !data.ok)
+        throw new Error(data && data.error ? data.error : 'Voice Mode config failed.');
+    applyPersonaPlexConfig({
+        ...personaPlexDefaultConfig,
+        ...(data.config || {}),
+        ...personaPlexLocalOverrides()
+    });
+    return personaPlexConfig;
+}
+
+async function savePersonaPlexConfig() {
+    const config = readPersonaPlexConfigInputs();
+    applyPersonaPlexConfig(config);
+    savePersonaPlexLocalOverrides(config);
+    const response = await fetch(localRoutePath('/api/personaplex/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config })
+    });
+    const data = await readJsonResponse(response, null);
+    if (!response.ok || !data || !data.ok)
+        throw new Error(data && data.error ? data.error : 'Voice Mode config save failed.');
+    setPersonaPlexStatus('Saved', personaPlexReady ? 'ready' : '');
+    await refreshPersonaPlexStatus();
+}
+
+async function refreshPersonaPlexStatus() {
+    const config = readPersonaPlexConfigInputs();
+    applyPersonaPlexConfig(config);
+    savePersonaPlexLocalOverrides(config);
+    personaPlexReady = false;
+    updatePersonaPlexControls();
+    setPersonaPlexStatus('Checking...', '');
+    const response = await fetch(personaPlexRouteUrl('/api/personaplex/status', config).toString());
+    const data = await readJsonResponse(response, null);
+    if (!response.ok || !data || !data.ok)
+        throw new Error(data && data.error ? data.error : 'Voice Mode status failed.');
+    personaPlexLastStatusData = data;
+    personaPlexReady = !!data.ready;
+    setPersonaPlexInstallState(data.install, !!data.installRequired);
+    if (personaPlexReady) {
+        setPersonaPlexStatus('Ready', 'ready');
+    } else {
+        const install = data.install || {};
+        if (data.installRequired && !install.localInstalled) {
+            setPersonaPlexStatus('Install Voice Mode from JackLLM Workstation.', '');
+        } else if (install.localInstalled && install.needsHuggingFaceToken) {
+            setPersonaPlexStatus('Open JackLLM Workstation to add the NVIDIA PersonaPlex model access token.', '');
+        } else if (data.installRequired) {
+            setPersonaPlexStatus('Finish Voice Mode setup in JackLLM Workstation.', '');
+        } else if (data.status === 'loading') {
+            setPersonaPlexStatus('Starting voice model...', '');
+        } else if (data.status === 'error' && data.error) {
+            setPersonaPlexStatus(voiceModeInstallMessage(data.error), 'error');
+        } else if (install.localInstalled && install.hfTokenAvailable) {
+            setPersonaPlexStatus('Voice model is installed. Press Start Voice to connect.', '');
+        } else {
+            setPersonaPlexStatus('Voice model is not running.', 'error');
+        }
+    }
+    window.clearTimeout(personaPlexStatusTimer);
+    if (!personaPlexReady && data.status === 'loading') {
+        personaPlexStatusTimer = window.setTimeout(() => {
+            refreshPersonaPlexStatus().catch(() => { });
+        }, 1800);
+    }
+    updatePersonaPlexControls();
+    return personaPlexReady;
+}
+
+async function startPersonaPlexServer() {
+    const config = readPersonaPlexConfigInputs();
+    applyPersonaPlexConfig(config);
+    savePersonaPlexLocalOverrides(config);
+    setPersonaPlexStatus('Starting voice model...', '');
+    const response = await fetch(personaPlexRouteUrl('/api/personaplex/start', config).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cpuOffload: false })
+    });
+    const data = await readJsonResponse(response, null);
+    if (!response.ok || !data || !data.ok)
+        throw new Error(data && data.error ? data.error : 'Voice Mode could not start.');
+    personaPlexLastStatusData = data;
+    personaPlexReady = !!data.ready;
+    setPersonaPlexInstallState(data.install, !!data.installRequired);
+    if (!personaPlexReady)
+        setPersonaPlexStatus(data.error || 'Starting voice model...', '');
+    updatePersonaPlexControls();
+    return data;
+}
+
+async function stopPersonaPlexServer() {
+    const config = readPersonaPlexConfigInputs();
+    const response = await fetch(personaPlexRouteUrl('/api/personaplex/stop', config).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+    });
+    const data = await readJsonResponse(response, null);
+    if (data && data.install)
+        setPersonaPlexInstallState(data.install, !!data.installRequired);
+    personaPlexReady = false;
+    updatePersonaPlexControls();
+    return data;
+}
+
+async function refreshPersonaPlexInstallStatus() {
+    const response = await fetch(personaPlexRouteUrl('/api/personaplex/install', readPersonaPlexConfigInputs()).toString());
+    const data = await readJsonResponse(response, null);
+    if (!response.ok || !data || !data.ok)
+        throw new Error(data && data.error ? data.error : 'Voice Mode install status failed.');
+    setPersonaPlexInstallState(data.install, !!data.installRequired);
+    updatePersonaPlexControls();
+    return data.install || null;
+}
+
+function schedulePersonaPlexInstallPoll() {
+    window.clearTimeout(personaPlexInstallPollTimer);
+    if (!personaPlexInstallActive(personaPlexInstallState))
+        return;
+    personaPlexInstallPollTimer = window.setTimeout(() => {
+        refreshPersonaPlexInstallStatus()
+            .then(state => {
+                if (personaPlexInstallActive(state)) {
+                    schedulePersonaPlexInstallPoll();
+                } else {
+                    refreshPersonaPlexStatus().catch(() => { });
+                }
+            })
+            .catch(error => {
+                if (personaPlexInstallStatus)
+                    personaPlexInstallStatus.textContent = error && error.message ? error.message : String(error);
+            });
+    }, 1800);
+}
+
+async function installPersonaPlex() {
+    window.clearTimeout(personaPlexInstallPollTimer);
+    setPersonaPlexInstallState({ status: 'queued', message: 'Queueing Voice Mode install.', progress: 1 }, true);
+    updatePersonaPlexControls();
+    const response = await fetch(personaPlexRouteUrl('/api/personaplex/install', readPersonaPlexConfigInputs()).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'install', startAfterInstall: true })
+    });
+    const data = await readJsonResponse(response, null);
+    if (!response.ok || !data || !data.ok)
+        throw new Error(data && data.error ? data.error : 'Voice Mode install could not be queued.');
+    setPersonaPlexInstallState(data.install, true);
+    schedulePersonaPlexInstallPoll();
+}
+
+function setPersonaPlexPanelOpen(open) {
+    if (!personaPlexPanel) return;
+    const shouldOpen = !!open;
+    const wasOpen = !personaPlexPanel.hidden;
+    if (wasOpen === shouldOpen) return;
+    personaPlexPanel.hidden = !shouldOpen;
+    if (!open)
+        window.clearTimeout(personaPlexStatusTimer);
+    if (shouldOpen) {
+        loadPersonaPlexConfig()
+            .then(refreshPersonaPlexStatus)
+            .catch(error => {
+                setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error');
+                updatePersonaPlexControls();
+            });
+    }
+}
+
+function resetPersonaPlexTranscript() {
+    personaPlexTranscriptText = '';
+    personaPlexTranscriptMessage = null;
+    clearTimeout(personaPlexTranscriptSaveTimer);
+    personaPlexTranscriptSaveTimer = 0;
+    if (personaPlexTranscript)
+        personaPlexTranscript.textContent = 'No transcript yet.';
+}
+
+function commitPersonaPlexTranscript(finalize) {
+    const text = personaPlexTranscriptText.trim();
+    if (!text) return;
+    const content = '[Voice transcript]\n' + text;
+    if (!personaPlexTranscriptMessage) {
+        personaPlexTranscriptMessage = { role: 'assistant', content };
+        messages.push(personaPlexTranscriptMessage);
+    } else {
+        personaPlexTranscriptMessage.content = content;
+    }
+    try { renderConversation(); } catch { }
+    if (finalize) {
+        saveCurrentSession(false).catch(() => { });
+    } else {
+        clearTimeout(personaPlexTranscriptSaveTimer);
+        personaPlexTranscriptSaveTimer = setTimeout(() => {
+            personaPlexTranscriptSaveTimer = 0;
+            saveCurrentSession(false).catch(() => { });
+        }, 1200);
+    }
+}
+
+function appendPersonaPlexTranscript(text) {
+    if (!text) return;
+    personaPlexTranscriptText += text;
+    if (personaPlexTranscript)
+        personaPlexTranscript.textContent = personaPlexTranscriptText.trim() || personaPlexTranscriptText || 'No transcript yet.';
+    commitPersonaPlexTranscript(false);
+}
+
+function personaPlexMessageBytes(kind, payload) {
+    const body = payload instanceof Uint8Array ? payload : new Uint8Array(payload || []);
+    const frame = new Uint8Array(body.length + 1);
+    frame[0] = kind;
+    frame.set(body, 1);
+    return frame;
+}
+
+function sendPersonaPlexAudioPayload(payload) {
+    if (!personaPlexSocket || personaPlexSocket.readyState !== WebSocket.OPEN || !payload)
+        return;
+    const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+    if (!bytes.length) return;
+    personaPlexSocket.send(personaPlexMessageBytes(0x01, bytes));
+}
+
+function personaPlexMediaRecorderMimeType() {
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported)
+        return '';
+    const candidates = [
+        'audio/ogg;codecs=opus',
+        'audio/webm;codecs=opus',
+        'audio/ogg',
+        'audio/webm'
+    ];
+    return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+async function startPersonaPlexRecorder() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+        throw new Error('Microphone capture is not available in this browser.');
+    personaPlexMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            channelCount: 1,
+            sampleRate: 24000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+        }
+    });
+
+    if (typeof window.Recorder === 'function') {
+        const recorder = new window.Recorder({
+            numberOfChannels: 1,
+            encoderSampleRate: 24000,
+            streamPages: true,
+            encoderApplication: 2049
+        });
+        recorder.ondataavailable = data => sendPersonaPlexAudioPayload(data);
+        recorder.start(personaPlexMicStream);
+        personaPlexRecorder = recorder;
+        personaPlexRecorderMode = 'opus-recorder';
+        return;
+    }
+
+    const mimeType = personaPlexMediaRecorderMimeType();
+    if (!window.MediaRecorder || !mimeType)
+        throw new Error('This browser cannot encode microphone audio as Opus.');
+    const recorder = new MediaRecorder(personaPlexMicStream, { mimeType });
+    recorder.ondataavailable = event => {
+        if (!event || !event.data || event.data.size <= 0) return;
+        event.data.arrayBuffer()
+            .then(buffer => sendPersonaPlexAudioPayload(new Uint8Array(buffer)))
+            .catch(() => { });
+    };
+    recorder.start(40);
+    personaPlexRecorder = recorder;
+    personaPlexRecorderMode = 'MediaRecorder ' + mimeType;
+}
+
+function stopPersonaPlexRecorder() {
+    if (personaPlexRecorder) {
+        try { personaPlexRecorder.stop(); } catch { }
+        try { personaPlexRecorder.destroy && personaPlexRecorder.destroy(); } catch { }
+    }
+    personaPlexRecorder = null;
+    personaPlexRecorderMode = '';
+    if (personaPlexMicStream) {
+        try { personaPlexMicStream.getTracks().forEach(track => track.stop()); } catch { }
+    }
+    personaPlexMicStream = null;
+}
+
+function playPersonaPlexAudio(payload) {
+    if (!payload || !payload.length) return;
+    const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+    personaPlexAudioQueue = personaPlexAudioQueue.then(() => new Promise(resolve => {
+        const blob = new Blob([bytes], { type: 'audio/ogg; codecs=opus' });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            URL.revokeObjectURL(url);
+            resolve();
+        };
+        audio.onended = finish;
+        audio.onerror = finish;
+        audio.play().catch(finish);
+        setTimeout(finish, 5000);
+    })).catch(() => { });
+}
+
+function handlePersonaPlexMessage(event) {
+    const data = event && event.data;
+    if (typeof data === 'string') {
+        appendPersonaPlexTranscript(data);
+        return;
+    }
+    Promise.resolve(data instanceof Blob ? data.arrayBuffer() : data)
+        .then(buffer => {
+            const bytes = new Uint8Array(buffer || []);
+            if (!bytes.length) return;
+            const kind = bytes[0];
+            const payload = bytes.slice(1);
+            if (kind === 0x00) {
+                setPersonaPlexTransportStatus('Connected');
+                startPersonaPlexRecorder()
+                    .then(() => {
+                        setPersonaPlexTransportStatus('Listening');
+                        updatePersonaPlexControls();
+                    })
+                    .catch(error => {
+                        setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error');
+                        stopPersonaPlex();
+                    });
+            } else if (kind === 0x01) {
+                playPersonaPlexAudio(payload);
+            } else if (kind === 0x02) {
+                appendPersonaPlexTranscript(new TextDecoder().decode(payload));
+            } else if (kind === 0x04) {
+                setPersonaPlexTransportStatus('Preparing');
+            } else if (kind === 0x05) {
+                const errorText = new TextDecoder().decode(payload) || 'Voice Mode returned an error.';
+                setPersonaPlexStatus(errorText, 'error');
+                addMessage('error', errorText);
+            } else if (kind === 0x06 && personaPlexSocket && personaPlexSocket.readyState === WebSocket.OPEN) {
+                personaPlexSocket.send(new Uint8Array([0x06]));
+            }
+        })
+        .catch(error => setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error'));
+}
+
+async function waitForPersonaPlexReady(attemptId, timeoutMs) {
+    const deadline = Date.now() + Math.max(3000, timeoutMs || 90000);
+    while (attemptId === personaPlexStartAttemptId && Date.now() < deadline) {
+        const ready = await refreshPersonaPlexStatus();
+        if (ready)
+            return true;
+
+        const install = personaPlexInstallState || {};
+        if (install.needsHuggingFaceToken || (personaPlexLastStatusData && personaPlexLastStatusData.installRequired && !install.localInstalled))
+            return false;
+        if (personaPlexLastStatusData && personaPlexLastStatusData.status === 'error')
+            return false;
+
+        setPersonaPlexStatus(install.serverRunning || (personaPlexLastStatusData && personaPlexLastStatusData.status === 'loading')
+            ? 'Starting voice model...'
+            : 'Starting Voice Mode...', '');
+        await new Promise(resolve => setTimeout(resolve, 1800));
+    }
+    return false;
+}
+
+async function startPersonaPlex() {
+    if (personaPlexIsRunning()) {
+        stopPersonaPlex();
+        return;
+    }
+    if (personaPlexStartPending) {
+        stopPersonaPlex();
+        return;
+    }
+
+    personaPlexStartPending = true;
+    const attemptId = ++personaPlexStartAttemptId;
+    setPersonaPlexTransportStatus('Starting');
+    updatePersonaPlexControls();
+    try {
+        await loadPersonaPlexConfig();
+        personaPlexConfig = readPersonaPlexConfigInputs();
+        savePersonaPlexLocalOverrides(personaPlexConfig);
+        if (!personaPlexReady)
+            await startPersonaPlexServer();
+        const ready = personaPlexReady || await waitForPersonaPlexReady(attemptId, 90000);
+        if (!ready || attemptId !== personaPlexStartAttemptId) {
+            if (attemptId === personaPlexStartAttemptId)
+                setPersonaPlexTransportStatus('Idle');
+            return;
+        }
+        stopPersonaPlex(false);
+        personaPlexStartPending = false;
+        ensureSessionId();
+        resetPersonaPlexTranscript();
+        setPersonaPlexTransportStatus('Connecting');
+        personaPlexSocket = new WebSocket(personaPlexWebSocketUrl(personaPlexConfig));
+        personaPlexSocket.binaryType = 'arraybuffer';
+        personaPlexSocket.onopen = () => {
+            setPersonaPlexTransportStatus('Waiting');
+            updatePersonaPlexControls();
+        };
+        personaPlexSocket.onmessage = handlePersonaPlexMessage;
+        personaPlexSocket.onerror = () => {
+            setPersonaPlexStatus('Voice connection error.', 'error');
+        };
+        personaPlexSocket.onclose = () => {
+            stopPersonaPlexRecorder();
+            setPersonaPlexTransportStatus('Idle');
+            updatePersonaPlexControls();
+            commitPersonaPlexTranscript(true);
+        };
+        updatePersonaPlexControls();
+    } catch (error) {
+        setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error');
+        updatePersonaPlexControls();
+    } finally {
+        if (attemptId === personaPlexStartAttemptId && !personaPlexSocket) {
+            personaPlexStartPending = false;
+            updatePersonaPlexControls();
+        }
+    }
+}
+
+function stopPersonaPlex(releaseServer = true) {
+    personaPlexStartPending = false;
+    personaPlexStartAttemptId++;
+    stopPersonaPlexRecorder();
+    if (personaPlexSocket) {
+        try { personaPlexSocket.close(); } catch { }
+    }
+    personaPlexSocket = null;
+    setPersonaPlexTransportStatus('Idle');
+    updatePersonaPlexControls();
+    commitPersonaPlexTranscript(true);
+    if (releaseServer) {
+        stopPersonaPlexServer()
+            .then(() => setPersonaPlexStatus('Voice model stopped.', ''))
+            .catch(error => setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error'));
     }
 }
 
@@ -19216,14 +21038,35 @@ function updateMediaSourceAttachVisibility() {
 function applySelectedRuntimeModelService() {
     if (!serviceSelect) return false;
     const modelId = selectedModel();
+    const runtimeModel = findRuntimeModelInfo(modelId);
+    const toolServiceId = modelSupportsToolsById(modelId) ? 'agent' : '';
     const serviceId = runtimeModelServices[modelId] || inferMediaGenerationServiceFromModelText(modelId, modelOptionDisplayNames[modelId]);
+    if (manualServiceSelectionActive &&
+        manualServiceSelectionModel === modelId &&
+        manualServiceSelectionId === defaultServiceId &&
+        (toolServiceId || serviceId)) {
+        clearManualServiceSelection();
+    } else if (runtimeModel && !runtimeModelSupportsChat(runtimeModel) &&
+        serviceId &&
+        isMediaGenerationService(serviceId) &&
+        manualServiceSelectionActive &&
+        manualServiceSelectionModel === modelId &&
+        manualServiceSelectionId !== serviceId) {
+        clearManualServiceSelection();
+    }
+    if (shouldKeepManualServiceSelection()) return false;
+    if (toolServiceId && isChatModeServiceSelectable(toolServiceId)) {
+        const option = Array.from(serviceSelect.options).find(option => option.value === toolServiceId);
+        if (option && !option.disabled && serviceSelect.value !== toolServiceId)
+            return setAutomaticServiceSelection(toolServiceId, true);
+        return false;
+    }
     if (!serviceId || !isMediaGenerationService(serviceId)) {
         if (isMediaGenerationService(selectedService())) {
             return setAutomaticServiceSelection(defaultServiceId, true);
         }
         return false;
     }
-    const runtimeModel = findRuntimeModelInfo(modelId);
     if (manualServiceSelectionActive &&
         manualServiceSelectionModel === modelId &&
         manualServiceSelectionId === defaultServiceId) {
@@ -19234,7 +21077,6 @@ function applySelectedRuntimeModelService() {
         manualServiceSelectionId !== serviceId) {
         clearManualServiceSelection();
     }
-    if (shouldKeepManualServiceSelection()) return false;
     if (!isChatModeServiceSelectable(serviceId)) return false;
     const option = Array.from(serviceSelect.options).find(option => option.value === serviceId);
     if (!option || option.disabled || serviceSelect.value === serviceId) return false;
@@ -19418,11 +21260,12 @@ async function loadServices() {
 }
 
 function applyPermissionUi() {
-    const adminEditable = !!(permissionCanEdit && canUseAdminTools());
+    const adminVisible = canUseAdminTools();
+    const adminEditable = !!(permissionCanEdit && adminVisible);
     const sqlAdminEditable = adminEditable && isJackSqlAdminUser();
-    if (permissionsMenu) permissionsMenu.style.display = adminEditable ? '' : 'none';
-    if (accessPanelToggle) accessPanelToggle.style.display = adminEditable ? '' : 'none';
-    if (!adminEditable) setAccessPanelVisible(false);
+    if (permissionsMenu) permissionsMenu.style.display = adminVisible ? '' : 'none';
+    if (accessPanelToggle) accessPanelToggle.style.display = adminVisible ? '' : 'none';
+    if (!adminVisible) setAccessPanelVisible(false);
     if (sqlAdminWrap) sqlAdminWrap.style.display = sqlAdminEditable ? '' : 'none';
     if (sqlAdminMenuToggle) sqlAdminMenuToggle.style.display = sqlAdminEditable ? '' : 'none';
     if (adminSqlPermissionRow) adminSqlPermissionRow.style.display = sqlAdminEditable ? '' : 'none';
@@ -20228,7 +22071,7 @@ function updateSolutionStorage(storage) {
     }
     if (solutionStorageFill) {
         const percent = unlimited ? 100 : Math.max(0, Math.min(100, used / Math.max(1, limit) * 100));
-        solutionStorageFill.style.width = percent.toFixed(2) + '%';
+        setFixedGradientProgressFill(solutionStorageFill, percent);
     }
     if (usageState)
         updateUsagePanel(0);
@@ -21354,11 +23197,7 @@ function shouldOfferMessageCopy(role, content) {
 }
 
 function buildAssistantCopyText(content, reasoning) {
-    const answerText = normalizeDisplayText(content || '').trim();
-    const reasoningText = normalizeDisplayText(reasoning || '').trim();
-    if (answerText && reasoningText)
-        return answerText + '\n\nThought process:\n' + reasoningText;
-    return answerText || reasoningText;
+    return sanitizeToolTranscriptForDisplay(content || '').trim();
 }
 
 function isGenerationFailureText(content) {
@@ -21522,10 +23361,6 @@ function renderQueuedPromptAction(queuedTurn) {
     const item = queuedTurn && queuedTurn.userItem;
     if (!item || !item.isConnected) return;
     const canSteer = queuedPromptCanSteer(queuedTurn);
-    if (!canSteer) {
-        clearQueuedPromptAction(queuedTurn, '');
-        return;
-    }
 
     item.classList.add('queued-prompt');
     item.dataset.queueId = queuedTurn.queueId || '';
@@ -21536,22 +23371,58 @@ function renderQueuedPromptAction(queuedTurn) {
         item.appendChild(actions);
     }
     actions.textContent = '';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'queued-message-steer';
-    button.textContent = 'Steer';
-    button.title = 'Use this queued prompt to steer the running agent turn, then remove it from the queue';
-    button.addEventListener('click', event => {
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'queued-message-button queued-message-edit';
+    editButton.textContent = 'Edit';
+    editButton.title = 'Move this queued prompt back into the composer and remove it from the queue';
+    editButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        editQueuedPrompt(queuedTurn.queueId);
+    });
+    actions.appendChild(editButton);
+    if (!canSteer) return;
+    const steerButton = document.createElement('button');
+    steerButton.type = 'button';
+    steerButton.className = 'queued-message-button queued-message-steer';
+    steerButton.textContent = 'Steer';
+    steerButton.title = 'Use this queued prompt to steer the running agent turn, then remove it from the queue';
+    steerButton.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
         steerQueuedPrompt(queuedTurn.queueId)
             .catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     });
-    actions.appendChild(button);
+    actions.appendChild(steerButton);
 }
 
 function refreshQueuedPromptActions() {
     queuedPrompts.forEach(renderQueuedPromptAction);
+}
+
+function editQueuedPrompt(queueId) {
+    const index = queuedPrompts.findIndex(item => item && item.queueId === queueId);
+    if (index < 0) return false;
+    const queuedTurn = queuedPrompts[index];
+    queuedPrompts.splice(index, 1);
+    const text = queuedPromptText(queuedTurn);
+    if (queuedTurn.userItem && queuedTurn.userItem.isConnected)
+        queuedTurn.userItem.remove();
+    if (prompt) {
+        prompt.value = text;
+        prompt.focus();
+        try { prompt.setSelectionRange(prompt.value.length, prompt.value.length); } catch { }
+    }
+    pendingImages = [];
+    pendingFiles = [];
+    pendingMediaSource = null;
+    renderPreviews();
+    refreshQueuedPromptBaseForSession(activeStreamState && activeStreamState.sessionContext);
+    updateContextToggleMeta();
+    scheduleDraftSessionSave();
+    setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
+    return true;
 }
 
 async function steerQueuedPrompt(queueId) {
@@ -21641,6 +23512,27 @@ function createAssistantParts(item) {
         promptSpeedButtons.push(button);
         promptControls.appendChild(button);
     });
+    const promptStopButton = document.createElement('button');
+    promptStopButton.type = 'button';
+    promptStopButton.className = 'prompt-processing-control prompt-processing-action prompt-processing-stop';
+    promptStopButton.textContent = 'Stop';
+    promptStopButton.title = 'Stop this response and clear queued prompts for this chat';
+    promptStopButton.hidden = true;
+    promptControls.appendChild(promptStopButton);
+    const promptSteerButton = document.createElement('button');
+    promptSteerButton.type = 'button';
+    promptSteerButton.className = 'prompt-processing-control prompt-processing-action prompt-processing-steer';
+    promptSteerButton.textContent = 'Steer';
+    promptSteerButton.title = 'Inject the current prompt at the next safe agent break';
+    promptSteerButton.hidden = true;
+    promptControls.appendChild(promptSteerButton);
+    const promptInterruptButton = document.createElement('button');
+    promptInterruptButton.type = 'button';
+    promptInterruptButton.className = 'prompt-processing-control prompt-processing-action prompt-processing-interrupt';
+    promptInterruptButton.textContent = 'Interrupt';
+    promptInterruptButton.title = 'Stop this response and send the current prompt immediately';
+    promptInterruptButton.hidden = true;
+    promptControls.appendChild(promptInterruptButton);
     promptStatus.appendChild(promptSpinner);
     promptStatus.appendChild(promptStatusText);
     promptStatus.appendChild(promptPercent);
@@ -21696,6 +23588,9 @@ function createAssistantParts(item) {
         promptControls,
         promptSkipButton,
         promptSpeedButtons,
+        promptStopButton,
+        promptSteerButton,
+        promptInterruptButton,
         details,
         pre,
         toolActivity,
@@ -21798,10 +23693,26 @@ function browserSkillToolName(name) {
 
 function firstBrowserSkillUrlFromText(text) {
     const raw = String(text || '');
-    const labeled = raw.match(/^\s*(?:url|finalUrl|href|opened)\s*:\s*(https?:\/\/\S+)/im);
-    if (labeled && labeled[1]) return labeled[1].replace(/[)\].,;]+$/, '');
+    const labeled = raw.match(/^\s*(?:url|finalUrl|href|opened)\s*:\s*(.+)$/im);
+    if (labeled && labeled[1]) return cleanBrowserSkillUrlCandidate(labeled[1]);
     const any = raw.match(/https?:\/\/[^\s<>"']+/i);
-    return any && any[0] ? any[0].replace(/[)\].,;]+$/, '') : '';
+    return any && any[0] ? cleanBrowserSkillUrlCandidate(any[0]) : '';
+}
+
+function cleanBrowserSkillUrlCandidate(value) {
+    let raw = String(value || '').trim();
+    if (!raw) return '';
+    raw = raw.replace(/&amp;/gi, '&');
+    const firstHttp = raw.search(/https?:\/\//i);
+    if (firstHttp > 0) raw = raw.slice(firstHttp);
+    const metadataLabels = '(?:query|text|selector|href|url|take|index|value|key|label|action|mode)';
+    raw = raw.replace(new RegExp('(?:\\\\r)?\\\\n\\s*' + metadataLabels + '\\s*:[\\s\\S]*$', 'i'), '');
+    raw = raw.replace(new RegExp('(?:%5c%5cr|%5cr)?(?:%5c%5cn|%5cn)\\s*' + metadataLabels + '\\s*:[\\s\\S]*$', 'i'), '');
+    raw = raw.replace(new RegExp('(?:%0d)?%0a\\s*' + metadataLabels + '\\s*:[\\s\\S]*$', 'i'), '');
+    raw = raw.split(/[\r\n]/)[0].trim();
+    const any = raw.match(/https?:\/\/[^\s<>"']+/i);
+    if (any && any[0]) raw = any[0];
+    return raw.trim().replace(/[)\].,;]+$/, '');
 }
 
 function setBrowserSkillCursorPosition(x, y, clicking) {
@@ -21821,13 +23732,120 @@ function setBrowserSkillCursorPosition(x, y, clicking) {
     }, clicking ? 260 : 1200);
 }
 
+function browserSkillFrameDocument() {
+    try {
+        return chatBrowserFrame && (chatBrowserFrame.contentDocument || (chatBrowserFrame.contentWindow && chatBrowserFrame.contentWindow.document));
+    } catch {
+        return null;
+    }
+}
+
+function browserSkillControlLabel(el) {
+    if (!el) return '';
+    return normalizeBrowserSkillLinkText(el.innerText || el.value || el.getAttribute('aria-label') || el.placeholder || el.name || el.id || el.textContent || el.tagName || '');
+}
+
+function browserSkillControlCandidates(doc) {
+    if (!doc) return [];
+    return Array.from(doc.querySelectorAll('button, input, textarea, select, [role="button"], [contenteditable="true"], a[href]'))
+        .filter(el => el && el.getBoundingClientRect && el.getBoundingClientRect().width >= 0 && el.getBoundingClientRect().height >= 0);
+}
+
+function browserSkillTargetFromArgs(args) {
+    const doc = browserSkillFrameDocument();
+    if (!doc || !doc.documentElement) return null;
+    const selector = String(args && args.selector || '').trim();
+    if (selector) {
+        try {
+            const selected = doc.querySelector(selector);
+            if (selected) return selected;
+        } catch { }
+    }
+    const controls = browserSkillControlCandidates(doc);
+    const index = Number(args && args.index || 0);
+    if (index > 0 && controls[index - 1]) return controls[index - 1];
+    const text = normalizeBrowserSkillLinkText(args && (args.text || args.label || args.query || args.value) || '');
+    if (text) {
+        const found = controls.find(el => browserSkillControlLabel(el).toLowerCase().includes(text.toLowerCase()));
+        if (found) return found;
+    }
+    const x = Number(args && (args.xPercent || args.x || args.left));
+    const y = Number(args && (args.yPercent || args.y || args.top));
+    if (Number.isFinite(x) && Number.isFinite(y) && doc.elementFromPoint && chatBrowserFrame) {
+        const rect = chatBrowserFrame.getBoundingClientRect();
+        const el = doc.elementFromPoint(Math.max(0, Math.min(rect.width, rect.width * x / 100)), Math.max(0, Math.min(rect.height, rect.height * y / 100)));
+        if (el) return el.closest && el.closest('button, input, textarea, select, [role="button"], [contenteditable="true"], a[href]') || el;
+    }
+    return doc.activeElement && doc.activeElement !== doc.body ? doc.activeElement : null;
+}
+
+function dispatchBrowserSkillInputEvents(el) {
+    if (!el) return;
+    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch { }
+    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch { }
+}
+
+function mirrorBrowserSkillDomAction(name, args) {
+    const action = String(name || '').toLowerCase();
+    const target = browserSkillTargetFromArgs(args || {});
+    if (!target) {
+        setChatBrowserMessage('Browser action could not find a live same-origin target.', true);
+        setChatBrowserOpen(true);
+        return false;
+    }
+    try { target.focus && target.focus(); } catch { }
+    try {
+        if (action === 'browser_click') {
+            target.click ? target.click() : target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        } else if (action === 'browser_type') {
+            const text = String(args && args.text || '');
+            if (target.isContentEditable) {
+                if (args && args.clear) target.textContent = '';
+                target.textContent = (args && args.clear) ? text : ((target.textContent || '') + text);
+            } else if ('value' in target) {
+                target.value = (args && args.clear) ? text : (String(target.value || '') + text);
+            }
+            dispatchBrowserSkillInputEvents(target);
+        } else if (action === 'browser_select') {
+            const value = String(args && (args.value || args.text || args.label) || '');
+            if (target.tagName && target.tagName.toLowerCase() === 'select') {
+                const options = Array.from(target.options || []);
+                const match = options.find(option => option.value === value || normalizeBrowserSkillLinkText(option.textContent).toLowerCase() === normalizeBrowserSkillLinkText(value).toLowerCase());
+                if (match) target.value = match.value;
+                else target.value = value;
+                dispatchBrowserSkillInputEvents(target);
+            }
+        } else if (action === 'browser_press') {
+            const key = String(args && (args.key || args.value || args.text) || 'Enter');
+            if (key.toLowerCase() === 'enter' && /^(button|submit)$/i.test(target.type || target.tagName || '')) target.click();
+            target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+            target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }));
+        }
+        setChatBrowserMessage('Applied ' + action.replace('browser_', '') + ' to ' + (browserSkillControlLabel(target) || 'page control') + '.', false);
+        setChatBrowserOpen(true);
+        window.setTimeout(syncChatBrowserUrlFromFrame, 80);
+        return true;
+    } catch (error) {
+        setChatBrowserMessage(error && error.message ? error.message : String(error), true);
+        setChatBrowserOpen(true);
+        return false;
+    }
+}
+
 function handleBrowserSkillToolEvent(rawEvent) {
     const call = normalizeToolCallEvent(rawEvent);
     if (!call || !browserSkillToolName(call.name)) return;
     const args = parseToolArgumentsPreview(call.argumentsPreview);
-    setBrowserSkillCursorPosition(args.xPercent || args.x || args.left, args.yPercent || args.y || args.top, call.name === 'browser_click_link');
+    const name = String(call.name || '').toLowerCase();
+    setBrowserSkillCursorPosition(args.xPercent || args.x || args.left, args.yPercent || args.y || args.top, name === 'browser_click_link' || name === 'browser_click');
     const status = normalizeToolCallStatus(call.status);
     if (status === 'failed') return;
+    if (/^browser_(?:click|type|select|press)$/i.test(name)) {
+        mirrorBrowserSkillDomAction(name, args);
+        return;
+    }
+    if (name === 'browser_find_text') return;
+    if (name === 'browser_read_page' && !(args.url || args.href)) return;
     const url = firstBrowserSkillUrlFromText(args.url || args.href || call.resultPreview || call.summary);
     if (!url) return;
     try {
@@ -22811,6 +24829,38 @@ function setThinkingDetailsOpen(parts, open) {
     parts.details.open = !!open;
 }
 
+function updatePromptProcessingActions(parts) {
+    if (!parts || !parts.promptStatus) return;
+    const streamState = currentSessionStreamState();
+    const active = !!(streamState && streamState.parts === parts && !parts.promptProcessingRetired);
+    const draftAvailable = hasDraftPromptContent();
+    const typedText = hasTypedPromptText();
+    const draftHasAttachments = pendingImages.length > 0 || pendingFiles.length > 0 || !!pendingMediaSource;
+    const agentMode = !sharedView && selectedService() === 'agent';
+    const canSteer = active && agentMode && typedText && !draftHasAttachments;
+    const canInterrupt = active && draftAvailable && !canSteer;
+    if (parts.promptStopButton) {
+        parts.promptStopButton.hidden = !active;
+        parts.promptStopButton.disabled = !active;
+    }
+    if (parts.promptSteerButton) {
+        parts.promptSteerButton.hidden = !canSteer;
+        parts.promptSteerButton.disabled = !canSteer;
+    }
+    if (parts.promptInterruptButton) {
+        parts.promptInterruptButton.hidden = !canInterrupt;
+        parts.promptInterruptButton.disabled = !canInterrupt;
+    }
+}
+
+function refreshActivePromptProcessingActions() {
+    const streamState = currentSessionStreamState();
+    if (streamState && streamState.parts)
+        updatePromptProcessingActions(streamState.parts);
+    if (remoteActiveStreamState && remoteActiveStreamState.parts)
+        updatePromptProcessingActions(remoteActiveStreamState.parts);
+}
+
 function wirePromptProcessingControls(parts) {
     if (!parts || !parts.promptControls || parts.promptControlsBound) return;
     parts.promptControlsBound = true;
@@ -22830,7 +24880,30 @@ function wirePromptProcessingControls(parts) {
             setPromptLoadingDisplaySpeed(parts, speed);
         });
     });
+    if (parts.promptStopButton) {
+        parts.promptStopButton.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            stopCurrentGeneration();
+        });
+    }
+    if (parts.promptSteerButton) {
+        parts.promptSteerButton.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            steerCurrentAgentConversation(prompt.value)
+                .catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+        });
+    }
+    if (parts.promptInterruptButton) {
+        parts.promptInterruptButton.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            interruptCurrentGenerationWithDraft();
+        });
+    }
     updatePromptLoadingSpeedControls(parts);
+    updatePromptProcessingActions(parts);
 }
 
 function setPromptLoadingDisplaySpeed(parts, speed) {
@@ -22877,6 +24950,7 @@ function showPromptProcessing(parts) {
     parts.promptStatus.hidden = false;
     parts.promptStatus.classList.remove('fading-out');
     updatePromptLoadingSpeedControls(parts);
+    updatePromptProcessingActions(parts);
 }
 
 const assistantLiveRenderIntervalMs = 15;
@@ -22987,10 +25061,16 @@ function setPromptProcessing(parts, progress, status, tokenProgress) {
     if (parts.promptPercent)
         parts.promptPercent.textContent = parts.hasOutputStarted ? '' : statusParts.elapsed;
     if (parts.promptFill) {
-        parts.promptFill.style.width = displayNumeric === null ? '24%' : formatProgressPercent(displayNumeric);
+        if (displayNumeric === null) {
+            parts.promptFill.style.width = '24%';
+            parts.promptFill.style.removeProperty('--progress-fill');
+        } else {
+            setFixedGradientProgressFill(parts.promptFill, Math.round(displayNumeric * 100));
+        }
         parts.promptFill.style.transform = displayNumeric === null ? '' : 'none';
     }
     updatePromptProcessingTrackLabel(parts, displayNumeric);
+    updatePromptProcessingActions(parts);
     scrollMessagesToEndIf(shouldScroll);
 }
 
@@ -23006,11 +25086,13 @@ function compactPromptProcessing(parts) {
     if (parts.promptStatusText)
         parts.promptStatusText.textContent = buildPromptProgressStatusText(parts, 'Receiving response...', acceleratePromptLoadingProgressForDisplay(parts, typeof parts.promptProgress === 'number' ? parts.promptProgress : null));
     updatePromptProcessingTrackLabel(parts, acceleratePromptLoadingProgressForDisplay(parts, typeof parts.promptProgress === 'number' ? parts.promptProgress : null));
+    updatePromptProcessingActions(parts);
 }
 
 function hidePromptProcessing(parts) {
     if (!parts || !parts.promptStatus) return;
     parts.promptProcessingRetired = true;
+    updatePromptProcessingActions(parts);
     window.clearTimeout(parts.promptProcessingHideTimer);
     window.clearTimeout(parts.promptProcessingFadeTimer);
     if (parts.promptLoadingSkipped) {
@@ -23838,7 +25920,7 @@ function repairRuntimeSpacingArtifacts(text) {
 function sanitizeToolTranscriptForDisplay(text) {
     let value = stripLooseToolJsonForDisplay(removeSerializedChatStreamControlEvents(text || ''));
     if (!hasToolTranscriptMarkup(value))
-        return repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(value)));
+        return trimRunawayUnpunctuatedTail(repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(value))));
 
     const resultClose = value.toLowerCase().lastIndexOf('</tool_result>');
     if (resultClose >= 0) {
@@ -23856,22 +25938,22 @@ function sanitizeToolTranscriptForDisplay(text) {
         value = next;
     }
 
-    return repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(stripToolPlanningMarkupForDisplay(value
+    return trimRunawayUnpunctuatedTail(repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(stripToolPlanningMarkupForDisplay(value
         .replace(/<\/?(?:tool_call|tool_result|function_call|function_result|arguments|argument|result)\b[^>]*>/gi, ''))
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
-        .trim())));
+        .trim()))));
 }
 
 function hasToolTranscriptMarkup(text) {
-    return /<\/?(?:tool_call|tool_result|function_call|function_result|arguments|argument|result|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|browser_skill|query)\b/i.test(text || '') ||
-        /^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|tool_call|function_call)\s*$/im.test(text || '');
+    return /<\/?(?:tool_call|tool_result|function_call|function_result|arguments|argument|result|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|query)\b/i.test(text || '') ||
+        /^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|tool_call|function_call)\s*$/im.test(text || '');
 }
 
 function stripLooseToolJsonForDisplay(text) {
     const value = normalizeDisplayText(text || '');
     if (!value) return '';
-    const names = 'internet_search|download_file|nuget_search|nuget_package_info|github_code_search|browser_open|browser_read_page|browser_click_link|browser_find_text|read_file|vs_read_file|vs_write_file|vs_replace_in_file|vs_copy_file|vs_rename_file|vs_delete_file|vs_search_files|vs_list_files|run_command_in_terminal|workstation_list_models|workstation_run_model|sockjackdml_plan_create|sockjackdml_progress_document_create|sockjackdml_plan_execute|sockjackdml_workflow_status|sockjackdml_progress_document_find|sockjackdml_execution_control|sockjackdml_evidence_link';
+    const names = 'internet_search|download_file|nuget_search|nuget_package_info|github_code_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|read_file|vs_read_file|vs_write_file|vs_replace_in_file|vs_copy_file|vs_rename_file|vs_delete_file|vs_search_files|vs_list_files|run_command_in_terminal|workstation_list_models|workstation_run_model|sockjackdml_plan_create|sockjackdml_progress_document_create|sockjackdml_plan_execute|sockjackdml_workflow_status|sockjackdml_progress_document_find|sockjackdml_execution_control|sockjackdml_evidence_link';
     const direct = new RegExp('^\\s*(?:```(?:json)?\\s*)?\\{[\\s\\S]{0,2200}?\"name\"\\s*:\\s*\"(?:' + names + ')\"[\\s\\S]{0,2200}?\"arguments\"\\s*:', 'i');
     const wrapped = new RegExp('^\\s*(?:```(?:json)?\\s*)?\\{[\\s\\S]{0,2200}?\"tool_calls?\"\\s*:', 'i');
     return direct.test(value) || wrapped.test(value) ? '' : value;
@@ -23880,7 +25962,7 @@ function stripLooseToolJsonForDisplay(text) {
 function stripToolPlanningMarkupForDisplay(text) {
     let value = normalizeDisplayText(text || '');
     if (!value) return '';
-    const names = 'search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|browser_skill|tool_call|tool_result|function_call|function_result|arguments|argument|result|query';
+    const names = 'search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|tool_call|tool_result|function_call|function_result|arguments|argument|result|query';
     const block = new RegExp('<\\s*(?:' + names + ')\\b[^>]*>[\\s\\S]*?(?:<\\s*\\/\\s*(?:' + names + ')\\s*>|<\\s*\\/\\s*>|<\\s*\\/\\s*)', 'gi');
     let previous = '';
     for (let i = 0; i < 8 && previous !== value; i++) {
@@ -23890,7 +25972,7 @@ function stripToolPlanningMarkupForDisplay(text) {
     value = value
         .replace(new RegExp('<\\s*(?:' + names + ')\\b[^>]*>[^\\n]*(?:<\\s*\\/\\s*)?', 'gi'), '')
         .replace(new RegExp('<\\s*\\/\\s*(?:' + names + ')\\s*>', 'gi'), '')
-        .replace(/^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|tool_call|function_call)\s*$/gim, '');
+        .replace(/^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|tool_call|function_call)\s*$/gim, '');
     return value;
 }
 
@@ -23904,10 +25986,10 @@ function stripReasoningMarkupForDisplay(text) {
         value = value.replace(block, '');
     }
 
-    const closeTag = /<\/(?:think|thinking|thought|analysis)>/i;
+    const closeTag = /<\/(?:think|thinking|thought|analysis)\s*>?/i;
     let guard = 0;
     while (closeTag.test(value) && guard++ < 8) {
-        value = value.replace(/([\s\S]*?)<\/(?:think|thinking|thought|analysis)>/i, (match, before) => {
+        value = value.replace(/([\s\S]*?)<\/(?:think|thinking|thought|analysis)\s*>?/i, (match, before) => {
             const suffix = value.slice(value.toLowerCase().indexOf(match.toLowerCase()) + match.length).trim();
             const prefix = String(before || '').trim();
             if (!prefix) return '';
@@ -23918,11 +26000,58 @@ function stripReasoningMarkupForDisplay(text) {
         });
     }
 
+    value = splitPlainReasoningHeadings(value, '').content;
     return value
-        .replace(/<\/?(?:think|thinking|thought|analysis)\b[^>]*>/gi, '')
+        .replace(/<\/?(?:think|thinking|thought|analysis)\b[^>\n]*>?/gi, '')
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
+}
+
+function splitPlainReasoningHeadings(content, reasoning) {
+    const source = normalizeDisplayText(content || '');
+    const existingReasoning = normalizeDisplayText(reasoning || '');
+    if (!source.trim()) return { content: source.trim(), reasoning: existingReasoning.trim() };
+    const heading = /(?:^|\n)\s*(?:\*\*)?\s*(thought\s+process|chain\s+of\s+thought|reasoning|analysis|thinking)\s*:?\s*(?:\*\*)?\s*(?:\n|$)/ig;
+    let match;
+    while ((match = heading.exec(source)) !== null) {
+        const before = source.slice(0, match.index);
+        const after = source.slice(match.index + match[0].length);
+        if (!looksSubstantiveAssistantAnswer(before)) continue;
+        const label = String(match[1] || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (label !== 'thought process' && label !== 'chain of thought' && !looksLikeReasoningLeak(after))
+            continue;
+        const parts = [existingReasoning.trim(), after.trim()].filter(Boolean);
+        return { content: before.trimEnd(), reasoning: parts.join('\n\n') };
+    }
+    return { content: source.trim(), reasoning: existingReasoning.trim() };
+}
+
+function looksSubstantiveAssistantAnswer(text) {
+    const normalized = normalizeDisplayText(text || '')
+        .replace(/<\/?(?:final_answer|answer|response)\b[^>]*>/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return normalized.length >= 12 && normalized.toLowerCase() !== 'final answer';
+}
+
+function trimRunawayUnpunctuatedTail(text) {
+    const value = normalizeDisplayText(text || '');
+    if (value.length < 1800 || value.includes('```')) return value;
+    const boundaryPattern = /[.!?]["')\]]?\s+/g;
+    let boundaryEnd = -1;
+    let match;
+    while ((match = boundaryPattern.exec(value)) !== null) {
+        const end = match.index + match[0].length;
+        if (end < value.length - 900) boundaryEnd = end;
+    }
+    if (boundaryEnd < 0) return value;
+    const tail = value.slice(boundaryEnd).trim();
+    if (tail.length < 900) return value;
+    const words = tail.match(/\b[\p{L}\p{N}][\p{L}\p{N}'-]*\b/gu) || [];
+    const punctuation = tail.match(/[.!?;:]/g) || [];
+    if (words.length < 140 || punctuation.length > 2 || /[{}=;<>]{3,}/.test(tail)) return value;
+    return value.slice(0, boundaryEnd).trimEnd() + '\n\n[Response shortened by proxy after runaway output.]';
 }
 
 function sanitizeFinalAnswerMarkupForDisplay(text) {
@@ -24891,7 +27020,8 @@ function splitThinkTags(text) {
         cursor = close + tag.close.length;
     }
 
-    return { content: answer.trimStart(), reasoning: reasoning.trim() };
+    const plainSplit = splitPlainReasoningHeadings(answer, reasoning);
+    return { content: plainSplit.content.trimStart(), reasoning: plainSplit.reasoning.trim() };
 }
 
 function extractReasoningFromStreamEvent(event) {
@@ -25503,8 +27633,8 @@ function buildBrowserSkillObservationPrompt(text, snapshot, loopIndex) {
         'DOM access: ' + (snapshot.sameOrigin ? 'live same-origin HTML is included' : 'limited cross-origin DOM; use browser tools for fetched HTML'),
         'Viewport: ' + (snapshot.viewport || 'unknown'),
         '',
-        'Available browser tools: browser_open, browser_read_page, browser_click_link, browser_find_text.',
-        'Use them to navigate/read pages. The web chat will mirror browser navigation live.',
+        'Available browser tools: browser_open, browser_read_page, browser_click_link, browser_click, browser_type, browser_select, browser_press, browser_find_text.',
+        'Use them to navigate/read and manipulate pages. The web chat will mirror browser navigation and DOM actions live.',
         'When the criteria is met, put BROWSER_SKILL_DONE on its own line.',
         'If you need another live browser observation after tool use, put BROWSER_SKILL_OBSERVE on its own line.',
         'If user input, login, CAPTCHA, payment, or other human intervention is required, put BROWSER_SKILL_USER on its own line and explain what is needed.',
@@ -25648,6 +27778,7 @@ function refreshQueuedPromptBaseForSession(sessionContext) {
 function queuePromptTurn(turn) {
     const sessionId = ensureSessionId();
     clearQueueStopForSession(sessionId);
+    clearLocalStopForSession(sessionId);
     const baseMessages = queuedSessionMessagesFor(sessionId, messages);
     const baseFiles = sessionFiles.slice();
     const queuedTurn = Object.assign({}, turn, {
@@ -25916,11 +28047,6 @@ async function sendMessage() {
     const images = sharedView ? [] : pendingImages.slice();
     const files = sharedView ? [] : pendingFiles.slice();
     const mediaSource = (!sharedView && isMediaGenerationService(service)) ? pendingMediaSource : null;
-    const currentStreamActive = !!currentSessionStreamState();
-    if (!text && images.length === 0 && files.length === 0 && !mediaSource && currentStreamActive) {
-        stopCurrentGeneration();
-        return;
-    }
     if (!text && images.length === 0 && files.length === 0 && !mediaSource) return;
     if (mediaSource && !text) {
         addMessage('error', 'A prompt is required when using a source media file for generation.');
@@ -26126,6 +28252,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
     let rawContent = '';
     let explicitReasoning = '';
     const noThinkRequested = messagesRequestNoThink(turnMessages);
+    const suppressReasoning = noThinkRequested || !selectedService();
     const streamId = 'stream_' + Math.random().toString(16).slice(2) + Date.now().toString(16);
     const controller = new AbortController();
     activeAbortController = controller;
@@ -26219,10 +28346,10 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             if (event.type === 'usage') return false;
 
             rawContent += event.content || '';
-            if (!noThinkRequested)
+            if (!suppressReasoning)
                 explicitReasoning += extractReasoningFromStreamEvent(event);
             const split = splitThinkTags(rawContent);
-            const reasoning = noThinkRequested ? '' : [explicitReasoning.trim(), split.reasoning.trim()].filter(Boolean).join('\n\n');
+            const reasoning = suppressReasoning ? '' : [explicitReasoning.trim(), split.reasoning.trim()].filter(Boolean).join('\n\n');
             updateActiveStreamDisplay(streamState, split.content, reasoning, false);
             return false;
         };
@@ -26245,7 +28372,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             handleStreamEventLine(buffer);
 
         const finalSplit = splitThinkTags(rawContent);
-        const finalReasoning = noThinkRequested ? '' : [explicitReasoning.trim(), finalSplit.reasoning.trim()].filter(Boolean).join('\n\n');
+        const finalReasoning = suppressReasoning ? '' : [explicitReasoning.trim(), finalSplit.reasoning.trim()].filter(Boolean).join('\n\n');
         const finalContent = buildAssistantFinalContent(finalSplit.content, getAssistantAnswerMarkdown(parts), finalReasoning, streamState);
         updateActiveStreamDisplay(streamState, finalContent, finalReasoning, true);
         if (streamState.parts) {
@@ -26273,7 +28400,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
         if (error && error.name === 'AbortError') {
             const stoppedSplit = splitThinkTags(rawContent);
             const stoppedContent = stoppedSplit.content || getAssistantAnswerMarkdown(parts) || '(stopped)';
-            const stoppedReasoning = noThinkRequested ? '' : [explicitReasoning.trim(), stoppedSplit.reasoning.trim()].filter(Boolean).join('\n\n');
+            const stoppedReasoning = suppressReasoning ? '' : [explicitReasoning.trim(), stoppedSplit.reasoning.trim()].filter(Boolean).join('\n\n');
             if (streamState.parts)
                 streamState.parts._pendingFileChanges = null;
             updateActiveStreamDisplay(streamState, stoppedContent, stoppedReasoning, true);
@@ -26678,7 +28805,7 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 }
 
 function localWebSocketUrl(path) {
-    const route = localRoutePath(path);
+    const route = explicitLocalRoutePath(path);
     const url = new URL(route, window.location.href);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return url.href;
@@ -27149,6 +29276,7 @@ function syncViewMenuState() {
     }
     updateEdgePanelToggle(sessionPanelEdgeToggle, sessionsPanelOpen, 'sessions');
     updateEdgePanelToggle(solutionPanelEdgeToggle, solutionExplorerOpen, 'files');
+    updateEdgePanelToggle(commentsPanelEdgeToggle, !commentsCollapsed, 'comments');
 }
 
 function desktopEdgeDrawersActive() {
@@ -27574,6 +29702,7 @@ function setChatBrowserOpen(open, options) {
 function normalizeChatBrowserUrl(value) {
     let raw = String(value || '').trim();
     raw = unwrapChatBrowserProxyUrl(raw) || raw;
+    raw = cleanBrowserSkillUrlCandidate(raw) || raw;
     if (!raw) return '';
     const schemeMatch = raw.match(/^([a-z][a-z0-9+.-]*):/i);
     const hasSlashedScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
@@ -27591,10 +29720,59 @@ function normalizeChatBrowserUrl(value) {
     return url.href;
 }
 
+function isStripeHostedCheckoutUrl(value) {
+    try {
+        const host = new URL(String(value || '').trim(), window.location.href).hostname.toLowerCase();
+        return host === 'checkout.stripe.com' ||
+            host.endsWith('.checkout.stripe.com') ||
+            host === 'buy.stripe.com' ||
+            host.endsWith('.buy.stripe.com');
+    } catch {
+        return false;
+    }
+}
+
+function openStripeCheckoutAtTopLevel(value) {
+    const url = normalizeChatBrowserUrl(value);
+    if (!url) return false;
+    try {
+        if (window.top && window.top !== window.self) {
+            window.top.location.href = url;
+            return true;
+        }
+    } catch { }
+    try {
+        window.location.href = url;
+        return true;
+    } catch { }
+    try {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function openStripeCheckoutOutsideFrame(value) {
+    const url = normalizeChatBrowserUrl(value);
+    try {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return true;
+    } catch {
+        return openStripeCheckoutAtTopLevel(url);
+    }
+}
+
 function openChatBrowserUrl(value, title) {
     const url = normalizeChatBrowserUrl(value);
     if (!url) {
         setChatBrowserOpen(true, { focus: true });
+        return;
+    }
+    if (isStripeHostedCheckoutUrl(url)) {
+        openStripeCheckoutOutsideFrame(url);
+        setChatBrowserMessage('Opened Stripe Checkout in the browser.', false);
+        setChatBrowserOpen(false);
         return;
     }
     revokeChatBrowserInternalUrl();
@@ -28658,9 +30836,17 @@ async function loadActiveSessions() {
         return;
     }
     activeChatSessions = Array.isArray(data.sessions) ? data.sessions : [];
+    if (locallyStoppedPromptSessionIds.size > 0) {
+        const activeSessionKeys = new Set(activeChatSessions.map(active => queueSessionKey(active && active.sessionId)).filter(Boolean));
+        Array.from(locallyStoppedPromptSessionIds).forEach(key => {
+            if (!activeSessionKeys.has(key))
+                locallyStoppedPromptSessionIds.delete(key);
+        });
+    }
     renderSharedPromptQueue();
     renderSessionList();
     renderRemoteActiveSessionForCurrentSession();
+    setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0 || activeChatSessions.length > 0);
 }
 
 function startActiveSessionPolling() {
@@ -28679,7 +30865,10 @@ function canModerateSharedPromptClients() {
 function renderSharedPromptQueue() {
     if (!sharedPromptQueue) return;
     const relevant = (activeChatSessions || []).filter(active =>
-        active && (!currentSessionId || active.sessionId === currentSessionId));
+        active &&
+        !isQueueStopRequestedForSession(active.sessionId) &&
+        !isSessionLocallyStopped(active.sessionId) &&
+        (!currentSessionId || active.sessionId === currentSessionId));
     sharedPromptQueue.hidden = !relevant.length;
     sharedPromptQueue.textContent = '';
     if (!relevant.length) return;
@@ -28967,9 +31156,12 @@ function getSessionFileCount(session) {
 
 function activeSessionFor(session) {
     if (!session || !session.id) return null;
+    if (isQueueStopRequestedForSession(session.id) || isSessionLocallyStopped(session.id)) return null;
     return activeChatSessions.find(active =>
         active &&
         active.sessionId === session.id &&
+        !isQueueStopRequestedForSession(active.sessionId) &&
+        !isSessionLocallyStopped(active.sessionId) &&
         (!active.ownerKey || !session.ownerKey || active.ownerKey === session.ownerKey || active.ownerKey === currentSessionOwnerKey));
 }
 
@@ -30725,6 +32917,9 @@ function runtimeCompatibilityRepairHint(data) {
 
 async function loadRuntimeCompatibilityStatus(options) {
     const quiet = options && options.quiet;
+    const force = options && options.force;
+    if (!force && runtimeCompatibilityStatus && runtimeCompatibilityStatusLoadedAt && Date.now() - runtimeCompatibilityStatusLoadedAt < 600000)
+        return runtimeCompatibilityStatus;
     try {
         const response = await fetchWithTimeout('/api/model-runtime/compatibility', null, 15000);
         const data = await readJsonResponse(response, {});
@@ -30732,15 +32927,18 @@ async function loadRuntimeCompatibilityStatus(options) {
         if (!response.ok || error)
             throw new Error(error && (error.message || error.code) ? (error.message || error.code) : 'Runtime compatibility check failed.');
         runtimeCompatibilityStatus = data;
+        runtimeCompatibilityStatusLoadedAt = Date.now();
         if (data && (data.generationDisabled || data.requiresPytorchRepair) && !runtimeCompatibilityWarningShown) {
             runtimeCompatibilityWarningShown = true;
             const message = runtimeCompatibilityMessage(data) || 'Local generation is disabled because only CPU generation can be achieved.';
             const hint = runtimeCompatibilityRepairHint(data);
             addMessage('error', 'Local image generation is disabled: ' + message + (hint ? '\n\n' + hint : ''));
         }
+        return data;
     } catch (error) {
         if (!quiet)
             addMessage('error', 'Could not check runtime compatibility: ' + (error && error.message ? error.message : String(error)));
+        return null;
     }
 }
 
@@ -31474,12 +33672,34 @@ function modelCapabilityLabels(id) {
     return labels.join(', ');
 }
 
+function composerAttachControlVisible(element) {
+    if (!element || element.hidden) return false;
+    if (element.style && element.style.display === 'none') return false;
+    return true;
+}
+
+function updateComposerAttachStackLayout() {
+    const imageVisible = composerAttachControlVisible(imageAttach);
+    const fileVisible = composerAttachControlVisible(fileAttach);
+    const visibleCount = (imageVisible ? 1 : 0) + (fileVisible ? 1 : 0);
+    if (composerAttachStack) {
+        composerAttachStack.hidden = visibleCount === 0;
+        composerAttachStack.classList.toggle('single-attach', visibleCount <= 1);
+    }
+    if (form) {
+        form.classList.toggle('no-file-attach', !fileVisible);
+        form.classList.toggle('no-attach-controls', visibleCount === 0);
+    }
+}
+
 function updateImageAttachVisibility() {
     if (!imageAttach) return;
     const showImages = permissionState.imageUploads !== false;
     imageAttach.style.display = showImages ? 'grid' : 'none';
     if (form) form.classList.toggle('no-image-attach', !showImages);
+    updateComposerAttachStackLayout();
     updateMediaSourceAttachVisibility();
+    updateVoiceButtonVisibility();
 }
 
 form.addEventListener('submit', event => {
@@ -31501,16 +33721,6 @@ if (chatModeDock) {
     chatModeDock.addEventListener('pointerleave', hideChatModeDock);
 }
 
-if (streamAction) {
-    streamAction.addEventListener('click', () => {
-        if (!sharedView && selectedService() === 'agent') {
-            steerCurrentAgentConversation(prompt.value)
-                .catch(error => addMessage('error', error && error.message ? error.message : String(error)));
-        } else {
-            interruptCurrentGenerationForNext();
-        }
-    });
-}
 if (send) {
     send.addEventListener('pointerenter', showChatModeDock);
     send.addEventListener('pointerleave', hideChatModeDock);
@@ -31616,9 +33826,16 @@ remoteAdminKeys.forEach(button => {
 });
 
 function clearConversation() {
-    queuedPrompts = [];
+    const clearingSessionId = currentSessionId;
+    if (clearingSessionId) {
+        removeQueuedPromptsForSession(clearingSessionId);
+        clearQueueStopForSession(clearingSessionId);
+        clearLocalStopForSession(clearingSessionId);
+    } else if (!activeAbortController && !isProcessingQueue) {
+        queuedPrompts = [];
+    }
     window.clearTimeout(sessionDraftSaveTimer);
-    if (!activeAbortController)
+    if (!activeAbortController && queuedPrompts.length === 0)
         isProcessingQueue = false;
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue);
     messages.length = 0;
@@ -31748,6 +33965,11 @@ if (solutionPanelEdgeToggle)
         setViewMenuOpen(false);
         setSolutionExplorerOpen(!solutionExplorerOpen);
     });
+if (commentsPanelEdgeToggle)
+    commentsPanelEdgeToggle.addEventListener('click', () => {
+        setViewMenuOpen(false);
+        setCommentsCollapsed(!commentsCollapsed);
+    });
 if (deleteSelectedSessions)
     deleteSelectedSessions.addEventListener('click', () => deleteSelectedSessionIds().catch(error => addMessage('error', error && error.message ? error.message : String(error))));
 if (selectAllSessions)
@@ -31832,6 +34054,7 @@ modelSelect.addEventListener('change', () => {
     saveSettings();
     updateModelCapabilityIcons();
     updateImageAttachVisibility();
+    updateVoiceButtonVisibility();
     updateLlmRuntimeReadyGlow();
     schedulePromptIntellisense();
     updateContextToggleMeta();
@@ -31852,6 +34075,7 @@ modelSelect.addEventListener('change', () => {
             applyAgentVisualMode();
             renderFilesystemContextMenu();
             updateImageAttachVisibility();
+            updateVoiceButtonVisibility();
             saveSettings();
             hidePromptIntellisense();
             schedulePromptIntellisense();
@@ -32228,6 +34452,45 @@ topPInput.addEventListener('input', saveSettings);
 maxTokensInput.addEventListener('input', saveSettings);
 if (voiceInput)
     voiceInput.addEventListener('click', startVoiceInput);
+if (personaPlexToggle)
+    personaPlexToggle.addEventListener('click', () => setPersonaPlexPanelOpen(!personaPlexPanel || personaPlexPanel.hidden));
+if (personaPlexClose)
+    personaPlexClose.addEventListener('click', () => setPersonaPlexPanelOpen(false));
+if (personaPlexRefresh)
+    personaPlexRefresh.addEventListener('click', () => {
+        refreshPersonaPlexStatus().catch(error => setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error'));
+    });
+if (personaPlexSave)
+    personaPlexSave.addEventListener('click', () => {
+        savePersonaPlexConfig().catch(error => setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error'));
+    });
+if (personaPlexStart)
+    personaPlexStart.addEventListener('click', () => {
+        if (personaPlexIsRunning() || personaPlexStartPending)
+            stopPersonaPlex();
+        else
+            startPersonaPlex();
+    });
+if (personaPlexStop)
+    personaPlexStop.addEventListener('click', stopPersonaPlex);
+if (personaPlexInstall)
+    personaPlexInstall.addEventListener('click', () => {
+        installPersonaPlex().catch(error => {
+            setPersonaPlexInstallState(personaPlexInstallState, true);
+            if (personaPlexInstallStatus)
+                personaPlexInstallStatus.textContent = error && error.message ? error.message : String(error);
+            updatePersonaPlexControls();
+        });
+    });
+[personaPlexProfileSelect, personaPlexPersonaPrompt].forEach(input => {
+    if (!input) return;
+    input.addEventListener('change', () => {
+        applyPersonaPlexConfig(readPersonaPlexConfigInputs());
+        savePersonaPlexLocalOverrides(personaPlexConfig);
+        updatePersonaPlexControls();
+        savePersonaPlexConfig().catch(error => setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error'));
+    });
+});
 if (ttsEnabled) {
     ttsEnabled.addEventListener('change', () => {
         saveSettings();
@@ -32506,6 +34769,8 @@ setSessionsPanelOpen(initialSessionsPanelOpen, { save: false, closePeers: false 
 setSolutionExplorerOpen(initialSolutionExplorerOpen, { save: false, closePeers: false });
 setCommentsCollapsed(initialWebUiLayoutState.commentsCollapsed === undefined ? false : !!initialWebUiLayoutState.commentsCollapsed);
 updatePermissionTargetUi();
+applyPersonaPlexConfig({ ...personaPlexDefaultConfig, ...personaPlexLocalOverrides() });
+updatePersonaPlexControls();
 if (initialWebUiLayoutState.browserExpanded)
     setBrowserExpanded(true, { save: false });
 updateShareUi();

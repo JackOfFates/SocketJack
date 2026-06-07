@@ -7,7 +7,8 @@ public enum LlmBackendKind
     Cuda,
     Cuda12,
     Vulkan,
-    DirectML
+    DirectML,
+    Vllm
 }
 
 public sealed class LlmRuntimeOptions
@@ -28,7 +29,7 @@ public sealed class LlmRuntimeOptions
 
     public string CompatibilityConfigPath { get; set; } = "";
 
-    public bool RestoreLoadedModelsOnStartup { get; set; } = true;
+    public bool RestoreLoadedModelsOnStartup { get; set; } = false;
 
     public int Port { get; set; } = 1234;
 
@@ -53,6 +54,32 @@ public sealed class LlmRuntimeOptions
     public string DirectMlGgufRunnerPath { get; set; } = "";
 
     public string DirectMlGgufRunnerArguments { get; set; } = "";
+
+    public string VllmPythonPath { get; set; } =
+        Environment.GetEnvironmentVariable("JACKLLM_VLLM_PYTHON") ??
+        Environment.GetEnvironmentVariable("LLMRUNTIME_VLLM_PYTHON") ??
+        "";
+
+    public string VllmBaseUrl { get; set; } =
+        Environment.GetEnvironmentVariable("JACKLLM_VLLM_BASE_URL") ??
+        Environment.GetEnvironmentVariable("LLMRUNTIME_VLLM_BASE_URL") ??
+        "http://127.0.0.1:8000";
+
+    public string VllmExtraArguments { get; set; } =
+        Environment.GetEnvironmentVariable("JACKLLM_VLLM_ARGS") ??
+        Environment.GetEnvironmentVariable("LLMRUNTIME_VLLM_ARGS") ??
+        "--dtype auto --enforce-eager";
+
+    public TimeSpan VllmStartupTimeout { get; set; } =
+        TimeSpan.FromSeconds(Math.Clamp(
+            int.TryParse(
+                Environment.GetEnvironmentVariable("JACKLLM_VLLM_STARTUP_TIMEOUT_SECONDS") ??
+                Environment.GetEnvironmentVariable("LLMRUNTIME_VLLM_STARTUP_TIMEOUT_SECONDS"),
+                out int seconds)
+                ? seconds
+                : 600,
+            30,
+            3600));
 
     public bool LocalPrivacyMode { get; set; } = true;
 

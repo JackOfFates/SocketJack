@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.VisualStudio.Extensibility;
+using Microsoft.VisualStudio.Extensibility.Shell;
 using Microsoft.VisualStudio.Extensibility.UI;
 using Microsoft.VisualStudio.ProjectSystem.Query;
 
@@ -18,6 +19,8 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     private const string GlyphOk = "\u2713";
     private const string GlyphPending = "\u25CF";
     private const string GlyphDeleted = "X";
+    private const string SessionFileName = "socketjack.session";
+    private const int SessionFileVersion = 1;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -32,12 +35,18 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     private string tempRoot = "";
     private string mirrorRoot = "";
     private string snapshotPath = "";
+    private string sessionFilePath = "";
     private string ignoreManifestPath = "";
     private string endpointSummary = "Open a solution, then Refresh.";
     private string selectedDetails = "";
     private string sessionId = "";
     private string status = "Ready.";
+    private string createSessionButtonText = "Create Session On SocketJack";
     private bool isBusy;
+    private bool canPull = true;
+    private bool hasSessionFile;
+    private bool sessionControlsEnabled;
+    private bool isSessionBootstrapVisible = true;
     private List<SessionSyncTreeItem> treeItems = new();
     private SessionSyncSnapshot snapshot = new();
     private SessionSyncIgnoreManifest ignoreManifest = new();
@@ -51,11 +60,29 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         this.RefreshCommand = new AsyncCommand(this.RefreshAsync);
         this.PullCommand = new AsyncCommand(this.PullAsync);
         this.PushCommand = new AsyncCommand(this.PushAsync);
+        this.CreateSessionCommand = new AsyncCommand(this.CreateSessionAsync);
         this.OpenFileLocationCommand = new AsyncCommand(this.OpenFileLocationAsync);
         this.IgnoreCommand = new AsyncCommand(this.IgnoreAsync);
         this.IgnoreRemoteCommand = new AsyncCommand(this.IgnoreRemoteAsync);
         this.PropertiesCommand = new AsyncCommand(this.PropertiesAsync);
         this.RemoveIgnoreCommand = new AsyncCommand(this.RemoveIgnoreAsync);
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await this.EnsureSolutionStateAsync(cancellationToken);
+            if (this.HasSessionFile)
+            {
+                this.BuildTree();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            this.Status = "Session Sync setup failed: " + ex.Message;
+            this.RefreshSessionControlAvailability();
+        }
     }
 
     [DataMember]
@@ -66,6 +93,9 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
 
     [DataMember]
     public IAsyncCommand PushCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand CreateSessionCommand { get; }
 
     [DataMember]
     public IAsyncCommand OpenFileLocationCommand { get; }
@@ -120,6 +150,13 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     }
 
     [DataMember]
+    public string CreateSessionButtonText
+    {
+        get => this.createSessionButtonText;
+        set => this.SetProperty(ref this.createSessionButtonText, value ?? "");
+    }
+
+    [DataMember]
     public string SelectedDetails
     {
         get => this.selectedDetails;
@@ -130,7 +167,43 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     public bool IsBusy
     {
         get => this.isBusy;
-        set => this.SetProperty(ref this.isBusy, value);
+        set
+        {
+            this.SetProperty(ref this.isBusy, value);
+            this.RefreshSessionControlAvailability();
+        }
+    }
+
+    [DataMember]
+    public bool CanPull
+    {
+        get => this.canPull;
+        set => this.SetProperty(ref this.canPull, value);
+    }
+
+    [DataMember]
+    public bool HasSessionFile
+    {
+        get => this.hasSessionFile;
+        set
+        {
+            this.SetProperty(ref this.hasSessionFile, value);
+            this.RefreshSessionControlAvailability();
+        }
+    }
+
+    [DataMember]
+    public bool SessionControlsEnabled
+    {
+        get => this.sessionControlsEnabled;
+        set => this.SetProperty(ref this.sessionControlsEnabled, value);
+    }
+
+    [DataMember]
+    public bool IsSessionBootstrapVisible
+    {
+        get => this.isSessionBootstrapVisible;
+        set => this.SetProperty(ref this.isSessionBootstrapVisible, value);
     }
 
     private async Task RefreshAsync(object? commandParameter, CancellationToken cancellationToken)
@@ -139,6 +212,7 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         {
             await this.EnsureSignedInAsync(token);
             await this.EnsureSolutionStateAsync(token);
+            this.ThrowIfSessionFileMissing();
             string remoteMessage = await this.LoadRemoteMetadataBestEffortAsync(token);
             this.BuildTree();
             this.SaveSnapshot();
@@ -154,7 +228,21 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         {
             await this.EnsureSignedInAsync(token);
             await this.EnsureSolutionStateAsync(token);
+            this.ThrowIfSessionFileMissing();
             IReadOnlyList<SessionSyncRemoteFile> remoteFiles = await this.service.ListRemoteFilesAsync(this.bridgeSelection, this.SessionId, token);
+            foreach (SessionSyncRemoteFile remote in remoteFiles)
+            {
+                this.UpsertRemoteSnapshot(remote);
+            }
+
+            this.BuildTree();
+            if (this.HasUnpushedLocalChanges(out int pendingUploads, out int pendingDeletes))
+            {
+                this.SaveSnapshot();
+                this.Status = BuildPullDisabledStatus(pendingUploads, pendingDeletes);
+                return;
+            }
+
             int downloaded = 0;
             int skipped = 0;
 
@@ -180,7 +268,6 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
                 if (File.Exists(localPath) && (localUtc >= remoteFile.LastWriteUtc.UtcDateTime || localMatchesRemote))
                 {
                     skipped++;
-                    this.UpsertRemoteSnapshot(remoteFile);
                     continue;
                 }
 
@@ -225,6 +312,7 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         {
             await this.EnsureSignedInAsync(token);
             await this.EnsureSolutionStateAsync(token);
+            this.ThrowIfSessionFileMissing();
             this.BuildTree();
 
             List<SessionSyncTreeItem> pending = this.currentItems.Values
@@ -252,12 +340,18 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
                 }
 
                 SessionSyncSnapshotFile? previous = this.snapshot.Find(item.RelativePath);
-                if (previous != null &&
-                    previous.LocalLastWriteUtc > DateTimeOffset.MinValue &&
-                    info.LastWriteTimeUtc <= previous.LocalLastWriteUtc.UtcDateTime &&
-                    !item.WasChangedByBridge)
+                bool localChanged = previous == null ||
+                    SessionSyncDiffState.HasUnpushedLocalChange(
+                        localExists: true,
+                        previous?.LocalLastWriteUtc ?? DateTimeOffset.MinValue,
+                        previous?.LocalSizeBytes ?? 0,
+                        previous?.LocalSha256 ?? "",
+                        new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero),
+                        info.Length,
+                        item.LocalSha256);
+                if (previous != null && !localChanged && !item.WasChangedByBridge)
                 {
-                    item.StatusText = "Local older";
+                    item.StatusText = "No local change";
                     item.StatusGlyph = GlyphPending;
                     item.StatusColor = "#FFB347";
                     skipped++;
@@ -308,6 +402,53 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
                 ", skipped " + skipped.ToString(CultureInfo.InvariantCulture) +
                 (deleted.Count == 0 ? "." : ", remote deletes attempted " + deleted.Count.ToString(CultureInfo.InvariantCulture) + ".");
         }, cancellationToken);
+    }
+
+    private async Task CreateSessionAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        bool createdOrLoaded = false;
+        await this.RunBusyAsync("Creating Session Sync configuration...", async token =>
+        {
+            await this.EnsureSignedInAsync(token);
+            await this.EnsureSolutionStateAsync(token);
+            this.bridgeSelection.ThrowIfMissing();
+
+            if (string.IsNullOrWhiteSpace(this.SessionId))
+            {
+                this.SessionId = this.bridgeSelection.GetDefaultSessionId(this.solutionRoot);
+            }
+
+            if (!File.Exists(this.sessionFilePath))
+            {
+                this.snapshot = new SessionSyncSnapshot
+                {
+                    Version = SessionFileVersion,
+                    CreatedUtc = DateTimeOffset.UtcNow,
+                    Files = new List<SessionSyncSnapshotFile>()
+                };
+            }
+
+            this.HasSessionFile = true;
+            this.SaveSnapshot();
+            this.BuildTree();
+            this.Status = "Created .vs\\" + SessionFileName + " for " + this.bridgeSelection.DisplayServerName + ".";
+            createdOrLoaded = true;
+        }, cancellationToken);
+
+        if (!createdOrLoaded || !this.HasSessionFile)
+        {
+            return;
+        }
+
+        bool pushInitialCommit = await this.PromptForInitialCommitAsync(cancellationToken);
+        if (pushInitialCommit)
+        {
+            await this.PushAsync(null, cancellationToken);
+        }
+        else
+        {
+            this.Status = "Session file created. Initial push skipped.";
+        }
     }
 
     private async Task OpenFileLocationAsync(object? commandParameter, CancellationToken cancellationToken)
@@ -415,31 +556,76 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
             throw new InvalidOperationException("Open a solution before using Session Sync.");
         }
 
-        if (string.Equals(this.solutionRoot, directory, StringComparison.OrdinalIgnoreCase))
+        bool solutionChanged = !string.Equals(this.solutionRoot, directory, StringComparison.OrdinalIgnoreCase);
+        if (solutionChanged)
         {
-            this.bridgeSelection = this.bridgeSelection.WithAuth(this.AuthToken, this.AuthUserName);
-            return;
+            this.solutionRoot = directory;
+            string hash = ShortHash(directory);
+            this.tempRoot = Path.Combine(Path.GetTempPath(), "SocketJack", "SessionSync", hash);
+            this.mirrorRoot = Path.Combine(this.tempRoot, "files");
+            this.sessionFilePath = Path.Combine(this.solutionRoot, ".vs", SessionFileName);
+            this.snapshotPath = this.sessionFilePath;
+            this.ignoreManifestPath = Path.Combine(this.solutionRoot, "jackllm.ignore.manifest");
+            Directory.CreateDirectory(this.mirrorRoot);
         }
 
-        this.solutionRoot = directory;
-        string hash = ShortHash(directory);
-        this.tempRoot = Path.Combine(Path.GetTempPath(), "SocketJack", "SessionSync", hash);
-        this.mirrorRoot = Path.Combine(this.tempRoot, "files");
-        this.snapshotPath = Path.Combine(this.tempRoot, "session-sync.snapshot.json");
-        this.ignoreManifestPath = Path.Combine(this.solutionRoot, "jackllm.ignore.manifest");
-        Directory.CreateDirectory(this.mirrorRoot);
+        SessionSyncBridgeSelection configuredSelection = SessionSyncBridgeSelection.Load(this.solutionRoot).WithAuth(this.AuthToken, this.AuthUserName);
+        bool sessionFileExists = !string.IsNullOrWhiteSpace(this.sessionFilePath) && File.Exists(this.sessionFilePath);
+        this.snapshot = sessionFileExists ? this.LoadSnapshot() : new SessionSyncSnapshot();
+        if (sessionFileExists)
+        {
+            this.SessionId = FirstNonEmpty(this.snapshot.SessionId, configuredSelection.GetDefaultSessionId(this.solutionRoot));
+            this.bridgeSelection = SessionSyncBridgeSelection.FromSnapshot(this.snapshot, configuredSelection).WithAuth(this.AuthToken, this.AuthUserName);
+            this.HasSessionFile = true;
+        }
+        else
+        {
+            this.SessionId = "";
+            this.bridgeSelection = configuredSelection;
+            this.HasSessionFile = false;
+        }
 
-        this.bridgeSelection = SessionSyncBridgeSelection.Load(this.solutionRoot).WithAuth(this.AuthToken, this.AuthUserName);
+        this.ignoreManifest = SessionSyncIgnoreManifest.Load(this.ignoreManifestPath);
+        this.EndpointSummary = this.BuildEndpointSummary();
+        this.CreateSessionButtonText = "Create Session On " + this.bridgeSelection.DisplayServerName;
+    }
+
+    private string BuildEndpointSummary()
+    {
+        if (!this.bridgeSelection.HasRemoteApi)
+        {
+            return "No SocketJack MCP selection found in .vs\\mcp.json.";
+        }
+
+        string sessionPart = this.HasSessionFile ? ".vs\\" + SessionFileName : "create .vs\\" + SessionFileName + " first";
+        return this.bridgeSelection.ServerId + " / " + this.bridgeSelection.ModelId + " / " + this.bridgeSelection.AutoApiBase + " / " + sessionPart;
+    }
+
+    private void ThrowIfSessionFileMissing()
+    {
+        if (!this.HasSessionFile || string.IsNullOrWhiteSpace(this.sessionFilePath) || !File.Exists(this.sessionFilePath))
+        {
+            throw new InvalidOperationException("Create .vs\\" + SessionFileName + " before using Session Sync controls.");
+        }
+
         if (string.IsNullOrWhiteSpace(this.SessionId))
         {
-            this.SessionId = this.bridgeSelection.GetDefaultSessionId(this.solutionRoot);
+            throw new InvalidOperationException(".vs\\" + SessionFileName + " does not contain a SessionId.");
         }
+    }
 
-        this.snapshot = this.LoadSnapshot();
-        this.ignoreManifest = SessionSyncIgnoreManifest.Load(this.ignoreManifestPath);
-        this.EndpointSummary = this.bridgeSelection.HasRemoteApi
-            ? this.bridgeSelection.ServerId + " / " + this.bridgeSelection.ModelId + " / " + this.bridgeSelection.AutoApiBase
-            : "No SocketJack MCP selection found in .vs\\mcp.json.";
+    private async Task<bool> PromptForInitialCommitAsync(CancellationToken cancellationToken)
+    {
+        ChoiceResultCollection<bool> choices = new();
+        choices.Add(new ChoiceDescription("Push initial commit"), true);
+        choices.Add(new ChoiceDescription("Skip"), false);
+
+        PromptOptions<bool> options = new(choices, defaultChoiceIndex: 0, dismissedReturns: false);
+        return await this.extensibility.Shell().ShowPromptAsync(
+            "Created .vs\\" + SessionFileName + " for " + this.bridgeSelection.DisplayServerName + "." + Environment.NewLine +
+            "Push an initial commit of the current solution files now?",
+            options,
+            cancellationToken);
     }
 
     private async Task<string?> GetCurrentSolutionDirectoryAsync(CancellationToken cancellationToken)
@@ -534,6 +720,7 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
             .OrderBy(item => item.IsIgnoreBranch ? 1 : 0)
             .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        this.RefreshPullAvailability();
     }
 
     private SessionSyncTreeItem CreateFileItem(string relativePath, string fullPath)
@@ -553,6 +740,22 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         string color;
         double progress;
 
+        bool localChanged = snapshotFile == null ||
+            SessionSyncDiffState.HasUnpushedLocalChange(
+                localExists: true,
+                snapshotFile.LocalLastWriteUtc,
+                snapshotFile.LocalSizeBytes,
+                snapshotFile.LocalSha256,
+                localUtc,
+                info.Length,
+                localHash);
+        bool remoteDiffersFromLocal = snapshotFile != null &&
+            HasRemoteBaseline(snapshotFile) &&
+            !KnownHashesEqual(localHash, remoteHash) &&
+            (remoteUtc > DateTimeOffset.MinValue ||
+                snapshotFile.RemoteSizeBytes != info.Length ||
+                !string.IsNullOrWhiteSpace(remoteHash));
+
         if (ignored || remoteIgnored)
         {
             state = SessionSyncItemState.Ignored;
@@ -561,30 +764,18 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
             color = "#9A9A9A";
             progress = 0;
         }
-        else if (snapshotFile == null)
+        else if (localChanged)
         {
             state = SessionSyncItemState.PendingUpload;
-            statusText = "Pending upload";
+            statusText = remoteDiffersFromLocal ? "Push before pull" : "Pending upload";
             glyph = GlyphPending;
             color = "#FFB347";
             progress = 0;
         }
-        else if (remoteUtc > DateTimeOffset.MinValue &&
-                 remoteUtc.UtcDateTime > info.LastWriteTimeUtc &&
-                 !KnownHashesEqual(localHash, remoteHash))
+        else if (remoteDiffersFromLocal)
         {
             state = SessionSyncItemState.PendingDownload;
             statusText = "Pending pull";
-            glyph = GlyphPending;
-            color = "#FFB347";
-            progress = 0;
-        }
-        else if (snapshotFile.LocalLastWriteUtc > DateTimeOffset.MinValue &&
-                 info.LastWriteTimeUtc > snapshotFile.LocalLastWriteUtc.UtcDateTime &&
-                 !KnownHashesEqual(localHash, snapshotFile.LocalSha256))
-        {
-            state = SessionSyncItemState.PendingUpload;
-            statusText = "Pending upload";
             glyph = GlyphPending;
             color = "#FFB347";
             progress = 0;
@@ -621,11 +812,13 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     private SessionSyncTreeItem CreateDeletedItem(string relativePath, string fullPath, SessionSyncSnapshotFile snapshotFile)
     {
         bool ignored = this.ignoreManifest.IsIgnored(relativePath);
+        bool remoteIgnored = this.ignoreManifest.IsRemoteIgnored(relativePath);
         bool pendingDownload = HasRemoteBaseline(snapshotFile) && !HasLocalBaseline(snapshotFile);
-        string statusText = ignored ? "Ignored" : (pendingDownload ? "Pending pull" : "Deleted");
-        string glyph = ignored ? GlyphPending : (pendingDownload ? GlyphPending : GlyphDeleted);
-        string color = ignored ? "#9A9A9A" : (pendingDownload ? "#FFB347" : "#E57373");
-        SessionSyncItemState state = ignored ? SessionSyncItemState.Ignored : (pendingDownload ? SessionSyncItemState.PendingDownload : SessionSyncItemState.Deleted);
+        bool isIgnored = ignored || remoteIgnored;
+        string statusText = isIgnored ? (ignored ? "Ignored" : "Remote ignored") : (pendingDownload ? "Pending pull" : "Deleted");
+        string glyph = isIgnored ? GlyphPending : (pendingDownload ? GlyphPending : GlyphDeleted);
+        string color = isIgnored ? "#9A9A9A" : (pendingDownload ? "#FFB347" : "#E57373");
+        SessionSyncItemState state = isIgnored ? SessionSyncItemState.Ignored : (pendingDownload ? SessionSyncItemState.PendingDownload : SessionSyncItemState.Deleted);
 
         return new SessionSyncTreeItem
         {
@@ -633,7 +826,7 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
             RelativePath = relativePath,
             FullPath = fullPath,
             IsFolder = false,
-            IsIgnored = ignored,
+            IsIgnored = isIgnored,
             StatusText = statusText,
             StatusGlyph = glyph,
             StatusColor = color,
@@ -743,7 +936,9 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
             }
 
             string json = File.ReadAllText(this.snapshotPath);
-            return JsonSerializer.Deserialize<SessionSyncSnapshot>(json, JsonOptions) ?? new SessionSyncSnapshot();
+            SessionSyncSnapshot snapshot = JsonSerializer.Deserialize<SessionSyncSnapshot>(json, JsonOptions) ?? new SessionSyncSnapshot();
+            snapshot.Files ??= new List<SessionSyncSnapshotFile>();
+            return snapshot;
         }
         catch
         {
@@ -753,12 +948,23 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
 
     private void SaveSnapshot()
     {
+        this.snapshot.Version = SessionFileVersion;
         this.snapshot.SessionId = this.SessionId;
         this.snapshot.SolutionRoot = this.solutionRoot;
         this.snapshot.ServerEndpoint = this.bridgeSelection.ServerEndpoint;
+        this.snapshot.AutoApiBase = this.bridgeSelection.AutoApiBase;
+        this.snapshot.ServerId = this.bridgeSelection.ServerId;
+        this.snapshot.ServerName = this.bridgeSelection.ServerName;
         this.snapshot.ModelId = this.bridgeSelection.ModelId;
+        if (this.snapshot.CreatedUtc == DateTimeOffset.MinValue)
+        {
+            this.snapshot.CreatedUtc = DateTimeOffset.UtcNow;
+        }
+
+        this.snapshot.UpdatedUtc = DateTimeOffset.UtcNow;
         Directory.CreateDirectory(Path.GetDirectoryName(this.snapshotPath) ?? this.tempRoot);
         File.WriteAllText(this.snapshotPath, JsonSerializer.Serialize(this.snapshot, JsonOptions), new UTF8Encoding(false));
+        this.HasSessionFile = true;
     }
 
     private void SaveIgnoreManifest()
@@ -817,6 +1023,61 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     {
         this.currentItems.TryGetValue(NormalizeRelativePath(relativePath), out SessionSyncTreeItem? item);
         return item;
+    }
+
+    private bool HasUnpushedLocalChanges(out int pendingUploads, out int pendingDeletes)
+    {
+        pendingUploads = 0;
+        pendingDeletes = 0;
+        foreach (SessionSyncTreeItem item in this.currentItems.Values)
+        {
+            if (item.IsFolder || item.IsIgnored)
+            {
+                continue;
+            }
+
+            if (item.SyncState == SessionSyncItemState.PendingUpload)
+            {
+                pendingUploads++;
+            }
+            else if (item.SyncState == SessionSyncItemState.Deleted)
+            {
+                pendingDeletes++;
+            }
+        }
+
+        return pendingUploads > 0 || pendingDeletes > 0;
+    }
+
+    private void RefreshPullAvailability()
+    {
+        bool hasLocalChanges = this.HasSessionFile && this.HasUnpushedLocalChanges(out _, out _);
+        this.CanPull = this.SessionControlsEnabled && !hasLocalChanges;
+    }
+
+    private void RefreshSessionControlAvailability()
+    {
+        this.SessionControlsEnabled = this.HasSessionFile && !this.IsBusy;
+        this.IsSessionBootstrapVisible = !this.HasSessionFile;
+        this.CreateSessionButtonText = "Create Session On " + this.bridgeSelection.DisplayServerName;
+        this.RefreshPullAvailability();
+    }
+
+    private static string BuildPullDisabledStatus(int pendingUploads, int pendingDeletes)
+    {
+        List<string> parts = new();
+        if (pendingUploads > 0)
+        {
+            parts.Add(pendingUploads.ToString(CultureInfo.InvariantCulture) + " upload" + (pendingUploads == 1 ? "" : "s"));
+        }
+
+        if (pendingDeletes > 0)
+        {
+            parts.Add(pendingDeletes.ToString(CultureInfo.InvariantCulture) + " delete" + (pendingDeletes == 1 ? "" : "s"));
+        }
+
+        string summary = parts.Count == 0 ? "local changes" : string.Join(", ", parts);
+        return "Pull disabled because " + summary + " are waiting to push. Push first to update the Auto session files, then pull.";
     }
 
     private string ResolveSolutionPath(string relativePath)
@@ -1426,6 +1687,8 @@ internal sealed class SessionSyncBridgeSelection
 
     public bool HasRemoteApi => !string.IsNullOrWhiteSpace(this.AutoApiBase);
 
+    public string DisplayServerName => FirstNonEmpty(this.ServerName, this.ServerId, GetHostName(this.ServerEndpoint), "SocketJack");
+
     public SessionSyncBridgeSelection WithAuth(string authToken, string authUserName)
     {
         return new SessionSyncBridgeSelection
@@ -1484,6 +1747,15 @@ internal sealed class SessionSyncBridgeSelection
         }
 
         return FromEnvironment();
+    }
+
+    public static SessionSyncBridgeSelection FromSnapshot(SessionSyncSnapshot snapshot, SessionSyncBridgeSelection fallback)
+    {
+        string endpoint = FirstNonEmpty(snapshot.ServerEndpoint, snapshot.AutoApiBase, fallback.ServerEndpoint);
+        string serverId = FirstNonEmpty(snapshot.ServerId, fallback.ServerId);
+        string serverName = FirstNonEmpty(snapshot.ServerName, fallback.ServerName, serverId);
+        string modelId = FirstNonEmpty(snapshot.ModelId, fallback.ModelId);
+        return Create(endpoint, serverId, serverName, modelId, fallback.AuthToken, fallback.AuthUserName);
     }
 
     public string GetDefaultSessionId(string solutionRoot)
@@ -1618,6 +1890,11 @@ internal sealed class SessionSyncBridgeSelection
         }
 
         return uri.Host;
+    }
+
+    private static string GetHostName(string endpoint)
+    {
+        return Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) ? uri.Host : "";
     }
 
     private static string SanitizeAutoSessionId(string value)
@@ -1780,10 +2057,16 @@ internal sealed class SessionSyncIgnoreManifest
 
 internal sealed class SessionSyncSnapshot
 {
+    public int Version { get; set; }
     public string SessionId { get; set; } = "";
     public string SolutionRoot { get; set; } = "";
     public string ServerEndpoint { get; set; } = "";
+    public string AutoApiBase { get; set; } = "";
+    public string ServerId { get; set; } = "";
+    public string ServerName { get; set; } = "";
     public string ModelId { get; set; } = "";
+    public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.MinValue;
+    public DateTimeOffset UpdatedUtc { get; set; } = DateTimeOffset.MinValue;
     public List<SessionSyncSnapshotFile> Files { get; set; } = new();
 
     public SessionSyncSnapshotFile? Find(string relativePath)

@@ -42,6 +42,8 @@ internal sealed class LlmRuntimeScheduler
                     Backend = instance.Backend,
                     ParallelismMode = instance.Config.ParallelismMode.ToString(),
                     ParallelismPlacement = instance.Config.ParallelismPlacement.ToString(),
+                    ParallelTensor = instance.Config.ParallelTensor,
+                    TensorParallelSize = instance.Config.TensorParallelSize,
                     TargetDeviceIds = instance.Config.TargetDeviceIds,
                     NetworkNodeIds = instance.Config.NetworkNodeIds,
                     MaxGpuLoadPercent = instance.Config.MaxGpuLoadPercent,
@@ -99,6 +101,10 @@ public sealed class LlmSchedulerInstanceStatus
     public string ParallelismMode { get; init; } = "";
 
     public string ParallelismPlacement { get; init; } = "";
+
+    public bool ParallelTensor { get; init; }
+
+    public int TensorParallelSize { get; init; } = 1;
 
     public IReadOnlyList<string> TargetDeviceIds { get; init; } = [];
 

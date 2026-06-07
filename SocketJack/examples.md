@@ -1,0 +1,1 @@
+﻿which gives me a good overview of SocketJack. Let me also check for additional documentation files like examples.md, changelog_proxy.md, or any other relevant source files to create a comprehensive summary.

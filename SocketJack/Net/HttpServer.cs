@@ -80,6 +80,16 @@ namespace SocketJack.Net {
         public byte[] BodyBytes { get; internal set; } = Array.Empty<byte>();
     }
 
+    public sealed class HttpDocumentRootResponse {
+        public byte[] Data { get; set; }
+        public string Text { get; set; }
+        public string FileName { get; set; }
+        public string ContentType { get; set; }
+        public DateTime? LastModifiedUtc { get; set; }
+        public Dictionary<string, string> Headers { get; set; }
+    }
+
+    public delegate bool HttpDocumentRootResolver(HttpRequest request, string relativePath, out HttpDocumentRootResponse response);
     public sealed class HttpStreamDispatchCallbacks {
         public Action<HttpResponse> OnStart { get; set; }
         public Action<byte[], int, int> OnChunk { get; set; }
@@ -242,6 +252,7 @@ namespace SocketJack.Net {
 
         private readonly Dictionary<string, string> _directoryMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _fileMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HttpDocumentRootResolver> _documentRootMappings = new Dictionary<string, HttpDocumentRootResolver>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, Dictionary<string, RouteHandler>>> _hostRoutes = new Dictionary<string, Dictionary<string, Dictionary<string, RouteHandler>>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, string>> _hostDirectoryMappings = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, string>> _hostFileMappings = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
@@ -1009,6 +1020,41 @@ namespace SocketJack.Net {
         }
 
         /// <summary>
+        /// Maps a URL prefix to a virtual document root resolved by application code.
+        /// Resolvers can serve SQL-backed, sandboxed, or other non-disk content while
+        /// reusing SocketJack's HTTP MIME, header, and route ordering behavior.
+        /// </summary>
+        public void MapDocumentRoot(string urlPrefix, HttpDocumentRootResolver resolver) {
+            if (string.IsNullOrWhiteSpace(urlPrefix))
+                throw new ArgumentException("URL prefix is required.", nameof(urlPrefix));
+            if (resolver == null)
+                throw new ArgumentNullException(nameof(resolver));
+
+            var normalized = NormalizePath(urlPrefix);
+            if (normalized.Length > 1 && normalized.EndsWith("/", StringComparison.Ordinal))
+                normalized = normalized.TrimEnd('/');
+            _documentRootMappings[normalized] = resolver;
+        }
+
+        /// <summary>
+        /// Maps a disk directory as an explicit document root. Disk roots delegate to
+        /// <see cref="MapDirectory"/> so the existing path containment and .htaccess
+        /// protections remain authoritative.
+        /// </summary>
+        public void MapDocumentRoot(string urlPrefix, string localDirectory) {
+            MapDirectory(urlPrefix, localDirectory);
+        }
+
+        /// <summary>
+        /// Removes a virtual document root mapping.
+        /// </summary>
+        public bool RemoveDocumentRootMapping(string urlPrefix) {
+            var normalized = NormalizePath(urlPrefix);
+            if (normalized.Length > 1 && normalized.EndsWith("/", StringComparison.Ordinal))
+                normalized = normalized.TrimEnd('/');
+            return _documentRootMappings.Remove(normalized);
+        }
+        /// <summary>
         /// Maps a local directory to a URL prefix for a specific Host header.
         /// </summary>
         public void MapHostDirectory(string hostName, string urlPrefix, string localDirectory) {
@@ -1468,6 +1514,67 @@ namespace SocketJack.Net {
             return false;
         }
 
+        private bool TryResolveDocumentRootFile(HttpRequest request, out HttpDocumentRootResponse response) {
+            response = null;
+            if (_documentRootMappings.Count == 0)
+                return false;
+            if (request == null || request.Method == null || !(request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || request.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)))
+                return false;
+            if (string.IsNullOrEmpty(request.Path))
+                return false;
+
+            string normalizedPath = NormalizePath(request.Path);
+            foreach (var kv in _documentRootMappings.OrderByDescending(item => item.Key.Length)) {
+                string prefix = kv.Key;
+                string relative = null;
+                if (prefix == "/") {
+                    relative = normalizedPath.TrimStart('/');
+                } else if (normalizedPath.Equals(prefix, StringComparison.OrdinalIgnoreCase)) {
+                    relative = "";
+                } else if (normalizedPath.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase)) {
+                    relative = normalizedPath.Substring(prefix.Length + 1);
+                }
+
+                if (relative == null)
+                    continue;
+                if (relative.Contains("..") || relative.IndexOf('\\') >= 0) {
+                    RecordEndpointSecurityFilesystemEvent(null, normalizedPath, "document-root", "path escaped mapped document root");
+                    return false;
+                }
+
+                if (kv.Value(request, relative, out response) && response != null)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool TryResolveAndApplyDocumentRoot(HttpContext context, HttpRequest request) {
+            if (context == null || request == null)
+                return false;
+            if (!TryResolveDocumentRootFile(request, out var docResponse) || docResponse == null)
+                return false;
+
+            string fileName = docResponse.FileName;
+            string contentType = !string.IsNullOrWhiteSpace(docResponse.ContentType)
+                ? docResponse.ContentType
+                : GetMimeType(fileName);
+            ApplyServedFileHeaders(context.Response, contentType, fileName);
+            if (docResponse.LastModifiedUtc.HasValue)
+                context.Response.Headers["Last-Modified"] = docResponse.LastModifiedUtc.Value.ToString("R", CultureInfo.InvariantCulture);
+            if (docResponse.Headers != null) {
+                foreach (var kv in docResponse.Headers)
+                    context.Response.Headers[kv.Key] = kv.Value;
+            }
+
+            if (docResponse.Data != null) {
+                context.Response.BodyBytes = docResponse.Data;
+            } else {
+                context.Response.Body = docResponse.Text ?? "";
+            }
+            context.Response.ContentType = contentType;
+            return true;
+        }
         public static string GetMimeType(string fileNameOrExtension) {
             string extension = fileNameOrExtension;
             if (!string.IsNullOrWhiteSpace(extension) && (!extension.StartsWith(".", StringComparison.Ordinal) || extension.IndexOfAny(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }) >= 0))
@@ -1751,6 +1858,8 @@ namespace SocketJack.Net {
             }
 
             bool handledByRoute = TryResolveAndApplyRoute(connection, request, cancellationToken, context, RouteMatchMode.ExactOnly);
+            if (!handledByRoute)
+                handledByRoute = TryResolveAndApplyDocumentRoot(context, request);
             if (!handledByRoute)
                 handledByRoute = TryResolveAndApplyRoute(connection, request, cancellationToken, context, RouteMatchMode.WildcardOnly);
 
@@ -3123,6 +3232,10 @@ namespace SocketJack.Net {
                 // Exact routes should win first, but wildcard page fallbacks should not
                 // hide mapped files under a more specific static prefix.
                 var handledByRoute = TryResolveAndApplyRoute(e.Connection, request, ct, context, RouteMatchMode.ExactOnly);
+
+                if (!handledByRoute) {
+                    handledByRoute = TryResolveAndApplyDocumentRoot(context, request);
+                }
 
                 // Check file mappings (URL-to-file routes)
                 if (!handledByRoute) {

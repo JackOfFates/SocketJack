@@ -1,4 +1,5 @@
 using LlmRuntime;
+using LLama.Native;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Net;
 using System.Text;
@@ -224,6 +225,204 @@ public sealed class LlmModelRegistryTests
     }
 
     [TestMethod]
+    public void ListModels_DetectsCompleteModelsGptqSafetensorsBundleAsVllmChat()
+    {
+        string root = CreateTempDirectory();
+        string completeRoot = CreateTempDirectory();
+        try
+        {
+            string modelDirectory = Path.Combine(completeRoot, "Qwen2.5-72B-Instruct-GPTQ-Int4");
+            Directory.CreateDirectory(modelDirectory);
+            File.WriteAllText(Path.Combine(modelDirectory, "config.json"), """
+                {
+                  "architectures": [ "Qwen2ForCausalLM" ],
+                  "model_type": "qwen2",
+                  "max_position_embeddings": 32768,
+                  "sliding_window": 131072,
+                  "quantization_config": {
+                    "bits": 4,
+                    "quant_method": "gptq"
+                  }
+                }
+                """);
+            File.WriteAllText(Path.Combine(modelDirectory, "tokenizer_config.json"), """
+                {
+                  "model_max_length": 131072
+                }
+                """);
+            File.WriteAllText(Path.Combine(modelDirectory, "model.safetensors.index.json"), "{\"metadata\":{},\"weight_map\":{}}");
+            string shard1 = Path.Combine(modelDirectory, "model-00001-of-00002.safetensors");
+            string shard2 = Path.Combine(modelDirectory, "model-00002-of-00002.safetensors");
+            File.WriteAllBytes(shard1, [1, 2, 3, 4]);
+            File.WriteAllBytes(shard2, [5, 6, 7, 8]);
+
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions
+            {
+                ModelRoot = root,
+                CompleteModelRoot = completeRoot
+            }, new CapturingBackendFactory());
+
+            var model = registry.ListModels().Single(candidate => candidate.FilePath == modelDirectory);
+            Assert.AreEqual("Qwen2.5-72B-Instruct-GPTQ-Int4", model.DisplayName);
+            Assert.AreEqual("safetensors", model.Format);
+            Assert.AreEqual("Qwen2ForCausalLM", model.Architecture);
+            Assert.AreEqual("gptq", model.QuantizationName);
+            Assert.AreEqual((uint)131072, model.MaxContextLength);
+            Assert.IsTrue(
+                model.SizeBytes >= new FileInfo(shard1).Length + new FileInfo(shard2).Length,
+                "Safetensors bundle size should include weight shards so large-model placement defaults can trigger.");
+            CollectionAssert.Contains(model.Tags.ToList(), "complete-model");
+            CollectionAssert.Contains(model.Tags.ToList(), "vllm");
+            Assert.IsTrue(LlmModelRegistry.IsChatLoadableModel(model));
+            Assert.IsTrue(LlmModelRegistry.IsRuntimeLoadableModel(model));
+            Assert.AreEqual("chat_completion", LlmModelRegistry.GetRuntimeServiceForModel(model));
+
+            LlmLoadResult result = registry.Load(model.Key, echoLoadConfig: true);
+            Assert.AreEqual("chat_completion", result.ChatService);
+            Assert.AreEqual(LlmBackendKind.Vllm, result.LoadConfig?.Backend);
+            Assert.AreEqual((uint)131072, result.LoadConfig?.ContextLength);
+
+            var loaded = registry.ListModels().Single(candidate => candidate.FilePath == modelDirectory);
+            Assert.AreEqual(1, loaded.LoadedInstances.Count);
+            Assert.AreEqual("vllm", loaded.LoadedInstances[0].Backend);
+            Assert.AreEqual((uint)131072, loaded.LoadedInstances[0].Config.ContextLength);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+            TryDeleteDirectory(completeRoot);
+        }
+    }
+
+    [TestMethod]
+    public void VllmBackend_BuildArguments_UsesContextTensorParallelAndMemoryCap()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            using var backend = new VllmBackend(
+                "Qwen2.5-72B-Instruct-GPTQ-Int4",
+                root,
+                new LlmLoadConfig
+                {
+                    ContextLength = 32768,
+                    MaxVramUsagePercent = 100,
+                    TensorParallelSize = 4,
+                    TargetDeviceIds = ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
+                },
+                new LlmRuntimeOptions
+                {
+                    VllmBaseUrl = "http://127.0.0.1:8000",
+                    VllmExtraArguments = "--dtype auto --enforce-eager"
+                });
+
+            string[] args = backend.BuildVllmArguments().ToArray();
+
+            Assert.AreEqual("32768", ValueAfter(args, "--max-model-len"));
+            Assert.AreEqual("4", ValueAfter(args, "--tensor-parallel-size"));
+            Assert.AreEqual("32768", ValueAfter(args, "--max-num-batched-tokens"));
+            Assert.AreEqual("0.9", ValueAfter(args, "--gpu-memory-utilization"));
+            CollectionAssert.Contains(args.ToList(), "--enforce-eager");
+            Assert.AreEqual(0.80d, VllmBackend.ResolveGpuMemoryUtilization(80), 0.001d);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+
+        static string ValueAfter(IReadOnlyList<string> args, string option)
+        {
+            int index = args.ToList().FindIndex(value => string.Equals(value, option, StringComparison.OrdinalIgnoreCase));
+            Assert.IsTrue(index >= 0, "Missing option " + option + ".");
+            Assert.IsTrue(index + 1 < args.Count, "Missing value for " + option + ".");
+            return args[index + 1];
+        }
+    }
+
+    [TestMethod]
+    public void VllmBackend_LongContextOverrideRequiresTokenizerLimit()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "config.json"), """
+                {
+                  "max_position_embeddings": 32768
+                }
+                """);
+            File.WriteAllText(Path.Combine(root, "tokenizer_config.json"), """
+                {
+                  "model_max_length": 131072
+                }
+                """);
+
+            using var backend = new VllmBackend(
+                "Qwen2.5-72B-Instruct-GPTQ-Int4",
+                root,
+                new LlmLoadConfig
+                {
+                    ContextLength = 131072
+                },
+                new LlmRuntimeOptions());
+
+            Assert.IsTrue(backend.ShouldAllowLongMaxModelLenOverride());
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public void VllmBackend_LongContextCompatibilityProfileCapsPrefillAndAddsRuntimeFlags()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "config.json"), """
+                {
+                  "max_position_embeddings": 32768
+                }
+                """);
+            File.WriteAllText(Path.Combine(root, "tokenizer_config.json"), """
+                {
+                  "model_max_length": 131072
+                }
+                """);
+
+            using var backend = new VllmBackend(
+                "Qwen2.5-72B-Instruct-GPTQ-Int4",
+                root,
+                new LlmLoadConfig
+                {
+                    ContextLength = 131072,
+                    MaxVramUsagePercent = 100,
+                    TensorParallelSize = 4
+                },
+                new LlmRuntimeOptions
+                {
+                    VllmExtraArguments = "--dtype auto --enforce-eager"
+                });
+
+            string[] args = backend.BuildVllmArguments().ToArray();
+
+            Assert.IsTrue(backend.ShouldUseLongContextCompatibilityProfile());
+            Assert.AreEqual("131072", ValueAfter(args, "--max-model-len"));
+            Assert.AreEqual("32768", ValueAfter(args, "--max-num-batched-tokens"));
+            Assert.AreEqual("0.66", ValueAfter(args, "--gpu-memory-utilization"));
+            Assert.AreEqual("1", ValueAfter(args, "--max-num-seqs"));
+            Assert.AreEqual("20", ValueAfter(args, "--cpu-offload-gb"));
+            Assert.AreEqual("fp8_e5m2", ValueAfter(args, "--kv-cache-dtype"));
+            CollectionAssert.Contains(args.ToList(), "--enable-chunked-prefill");
+            CollectionAssert.Contains(args.ToList(), "--disable-custom-all-reduce");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
     public void Load_RejectsMetadataLessGgufBeforeChatBackend()
     {
         string root = CreateTempDirectory();
@@ -340,6 +539,28 @@ public sealed class LlmModelRegistryTests
     }
 
     [TestMethod]
+    public void Load_ReportsReadyProgressWhenBackendIsAlreadyReady()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "ReadyProgress-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new CapturingBackendFactory());
+            var progress = new List<LlmModelLoadProgress>();
+            registry.ModelLoadProgressChanged += progress.Add;
+
+            registry.Load("ReadyProgress-Q4_0");
+
+            Assert.IsTrue(progress.Any(item => item.Percent == 100 && item.Status == "ready"));
+            Assert.IsFalse(progress.Any(item => item.Status == "warming_prompt_pipeline"));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
     public async Task RestorePersistedLoadedModelsAsync_LoadsSavedModelsFromRuntimeConfig()
     {
         string root = CreateTempDirectory();
@@ -350,7 +571,8 @@ public sealed class LlmModelRegistryTests
             var options = new LlmRuntimeOptions
             {
                 ModelRoot = root,
-                RuntimeConfigPath = configPath
+                RuntimeConfigPath = configPath,
+                RestoreLoadedModelsOnStartup = true
             };
 
             using (var registry = new LlmModelRegistry(options, new CapturingBackendFactory()))
@@ -390,6 +612,43 @@ public sealed class LlmModelRegistryTests
             Assert.IsTrue(restored.Unload(model.Key));
             using JsonDocument unloadedDocument = JsonDocument.Parse(File.ReadAllText(configPath));
             Assert.AreEqual(0, unloadedDocument.RootElement.GetProperty("loadedModels").GetArrayLength());
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task RestorePersistedLoadedModelsAsync_DefaultDoesNotLoadSavedModels()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            string configPath = Path.Combine(root, "LlmRuntime.config.json");
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "PersistedOff-Q4_0.gguf"));
+            var saveOptions = new LlmRuntimeOptions
+            {
+                ModelRoot = root,
+                RuntimeConfigPath = configPath,
+                RestoreLoadedModelsOnStartup = true
+            };
+
+            using (var registry = new LlmModelRegistry(saveOptions, new CapturingBackendFactory()))
+            {
+                registry.Load("PersistedOff-Q4_0", backend: LlmBackendKind.Vulkan);
+            }
+
+            using var restored = new LlmModelRegistry(new LlmRuntimeOptions
+            {
+                ModelRoot = root,
+                RuntimeConfigPath = configPath
+            }, new CapturingBackendFactory());
+
+            await restored.RestorePersistedLoadedModelsAsync();
+
+            LlmModelInfo model = restored.ListModels().Single(candidate => candidate.Key == "PersistedOff-Q4_0");
+            Assert.AreEqual(0, model.LoadedInstances.Count);
         }
         finally
         {
@@ -962,6 +1221,82 @@ base_model:
     }
 
     [TestMethod]
+    public async Task RestorePersistedLoadedModelsAsync_RoundTripsTensorParallelConfig()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            string configPath = Path.Combine(root, "LlmRuntime.config.json");
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "TensorPersisted-Q4_0.gguf"));
+            var options = new LlmRuntimeOptions
+            {
+                ModelRoot = root,
+                RuntimeConfigPath = configPath,
+                RestoreLoadedModelsOnStartup = true
+            };
+
+            using (var registry = new LlmModelRegistry(options, new CapturingBackendFactory()))
+            {
+                LlmLoadResult result = registry.Load(
+                    "TensorPersisted-Q4_0",
+                    parallelismMode: LlmParallelismMode.TensorParallel,
+                    targetDeviceIds: ["cuda:0", "cuda:1"],
+                    echoLoadConfig: true);
+
+                Assert.AreEqual(LlmParallelismMode.TensorParallel, result.LoadConfig?.ParallelismMode);
+                Assert.IsTrue(result.LoadConfig?.ParallelTensor);
+                Assert.AreEqual(2, result.LoadConfig?.TensorParallelSize);
+                CollectionAssert.AreEquivalent(new[] { "cuda:0", "cuda:1" }, result.LoadConfig?.TargetDeviceIds.ToArray());
+
+                LlmModelInfo loaded = registry.ListModels().Single(candidate => candidate.Key == "TensorPersisted-Q4_0");
+                Assert.AreEqual(1, loaded.LoadedInstances.Count);
+                Assert.AreEqual(LlmParallelismMode.TensorParallel, loaded.LoadedInstances[0].Config.ParallelismMode);
+                Assert.IsTrue(loaded.LoadedInstances[0].Config.ParallelTensor);
+                Assert.AreEqual(2, loaded.LoadedInstances[0].Config.TensorParallelSize);
+            }
+
+            using (JsonDocument document = JsonDocument.Parse(File.ReadAllText(configPath)))
+            {
+                JsonElement config = document.RootElement.GetProperty("loadedModels")[0].GetProperty("config");
+                Assert.AreEqual("tensorParallel", config.GetProperty("parallelismMode").GetString());
+                Assert.IsTrue(config.GetProperty("parallelTensor").GetBoolean());
+                Assert.AreEqual(2, config.GetProperty("tensorParallelSize").GetInt32());
+            }
+
+            using var restored = new LlmModelRegistry(options, new CapturingBackendFactory());
+            await restored.RestorePersistedLoadedModelsAsync();
+
+            LlmModelInfo restoredModel = restored.ListModels().Single(candidate => candidate.Key == "TensorPersisted-Q4_0");
+            Assert.AreEqual(1, restoredModel.LoadedInstances.Count);
+            Assert.AreEqual(LlmParallelismMode.TensorParallel, restoredModel.LoadedInstances[0].Config.ParallelismMode);
+            Assert.IsTrue(restoredModel.LoadedInstances[0].Config.ParallelTensor);
+            Assert.AreEqual(2, restoredModel.LoadedInstances[0].Config.TensorParallelSize);
+            CollectionAssert.AreEquivalent(new[] { "cuda:0", "cuda:1" }, restoredModel.LoadedInstances[0].Config.TargetDeviceIds.ToArray());
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public void LlamaSharpBackend_ResolveTensorParallelSettings_UsesTensorSplitMode()
+    {
+        var settings = LlamaSharpBackend.ResolveTensorParallelSettings(new LlmLoadConfig
+        {
+            ParallelismMode = LlmParallelismMode.TensorParallel,
+            ParallelTensor = true,
+            TensorParallelSize = 2,
+            TargetDeviceIds = ["cuda:0", "cuda:1"]
+        });
+
+        Assert.IsTrue(settings.Enabled);
+        Assert.AreEqual(GPUSplitMode.Tensor, settings.SplitMode);
+        Assert.AreEqual(0, settings.MainGpu);
+        CollectionAssert.AreEqual(new[] { 1f, 1f }, settings.TensorSplits);
+    }
+
+    [TestMethod]
     public void ListModels_IncludesOnnxManifestButDoesNotLoadItAsGguf()
     {
         string root = CreateTempDirectory();
@@ -1092,6 +1427,14 @@ base_model:
     internal static void TryDeleteDirectory(string path)
     {
         try { Directory.Delete(path, true); } catch { }
+    }
+
+    private static string ValueAfter(IReadOnlyList<string> args, string option)
+    {
+        int index = args.ToList().FindIndex(value => string.Equals(value, option, StringComparison.OrdinalIgnoreCase));
+        Assert.IsTrue(index >= 0, "Missing option " + option + ".");
+        Assert.IsTrue(index + 1 < args.Count, "Missing value for " + option + ".");
+        return args[index + 1];
     }
 
     private static void WriteWanConfig(string path)

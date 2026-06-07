@@ -256,6 +256,7 @@ h1 {
 .pill.warn { color: var(--warn); }
 .pill.danger { color: var(--danger); }
 .progress-track {
+    --progress-fill: 0%;
     height: 8px;
     overflow: hidden;
     border-radius: 999px;
@@ -264,8 +265,10 @@ h1 {
 .progress-track span {
     display: block;
     height: 100%;
-    width: 0%;
+    width: 100%;
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    clip-path: inset(0 calc(100% - var(--progress-fill, 0%)) 0 0 round 999px);
+    transition: clip-path 180ms ease;
 }
 .timeline {
     max-height: 640px;
@@ -776,7 +779,7 @@ function renderMissions() {
         return '<article class="item clickable ' + (id === state.selectedMissionId ? 'selected' : '') + '" data-mission="' + html(id) + '">' +
             '<div class="item-top"><div class="title">' + html(prop(m, 'Title')) + '</div><span class="pill ok">' + progress + '%</span></div>' +
             '<div class="meta">' + html(prop(m, 'Objective') || '') + '</div>' +
-            '<div class="progress-track"><span style="width:' + progress + '%"></span></div>' +
+            '<div class="progress-track" style="--progress-fill:' + progress + '%"><span></span></div>' +
             '<div class="pill-row"><span class="pill">' + html(prop(m, 'Priority') || 'normal') + '</span><span class="pill">' + html(prop(m, 'CurrentPhase') || '') + '</span>' +
             tags.map(t => '<span class="pill">' + html(t) + '</span>').join('') + '</div>' +
             '</article>';
@@ -882,7 +885,7 @@ function renderCapabilities() {
     list.innerHTML = caps.length ? caps.map(c => {
         const score = Number(prop(c, 'Score') || 0);
         return '<article class="item"><div class="item-top"><div class="title">' + html(prop(c, 'Name')) + '</div><span class="pill ' + (prop(c, 'Enabled') ? 'ok' : 'warn') + '">' + score + '</span></div>' +
-            '<div class="progress-track"><span style="width:' + Math.max(0, Math.min(100, score)) + '%"></span></div>' +
+            '<div class="progress-track" style="--progress-fill:' + Math.max(0, Math.min(100, score)) + '%"><span></span></div>' +
             '<div class="pill-row"><span class="pill">' + html(prop(c, 'Status')) + '</span><a class="pill" href="' + html(prop(c, 'Route')) + '">' + html(prop(c, 'Id')) + '</a></div></article>';
     }).join('') : '<div class="item"><div class="meta">Capability router unavailable.</div></div>';
 }
@@ -911,7 +914,7 @@ function renderWorkflow() {
         '<div class="item-top"><div class="title">' + html(prop(doc, 'ProgressFileName')) + '</div><span class="pill ok">' + html(prop(doc, 'OverallPercent') || 0) + '%</span></div>' +
         '<div class="meta">' + html(prop(doc, 'CurrentStatus') || '') + '</div>' +
         '<div class="meta mono">' + html(prop(doc, 'ProgressPath') || '') + '</div>' +
-        '<div class="progress-track"><span style="width:' + Math.max(0, Math.min(100, Number(prop(doc, 'OverallPercent') || 0))) + '%"></span></div>' +
+        '<div class="progress-track" style="--progress-fill:' + Math.max(0, Math.min(100, Number(prop(doc, 'OverallPercent') || 0))) + '%"><span></span></div>' +
         '</article>').join('') : '<div class="item"><div class="meta">No progress trackers found.</div></div>';
 
     $('workflowExecutionList').innerHTML = executions.length ? executions.map(exec => '<article class="item clickable" data-workflow-execution="' + html(prop(exec, 'ExecutionId')) + '">' +

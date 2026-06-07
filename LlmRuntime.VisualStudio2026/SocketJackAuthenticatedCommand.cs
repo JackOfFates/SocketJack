@@ -9,6 +9,7 @@ internal abstract class SocketJackAuthenticatedCommand : Command
 
     public override Task InitializeAsync(CancellationToken cancellationToken)
     {
+        SocketJackLocalProxySupervisor.StartBestEffortFromStoredSelection();
         SocketJackVisualStudioAuthService.AuthStateChanged += this.OnAuthStateChanged;
         this.UpdateAuthState();
         return base.InitializeAsync(cancellationToken);

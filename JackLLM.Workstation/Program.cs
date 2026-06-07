@@ -90,7 +90,7 @@ internal static class Program
         public WorkstationHost(WorkstationOptions options)
         {
             _options = options;
-            _proxy = new LmVsProxy(options.LmStudioHost, options.LmStudioPort, options.ProxyPort, options.ChatServerPort)
+            _proxy = new LmVsProxy(options.LmStudioHost, options.LmStudioPort, options.ProxyPort, options.ChatServerPort, options.DataRoot)
             {
                 PromptTimeout = TimeSpan.FromMinutes(options.PromptTimeoutMinutes),
                 StoreLocalWebAuthAccounts = options.StoreLocalWebAuthAccounts,
@@ -285,7 +285,7 @@ internal static class Program
         public int LmStudioPort { get; private set; } = ReadPort("JACKLLM_LMSTUDIO_PORT", DefaultLmStudioPort);
         public string ChatModel { get; private set; } = Environment.GetEnvironmentVariable("JACKLLM_CHAT_MODEL") ?? "lm-studio";
         public bool StartEmbeddedRuntime { get; private set; } = ReadBool("JACKLLM_START_EMBEDDED_RUNTIME", true);
-        public bool RestoreLoadedModelsOnStartup { get; private set; } = ReadBool("JACKLLM_RESTORE_LOADED_MODELS_ON_STARTUP", true);
+        public bool RestoreLoadedModelsOnStartup { get; private set; } = ReadBool("JACKLLM_RESTORE_LOADED_MODELS_ON_STARTUP", false);
         public bool EnableLmStudioFallback { get; private set; } = ReadBool("JACKLLM_LMSTUDIO_FALLBACK", true);
         public bool IncludeLmStudioModels { get; private set; } = ReadBool("JACKLLM_INCLUDE_LMSTUDIO_MODELS", true);
         public bool WebChatModelLoadApiEnabled { get; private set; } = ReadBool("JACKLLM_WEBCHAT_MODEL_LOAD", false);

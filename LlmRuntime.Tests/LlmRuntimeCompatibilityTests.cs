@@ -117,6 +117,57 @@ public sealed class LlmRuntimeCompatibilityTests
     }
 
     [TestMethod]
+    public void Status_MissingTorchMessageNamesJackLlmPythonEnvironment()
+    {
+        var probe = new FakeCompatibilityProbe
+        {
+            Gpus = [new LlmDetectedGpu { Name = "GeForce RTX 4090", IsNvidia = true }],
+            Python = new LlmPythonRuntimeStatus
+            {
+                ExecutablePath = "python.exe",
+                IsAvailable = true,
+                Version = "3.12.8",
+                HasTorch = false
+            }
+        };
+        var service = new LlmRuntimeCompatibilityService(new LlmRuntimeOptions(), probe);
+
+        LlmRuntimeCompatibilityStatus status = service.GetStatus("python.exe");
+
+        Assert.AreEqual("repair_required", status.Status);
+        Assert.IsTrue(status.GenerationDisabled);
+        StringAssert.Contains(status.Message, "JackLLM's image-generation Python environment");
+        Assert.IsFalse(status.Message.Contains("CUDA is not installed", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public void Status_LegacyMaxwellPython312EnablesRepairAction()
+    {
+        var probe = new FakeCompatibilityProbe
+        {
+            Gpus = [new LlmDetectedGpu { Name = "NVIDIA GeForce GTX TITAN X", IsNvidia = true, ComputeCapability = "5.2" }],
+            Python = new LlmPythonRuntimeStatus
+            {
+                ExecutablePath = "python.exe",
+                IsAvailable = true,
+                Version = "3.12.8",
+                HasTorch = false
+            }
+        };
+        var service = new LlmRuntimeCompatibilityService(new LlmRuntimeOptions(), probe);
+
+        LlmRuntimeCompatibilityStatus status = service.GetStatus("python.exe");
+        LlmRuntimeCompatibilityAction? repair = status.Actions.FirstOrDefault(action => action.Id == "repair_pytorch");
+
+        Assert.AreEqual("repair_required", status.Status);
+        Assert.IsNull(status.Diagnostics.RecommendedPytorch);
+        Assert.IsNotNull(repair);
+        Assert.IsTrue(repair.Enabled);
+        StringAssert.Contains(status.Message, "legacy CUDA Python runtime");
+        StringAssert.Contains(repair.Detail, "Python 3.11.9");
+    }
+
+    [TestMethod]
     public void Status_TorchArchListRejectsUnsupportedGpu()
     {
         var probe = new FakeCompatibilityProbe

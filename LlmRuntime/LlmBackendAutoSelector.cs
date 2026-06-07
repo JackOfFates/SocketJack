@@ -52,6 +52,7 @@ internal static class LlmBackendAutoSelector
             "cuda12" => LlmBackendKind.Cuda12,
             "vulkan" => LlmBackendKind.Vulkan,
             "directml" => LlmBackendKind.DirectML,
+            "vllm" => LlmBackendKind.Vllm,
             _ => LlmBackendKind.Auto
         };
 

@@ -191,6 +191,10 @@ export HF_XET_CACHE="${HF_XET_CACHE:-$HF_HOME/xet}"
 export JACKLLM_RESTORE_LOADED_MODELS_ON_STARTUP="${JACKLLM_RESTORE_LOADED_MODELS_ON_STARTUP:-0}"
 export NVIDIA_SMI_PATH="${NVIDIA_SMI_PATH:-/usr/bin/nvidia-smi}"
 export JACKLLM_NVIDIA_SMI="${JACKLLM_NVIDIA_SMI:-/usr/bin/nvidia-smi}"
+if [ -z "${JACKLLM_VLLM_PYTHON:-}" ] && [ -x /opt/vllm/venv/bin/python ]; then
+  export JACKLLM_VLLM_PYTHON=/opt/vllm/venv/bin/python
+fi
+export JACKLLM_VLLM_ARGS="${JACKLLM_VLLM_ARGS:---dtype auto --enforce-eager}"
 mkdir -p "$JACKLLM_MODELS_LOCATION" "$JACKLLM_MODEL_ROOT" "$JACKLLM_COMPLETE_MODEL_ROOT" "$JACKLLM_TOOL_ROOT" "$JACKLLM_AGENT_ROOT" "$(dirname "$JACKONNX_PYTHON_HOME")" "$HF_HOME" "$HUGGINGFACE_HUB_CACHE" "$TRANSFORMERS_CACHE" "$HF_XET_CACHE" "$HOME/.local/state/jackllm"
 WINE_BIN="${WINE_BIN:-}"
 if [ -z "$WINE_BIN" ]; then
@@ -210,6 +214,21 @@ if [ "${JACKLLM_PRESTART_NATIVE_BACKEND:-1}" != "0" ] && [ "${JACKLLM_DISABLE_LI
       fi
       sleep 1
     done
+  fi
+fi
+if [ -z "${DISPLAY:-}" ]; then
+  if command -v xvfb-run >/dev/null 2>&1; then
+    cd "$WPF_ROOT"
+    exec xvfb-run -a -s "${JACKLLM_XVFB_SERVER_ARGS:--screen 0 1280x720x24 -nolisten tcp}" "$WINE_BIN" "$WPF_ROOT/JackLLM.exe" "$@"
+  elif command -v Xvfb >/dev/null 2>&1; then
+    export DISPLAY="${JACKLLM_XVFB_DISPLAY:-:10}"
+    if ! pgrep -u "$USER" -f "Xvfb $DISPLAY" >/dev/null 2>&1; then
+      Xvfb "$DISPLAY" -screen 0 "${JACKLLM_XVFB_SCREEN:-1280x720x24}" -nolisten tcp >/tmp/jackllm-xvfb.log 2>&1 &
+      sleep 1
+    fi
+  else
+    echo "No DISPLAY is set and Xvfb is not installed. Install xvfb or launch from a desktop session." >&2
+    exit 1
   fi
 fi
 cd "$WPF_ROOT"
@@ -284,6 +303,10 @@ esac
 export JACKLLM_LINUX_GUI=0
 export NVIDIA_SMI_PATH="${NVIDIA_SMI_PATH:-/usr/bin/nvidia-smi}"
 export JACKLLM_NVIDIA_SMI="${JACKLLM_NVIDIA_SMI:-/usr/bin/nvidia-smi}"
+if [ -z "${JACKLLM_VLLM_PYTHON:-}" ] && [ -x /opt/vllm/venv/bin/python ]; then
+  export JACKLLM_VLLM_PYTHON=/opt/vllm/venv/bin/python
+fi
+export JACKLLM_VLLM_ARGS="${JACKLLM_VLLM_ARGS:---dtype auto --enforce-eager}"
 export LD_LIBRARY_PATH="$BASE:$LLAMA_NATIVE_DIRS:$CUDA_PY_DIRS:${LD_LIBRARY_PATH:-}"
 cd "$BASE"
 exec "$BASE/JackLLM.Workstation" \
@@ -507,7 +530,7 @@ Priority: optional
 Architecture: $ARCH
 Installed-Size: $installed_size
 Maintainer: SocketJack <support@socketjack.com>
-Depends: bash, ca-certificates, curl, python3, python3-venv, python3-pip, wine64 | wine, libgomp1, libstdc++6
+Depends: bash, ca-certificates, curl, python3, python3-venv, python3-pip, wine64 | wine, xvfb, libgomp1, libstdc++6
 Recommends: xdg-utils, desktop-file-utils, nvidia-utils-550 | nvidia-utils | nvidia-driver, libcudart12, libcublas12, libcublaslt12, libcufft11, libcudnn9-cuda-12
 Description: JackLLM Workstation for Linux
  Wine-hosted JackLLM WPF Workstation with a Linux-native LlmRuntime backend.

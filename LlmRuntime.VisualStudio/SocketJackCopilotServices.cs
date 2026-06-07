@@ -30,6 +30,7 @@ public sealed class SocketJackServerCandidate
     public string DirectMcpUrl { get; set; } = "";
     public string OpenAiBaseUrl { get; set; } = "";
     public JsonObject? ModelCapabilitiesJson { get; set; }
+    public JsonArray? ModelCapabilitiesArray { get; set; }
     public JsonObject? ModelBenchmarksJson { get; set; }
     public List<string> AvailableModels { get; } = new();
     public JsonObject? Raw { get; set; }
@@ -229,6 +230,7 @@ public sealed class SocketJackMasterListClient
         };
 
         candidate.ModelCapabilitiesJson = CloneObject(FirstObject(serverObject, "modelCapabilitiesJson", "modelCapabilities", "capabilitiesByModel"));
+        candidate.ModelCapabilitiesArray = CloneArray(FirstArray(serverObject, "modelCapabilitiesJson", "modelCapabilities", "capabilitiesByModel"));
         candidate.ModelBenchmarksJson = CloneObject(FirstObject(serverObject, "modelBenchmarksJson", "modelBenchmarks", "benchmarksByModel"));
         candidate.AvailableModels.AddRange(ParseAvailableModels(serverObject));
         candidate.ToolsAdvertised = HasToolsAdvertised(candidate, serverObject);
@@ -382,6 +384,31 @@ public sealed class SocketJackMasterListClient
         return null;
     }
 
+    internal static JsonArray? FirstArray(JsonObject obj, params string[] names)
+    {
+        foreach (string name in names)
+        {
+            if (obj[name] is JsonArray child)
+                return child;
+            if (obj[name] is JsonValue valueNode)
+            {
+                string value = valueNode.ToString();
+                if (value.TrimStart().StartsWith("[", StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        return JsonNode.Parse(value) as JsonArray;
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     internal static string NormalizeEndpoint(string endpoint)
     {
         if (string.IsNullOrWhiteSpace(endpoint))
@@ -402,6 +429,13 @@ public sealed class SocketJackMasterListClient
         if (obj == null)
             return null;
         return JsonNode.Parse(obj.ToJsonString()) as JsonObject;
+    }
+
+    internal static JsonArray? CloneArray(JsonArray? array)
+    {
+        if (array == null)
+            return null;
+        return JsonNode.Parse(array.ToJsonString()) as JsonArray;
     }
 }
 
@@ -520,6 +554,27 @@ public sealed class SocketJackModelDiscoveryService
             state.ChatCapable ??= true;
         }
 
+        if (server.ModelCapabilitiesArray != null)
+        {
+            foreach (JsonNode? node in server.ModelCapabilitiesArray)
+            {
+                if (node is not JsonObject modelCapabilities)
+                    continue;
+
+                string modelId = SocketJackMasterListClient.FirstString(modelCapabilities, "id", "key", "model", "name", "modelId");
+                if (string.IsNullOrWhiteSpace(modelId))
+                    continue;
+
+                if (!models.TryGetValue(modelId, out ModelMergeState? state))
+                {
+                    state = new ModelMergeState(modelId);
+                    models[modelId] = state;
+                }
+
+                state.MergeCompact(modelCapabilities);
+            }
+        }
+
         if (server.ModelCapabilitiesJson != null)
         {
             foreach (KeyValuePair<string, JsonNode?> pair in server.ModelCapabilitiesJson)
@@ -581,6 +636,7 @@ public sealed class SocketJackModelDiscoveryService
         public bool? RuntimeLoadable { get; private set; }
         public bool? WebChatDynamicLoadable { get; private set; }
         public bool? Enabled { get; private set; }
+        public bool? Disabled { get; private set; }
         public string DisabledReason { get; private set; } = "";
         public int? MaxInputTokens { get; private set; }
         public int? MaxOutputTokens { get; private set; }
@@ -594,8 +650,13 @@ public sealed class SocketJackModelDiscoveryService
             Type = FirstNonEmpty(Type, SocketJackMasterListClient.FirstString(obj, "type", "kind"));
             SupportsTools = SupportsTools ?? FirstBoolOrCapability(obj, "supportsTools", "supports_tools", "tools", "toolCalling", "tool_calling");
             SupportsVision = SupportsVision ?? FirstBoolOrCapability(obj, "supportsVision", "supports_vision", "vision");
-            IsLoaded = IsLoaded ?? SocketJackMasterListClient.FirstBool(obj, "isLoaded", "loaded", "selected");
+            bool? loaded = SocketJackMasterListClient.FirstBool(obj, "isLoaded", "loaded", "selected");
+            IsLoaded = IsLoaded ?? loaded;
+            MergeDisabledFlag(SocketJackMasterListClient.FirstBool(obj, "disabled", "isDisabled"));
+            MergeDisabledReasons(obj, loaded ?? IsLoaded ?? false);
             Enabled = Enabled ?? SocketJackMasterListClient.FirstBool(obj, "enabled", "isEnabled", "available");
+            RuntimeLoadable = RuntimeLoadable ?? FirstBoolOrCapability(obj, "runtime_load", "runtimeLoad", "runtimeLoadable");
+            WebChatDynamicLoadable = WebChatDynamicLoadable ?? FirstBoolOrCapability(obj, "web_chat_dynamic_load", "webChatDynamicLoad", "web_chat_dynamic_load_enabled", "webChatDynamicLoadEnabled", "dynamicLoadEnabled", "serverDynamicLoadingEnabled", "web_chat_model_load_api_enabled");
             ChatCapable = ChatCapable ?? InferChatCapable(obj, Type);
             MaxInputTokens = MaxInputTokens ?? SocketJackMasterListClient.FirstInt(obj, "maxInputTokens", "max_input_tokens", "maxContextLength", "contextWindow");
             MaxOutputTokens = MaxOutputTokens ?? SocketJackMasterListClient.FirstInt(obj, "maxOutputTokens", "max_output_tokens");
@@ -606,10 +667,12 @@ public sealed class SocketJackModelDiscoveryService
             RawRuntime = SocketJackMasterListClient.CloneObject(obj);
             DisplayName = FirstNonEmpty(DisplayName, SocketJackMasterListClient.FirstString(obj, "displayName", "display_name", "name", "title"));
             Type = FirstNonEmpty(Type, SocketJackMasterListClient.FirstString(obj, "type", "kind"));
-            DisabledReason = FirstNonEmpty(DisabledReason, SocketJackMasterListClient.FirstString(obj, "load_disabled_reason", "loadDisabledReason", "disabledReason"));
-            IsLoaded = IsLoaded ?? IsRuntimeLoaded(obj);
+            bool? loaded = IsRuntimeLoaded(obj);
+            IsLoaded = IsLoaded ?? loaded;
+            MergeDisabledFlag(SocketJackMasterListClient.FirstBool(obj, "disabled", "isDisabled"));
+            MergeDisabledReasons(obj, loaded ?? IsLoaded ?? false);
             RuntimeLoadable = RuntimeLoadable ?? FirstBoolOrCapability(obj, "runtime_load", "runtimeLoad", "runtimeLoadable");
-            WebChatDynamicLoadable = WebChatDynamicLoadable ?? FirstBoolOrCapability(obj, "web_chat_dynamic_load", "webChatDynamicLoad", "dynamicLoad");
+            WebChatDynamicLoadable = WebChatDynamicLoadable ?? FirstBoolOrCapability(obj, "web_chat_dynamic_load", "webChatDynamicLoad", "web_chat_dynamic_load_enabled", "webChatDynamicLoadEnabled", "dynamicLoad", "dynamicLoadEnabled", "serverDynamicLoadingEnabled", "web_chat_model_load_api_enabled");
             SupportsTools = SupportsTools ?? FirstBoolOrCapability(obj, "supportsTools", "trained_for_tool_use", "tool_calling", "tools");
             SupportsVision = SupportsVision ?? FirstBoolOrCapability(obj, "supportsVision", "vision");
             ChatCapable = ChatCapable ?? FirstBoolOrCapability(obj, "chat_completion", "chat", "chatCompletion") ?? InferChatCapable(obj, Type);
@@ -627,7 +690,7 @@ public sealed class SocketJackModelDiscoveryService
             SupportsVision = SupportsVision ?? FirstBoolOrCapability(capabilities, "supportsVision", "vision");
             ChatCapable = ChatCapable ?? FirstBoolOrCapability(capabilities, "chat_completion", "chat", "chatCompletion");
             RuntimeLoadable = RuntimeLoadable ?? FirstBoolOrCapability(capabilities, "runtime_load", "runtimeLoad");
-            WebChatDynamicLoadable = WebChatDynamicLoadable ?? FirstBoolOrCapability(capabilities, "web_chat_dynamic_load", "webChatDynamicLoad");
+            WebChatDynamicLoadable = WebChatDynamicLoadable ?? FirstBoolOrCapability(capabilities, "web_chat_dynamic_load", "webChatDynamicLoad", "web_chat_dynamic_load_enabled", "webChatDynamicLoadEnabled", "dynamicLoadEnabled");
         }
 
         public SocketJackModelCandidate ToCandidate()
@@ -637,6 +700,10 @@ public sealed class SocketJackModelDiscoveryService
             bool isLoaded = IsLoaded ?? false;
             bool runtimeLoadable = RuntimeLoadable ?? false;
             bool webChatDynamicLoadable = WebChatDynamicLoadable ?? false;
+            bool disabled = Disabled ?? false;
+            bool enabled = disabled ? false : (Enabled ?? true);
+            if (!disabled && (isLoaded || webChatDynamicLoadable))
+                enabled = true;
 
             return new SocketJackModelCandidate
             {
@@ -649,7 +716,7 @@ public sealed class SocketJackModelDiscoveryService
                 IsLoaded = isLoaded,
                 RuntimeLoadable = runtimeLoadable,
                 WebChatDynamicLoadable = webChatDynamicLoadable,
-                Enabled = Enabled ?? true,
+                Enabled = enabled,
                 DisabledReason = DisabledReason,
                 MaxInputTokens = MaxInputTokens,
                 MaxOutputTokens = MaxOutputTokens,
@@ -659,6 +726,33 @@ public sealed class SocketJackModelDiscoveryService
         }
 
         private static string FirstNonEmpty(string current, string next) => string.IsNullOrWhiteSpace(current) ? next : current;
+
+        private void MergeDisabledFlag(bool? disabled)
+        {
+            if (disabled == true)
+            {
+                Disabled = true;
+            }
+            else if (!Disabled.HasValue)
+            {
+                Disabled = disabled;
+            }
+        }
+
+        private void MergeDisabledReasons(JsonObject obj, bool loaded)
+        {
+            string genericReason = SocketJackMasterListClient.FirstString(obj, "disabledReason", "disabled_reason");
+            if (!string.IsNullOrWhiteSpace(genericReason))
+            {
+                DisabledReason = FirstNonEmpty(DisabledReason, genericReason);
+                return;
+            }
+
+            if (!loaded)
+            {
+                DisabledReason = FirstNonEmpty(DisabledReason, SocketJackMasterListClient.FirstString(obj, "load_disabled_reason", "loadDisabledReason", "web_chat_load_disabled_reason", "webChatLoadDisabledReason"));
+            }
+        }
 
         private static bool? InferChatCapable(JsonObject obj, string type)
         {
@@ -868,7 +962,7 @@ public sealed class VisualStudioOllamaByomConfigWriter
         modelObject["IsSelected"] = true;
         modelObject["CustomURL"] = customUrl.TrimEnd('/');
         modelObject["Id"] = model.Id;
-        modelObject["DisplayName"] = string.IsNullOrWhiteSpace(model.DisplayName) ? model.Id : model.DisplayName;
+        modelObject["DisplayName"] = model.Id;
         modelObject["IsToolCallingEnabled"] = true;
         modelObject["IsVisionEnabled"] = model.SupportsVision;
         modelObject["MaxInputTokens"] = model.MaxInputTokens ?? 16384;
@@ -1269,7 +1363,7 @@ public static class SocketJackBridgeLaunchBuilder
             return false;
         }
 
-        if (!Uri.TryCreate(trimmedEndpoint, UriKind.Absolute, out Uri uri))
+        if (!Uri.TryCreate(trimmedEndpoint, UriKind.Absolute, out Uri? uri) || uri == null)
         {
             return false;
         }

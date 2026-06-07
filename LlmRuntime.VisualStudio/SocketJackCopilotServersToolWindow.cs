@@ -283,7 +283,7 @@ public sealed class SocketJackCopilotServersControl : UserControl
             return;
         }
 
-        SetBusy(true, "Configuring Copilot for " + server.DisplayName + " / " + model.DisplayName + "...");
+        SetBusy(true, "Configuring Copilot for " + server.DisplayName + " / " + model.Id + "...");
         try
         {
             string solutionDirectory = await _package.GetCurrentSolutionDirectoryAsync().ConfigureAwait(true);
@@ -374,7 +374,7 @@ public sealed class SocketJackCopilotServersControl : UserControl
                 ["serverEndpoint"] = server.EffectiveEndpoint,
                 ["modelAccessUrl"] = modelAccessUrl,
                 ["modelId"] = model.Id,
-                ["modelDisplayName"] = model.DisplayName
+                ["modelDisplayName"] = model.Id
             };
 
             string baseUrl = _options.LocalJackLlmUrl.TrimEnd('/') + "/";

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -26,6 +27,8 @@ public sealed class LlmRuntimeHost : IDisposable
     private readonly ModelRepositoryScanner _repositoryScanner = new();
     private readonly System.Net.Http.HttpClient _huggingFaceHttpClient = new();
     private readonly ModelConversionService _conversionService;
+    private readonly Dictionary<int, GpuProcessCpuSample> _gpuProcessCpuSamples = new();
+    private readonly object _gpuProcessCpuSamplesLock = new();
     private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
     private CancellationTokenSource? _startupModelLoadCancellation;
     private Task? _startupModelLoadTask;
@@ -234,6 +237,8 @@ public sealed class LlmRuntimeHost : IDisposable
         server.Map("POST", "/api/v1/models/convert/cancel", (_, request, _) => HandleConversionCancel(request));
 
         server.Map("GET", "/api/v1/runtime/compatibility", (_, request, cancellationToken) => HandleCompatibilityStatus(request, cancellationToken));
+        server.Map("GET", "/api/v1/runtime/gpu/processes", (_, request, _) => HandleGpuPythonProcesses(request));
+        server.Map("POST", "/api/v1/runtime/gpu/processes/stop", (_, request, _) => HandleGpuPythonProcessStop(request));
         server.Map("POST", "/api/v1/runtime/compatibility/config", (_, request, _) => HandleCompatibilityConfig(request));
         server.Map("POST", "/api/v1/runtime/compatibility/reset", (_, request, _) => HandleCompatibilityReset(request));
         server.Map("POST", "/api/v1/runtime/compatibility/repair-pytorch", (_, request, cancellationToken) => HandleCompatibilityRepairPytorch(request, cancellationToken));
@@ -389,6 +394,700 @@ public sealed class LlmRuntimeHost : IDisposable
         }
     }
 
+    private string HandleGpuPythonProcesses(HttpRequest request)
+    {
+        try
+        {
+            return ToJson(BuildGpuPythonProcessSnapshot());
+        }
+        catch (Exception ex)
+        {
+            return ToJson(new
+            {
+                ok = false,
+                capturedUtc = DateTimeOffset.UtcNow.ToString("O"),
+                error = "GPU Python process scan failed: " + ex.Message,
+                pythonProcessCount = 0,
+                gpuPythonProcessCount = 0,
+                totalGpuMemoryBytes = 0,
+                totalGpuMemoryText = "0 B",
+                processes = Array.Empty<GpuPythonProcessInfo>()
+            });
+        }
+    }
+
+    private string HandleGpuPythonProcessStop(HttpRequest request)
+    {
+        try
+        {
+            using JsonDocument? document = ParseOptionalBody(request);
+            JsonElement? root = document?.RootElement;
+            bool stopAll = root.HasValue && (GetBool(root.Value, "all") == true || GetBool(root.Value, "stopAll") == true);
+            HashSet<int> requestedPids = root.HasValue ? ReadProcessIds(root.Value) : [];
+            GpuPythonProcessSnapshot snapshot = BuildGpuPythonProcessSnapshot();
+            Dictionary<int, GpuPythonProcessInfo> byPid = snapshot.Processes.ToDictionary(process => process.Pid);
+
+            IReadOnlyList<GpuPythonProcessInfo> selected = stopAll
+                ? SelectTopLevelStopTargets(snapshot.Processes.Where(process => process.StopRecommended))
+                : SelectTopLevelStopTargets(requestedPids
+                    .Select(pid => byPid.TryGetValue(pid, out GpuPythonProcessInfo? process) ? process : null)
+                    .Where(process => process != null)
+                    .Cast<GpuPythonProcessInfo>());
+
+            if (selected.Count == 0)
+            {
+                return ToJson(new
+                {
+                    ok = false,
+                    message = stopAll
+                        ? "No GPU-backed Python generator processes are available to stop."
+                        : "No selected Python GPU process could be stopped.",
+                    results = Array.Empty<GpuPythonProcessStopResult>(),
+                    snapshot
+                });
+            }
+
+            var results = new List<GpuPythonProcessStopResult>();
+            foreach (GpuPythonProcessInfo process in selected)
+                results.Add(StopGpuPythonProcess(process));
+
+            return ToJson(new
+            {
+                ok = results.Any(result => result.Ok),
+                message = BuildGpuPythonStopSummary(results),
+                results,
+                snapshot = BuildGpuPythonProcessSnapshot()
+            });
+        }
+        catch (Exception ex)
+        {
+            return Error("GPU Python process stop failed: " + ex.Message, "gpu_process_stop_failed", "gpu_process_stop_failed");
+        }
+    }
+
+    private GpuPythonProcessSnapshot BuildGpuPythonProcessSnapshot()
+    {
+        DateTimeOffset capturedUtc = DateTimeOffset.UtcNow;
+        IReadOnlyList<GpuComputeProcessUsage> usages = ReadGpuComputeProcessUsages();
+        Dictionary<string, long> gpuMemoryTotalsByUuid = ReadGpuMemoryTotalsByUuid();
+        long allGpuMemoryBytes = gpuMemoryTotalsByUuid.Values.Where(value => value > 0).Sum();
+        Dictionary<int, GpuProcessDescriptor> descriptors = BuildGpuProcessDescriptorMap(usages.Select(usage => usage.Pid));
+        var groups = new Dictionary<int, GpuPythonProcessAggregate>();
+
+        foreach (GpuComputeProcessUsage usage in usages)
+        {
+            if (!descriptors.TryGetValue(usage.Pid, out GpuProcessDescriptor? descriptor) || descriptor == null)
+                descriptor = ReadGpuProcessDescriptor(usage.Pid, usage.ProcessName);
+
+            GpuProcessDescriptor? target = ResolveGpuPythonStopTarget(descriptor, descriptors);
+            if (target == null)
+                continue;
+
+            if (!groups.TryGetValue(target.Pid, out GpuPythonProcessAggregate? aggregate))
+            {
+                aggregate = new GpuPythonProcessAggregate(target);
+                groups[target.Pid] = aggregate;
+            }
+
+            aggregate.AddUsage(usage);
+        }
+
+        long totalGpuMemoryBytes = groups.Values.Sum(group => group.GpuMemoryBytes);
+        long totalRamBytes = TryGetTotalPhysicalMemoryBytes();
+        var seenPids = new HashSet<int>();
+        var processes = groups.Values
+            .Select(group => BuildGpuPythonProcessInfo(group, capturedUtc, totalRamBytes, allGpuMemoryBytes))
+            .Where(process =>
+            {
+                seenPids.Add(process.Pid);
+                return true;
+            })
+            .OrderByDescending(process => process.GpuMemoryBytes)
+            .ThenByDescending(process => process.CpuPercent ?? 0)
+            .ThenBy(process => process.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        PruneGpuProcessCpuSamples(seenPids);
+
+        return new GpuPythonProcessSnapshot
+        {
+            Ok = true,
+            CapturedUtc = capturedUtc.ToString("O"),
+            PythonProcessCount = processes.Length,
+            GpuPythonProcessCount = processes.Length,
+            TotalGpuMemoryBytes = totalGpuMemoryBytes,
+            TotalGpuMemoryText = FormatBytes(totalGpuMemoryBytes),
+            TotalGpuMemoryPercent = allGpuMemoryBytes > 0 ? ClampPercent(totalGpuMemoryBytes * 100d / allGpuMemoryBytes) : 0,
+            Processes = processes,
+            Message = processes.Length == 0
+                ? "No GPU-backed Python generator processes are currently visible."
+                : processes.Length.ToString(CultureInfo.InvariantCulture) + " GPU-backed Python process group(s) are visible."
+        };
+    }
+
+    private GpuPythonProcessInfo BuildGpuPythonProcessInfo(
+        GpuPythonProcessAggregate aggregate,
+        DateTimeOffset capturedUtc,
+        long totalRamBytes,
+        long allGpuMemoryBytes)
+    {
+        GpuProcessDescriptor descriptor = aggregate.Target;
+        long ramBytes = 0;
+        TimeSpan? cpuTime = null;
+        try
+        {
+            using Process process = Process.GetProcessById(descriptor.Pid);
+            ramBytes = Math.Max(0, SafeRead(() => process.WorkingSet64, 0L));
+            cpuTime = SafeReadNullable(() => process.TotalProcessorTime);
+        }
+        catch
+        {
+        }
+
+        double? cpuPercent = CalculateGpuProcessCpuPercent(descriptor.Pid, cpuTime, capturedUtc);
+        double ramPercent = totalRamBytes > 0 ? ClampPercent(ramBytes * 100d / totalRamBytes) : 0;
+        double vramPercent = allGpuMemoryBytes > 0 ? ClampPercent(aggregate.GpuMemoryBytes * 100d / allGpuMemoryBytes) : 0;
+        bool isRuntimeSelf = descriptor.Pid == Environment.ProcessId;
+        bool isStoppable = !isRuntimeSelf && descriptor.Pid > 4 && IsPythonManagedProcess(descriptor);
+
+        return new GpuPythonProcessInfo
+        {
+            Pid = descriptor.Pid,
+            ParentPid = descriptor.ParentPid,
+            ProcessGroupId = descriptor.ProcessGroupId,
+            Name = descriptor.Name,
+            DisplayName = BuildGpuProcessDisplayName(descriptor),
+            CommandLine = descriptor.CommandLine,
+            ExecutablePath = descriptor.ExecutablePath,
+            GpuMemoryBytes = aggregate.GpuMemoryBytes,
+            GpuMemoryText = FormatBytes(aggregate.GpuMemoryBytes),
+            GpuMemoryPercent = vramPercent,
+            CpuPercent = cpuPercent,
+            CpuPercentText = cpuPercent.HasValue ? cpuPercent.Value.ToString("0.0", CultureInfo.InvariantCulture) + "%" : "warming",
+            RamBytes = ramBytes,
+            RamText = ramBytes > 0 ? FormatBytes(ramBytes) : "n/a",
+            RamPercent = ramPercent,
+            RamPercentText = totalRamBytes > 0 ? ramPercent.ToString("0.0", CultureInfo.InvariantCulture) + "%" : "n/a",
+            ResourceText = BuildGpuPythonResourceText(cpuPercent, ramPercent, totalRamBytes, aggregate.GpuMemoryBytes, vramPercent),
+            GpuSummary = aggregate.GpuSummary,
+            ChildPids = aggregate.ChildPids.OrderBy(pid => pid).ToArray(),
+            IsRuntimeSelf = isRuntimeSelf,
+            IsStoppable = isStoppable,
+            StopRecommended = isStoppable,
+            StopReason = isRuntimeSelf ? "This is the current LlmRuntime process." : isStoppable ? "Stop this Python GPU process group." : "This process is not a stoppable Python generator target."
+        };
+    }
+
+    private static string BuildGpuPythonResourceText(double? cpuPercent, double ramPercent, long totalRamBytes, long gpuMemoryBytes, double vramPercent)
+    {
+        string cpu = cpuPercent.HasValue ? cpuPercent.Value.ToString("0.0", CultureInfo.InvariantCulture) + "% CPU" : "CPU warming";
+        string ram = totalRamBytes > 0 ? ramPercent.ToString("0.0", CultureInfo.InvariantCulture) + "% RAM" : "RAM n/a";
+        string vram = FormatBytes(gpuMemoryBytes) + " VRAM";
+        if (vramPercent > 0)
+            vram += " (" + vramPercent.ToString("0.0", CultureInfo.InvariantCulture) + "%)";
+        return cpu + " | " + ram + " | " + vram;
+    }
+
+    private static string BuildGpuProcessDisplayName(GpuProcessDescriptor descriptor)
+    {
+        string command = descriptor.CommandLine;
+        if (!string.IsNullOrWhiteSpace(command))
+        {
+            string model = TryExtractArgumentValue(command, "--model");
+            if (!string.IsNullOrWhiteSpace(model))
+                return Path.GetFileName(model.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) + " via " + FirstNonEmpty(descriptor.Name, "python");
+
+            if (command.Contains("vllm.entrypoints.openai.api_server", StringComparison.OrdinalIgnoreCase))
+                return "vLLM OpenAI server";
+        }
+
+        return FirstNonEmpty(descriptor.Name, Path.GetFileName(descriptor.ExecutablePath), "python");
+    }
+
+    private static string TryExtractArgumentValue(string commandLine, string argumentName)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine) || string.IsNullOrWhiteSpace(argumentName))
+            return "";
+
+        Match match = Regex.Match(commandLine, Regex.Escape(argumentName) + "\\s+(\"[^\"]+\"|'[^']+'|\\S+)", RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return "";
+
+        return match.Groups[1].Value.Trim().Trim('"', '\'');
+    }
+
+    private static IReadOnlyList<GpuPythonProcessInfo> SelectTopLevelStopTargets(IEnumerable<GpuPythonProcessInfo> processes)
+    {
+        return processes
+            .Where(process => process.IsStoppable)
+            .GroupBy(process => process.ProcessGroupId > 1 ? process.ProcessGroupId : process.Pid)
+            .Select(group => group.OrderBy(process => process.ParentPid <= 1 ? 0 : 1).ThenBy(process => process.Pid).First())
+            .OrderByDescending(process => process.GpuMemoryBytes)
+            .ToArray();
+    }
+
+    private GpuPythonProcessStopResult StopGpuPythonProcess(GpuPythonProcessInfo process)
+    {
+        if (process == null || process.Pid <= 4)
+            return GpuPythonProcessStopResult.Fail(0, "Invalid process selection.");
+        if (process.Pid == Environment.ProcessId)
+            return GpuPythonProcessStopResult.Fail(process.Pid, "Refusing to stop the active LlmRuntime process.");
+
+        GpuProcessDescriptor descriptor = ReadGpuProcessDescriptor(process.Pid, process.Name);
+        if (!IsPythonManagedProcess(descriptor))
+            return GpuPythonProcessStopResult.Fail(process.Pid, "Refusing to stop a process that no longer looks like Python.");
+
+        try
+        {
+            bool gracefulSignalSent = false;
+            if (OperatingSystem.IsLinux() && process.ProcessGroupId > 1)
+                gracefulSignalSent = TrySignalLinuxProcessGroup(process.ProcessGroupId, "TERM");
+
+            using Process target = Process.GetProcessById(process.Pid);
+            if (gracefulSignalSent)
+                WaitForProcessExit(target, TimeSpan.FromSeconds(8));
+
+            if (!target.HasExited)
+            {
+                target.Kill(entireProcessTree: true);
+                WaitForProcessExit(target, TimeSpan.FromSeconds(5));
+            }
+
+            return new GpuPythonProcessStopResult
+            {
+                Ok = true,
+                Pid = process.Pid,
+                Name = process.DisplayName,
+                Message = process.DisplayName + " (" + process.Pid.ToString(CultureInfo.InvariantCulture) + ") stopped."
+            };
+        }
+        catch (Exception ex)
+        {
+            return GpuPythonProcessStopResult.Fail(process.Pid, "Stop failed for " + process.DisplayName + ": " + ex.Message, process.DisplayName);
+        }
+    }
+
+    private static string BuildGpuPythonStopSummary(IReadOnlyList<GpuPythonProcessStopResult> results)
+    {
+        int stopped = results.Count(result => result.Ok);
+        int failed = results.Count - stopped;
+        if (stopped > 0 && failed == 0)
+            return stopped.ToString(CultureInfo.InvariantCulture) + " Python GPU process group(s) stopped.";
+        if (stopped > 0)
+            return stopped.ToString(CultureInfo.InvariantCulture) + " stopped; " + failed.ToString(CultureInfo.InvariantCulture) + " failed.";
+        return "No Python GPU process groups were stopped.";
+    }
+
+    private static void WaitForProcessExit(Process process, TimeSpan timeout)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.WaitForExit((int)Math.Max(1, timeout.TotalMilliseconds));
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool TrySignalLinuxProcessGroup(int processGroupId, string signal)
+    {
+        if (processGroupId <= 1)
+            return false;
+
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo("/bin/kill")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+            process.StartInfo.ArgumentList.Add("-" + signal);
+            process.StartInfo.ArgumentList.Add("--");
+            process.StartInfo.ArgumentList.Add("-" + processGroupId.ToString(CultureInfo.InvariantCulture));
+            if (!process.Start())
+                return false;
+            process.WaitForExit(3000);
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static HashSet<int> ReadProcessIds(JsonElement root)
+    {
+        var result = new HashSet<int>();
+        AddProcessId(root, "pid", result);
+        AddProcessId(root, "processId", result);
+        AddProcessId(root, "process_id", result);
+
+        if (TryGetPropertyAny(root, out JsonElement pids, "pids", "processIds", "process_ids") &&
+            pids.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in pids.EnumerateArray())
+                AddProcessId(item, result);
+        }
+
+        return result;
+    }
+
+    private static void AddProcessId(JsonElement root, string name, HashSet<int> result)
+    {
+        if (TryGetPropertyAny(root, out JsonElement value, name))
+            AddProcessId(value, result);
+    }
+
+    private static void AddProcessId(JsonElement value, HashSet<int> result)
+    {
+        int pid = 0;
+        if (value.ValueKind == JsonValueKind.Number)
+            value.TryGetInt32(out pid);
+        else if (value.ValueKind == JsonValueKind.String)
+            int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out pid);
+
+        if (pid > 0)
+            result.Add(pid);
+    }
+
+    private static Dictionary<int, GpuProcessDescriptor> BuildGpuProcessDescriptorMap(IEnumerable<int> pids)
+    {
+        var descriptors = new Dictionary<int, GpuProcessDescriptor>();
+        foreach (int pid in pids.Where(pid => pid > 0).Distinct())
+        {
+            int currentPid = pid;
+            for (int depth = 0; depth < 16 && currentPid > 1; depth++)
+            {
+                if (!descriptors.TryGetValue(currentPid, out GpuProcessDescriptor? descriptor))
+                {
+                    descriptor = ReadGpuProcessDescriptor(currentPid, "");
+                    descriptors[currentPid] = descriptor;
+                }
+
+                if (descriptor.ParentPid <= 1 || descriptor.ParentPid == currentPid)
+                    break;
+                currentPid = descriptor.ParentPid;
+            }
+        }
+
+        return descriptors;
+    }
+
+    private static GpuProcessDescriptor? ResolveGpuPythonStopTarget(GpuProcessDescriptor descriptor, IReadOnlyDictionary<int, GpuProcessDescriptor> descriptors)
+    {
+        if (!IsPythonManagedProcess(descriptor))
+            return null;
+
+        GpuProcessDescriptor best = descriptor;
+        GpuProcessDescriptor current = descriptor;
+        for (int depth = 0; depth < 16 && current.ParentPid > 1; depth++)
+        {
+            if (!descriptors.TryGetValue(current.ParentPid, out GpuProcessDescriptor? parent))
+                break;
+            if (descriptor.ProcessGroupId > 1 && parent.ProcessGroupId != descriptor.ProcessGroupId)
+                break;
+            if (!IsPythonManagedProcess(parent))
+                break;
+
+            best = parent;
+            current = parent;
+        }
+
+        return best;
+    }
+
+    private static bool IsPythonManagedProcess(GpuProcessDescriptor descriptor)
+    {
+        string text = (descriptor.Name + " " + descriptor.ExecutablePath + " " + descriptor.CommandLine + " " + descriptor.GpuProcessName).ToLowerInvariant();
+        return text.Contains("python") ||
+               text.Contains("vllm") ||
+               text.Contains("torchrun") ||
+               text.Contains("diffusers");
+    }
+
+    private static GpuProcessDescriptor ReadGpuProcessDescriptor(int pid, string fallbackName)
+    {
+        string name = fallbackName ?? "";
+        string executablePath = "";
+        string commandLine = "";
+        int parentPid = 0;
+        int processGroupId = 0;
+
+        try
+        {
+            using Process process = Process.GetProcessById(pid);
+            name = FirstNonEmpty(name, SafeRead(() => process.ProcessName, ""));
+            executablePath = SafeRead(() => process.MainModule?.FileName ?? "", "");
+            commandLine = TryReadProcessCommandLine(pid);
+        }
+        catch
+        {
+            commandLine = TryReadProcessCommandLine(pid);
+        }
+
+        if (OperatingSystem.IsLinux())
+            ReadLinuxProcessIds(pid, out parentPid, out processGroupId);
+
+        return new GpuProcessDescriptor
+        {
+            Pid = pid,
+            ParentPid = parentPid,
+            ProcessGroupId = processGroupId,
+            Name = FirstNonEmpty(name, Path.GetFileName(executablePath), "process"),
+            GpuProcessName = fallbackName ?? "",
+            ExecutablePath = executablePath,
+            CommandLine = FirstNonEmpty(commandLine, fallbackName)
+        };
+    }
+
+    private static string TryReadProcessCommandLine(int pid)
+    {
+        if (!OperatingSystem.IsLinux())
+            return "";
+
+        try
+        {
+            string path = "/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/cmdline";
+            if (!File.Exists(path))
+                return "";
+            byte[] bytes = File.ReadAllBytes(path);
+            string text = Encoding.UTF8.GetString(bytes).Replace('\0', ' ').Trim();
+            return text;
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static void ReadLinuxProcessIds(int pid, out int parentPid, out int processGroupId)
+    {
+        parentPid = 0;
+        processGroupId = 0;
+        try
+        {
+            string stat = File.ReadAllText("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat");
+            int close = stat.LastIndexOf(')');
+            if (close < 0 || close + 2 >= stat.Length)
+                return;
+            string[] parts = stat[(close + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 1)
+                int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out parentPid);
+            if (parts.Length > 2)
+                int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out processGroupId);
+        }
+        catch
+        {
+        }
+    }
+
+    private static IReadOnlyList<GpuComputeProcessUsage> ReadGpuComputeProcessUsages()
+    {
+        string output = RunShortProcess("nvidia-smi",
+            ["--query-compute-apps=gpu_uuid,pid,process_name,used_memory", "--format=csv,noheader,nounits"],
+            TimeSpan.FromSeconds(4));
+        IReadOnlyList<GpuComputeProcessUsage> rows = ParseGpuComputeProcessUsages(output, hasUuid: true);
+        if (rows.Count > 0)
+            return rows;
+
+        output = RunShortProcess("nvidia-smi",
+            ["--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits"],
+            TimeSpan.FromSeconds(4));
+        return ParseGpuComputeProcessUsages(output, hasUuid: false);
+    }
+
+    private static IReadOnlyList<GpuComputeProcessUsage> ParseGpuComputeProcessUsages(string output, bool hasUuid)
+    {
+        var rows = new List<GpuComputeProcessUsage>();
+        foreach (string line in (output ?? "").Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = line.Split(',', StringSplitOptions.TrimEntries);
+            if ((hasUuid && parts.Length < 4) || (!hasUuid && parts.Length < 3))
+                continue;
+
+            string uuid = hasUuid ? parts[0] : "";
+            string pidText = hasUuid ? parts[1] : parts[0];
+            string processName = hasUuid ? parts[2] : parts[1];
+            string memoryText = hasUuid ? parts[3] : parts[2];
+            if (!int.TryParse(pidText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int pid) || pid <= 0)
+                continue;
+
+            long memoryBytes = ParseNvidiaSmiMemoryMiB(memoryText);
+            rows.Add(new GpuComputeProcessUsage
+            {
+                GpuUuid = uuid,
+                Pid = pid,
+                ProcessName = processName,
+                UsedMemoryBytes = memoryBytes
+            });
+        }
+
+        return rows;
+    }
+
+    private static Dictionary<string, long> ReadGpuMemoryTotalsByUuid()
+    {
+        string output = RunShortProcess("nvidia-smi",
+            ["--query-gpu=uuid,memory.total", "--format=csv,noheader,nounits"],
+            TimeSpan.FromSeconds(4));
+        var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in (output ?? "").Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = line.Split(',', StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+                continue;
+            long memoryBytes = ParseNvidiaSmiMemoryMiB(parts[1]);
+            if (!string.IsNullOrWhiteSpace(parts[0]) && memoryBytes > 0)
+                result[parts[0]] = memoryBytes;
+        }
+
+        return result;
+    }
+
+    private static long ParseNvidiaSmiMemoryMiB(string value)
+    {
+        string clean = Regex.Replace(value ?? "", "[^0-9.]", "");
+        return double.TryParse(clean, NumberStyles.Float, CultureInfo.InvariantCulture, out double mib) && mib > 0
+            ? (long)Math.Round(mib * 1024d * 1024d)
+            : 0;
+    }
+
+    private static string RunShortProcess(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo(fileName)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            foreach (string argument in arguments)
+                startInfo.ArgumentList.Add(argument);
+
+            using var process = new Process { StartInfo = startInfo };
+            if (!process.Start())
+                return "";
+
+            if (!process.WaitForExit((int)Math.Max(1, timeout.TotalMilliseconds)))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return "";
+            }
+
+            return process.StandardOutput.ReadToEnd();
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private double? CalculateGpuProcessCpuPercent(int pid, TimeSpan? totalProcessorTime, DateTimeOffset capturedUtc)
+    {
+        if (!totalProcessorTime.HasValue || pid <= 0)
+            return null;
+
+        lock (_gpuProcessCpuSamplesLock)
+        {
+            if (!_gpuProcessCpuSamples.TryGetValue(pid, out GpuProcessCpuSample? previous))
+            {
+                _gpuProcessCpuSamples[pid] = new GpuProcessCpuSample(totalProcessorTime.Value, capturedUtc);
+                return null;
+            }
+
+            _gpuProcessCpuSamples[pid] = new GpuProcessCpuSample(totalProcessorTime.Value, capturedUtc);
+            double elapsedMs = Math.Max(1, (capturedUtc - previous.CapturedUtc).TotalMilliseconds);
+            double cpuMs = Math.Max(0, (totalProcessorTime.Value - previous.TotalProcessorTime).TotalMilliseconds);
+            return ClampPercent(cpuMs / (elapsedMs * Math.Max(1, Environment.ProcessorCount)) * 100d);
+        }
+    }
+
+    private void PruneGpuProcessCpuSamples(HashSet<int> activePids)
+    {
+        lock (_gpuProcessCpuSamplesLock)
+        {
+            foreach (int pid in _gpuProcessCpuSamples.Keys.Where(pid => !activePids.Contains(pid)).ToArray())
+                _gpuProcessCpuSamples.Remove(pid);
+        }
+    }
+
+    private static long TryGetTotalPhysicalMemoryBytes()
+    {
+        try
+        {
+            if (OperatingSystem.IsLinux() && File.Exists("/proc/meminfo"))
+            {
+                foreach (string line in File.ReadLines("/proc/meminfo"))
+                {
+                    if (!line.StartsWith("MemTotal:", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    Match match = Regex.Match(line, @"(\d+)");
+                    if (match.Success && long.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long kb))
+                        return kb * 1024;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            long total = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+            return Math.Max(0, total);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static T SafeRead<T>(Func<T> read, T fallback)
+    {
+        try { return read(); } catch { return fallback; }
+    }
+
+    private static TimeSpan? SafeReadNullable(Func<TimeSpan> read)
+    {
+        try { return read(); } catch { return null; }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0)
+            return "0 B";
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        int unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        string format = value >= 100 || unit == 0 ? "0" : value >= 10 ? "0.0" : "0.00";
+        return value.ToString(format, CultureInfo.InvariantCulture) + " " + units[unit];
+    }
+
+    private static double ClampPercent(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+            return 0;
+        if (value < 0)
+            return 0;
+        if (value > 100)
+            return 100;
+        return value;
+    }
+
     private string HandleCompatibilityConfig(HttpRequest request)
     {
         try
@@ -510,6 +1209,9 @@ public sealed class LlmRuntimeHost : IDisposable
             string? instanceId = GetString(root, "instance_id") ?? GetString(root, "instanceId");
             int? concurrencyLimit = GetInt32(root, "concurrency_limit") ?? GetInt32(root, "concurrencyLimit");
             LlmParallelismMode? parallelismMode = GetParallelismMode(root);
+            bool parallelTensorRequested = GetBool(root, "parallel_tensor") ?? GetBool(root, "parallelTensor") ?? false;
+            if (parallelTensorRequested && (!parallelismMode.HasValue || parallelismMode.Value == LlmParallelismMode.Single))
+                parallelismMode = LlmParallelismMode.TensorParallel;
             LlmParallelismPlacement? parallelismPlacement = GetParallelismPlacement(root);
             IReadOnlyList<string> targetDeviceIds = GetDeviceIds(root, deviceId);
             IReadOnlyList<string> networkNodeIds = GetStringArray(root, "network_node_ids")
@@ -657,7 +1359,9 @@ public sealed class LlmRuntimeHost : IDisposable
                     placement = ToParallelismPlacementName(result.LoadConfig?.ParallelismPlacement ?? parallelismPlacement ?? LlmParallelismPlacement.Local),
                     target_device_ids = targetDeviceIds,
                     network_node_ids = networkNodeIds,
-                    execution = loadDataParallelInstances ? "local-instance-pool" : "single-runtime-instance"
+                    parallel_tensor = result.LoadConfig?.ParallelTensor ?? parallelismMode == LlmParallelismMode.TensorParallel,
+                    tensor_parallel_size = result.LoadConfig?.TensorParallelSize ?? (parallelismMode == LlmParallelismMode.TensorParallel ? Math.Max(1, targetDeviceIds.Count) : 1),
+                    execution = GetParallelismExecution(result.LoadConfig?.ParallelismMode ?? parallelismMode ?? LlmParallelismMode.Single, loadDataParallelInstances)
                 },
                 instances = results.Select(loadResult => new
                 {
@@ -2044,7 +2748,7 @@ public sealed class LlmRuntimeHost : IDisposable
         ]);
         ApplyToolSelectionBudget(firstPassRequest);
         var firstPass = await Registry.CompleteChatAsync(firstPassRequest, cancellationToken).ConfigureAwait(false);
-        var toolCalls = ParseToolCallsFromModelText(firstPass.Content).ToArray();
+        var toolCalls = FilterAvailableToolCalls(request, ParseToolCallsFromModelText(firstPass.Content)).ToArray();
         if (toolCalls.Length == 0 && LooksLikeToolCallAttempt(firstPass.Content, request.Tools))
         {
             var repairRequest = CloneChatRequest(request, messages:
@@ -2052,11 +2756,11 @@ public sealed class LlmRuntimeHost : IDisposable
                 new LlmChatMessage("system", BuildToolUseInstruction(request.Tools)),
                 .. request.Messages,
                 new LlmChatMessage("assistant", firstPass.Content),
-                new LlmChatMessage("system", BuildToolRepairInstruction())
+                new LlmChatMessage("system", BuildToolRepairInstruction(request.Tools))
             ]);
             ApplyToolSelectionBudget(repairRequest);
             var repairedPass = await Registry.CompleteChatAsync(repairRequest, cancellationToken).ConfigureAwait(false);
-            var repairedCalls = ParseToolCallsFromModelText(repairedPass.Content).ToArray();
+            var repairedCalls = FilterAvailableToolCalls(request, ParseToolCallsFromModelText(repairedPass.Content)).ToArray();
             if (repairedCalls.Length > 0)
             {
                 firstPass = repairedPass;
@@ -2087,6 +2791,22 @@ public sealed class LlmRuntimeHost : IDisposable
             toolCalls = intentRescuedCalls.ToArray();
         }
 
+        if (toolCalls.Length > 0 && HasToolResultMessages(request))
+        {
+            toolCalls = toolCalls
+                .Where(toolCall => !IsRepeatedCompletedToolCall(request, toolCall))
+                .ToArray();
+            if (toolCalls.Length == 0)
+            {
+                var finalAnswerRequest = CloneChatRequest(request, prependMessages:
+                [
+                    new LlmChatMessage("system", "The needed tool result is already present in the conversation. Answer the user from that result now. Do not call tools, do not output tool JSON, and do not repeat completed tool calls.")
+                ]);
+                var finalAnswer = await Registry.CompleteChatAsync(finalAnswerRequest, cancellationToken).ConfigureAwait(false);
+                return SanitizeToolResultFinalAnswer(finalAnswer, request);
+            }
+        }
+
         if (toolCalls.Length == 0)
             return firstPass;
 
@@ -2112,32 +2832,212 @@ public sealed class LlmRuntimeHost : IDisposable
     private static bool TryRescueToolCallsFromIntent(LlmChatRequest request, string attemptedContent, out IReadOnlyList<LlmToolCall> toolCalls)
     {
         toolCalls = [];
-        if (!ToolIsAvailable(request.Tools, "vs_write_file"))
-            return false;
 
-        string combined = string.Join(Environment.NewLine, request.Messages
+        string combined = StripHiddenChatControlDirectives(string.Join(Environment.NewLine, request.Messages
             .Where(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
             .Select(message => message.Content)
-            .Append(attemptedContent ?? ""));
+            .Append(attemptedContent ?? "")));
 
-        if (!TryExtractWriteFileIntent(combined, out string path, out string content))
+        if (ToolIsAvailable(request.Tools, "vs_write_file") &&
+            TryExtractWriteFileIntent(combined, out string path, out string content))
+        {
+            toolCalls =
+            [
+                new LlmToolCall
+                {
+                    Id = "call_" + Guid.NewGuid().ToString("N"),
+                    Name = "vs_write_file",
+                    Arguments = JsonSerializer.SerializeToElement(new
+                    {
+                        path,
+                        content,
+                        overwrite = false
+                    }, JsonOptions)
+                }
+            ];
+            return true;
+        }
+
+        return TryRescueNamedToolIntent(request, combined, out toolCalls);
+    }
+
+    private static IEnumerable<LlmToolCall> FilterAvailableToolCalls(LlmChatRequest request, IEnumerable<LlmToolCall> toolCalls)
+    {
+        var available = request.Tools
+            .Select(tool => new { Name = ReadToolName(tool), Tool = tool })
+            .Where(item => !string.IsNullOrWhiteSpace(item.Name))
+            .GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Tool, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var toolCall in toolCalls)
+        {
+            string name = toolCall.Name?.Trim() ?? "";
+            if (IsPlaceholderToolName(name) || !available.TryGetValue(name, out var tool))
+                continue;
+
+            if (!ToolCallHasRequiredArguments(toolCall, tool))
+                continue;
+
+            yield return toolCall;
+        }
+    }
+
+    private static bool TryRescueNamedToolIntent(LlmChatRequest request, string combined, out IReadOnlyList<LlmToolCall> toolCalls)
+    {
+        foreach (JsonElement tool in request.Tools)
+        {
+            string name = ReadToolName(tool);
+            if (string.IsNullOrWhiteSpace(name) ||
+                string.Equals(name, "vs_write_file", StringComparison.OrdinalIgnoreCase) ||
+                !combined.Contains(name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var arguments = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (string propertyName in ReadToolParameterPropertyNames(tool))
+            {
+                string value = ExtractJsonStringField(combined, propertyName);
+                if (string.IsNullOrWhiteSpace(value) && LooksLikePathParameterName(propertyName))
+                    value = TryExtractPathLikeArgument(combined);
+                if (!string.IsNullOrWhiteSpace(value))
+                    arguments[propertyName] = value;
+            }
+
+            string[] required = ReadRequiredToolParameterNames(tool).ToArray();
+            if (required.Any(requiredName => !arguments.ContainsKey(requiredName)))
+                continue;
+
+            if (arguments.Count == 0 && required.Length > 0)
+                continue;
+
+            toolCalls =
+            [
+                new LlmToolCall
+                {
+                    Id = "call_" + Guid.NewGuid().ToString("N"),
+                    Name = name,
+                    Arguments = JsonSerializer.SerializeToElement(arguments, JsonOptions)
+                }
+            ];
+            return true;
+        }
+
+        toolCalls = [];
+        return false;
+    }
+
+    private static bool ToolCallHasRequiredArguments(LlmToolCall toolCall, JsonElement tool)
+    {
+        foreach (string requiredName in ReadRequiredToolParameterNames(tool))
+        {
+            if (!ToolCallHasArgument(toolCall.Arguments, requiredName))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool ToolCallHasArgument(JsonElement arguments, string name)
+    {
+        if (arguments.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(name))
             return false;
 
-        toolCalls =
-        [
-            new LlmToolCall
+        if (arguments.TryGetProperty(name, out var value))
+            return value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined;
+
+        foreach (var property in arguments.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                return property.Value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> ReadToolParameterPropertyNames(JsonElement tool)
+    {
+        if (!TryGetToolParameters(tool, out var parameters) ||
+            !TryGetPropertyAny(parameters, out var properties, "properties") ||
+            properties.ValueKind != JsonValueKind.Object)
+        {
+            yield break;
+        }
+
+        foreach (var property in properties.EnumerateObject())
+        {
+            if (!string.IsNullOrWhiteSpace(property.Name))
+                yield return property.Name;
+        }
+    }
+
+    private static IEnumerable<string> ReadRequiredToolParameterNames(JsonElement tool)
+    {
+        if (!TryGetToolParameters(tool, out var parameters) ||
+            !TryGetPropertyAny(parameters, out var required, "required") ||
+            required.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+
+        foreach (JsonElement item in required.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
             {
-                Id = "call_" + Guid.NewGuid().ToString("N"),
-                Name = "vs_write_file",
-                Arguments = JsonSerializer.SerializeToElement(new
-                {
-                    path,
-                    content,
-                    overwrite = false
-                }, JsonOptions)
+                string? name = item.GetString();
+                if (!string.IsNullOrWhiteSpace(name))
+                    yield return name!;
             }
-        ];
-        return true;
+        }
+    }
+
+    private static bool TryGetToolParameters(JsonElement tool, out JsonElement parameters)
+    {
+        parameters = default;
+        if (tool.ValueKind != JsonValueKind.Object)
+            return false;
+
+        if (TryGetPropertyAny(tool, out parameters, "parameters") && parameters.ValueKind == JsonValueKind.Object)
+            return true;
+
+        if (TryGetPropertyAny(tool, out var function, "function") &&
+            function.ValueKind == JsonValueKind.Object &&
+            TryGetPropertyAny(function, out parameters, "parameters") &&
+            parameters.ValueKind == JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        parameters = default;
+        return false;
+    }
+
+    private static bool IsPlaceholderToolName(string name)
+    {
+        string normalized = (name ?? "").Trim();
+        return normalized.Length == 0 ||
+            normalized.Equals("tool_name", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("actual_tool_name", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikePathParameterName(string name)
+    {
+        return name.Equals("path", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("file", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("filePath", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("filename", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("fileName", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string TryExtractPathLikeArgument(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        var match = Regex.Match(text, @"(?:""(?<quoted>[^""]+\.[A-Za-z0-9]{2,12})""|`(?<tick>[^`]+\.[A-Za-z0-9]{2,12})`)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success
+            ? FirstNonEmptyString(match.Groups["quoted"].Value, match.Groups["tick"].Value).Trim()
+            : "";
     }
 
     private static bool ToolIsAvailable(IReadOnlyList<JsonElement> tools, string name)
@@ -2147,6 +3047,7 @@ public sealed class LlmRuntimeHost : IDisposable
 
     private static bool TryExtractWriteFileIntent(string text, out string path, out string content)
     {
+        text = StripHiddenChatControlDirectives(text);
         path = ExtractJsonStringField(text, "path");
         content = ExtractJsonStringField(text, "content");
         if (string.IsNullOrWhiteSpace(path))
@@ -2165,7 +3066,28 @@ public sealed class LlmRuntimeHost : IDisposable
 
         path = path.Trim().Trim('"', '`');
         content = content.Trim().Trim('"', '`');
-        return !string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(content);
+        return !string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(content) && !IsHiddenChatControlPathCandidate(path);
+    }
+
+    private static string StripHiddenChatControlDirectives(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        string cleaned = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        cleaned = Regex.Replace(cleaned, "(?im)^\\s*/(?:no[_-]?think|think|reason|reasoning|analysis)\\s*$", "", RegexOptions.CultureInvariant);
+        cleaned = Regex.Replace(cleaned, "(?im)^\\s*Do\\s+not\\s+write\\s+a\\s+thought\\s+process,\\s*analysis,\\s*or\\s*<think>\\s+block\\.\\s*Start\\s+with\\s+the\\s+final\\s+answer\\s+immediately\\.\\s*$", "", RegexOptions.CultureInvariant);
+        return cleaned;
+    }
+
+    private static bool IsHiddenChatControlPathCandidate(string value)
+    {
+        string text = (value ?? "").Trim().Trim('"', '\'', '`', '.', ',', ';', ')', ']', '/', '\\').Replace('-', '_');
+        return text.Equals("no_think", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("think", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("reason", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("reasoning", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("analysis", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FirstNonEmptyString(params string[] values)
@@ -2427,13 +3349,128 @@ public sealed class LlmRuntimeHost : IDisposable
                "The exact shape is {\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"tool_name\",\"arguments\":{}}]}. " +
                "Return every tool call needed for the task in this one JSON object. Use double-quoted JSON strings and fully escape any nested quotes in arguments. " +
                "Never use XML tags such as <tool_call>, <arguments>, or <tool_result>. " +
-               "If prior tool results are already in the conversation, answer only from those results or call another available tool to gather missing facts; never invent unavailable details. " +
+               "If prior tool results are already in the conversation, treat those calls as completed: do not repeat a successful tool call with the same name and arguments. Answer from those results, or call only a new/different available tool to gather missing facts; never invent unavailable details. " +
                "If no tool is needed, answer normally without tool JSON. Available tools: " + BuildCompactToolManifest(tools);
     }
 
     private static bool HasToolResultMessages(LlmChatRequest request)
     {
         return request.Messages.Any(message => string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsRepeatedCompletedToolCall(LlmChatRequest request, LlmToolCall toolCall)
+    {
+        if (request == null || toolCall == null)
+            return false;
+
+        string requestedSignature = BuildToolCallRepeatSignature(toolCall.Name, toolCall.Arguments);
+        if (string.IsNullOrWhiteSpace(requestedSignature))
+            return false;
+
+        var callsById = new Dictionary<string, string>(StringComparer.Ordinal);
+        var completedCallIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (LlmChatMessage message in request.Messages)
+        {
+            string content = message.Content ?? "";
+            if (string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (Match match in Regex.Matches(content, @"^\s*tool_call\s+id=(?<id>\S+)\s+name=(?<name>\S+)\s+arguments=(?<args>.+?)\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant))
+                {
+                    string id = match.Groups["id"].Value.Trim();
+                    string signature = BuildToolCallRepeatSignature(match.Groups["name"].Value, match.Groups["args"].Value);
+                    if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(signature))
+                        callsById[id] = signature;
+                }
+            }
+            else if (string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))
+            {
+                Match match = Regex.Match(content, @"^\s*Tool result(?:\s+for\s+[^(]+)?\s+\((?<id>[^)]+)\):", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (match.Success && !ToolResultLooksEmptyOrFailed(content))
+                    completedCallIds.Add(match.Groups["id"].Value.Trim());
+            }
+        }
+
+        foreach (string id in completedCallIds)
+        {
+            if (callsById.TryGetValue(id, out string? completedSignature) &&
+                string.Equals(completedSignature, requestedSignature, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string BuildToolCallRepeatSignature(string name, JsonElement arguments)
+    {
+        return BuildToolCallRepeatSignature(name, arguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "{}" : arguments.GetRawText());
+    }
+
+    private static string BuildToolCallRepeatSignature(string name, string argumentsJson)
+    {
+        name = (name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return "";
+
+        return name.ToLowerInvariant() + "\n" + NormalizeToolCallArgumentsForRepeat(argumentsJson);
+    }
+
+    private static string NormalizeToolCallArgumentsForRepeat(string argumentsJson)
+    {
+        string text = (argumentsJson ?? "").Trim();
+        if (text.Length == 0)
+            return "{}";
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(text);
+            return NormalizeToolCallArgumentElementForRepeat(document.RootElement);
+        }
+        catch (JsonException)
+        {
+            return NormalizeToolCallArgumentStringForRepeat(Regex.Replace(text, @"\s+", "", RegexOptions.CultureInvariant));
+        }
+    }
+
+    private static string NormalizeToolCallArgumentElementForRepeat(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+            {
+                var properties = element.EnumerateObject()
+                    .OrderBy(property => property.Name, StringComparer.Ordinal)
+                    .Select(property => JsonSerializer.Serialize(property.Name, JsonOptions) + ":" + NormalizeToolCallArgumentElementForRepeat(property.Value));
+                return "{" + string.Join(",", properties) + "}";
+            }
+            case JsonValueKind.Array:
+                return "[" + string.Join(",", element.EnumerateArray().Select(NormalizeToolCallArgumentElementForRepeat)) + "]";
+            case JsonValueKind.String:
+                return JsonSerializer.Serialize(NormalizeToolCallArgumentStringForRepeat(element.GetString() ?? ""), JsonOptions);
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+            case JsonValueKind.Null:
+                return element.GetRawText();
+            default:
+                return "";
+        }
+    }
+
+    private static string NormalizeToolCallArgumentStringForRepeat(string value)
+    {
+        string text = (value ?? "").Trim();
+        return text.IndexOf('\\') >= 0 ? text.Replace('\\', '/') : text;
+    }
+
+    private static bool ToolResultLooksEmptyOrFailed(string content)
+    {
+        string text = (content ?? "").Trim();
+        string lower = text.ToLowerInvariant();
+        return lower.Contains("error", StringComparison.Ordinal) ||
+               lower.Contains("failed", StringComparison.Ordinal) ||
+               lower.Contains("not found", StringComparison.Ordinal);
     }
 
     private static bool ShouldBypassToolSelection(LlmChatRequest request)
@@ -2661,10 +3698,15 @@ public sealed class LlmRuntimeHost : IDisposable
         return text.Substring(0, Math.Max(0, maxLength - 1)).TrimEnd() + "...";
     }
 
-    private static string BuildToolRepairInstruction()
+    private static string BuildToolRepairInstruction(IReadOnlyList<JsonElement> tools)
     {
+        string toolNames = string.Join(", ", tools.Select(ReadToolName).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(toolNames))
+            toolNames = "one of the available tools";
+
         return "The previous assistant message attempted a tool call but was not valid tool JSON. Convert it into only one valid compact JSON object in this exact shape and include nothing else: " +
-               "{\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"tool_name\",\"arguments\":{}}]}.";
+               "{\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"actual_tool_name\",\"arguments\":{}}]}. " +
+               "Use only these available tool names: " + toolNames + ". Never output placeholder names such as actual_tool_name or tool_name.";
     }
 
     private static bool LooksLikeToolCallAttempt(string content, IReadOnlyList<JsonElement> tools)
@@ -3187,6 +4229,7 @@ public sealed class LlmRuntimeHost : IDisposable
             bits_per_weight = model.BitsPerWeight
         },
         size_bytes = model.SizeBytes,
+        required_memory_bytes = model.SizeBytes,
         params_string = model.ParamsString,
         prompt_pipeline_ready = model.LoadedInstances.Any(instance => instance.PromptPipelineReady),
         promptPipelineReady = model.LoadedInstances.Any(instance => instance.PromptPipelineReady),
@@ -3283,6 +4326,8 @@ public sealed class LlmRuntimeHost : IDisposable
         gpu_layer_count = config.GpuLayerCount,
         parallelism_mode = ToParallelismModeName(config.ParallelismMode),
         parallelism_placement = ToParallelismPlacementName(config.ParallelismPlacement),
+        parallel_tensor = config.ParallelTensor,
+        tensor_parallel_size = config.TensorParallelSize,
         target_device_ids = config.TargetDeviceIds,
         network_node_ids = config.NetworkNodeIds,
         gpu_load_threshold_percent = config.MaxGpuLoadPercent,
@@ -3308,6 +4353,8 @@ public sealed class LlmRuntimeHost : IDisposable
         provider = status.Backend,
         parallelism_mode = status.ParallelismMode,
         parallelism_placement = status.ParallelismPlacement,
+        parallel_tensor = status.ParallelTensor,
+        tensor_parallel_size = status.TensorParallelSize,
         target_device_ids = status.TargetDeviceIds,
         network_node_ids = status.NetworkNodeIds,
         gpu_load_threshold_percent = status.MaxGpuLoadPercent,
@@ -3762,6 +4809,7 @@ public sealed class LlmRuntimeHost : IDisposable
             "cuda12" => LlmBackendKind.Cuda12,
             "vulkan" => LlmBackendKind.Vulkan,
             "directml" or "direct_ml" or "direct-ml" => LlmBackendKind.DirectML,
+            "vllm" or "v_llm" or "v-llm" => LlmBackendKind.Vllm,
             _ => throw new LlmRuntimeException($"Unsupported backend: {value}", "invalid_request_error", "unsupported_backend")
         };
     }
@@ -3780,6 +4828,7 @@ public sealed class LlmRuntimeHost : IDisposable
             "data" or "dataparallel" or "data_parallel" or "data_parallelism" => LlmParallelismMode.DataParallel,
             "offload" or "modeloffload" or "model_offload" or "model_offloading" => LlmParallelismMode.ModelOffload,
             "pipeline" or "pipelineparallel" or "pipeline_parallel" or "pipeline_parallelism" => LlmParallelismMode.PipelineParallel,
+            "tensor" or "tensorparallel" or "tensor_parallel" or "tensor_parallelism" or "parallel_tensor" => LlmParallelismMode.TensorParallel,
             _ => throw new LlmRuntimeException($"Unsupported parallelism mode: {value}", "invalid_request_error", "unsupported_parallelism_mode")
         };
     }
@@ -3933,6 +4982,7 @@ public sealed class LlmRuntimeHost : IDisposable
             LlmBackendKind.Cuda => "cuda12",
             LlmBackendKind.Cuda12 => "cuda12",
             LlmBackendKind.DirectML => "directml",
+            LlmBackendKind.Vllm => "vllm",
             _ => backend.ToString().ToLowerInvariant()
         };
 
@@ -3942,8 +4992,16 @@ public sealed class LlmRuntimeHost : IDisposable
             LlmParallelismMode.DataParallel => "data_parallel",
             LlmParallelismMode.ModelOffload => "model_offload",
             LlmParallelismMode.PipelineParallel => "pipeline_parallel",
+            LlmParallelismMode.TensorParallel => "tensor_parallel",
             _ => "single"
         };
+
+    private static string GetParallelismExecution(LlmParallelismMode mode, bool loadDataParallelInstances) =>
+        loadDataParallelInstances
+            ? "local-instance-pool"
+            : mode == LlmParallelismMode.TensorParallel
+                ? "tensor-sharded-runtime-instance"
+                : "single-runtime-instance";
 
     private static string ToParallelismPlacementName(LlmParallelismPlacement placement) =>
         placement switch
@@ -3952,6 +5010,119 @@ public sealed class LlmRuntimeHost : IDisposable
             LlmParallelismPlacement.Hybrid => "hybrid",
             _ => "local"
         };
+
+    private sealed class GpuPythonProcessSnapshot
+    {
+        public bool Ok { get; init; }
+        public string CapturedUtc { get; init; } = "";
+        public string Message { get; init; } = "";
+        public int PythonProcessCount { get; init; }
+        public int GpuPythonProcessCount { get; init; }
+        public long TotalGpuMemoryBytes { get; init; }
+        public string TotalGpuMemoryText { get; init; } = "0 B";
+        public double TotalGpuMemoryPercent { get; init; }
+        public IReadOnlyList<GpuPythonProcessInfo> Processes { get; init; } = [];
+    }
+
+    private sealed class GpuPythonProcessInfo
+    {
+        public int Pid { get; init; }
+        public int ParentPid { get; init; }
+        public int ProcessGroupId { get; init; }
+        public string Name { get; init; } = "";
+        public string DisplayName { get; init; } = "";
+        public string CommandLine { get; init; } = "";
+        public string ExecutablePath { get; init; } = "";
+        public long GpuMemoryBytes { get; init; }
+        public string GpuMemoryText { get; init; } = "0 B";
+        public double GpuMemoryPercent { get; init; }
+        public double? CpuPercent { get; init; }
+        public string CpuPercentText { get; init; } = "";
+        public long RamBytes { get; init; }
+        public string RamText { get; init; } = "";
+        public double RamPercent { get; init; }
+        public string RamPercentText { get; init; } = "";
+        public string ResourceText { get; init; } = "";
+        public string GpuSummary { get; init; } = "";
+        public IReadOnlyList<int> ChildPids { get; init; } = [];
+        public bool IsRuntimeSelf { get; init; }
+        public bool IsStoppable { get; init; }
+        public bool StopRecommended { get; init; }
+        public string StopReason { get; init; } = "";
+    }
+
+    private sealed class GpuPythonProcessStopResult
+    {
+        public bool Ok { get; init; }
+        public int Pid { get; init; }
+        public string Name { get; init; } = "";
+        public string Message { get; init; } = "";
+
+        public static GpuPythonProcessStopResult Fail(int pid, string message, string name = "") => new()
+        {
+            Ok = false,
+            Pid = pid,
+            Name = name,
+            Message = message
+        };
+    }
+
+    private sealed class GpuPythonProcessAggregate
+    {
+        private readonly List<GpuComputeProcessUsage> _usages = [];
+        private readonly HashSet<int> _childPids = [];
+
+        public GpuPythonProcessAggregate(GpuProcessDescriptor target)
+        {
+            Target = target;
+        }
+
+        public GpuProcessDescriptor Target { get; }
+
+        public long GpuMemoryBytes => _usages.Sum(usage => Math.Max(0, usage.UsedMemoryBytes));
+
+        public IReadOnlyList<int> ChildPids => _childPids.ToArray();
+
+        public string GpuSummary
+        {
+            get
+            {
+                var grouped = _usages
+                    .GroupBy(usage => string.IsNullOrWhiteSpace(usage.GpuUuid) ? "GPU" : usage.GpuUuid)
+                    .Select(group => group.Key + " " + FormatBytes(group.Sum(usage => Math.Max(0, usage.UsedMemoryBytes))))
+                    .ToArray();
+                return grouped.Length == 0 ? "No GPU memory reported." : string.Join(" | ", grouped);
+            }
+        }
+
+        public void AddUsage(GpuComputeProcessUsage usage)
+        {
+            _usages.Add(usage);
+            if (usage.Pid != Target.Pid)
+                _childPids.Add(usage.Pid);
+        }
+    }
+
+    private sealed class GpuComputeProcessUsage
+    {
+        public string GpuUuid { get; init; } = "";
+        public int Pid { get; init; }
+        public string ProcessName { get; init; } = "";
+        public long UsedMemoryBytes { get; init; }
+    }
+
+    private sealed class GpuProcessDescriptor
+    {
+        public int Pid { get; init; }
+        public int ParentPid { get; init; }
+        public int ProcessGroupId { get; init; }
+        public string Name { get; init; } = "";
+        public string GpuProcessName { get; init; } = "";
+        public string ExecutablePath { get; init; } = "";
+        public string CommandLine { get; init; } = "";
+    }
+
+    private sealed record GpuProcessCpuSample(TimeSpan TotalProcessorTime, DateTimeOffset CapturedUtc);
 
     private static string Error(string message, string type, string code) => ToJson(new
     {

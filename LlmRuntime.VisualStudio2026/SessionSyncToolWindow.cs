@@ -33,7 +33,7 @@ internal sealed class SessionSyncToolWindow : ToolWindow
     public override Task InitializeAsync(CancellationToken cancellationToken)
     {
         this.dataContext = new SessionSyncViewModel(this.Extensibility);
-        return Task.CompletedTask;
+        return this.dataContext.InitializeAsync(cancellationToken);
     }
 
     public override Task<IRemoteUserControl> GetContentAsync(CancellationToken cancellationToken)

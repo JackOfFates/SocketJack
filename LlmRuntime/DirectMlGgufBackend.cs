@@ -67,10 +67,10 @@ public sealed class DirectMlGgufBackend : ILlmBackend
         }
 
         _loaded = true;
-        _promptPipelineReady = false;
-        _promptPipelineStatus = "cold";
-        _promptPipelineDetail = "Runner is configured; prompt pipeline is not warmed yet.";
-        _promptPipelineReadyAtUtc = null;
+        _promptPipelineReady = true;
+        _promptPipelineStatus = "ready";
+        _promptPipelineDetail = "Runner is configured; the DirectML process starts per prompt.";
+        _promptPipelineReadyAtUtc = DateTimeOffset.UtcNow;
         _promptPipelineWarmupSeconds = 0;
         return Task.CompletedTask;
     }
@@ -80,35 +80,23 @@ public sealed class DirectMlGgufBackend : ILlmBackend
         if (_promptPipelineReady)
             return;
 
-        var stopwatch = Stopwatch.StartNew();
+        using var operation = _lifetime.Enter();
+        await _inferenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _promptPipelineStatus = "warming";
-            _promptPipelineDetail = "Warming DirectML runner prompt path.";
-            await InvokeRunnerAsync(CreateWarmupRequest(), stream: false, cancellationToken).ConfigureAwait(false);
-            stopwatch.Stop();
+            if (_promptPipelineReady)
+                return;
+
+            ThrowIfNotLoaded();
             _promptPipelineReady = true;
             _promptPipelineStatus = "ready";
-            _promptPipelineDetail = "DirectML runner prompt path warmed; runner process starts per prompt.";
+            _promptPipelineDetail = "Runner is configured; the DirectML process starts per prompt.";
             _promptPipelineReadyAtUtc = DateTimeOffset.UtcNow;
-            _promptPipelineWarmupSeconds = stopwatch.Elapsed.TotalSeconds;
+            _promptPipelineWarmupSeconds = 0;
         }
-        catch (OperationCanceledException)
+        finally
         {
-            _promptPipelineReady = false;
-            _promptPipelineStatus = "cold";
-            _promptPipelineDetail = "Prompt pipeline warmup was canceled.";
-            _promptPipelineWarmupSeconds = stopwatch.Elapsed.TotalSeconds;
-            throw;
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            _promptPipelineReady = false;
-            _promptPipelineStatus = "failed";
-            _promptPipelineDetail = TrimPromptPipelineDetail(ex.Message);
-            _promptPipelineWarmupSeconds = stopwatch.Elapsed.TotalSeconds;
-            throw;
+            _inferenceLock.Release();
         }
     }
 
@@ -229,6 +217,8 @@ public sealed class DirectMlGgufBackend : ILlmBackend
             offload_kv_cache_to_gpu = LoadConfig.OffloadKvCacheToGpu,
             parallelism_mode = LoadConfig.ParallelismMode.ToString(),
             parallelism_placement = LoadConfig.ParallelismPlacement.ToString(),
+            parallel_tensor = LoadConfig.ParallelTensor,
+            tensor_parallel_size = LoadConfig.TensorParallelSize,
             target_device_ids = LoadConfig.TargetDeviceIds,
             network_node_ids = LoadConfig.NetworkNodeIds,
             gpu_load_threshold_percent = LoadConfig.MaxGpuLoadPercent,
@@ -413,20 +403,6 @@ public sealed class DirectMlGgufBackend : ILlmBackend
         }
     }
 
-    private LlmChatRequest CreateWarmupRequest() => new()
-    {
-        Model = InstanceId,
-        Messages =
-        [
-            new LlmChatMessage("system", "Warm the prompt pipeline. Reply with one token.")
-        ],
-        MaxTokens = 1,
-        MaxTokensSpecified = true,
-        Temperature = 0,
-        TopP = 1,
-        Stop = []
-    };
-
     private void ThrowIfNotLoaded()
     {
         _lifetime.ThrowIfDisposed();
@@ -435,14 +411,6 @@ public sealed class DirectMlGgufBackend : ILlmBackend
     }
 
     private static string Quote(string value) => "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
-
-    private static string TrimPromptPipelineDetail(string detail)
-    {
-        detail = (detail ?? "").Trim();
-        if (detail.Length <= 240)
-            return detail;
-        return detail[..240] + "...";
-    }
 
     public void Dispose()
     {

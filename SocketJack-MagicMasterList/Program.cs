@@ -30,7 +30,7 @@ internal sealed class MasterListOptions {
     private const string DefaultJackcastTargetUrl = "http://208.109.35.68:7477";
     private const string DefaultSecureAuthorityTargetUrl = "http://127.0.0.1:8500/";
     private const string DefaultSqlLoopbackBindHost = "127.0.0.1";
-    private static readonly string[] DefaultAllowedSqlLoginIpAddresses = { "172.58.9.236", "160.153.182.97" };
+    private static readonly string[] DefaultAllowedSqlLoginIpAddresses = { "172.58.9.186", "172.58.9.236", "160.153.182.97" };
 
     public int Port { get; private set; } = 8494;
     public int WebsitePort { get; private set; } = 80;
@@ -477,6 +477,8 @@ internal sealed partial class MasterListServerHost : IDisposable {
     private const int ShellProxyTargetPort = 11436;
     private const int ShellPublicPortStart = 18436;
     private const int ShellAgentPortStart = 19436;
+    private const int DefaultAutoParallelBatchLimit = 12;
+    private static readonly int AutoParallelBatchLimit = ReadAutoParallelBatchLimit();
     private static readonly TimeSpan ShellProxyAgentPresenceGrace = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan ShellProxyAgentCapacityWait = TimeSpan.FromSeconds(3);
 
@@ -702,6 +704,7 @@ internal sealed partial class MasterListServerHost : IDisposable {
     private const string WorkstationMetadataImageFileName = "JackLLMWorkstationMetadata.png";
     private const string AutoMetadataImageFileName = "SocketJackAutoMetadata.png";
     private const string FaviconFileName = "favicon.ico";
+    private const string FaviconPngFileName = "SocketJackIcon.png";
     private const string SiteIconCandidateFileName = "SocketJackSiteIcon.png";
     private const string JackLlmWorkstationMetadataCandidateFileName = "JackLLMWorkstationMetadataCandidate.png";
     private const string SocketJackLandingMetadataCandidateFileName = "SocketJackLandingMetadataCandidate.png";
@@ -782,6 +785,7 @@ internal sealed partial class MasterListServerHost : IDisposable {
         new("tools", "text-generation", "", "function calling"),
         new("tools", "text-generation", "", "tool use")
     ];
+    private static readonly string AuthFastPathRevision = "2026-06-02-auth-fastpath";
     private readonly MasterListOptions _options;
     private readonly MutableTcpServer _server;
     private readonly MutableTcpServer _websiteServer;
@@ -807,8 +811,16 @@ internal sealed partial class MasterListServerHost : IDisposable {
     private long _autoPoolSequence;
     private long _serverListVersion;
     private long _autoLiveVersion;
+    private int _asyncDataSaveRunning;
+    private int _asyncDataSaveRequested;
     private readonly object _masterListLiveSnapshotLock = new();
     private MasterListLivePayload? _cachedMasterListLivePayload;
+    private static readonly TimeSpan AutoModelCacheRefreshInterval = TimeSpan.FromSeconds(30);
+    private readonly object _autoModelCacheLock = new();
+    private System.Threading.Timer? _autoModelCacheTimer;
+    private JsonObject? _cachedAutoModelCachePayload;
+    private string _cachedAutoModelCacheSignature = "";
+    private int _autoModelCacheRefreshRunning;
     private readonly Dictionary<string, AutoModelBenchmarkRequirement> _autoModelBenchmarkRequirements = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lazy<string> _masterListHtml;
     private Table _table;
@@ -877,6 +889,7 @@ internal sealed partial class MasterListServerHost : IDisposable {
         _dataServer = _tds.Server;
         _dataServer.DataPath = options.ResolveDataFilePath();
         _dataServer.DefaultDatabase = options.DatabaseName;
+        _dataServer.SqlAdminIpWhitelistDatabaseName = options.DatabaseName;
         _dataServer.ServerName = "SocketJack";
         _dataServer.AutoSave = true;
         _dataServer.AutoSaveDebounceMs = 250;
@@ -924,6 +937,7 @@ internal sealed partial class MasterListServerHost : IDisposable {
                 MapJackcastRoutes(_jackcastSslServer);
 
             _initialized = true;
+            StartAutoModelCacheRefresh();
         } finally {
             _initSemaphore.Release();
         }
@@ -932,7 +946,9 @@ internal sealed partial class MasterListServerHost : IDisposable {
     private void ConfigureSqlLoginIpAllowList() {
         _dataServer.EnforceSqlLoginIpAllowList = true;
         _dataServer.AllowLoopbackSqlLogin = true;
-        _dataServer.AllowSqlLoginIpAddress(_options.AllowedSqlLoginIpAddresses);
+        var allowed = new List<string>(_options.AllowedSqlLoginIpAddresses ?? Array.Empty<string>());
+        allowed.AddRange(new[] { "172.58.9.186", "172.58.9.236", "160.153.182.97" });
+        _dataServer.AllowSqlLoginIpAddress(allowed.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
     private void ConfigureSharedJackcastSslCertificate(MutableTcpServer websiteSslServer) {
@@ -967,8 +983,10 @@ internal sealed partial class MasterListServerHost : IDisposable {
     }
 
     private void SetSqlAdminPanelEnabled(bool enabled) {
-        foreach (MutableTcpServer server in GetSqlAdminPanelServers())
+        foreach (MutableTcpServer server in GetSqlAdminPanelServers()) {
             server.SqlAdminPanelEnabled = enabled;
+            server.AdminSuiteEnabled = enabled;
+        }
     }
 
     private bool IsSqlAdminPanelEnabled() {
@@ -1339,6 +1357,79 @@ internal sealed partial class MasterListServerHost : IDisposable {
     private void NotifyAutoLiveDataChanged() {
         Interlocked.Increment(ref _autoLiveVersion);
         AutoLiveDataChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void StartAutoModelCacheRefresh() {
+        if (_autoModelCacheTimer != null)
+            return;
+
+        _autoModelCacheTimer = new System.Threading.Timer(_ => RefreshAutoModelCacheFromTimer(), null, TimeSpan.Zero, AutoModelCacheRefreshInterval);
+    }
+
+    private void RefreshAutoModelCacheFromTimer() {
+        if (_disposed || !_initialized)
+            return;
+        if (Interlocked.Exchange(ref _autoModelCacheRefreshRunning, 1) == 1)
+            return;
+
+        try {
+            if (RefreshAutoModelCacheSnapshot(refreshAvailability: true))
+                NotifyAutoLiveDataChanged();
+        } catch {
+        } finally {
+            Volatile.Write(ref _autoModelCacheRefreshRunning, 0);
+        }
+    }
+
+    private JsonObject GetAutoModelCachePayload() {
+        lock (_autoModelCacheLock) {
+            if (_cachedAutoModelCachePayload != null)
+                return CloneJsonObject(_cachedAutoModelCachePayload);
+        }
+
+        JsonObject payload = BuildAutoModelCachePayload(refreshAvailability: false);
+        StoreAutoModelCachePayload(payload);
+        return CloneJsonObject(payload);
+    }
+
+    private bool RefreshAutoModelCacheSnapshot(bool refreshAvailability) {
+        JsonObject payload = BuildAutoModelCachePayload(refreshAvailability);
+        return StoreAutoModelCachePayload(payload);
+    }
+
+    private bool StoreAutoModelCachePayload(JsonObject payload) {
+        JsonObject signaturePayload = CloneJsonObject(payload);
+        signaturePayload.Remove("updatedUtc");
+        string signature = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(signaturePayload.ToJsonString(MasterListJson.Options))));
+        lock (_autoModelCacheLock) {
+            bool changed = !string.Equals(_cachedAutoModelCacheSignature, signature, StringComparison.Ordinal);
+            _cachedAutoModelCachePayload = CloneJsonObject(payload);
+            _cachedAutoModelCacheSignature = signature;
+            return changed;
+        }
+    }
+
+    private JsonObject BuildAutoModelCachePayload(bool refreshAvailability) {
+        MasterListResponse response = BuildResponse(refreshAvailability);
+        var servers = response.Servers
+            .Select(server => {
+                server.HydrateFromStoredRegistration();
+                if (refreshAvailability)
+                    TryHydrateAutoServerModelInventory(server);
+                return server;
+            })
+            .ToList();
+
+        return new JsonObject {
+            ["version"] = ServerListVersion,
+            ["updatedUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            ["refreshIntervalSeconds"] = (int)AutoModelCacheRefreshInterval.TotalSeconds,
+            ["servers"] = JsonSerializer.SerializeToNode(servers, MasterListJson.Options)
+        };
+    }
+
+    private static JsonObject CloneJsonObject(JsonObject payload) {
+        return payload.DeepClone() as JsonObject ?? new JsonObject();
     }
 
     public bool Start() {
@@ -2736,7 +2827,7 @@ internal sealed partial class MasterListServerHost : IDisposable {
 
     private static string BuildSocketJackLoginPath(string returnUrl) {
         string normalizedReturnUrl = NormalizeSocketJackLoginReturnUrl(returnUrl);
-        return "/Login?returnUrl=" + Uri.EscapeDataString(normalizedReturnUrl);
+        return "/login?returnUrl=" + Uri.EscapeDataString(normalizedReturnUrl);
     }
 
     private static string NormalizeSocketJackLoginReturnUrl(string returnUrl) {
@@ -4046,6 +4137,7 @@ body.auto-browser-open .current-progress-panel{right:calc(min(var(--auto-browser
 body.auto-browser-open .auto-browser-edge-toggle{right:min(var(--auto-browser-width,440px),calc(100vw - 72px));border-radius:0 18px 18px 0;background:linear-gradient(90deg,rgba(0,0,0,.86),rgba(0,0,0,.48),rgba(0,0,0,0));color:#9fb0c8}
 body.auto-browser-resizing .auto-browser-frame{pointer-events:none}
 @media(max-width:780px){.current-progress-panel{top:8px;right:8px;width:min(320px,calc(100vw - 16px))}body.auto-browser-open .current-progress-panel{right:8px}.auto-browser-panel{width:calc(100vw - 38px)}body.auto-browser-open .auto-browser-edge-toggle{right:calc(100vw - 38px)}}
+</style>
 </head>
 <body><main class="card"><div class="kicker">SocketJack Auto</div><h1>No healthy server is ready yet.</h1><div class="meta">__MESSAGE__</div><div class="route">model: __MODEL__<br>mode: __MODE__</div></main></body>
 </html>
@@ -4713,6 +4805,14 @@ body.auto-browser-resizing .auto-browser-frame{pointer-events:none}
         public string Mode { get; init; } = "";
         public string Model { get; init; } = "";
         public JsonObject Body { get; init; } = new();
+    }
+
+    private sealed class AutoModeDecision {
+        public string Action { get; init; } = "run_single";
+        public string Mode { get; init; } = "text";
+        public int Count { get; init; }
+        public string BatchKind { get; init; } = "";
+        public string Command { get; init; } = "run_single:text";
     }
 
     private sealed class AutoApiParallelResult {
@@ -7631,8 +7731,8 @@ body.connected{--a:#40c9a2;--b:#7dd3fc;--c:#facc15;--glow-a:rgba(64,201,162,.44)
 .throbber span{position:absolute;inset:0;border-radius:999px;border:clamp(3px,.52vmin,6px) solid color-mix(in srgb,var(--b) 22%,transparent);border-top-color:var(--a);border-right-color:color-mix(in srgb,var(--b) 70%,transparent);box-shadow:0 0 26px var(--glow-a);animation:spin 1150ms var(--ease) infinite;transition:border-color 900ms var(--surface),box-shadow 900ms var(--surface)}
 .throbber span:nth-child(2){inset:15%;border-top-color:rgba(244,114,182,.82);animation-duration:1450ms;animation-direction:reverse}
 .throbber span:nth-child(3){inset:32%;border-top-color:rgba(250,204,21,.86);animation-duration:950ms}
-.progress{position:relative;width:min(100%,420px);height:8px;overflow:hidden;border-radius:999px;background:rgba(148,163,184,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 0 22px var(--glow-b);transition:box-shadow 900ms var(--surface)}
-.fill{position:absolute;inset:0 auto 0 0;width:4%;border-radius:inherit;background:linear-gradient(90deg,var(--a),var(--b) 58%,var(--c));box-shadow:0 0 20px var(--glow-a),0 0 34px var(--glow-b);transition:width 520ms var(--surface),background 900ms var(--surface),box-shadow 900ms var(--surface)}
+.progress{--progress-fill:4%;position:relative;width:min(100%,420px);height:8px;overflow:hidden;border-radius:999px;background:rgba(148,163,184,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 0 22px var(--glow-b);transition:box-shadow 900ms var(--surface)}
+.fill{position:absolute;inset:0;width:100%;border-radius:inherit;background:linear-gradient(90deg,var(--a),var(--b) 58%,var(--c));clip-path:inset(0 calc(100% - var(--progress-fill,4%)) 0 0 round 999px);box-shadow:0 0 20px var(--glow-a),0 0 34px var(--glow-b);transition:clip-path 520ms var(--surface),background 900ms var(--surface),box-shadow 900ms var(--surface)}
 .fill:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.54),transparent);animation:sheen 1400ms ease-in-out infinite}
 .text{color:rgba(255,255,255,.86);font:800 .74rem "Cascadia Code",monospace;letter-spacing:0;text-align:center;transition:color 900ms var(--surface)}
 .meta{max-width:min(620px,86vw);color:rgba(226,232,240,.62);font:.72rem/1.45 "Cascadia Code",monospace;text-align:center;overflow-wrap:anywhere}
@@ -7659,7 +7759,7 @@ const fill=document.querySelector('.fill'),bar=document.querySelector('.progress
 let connected=false;
 requestAnimationFrame(()=>document.body.classList.add('not-responding'));
 function percent(){const elapsed=(Date.now()-start)/1000;return Math.min(96,Math.round(4+elapsed*1.55))}
-function render(){const p=connected?100:percent();fill.style.width=p+'%';bar.setAttribute('aria-valuenow',String(p));text.textContent=(connected?'Server responding ':'Server not responding ')+p+'%'}
+function render(){const p=connected?100:percent();bar.style.setProperty('--progress-fill',p+'%');bar.setAttribute('aria-valuenow',String(p));text.textContent=(connected?'Server responding ':'Server not responding ')+p+'%'}
 function markConnected(){if(connected)return;connected=true;document.body.classList.remove('not-responding');document.body.classList.add('connected');sessionStorage.removeItem(key);render();setTimeout(()=>location.reload(),780)}
 async function probe(){if(connected)return;try{const r=await fetch(probePath,{cache:'no-store',credentials:'include',headers:{Accept:'application/json'},redirect:'manual'});const body=await r.text().catch(()=>'');if(r.ok&&/pong/i.test(body))markConnected()}catch{}}
 document.getElementById('retryNow').addEventListener('click',probe);
@@ -7852,8 +7952,11 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
     }
 
     private static void MapMetadataImageRoute(MutableTcpServer server) {
-        MapFaviconAsset(server, "/favicon.ico", FaviconFileName);
-        MapFaviconAsset(server, "/Images/favicon.ico", FaviconFileName);
+        MapFaviconAsset(server, "/favicon.ico", FaviconFileName, "image/x-icon");
+        MapFaviconAsset(server, "/favicon.png", FaviconPngFileName, "image/png");
+        MapFaviconAsset(server, "/apple-touch-icon.png", FaviconPngFileName, "image/png");
+        MapFaviconAsset(server, "/Images/favicon.ico", FaviconFileName, "image/x-icon");
+        MapFaviconAsset(server, "/Images/favicon.png", FaviconPngFileName, "image/png");
         MapMetadataImageAsset(server, LegacyMetadataImageRoute, WorkstationMetadataImageFileName);
         MapMetadataImageAsset(server, WorkstationMetadataImageRoute, WorkstationMetadataImageFileName);
         MapMetadataImageAsset(server, MasterListMetadataImageRoute, WorkstationMetadataImageFileName);
@@ -7872,9 +7975,9 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         server.Map("HEAD", route, (connection, request, cancellationToken) => BuildMetadataImageResponse(request, fileName));
     }
 
-    private static void MapFaviconAsset(MutableTcpServer server, string route, string fileName) {
-        server.Map("GET", route, (connection, request, cancellationToken) => BuildStaticImageResponse(request, fileName, "image/x-icon"));
-        server.Map("HEAD", route, (connection, request, cancellationToken) => BuildStaticImageResponse(request, fileName, "image/x-icon"));
+    private static void MapFaviconAsset(MutableTcpServer server, string route, string fileName, string contentType) {
+        server.Map("GET", route, (connection, request, cancellationToken) => BuildStaticImageResponse(request, fileName, contentType));
+        server.Map("HEAD", route, (connection, request, cancellationToken) => BuildStaticImageResponse(request, fileName, contentType));
     }
 
     private static object BuildStaticImageResponse(HttpRequest request, string fileName, string contentType) {
@@ -8148,14 +8251,10 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             });
         }
 
-        foreach (string loginPath in new[] { "/Login", "/Login/", "/login", "/login/" }) {
-            websiteServer.Map("GET", loginPath, (connection, request, cancellationToken) => {
-                return MasterListHtml(request, _masterListHtml.Value);
-            });
-        }
+        MapWebsiteAuthPageRoutes(websiteServer);
 
-        foreach (string adminPath in new[] { "/Admin", "/Admin/", "/admin", "/admin/" }) {
-            websiteServer.Map("GET", adminPath, (connection, request, cancellationToken) => {
+        foreach (string devPath in new[] { "/Dev", "/Dev/", "/dev", "/dev/" }) {
+            websiteServer.Map("GET", devPath, (connection, request, cancellationToken) => {
                 return Html(request, BuildAdminHtml());
             });
         }
@@ -8172,6 +8271,54 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 
         MapWebsitePublicApiRoutes(websiteServer);
         MapAuthRoutes(websiteServer);
+    }
+
+    private void MapWebsiteAuthPageRoutes(MutableTcpServer websiteServer) {
+        foreach (string loginPath in new[] { "/login", "/login/" }) {
+            websiteServer.Map("GET", loginPath, (connection, request, cancellationToken) => {
+                return ServeCanonicalWebsiteAuthPage(request, "/login");
+            });
+        }
+
+        foreach (string loginAlias in new[] { "/signin", "/signin/", "/sign-in", "/sign-in/", "/auth/login", "/auth/login/" }) {
+            websiteServer.Map("GET", loginAlias, (connection, request, cancellationToken) => {
+                return Redirect(request, BuildWebsitePathWithCurrentQuery("/login", request));
+            });
+        }
+
+        foreach (string registerPath in new[] { "/register", "/register/" }) {
+            websiteServer.Map("GET", registerPath, (connection, request, cancellationToken) => {
+                return ServeCanonicalWebsiteAuthPage(request, "/register");
+            });
+        }
+
+        foreach (string registerAlias in new[] { "/signup", "/signup/", "/sign-up", "/sign-up/", "/auth/register", "/auth/register/" }) {
+            websiteServer.Map("GET", registerAlias, (connection, request, cancellationToken) => {
+                return Redirect(request, BuildWebsitePathWithCurrentQuery("/register", request));
+            });
+        }
+
+        foreach (string logoutPath in new[] { "/logout", "/logout/", "/signout", "/signout/", "/sign-out", "/sign-out/" }) {
+            websiteServer.Map("GET", logoutPath, (connection, request, cancellationToken) => {
+                ClearAuthCookie(request);
+                return Redirect(request, "/");
+            });
+        }
+    }
+
+    private string ServeCanonicalWebsiteAuthPage(HttpRequest request, string canonicalPath) {
+        ArgumentNullException.ThrowIfNull(request);
+        string path = (request.Path ?? "").TrimEnd('/');
+        canonicalPath = string.IsNullOrWhiteSpace(canonicalPath) ? "/" : canonicalPath.TrimEnd('/');
+        if (string.Equals(path, canonicalPath, StringComparison.Ordinal))
+            return MasterListHtml(request, _masterListHtml.Value);
+        return Redirect(request, BuildWebsitePathWithCurrentQuery(canonicalPath, request));
+    }
+
+    private static string BuildWebsitePathWithCurrentQuery(string path, HttpRequest request) {
+        path = string.IsNullOrWhiteSpace(path) ? "/" : path.Trim();
+        string query = request?.QueryString ?? "";
+        return string.IsNullOrWhiteSpace(query) ? path : path + "?" + query.TrimStart('?');
     }
 
     private void MapDocumentationRoutes(MutableTcpServer server) {
@@ -8253,6 +8400,11 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             server.Map("OPTIONS", modelsPath, (connection, request, cancellationToken) => NoContent(request));
         }
 
+        foreach (string modelCachePath in new[] { "/auto/model-cache", "/Auto/model-cache", "/auto/model-cache/", "/Auto/model-cache/" }) {
+            server.Map("GET", modelCachePath, (connection, request, cancellationToken) => HandleAutoModelCacheRequest(request));
+            server.Map("OPTIONS", modelCachePath, (connection, request, cancellationToken) => NoContent(request));
+        }
+
         foreach (string routePath in new[] { "/auto/route", "/Auto/route", "/auto/route/", "/Auto/route/" }) {
             server.Map("POST", routePath, (connection, request, cancellationToken) => HandleAutoModeDecisionRequest(connection, request, cancellationToken));
             server.Map("OPTIONS", routePath, (connection, request, cancellationToken) => NoContent(request));
@@ -8275,7 +8427,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         }
 
         foreach (string filesPath in new[] { "/auto/session-files", "/Auto/session-files", "/auto/session-files/", "/Auto/session-files/" }) {
-            server.Map("GET", filesPath, (connection, request, cancellationToken) => HandleAutoSessionFilesRequest(connection, request));
+            server.Map("GET", filesPath, (connection, request, cancellationToken) => HandleAutoSessionFilesRequest(connection, request, cancellationToken));
             server.Map("POST", filesPath, (connection, request, cancellationToken) => HandleAutoSessionFileUploadRequest(connection, request));
             server.Map("OPTIONS", filesPath, (connection, request, cancellationToken) => NoContent(request));
         }
@@ -8312,8 +8464,19 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             count = sessions.Count,
             sessions,
             groups = BuildAutoSessionGroups(sessions, Array.Empty<JsonObject>()),
-            suggestions = BuildAutoSessionSuggestions(sessions)
+            suggestions = BuildAutoSessionSuggestions(sessions),
+            modelCache = GetAutoModelCachePayload()
         });
+    }
+
+    private object HandleAutoModelCacheRequest(HttpRequest request) {
+        var output = new JsonObject {
+            ["ok"] = true,
+            ["modelCache"] = GetAutoModelCachePayload(),
+            ["sentUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        };
+        AddCors(request);
+        return Json(request, output);
     }
 
     internal MasterListLivePayload GetCachedMasterListLivePayload() {
@@ -8406,7 +8569,6 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         List<JsonObject> serverOnlySessions = includeServerSessions && account != null
             ? DiscoverServerOnlyAutoSessions(sessions, search, query, clientRequest)
             : new List<JsonObject>();
-        MasterListResponse serverResponse = BuildResponse();
 
         string requestId = JsonText(clientRequest, "id", JsonText(clientRequest, "requestId", ""));
         var output = new JsonObject {
@@ -8423,11 +8585,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             ["serverOnlySessions"] = new JsonArray(serverOnlySessions.Select(item => item.DeepClone()).ToArray()),
             ["groups"] = BuildAutoSessionGroups(sessions, serverOnlySessions),
             ["suggestions"] = JsonSerializer.SerializeToNode(BuildAutoSessionSuggestions(sessions), MasterListJson.Options),
-            ["modelCache"] = JsonSerializer.SerializeToNode(new {
-                version = ServerListVersion,
-                updatedUtc = serverResponse.UpdatedUtc,
-                servers = serverResponse.Servers
-            }, MasterListJson.Options),
+            ["modelCache"] = GetAutoModelCachePayload(),
             ["usage"] = account == null
                 ? JsonSerializer.SerializeToNode(BuildAnonymousUsage(), MasterListJson.Options)
                 : JsonSerializer.SerializeToNode(BuildUsage(account), MasterListJson.Options),
@@ -8691,8 +8849,19 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             using JsonDocument document = JsonDocument.Parse(request.Body);
             JsonElement root = document.RootElement;
             string id = FirstNonEmpty(GetJsonString(root, "id"), GetJsonString(root, "sessionId"));
+            string[] ids = GetJsonStringArray(root, "ids", "sessionIds", "session_ids");
+            if (ids.Length == 0 && !string.IsNullOrWhiteSpace(id))
+                ids = new[] { id };
             string action = FirstNonEmpty(GetJsonString(root, "action"), "rename").Trim().ToLowerInvariant();
             string title = GetJsonString(root, "title");
+            if (ids.Length > 1) {
+                if (action.Equals("rename", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Batch rename is not supported.");
+                (List<AutoSessionRecord> sessions, int deleted) = ApplyAutoSessionBatchAction(ids, action, account, clientIp);
+                return Json(request, new { ok = true, action, count = ids.Length, deleted, sessions });
+            }
+            if (ids.Length == 1)
+                id = ids[0];
             AutoSessionRecord? session = ApplyAutoSessionAction(id, action, title, account, clientIp);
             return Json(request, new { ok = true, action, session });
         } catch (JsonException ex) {
@@ -8702,7 +8871,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         }
     }
 
-    private object HandleAutoSessionFilesRequest(NetworkConnection connection, HttpRequest request) {
+    private object HandleAutoSessionFilesRequest(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
         AccountRecord? account = AuthenticateRequest(request, out string authError);
         if (account == null)
             return AutoSessionFileLoginRequired(request, authError);
@@ -8715,7 +8884,9 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         if (!AutoSessionFilesVisibleToViewer(sessionId, account, clientIp))
             return Json(request, new { ok = false, error = "Auto session files are not available to this viewer." }, 403, "Forbidden");
 
-        object[] files = ListAutoSessionFileEntries(request, sessionId);
+        object[] localFiles = ListAutoSessionFileEntries(request, sessionId);
+        object[] upstreamFiles = ListAutoUpstreamSessionFileEntries(connection, request, sessionId, account, cancellationToken);
+        object[] files = MergeAutoSessionFileEntries(localFiles, upstreamFiles);
         return Json(request, new {
             ok = true,
             authenticated = true,
@@ -9457,6 +9628,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         double maxParameterBillions = ExtractAutoMaxParameterBillions(request);
         ISet<string> disabledAutoModels = ExtractAutoDisabledModels(request);
         bool isStatusRequest = IsAutoApiStatusRequest(request);
+        string forwardedPath = GetAutoApiForwardPath(request, mode);
         List<AutoApiParallelRequest> parallelRequests = new();
         string parallelBatchWarning = "";
         bool isParallelBatchRequest = !isStatusRequest && TryBuildAutoApiParallelRequests(request, mode, model, out parallelRequests, out parallelBatchWarning);
@@ -9467,6 +9639,23 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         AccountRecord? account = AuthenticateRequest(request, out string authError);
         if (account == null)
             TryAutoAuthenticateKnownIp(connection, request, out account, out _);
+
+        if (!isParallelBatchRequest && IsAutoApiCachedModelsCatalogRequest(request, forwardedPath)) {
+            return BuildCachedAutoApiModelsResponse(
+                request,
+                mode,
+                model,
+                requestedServerId,
+                strictServerRequest,
+                originMode,
+                autoPoolEnabled,
+                minParameterBillions,
+                maxParameterBillions,
+                premiumModelsEnabled,
+                account,
+                disabledAutoModels,
+                forwardedPath);
+        }
 
         if (!isStatusRequest && requiresAuthenticatedUser) {
             if (account == null) {
@@ -9584,7 +9773,6 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             });
         }
 
-        string forwardedPath = GetAutoApiForwardPath(request, mode);
         string query = BuildAutoApiForwardQuery(request, forwardedPath);
         string resolvedRuntimeModel = ResolveAutoApiRuntimeModel(selectedServer, mode, routingModel, minParameterBillions, maxParameterBillions, disabledAutoModels);
         bool forceInitialModel = !NormalizeAutoModelId(resolvedRuntimeModel).Equals(NormalizeAutoModelId(model), StringComparison.OrdinalIgnoreCase);
@@ -9730,6 +9918,163 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         return Json(request, new { ok = false, error = "No retryable Auto API target remained available.", mode, origin = originMode, model = attemptModel }, 503, "Service Unavailable");
     }
 
+    private object BuildCachedAutoApiModelsResponse(
+        HttpRequest request,
+        string mode,
+        string requestedModel,
+        string requestedServerId,
+        bool strictServerRequest,
+        string originMode,
+        bool autoPoolEnabled,
+        double minParameterBillions,
+        double maxParameterBillions,
+        bool premiumModelsEnabled,
+        AccountRecord? account,
+        ISet<string> disabledAutoModels,
+        string forwardedPath) {
+        bool canUsePremium = premiumModelsEnabled && AccountHasAutoPremiumTokens(account);
+
+        List<RegisteredServer> SelectServers(string serverId, out int premiumBlocked) {
+            premiumBlocked = 0;
+            var selected = new List<RegisteredServer>();
+            foreach (RegisteredServer server in BuildResponse(refreshAvailability: false).Servers.Where(server => !server.WebsiteHidden)) {
+                server.HydrateFromStoredRegistration();
+                if (!ServerMatchesAutoRequest(server, serverId))
+                    continue;
+                if (!ServerSupportsAutoModel(server, requestedModel))
+                    continue;
+                if (!ServerSupportsAutoMode(server, requestedModel, mode))
+                    continue;
+                if (ServerRequiresAutoPremium(server) && !canUsePremium) {
+                    premiumBlocked++;
+                    continue;
+                }
+
+                selected.Add(server);
+            }
+
+            return selected;
+        }
+
+        List<RegisteredServer> servers = SelectServers(requestedServerId, out int premiumBlockedCount);
+        bool serverFallbackUsed = false;
+        if (servers.Count == 0 && !strictServerRequest && !string.IsNullOrWhiteSpace(requestedServerId)) {
+            servers = SelectServers("", out int fallbackPremiumBlockedCount);
+            premiumBlockedCount = Math.Max(premiumBlockedCount, fallbackPremiumBlockedCount);
+            serverFallbackUsed = servers.Count > 0;
+        }
+
+        List<string> requestedAliases = AutoModelAliases(requestedModel).ToList();
+        var modelNodes = new JsonArray();
+        var openAiDataNodes = new JsonArray();
+        var modelIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (RegisteredServer server in servers) {
+            string serverTitle = FirstNonEmpty(server.TitleText, server.DisplayName, server.Id);
+            string routeName = TryResolveAutoRouteName(server, out string resolvedRouteName) ? resolvedRouteName : "";
+            foreach (RegisteredServerModelInfo item in server.Models) {
+                if (!CachedAutoCatalogModelMatches(item, mode, requestedAliases, minParameterBillions, maxParameterBillions, disabledAutoModels))
+                    continue;
+
+                JsonObject modelNode = JsonSerializer.SerializeToNode(item, MasterListJson.Options) as JsonObject ?? new JsonObject();
+                modelNode["id"] = item.Id;
+                modelNode["model"] = item.Id;
+                modelNode["object"] = "model";
+                modelNode["serverId"] = server.Id;
+                modelNode["serverTitle"] = serverTitle;
+                modelNode["serverEndpoint"] = server.Endpoint;
+                modelNode["serverLaunchUrl"] = server.LaunchUrl;
+                modelNode["serverOnline"] = server.IsOnline;
+                modelNode["serverHostResponding"] = server.HostResponding;
+                modelNode["serverStatus"] = FirstNonEmpty(server.ModelRuntimeStatus, server.StatusText, server.LastStatus);
+                modelNode["relay"] = routeName;
+                modelNodes.Add(modelNode);
+
+                openAiDataNodes.Add(new JsonObject {
+                    ["id"] = item.Id,
+                    ["object"] = "model",
+                    ["owned_by"] = FirstNonEmpty(server.OwnerUserName, serverTitle, "socketjack"),
+                    ["serverId"] = server.Id,
+                    ["serverTitle"] = serverTitle
+                });
+                modelIds.Add(item.Id);
+            }
+        }
+
+        string path = AutoApiForwardPathOnly(forwardedPath);
+        var output = new JsonObject {
+            ["ok"] = true,
+            ["cached"] = true,
+            ["code"] = "auto_cached_model_catalog",
+            ["mode"] = mode,
+            ["origin"] = originMode,
+            ["pool"] = autoPoolEnabled,
+            ["forwardedPath"] = path,
+            ["model"] = requestedModel,
+            ["requested_model"] = requestedModel,
+            ["requested_server"] = requestedServerId,
+            ["strict_server"] = strictServerRequest,
+            ["server_fallback"] = serverFallbackUsed,
+            ["eligible_servers"] = servers.Count,
+            ["premium_models_enabled"] = premiumModelsEnabled,
+            ["premium_blocked_servers"] = premiumBlockedCount,
+            ["modelCount"] = modelNodes.Count,
+            ["availableModels"] = string.Join(", ", modelIds.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+            ["models"] = modelNodes,
+            ["data"] = openAiDataNodes,
+            ["servers"] = JsonSerializer.SerializeToNode(servers, MasterListJson.Options),
+            ["modelCache"] = GetAutoModelCachePayload(),
+            ["sentUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        };
+        if (servers.Count > 0)
+            output["selected"] = JsonSerializer.SerializeToNode(BuildAutoApiServerSummary(servers[0], null, mode, minParameterBillions, maxParameterBillions, disabledAutoModels), MasterListJson.Options);
+
+        return Json(request, output);
+    }
+
+    private static bool IsAutoApiCachedModelsCatalogRequest(HttpRequest request, string forwardedPath) {
+        if (request == null)
+            return false;
+        string method = request.Method ?? "";
+        if (!method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+            !method.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string path = AutoApiForwardPathOnly(forwardedPath);
+        return path.Equals("/api/models", StringComparison.OrdinalIgnoreCase) ||
+               path.Equals("/api/model-runtime/models", StringComparison.OrdinalIgnoreCase) ||
+               path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase) ||
+               path.Equals("/api/v1/models", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string AutoApiForwardPathOnly(string forwardedPath) {
+        string path = NormalizeAutoApiForwardPath(forwardedPath);
+        int queryIndex = path.IndexOf('?');
+        if (queryIndex >= 0)
+            path = path.Substring(0, queryIndex);
+        return path.TrimEnd('/');
+    }
+
+    private static bool CachedAutoCatalogModelMatches(
+        RegisteredServerModelInfo item,
+        string mode,
+        IReadOnlyList<string> requestedAliases,
+        double minParameterBillions,
+        double maxParameterBillions,
+        ISet<string>? disabledAutoModels) {
+        if (item == null || string.IsNullOrWhiteSpace(item.Id))
+            return false;
+        if (!AutoModelIsSelectableForMode(item, mode))
+            return false;
+        if (AutoModelIsUserDisabled(item.Id, disabledAutoModels))
+            return false;
+        if (!AutoModelMatchesParameterLimit(item.Id, mode, minParameterBillions, maxParameterBillions))
+            return false;
+        if (requestedAliases != null && requestedAliases.Count > 0 &&
+            !AutoModelAliases(item.Id).Any(candidate => AutoModelAliasMatches(candidate, requestedAliases)))
+            return false;
+        return true;
+    }
+
     private object HandleAutoApiParallelBatchRequest(
         NetworkConnection connection,
         HttpRequest request,
@@ -9748,7 +10093,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         CancellationToken cancellationToken) {
         AutoApiParallelRequest[] requests = (parallelRequests ?? Array.Empty<AutoApiParallelRequest>())
             .Where(item => item != null && !string.IsNullOrWhiteSpace(item.Prompt))
-            .Take(12)
+            .Take(AutoParallelBatchLimit)
             .ToArray();
         if (requests.Length <= 1)
             return Json(request, new { ok = false, error = "Auto parallel batches require at least two prompts.", code = "auto_parallel_batch_too_small" }, 400, "Bad Request");
@@ -10164,11 +10509,15 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
     private object HandleAutoModeDecisionRequest(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) {
         string prompt = ExtractAutoDecisionPrompt(request);
         if (string.IsNullOrWhiteSpace(prompt)) {
+            AutoModeDecision missingPromptDecision = CreateAutoModeDecision("run_single", "text", 0, "");
             return Json(request, new {
                 ok = false,
                 error = "Prompt is required before Auto can choose a mode.",
-                mode = "text",
-                command = "USE TEXT"
+                mode = missingPromptDecision.Mode,
+                command = missingPromptDecision.Command,
+                parallelAgents = 0,
+                parallelMode = "",
+                decision = AutoModeDecisionPayload(missingPromptDecision)
             }, 400, "Bad Request");
         }
 
@@ -10176,29 +10525,16 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         string requestedServerId = ExtractAutoServerId(request);
         bool autoPoolEnabled = ExtractAutoPoolEnabled(request);
         bool premiumModelsEnabled = ExtractAutoPremiumModelsEnabled(request);
-        string inferredFastMode = InferAutoModeFromPrompt(prompt);
-        if (!inferredFastMode.Equals("text", StringComparison.OrdinalIgnoreCase)) {
-            string fastCommand = BuildAutoModeDecisionCommand(inferredFastMode, InferAutoParallelAgentCount(prompt, inferredFastMode));
-            return Json(request, new {
-                ok = true,
-                mode = inferredFastMode,
-                command = fastCommand,
-                parallelAgents = AutoModeDecisionParallelAgentCount(fastCommand),
-                parallelMode = AutoModeDecisionParallelAgentMode(fastCommand),
-                source = "heuristic",
-                origin = originMode,
-                pool = autoPoolEnabled,
-                server = requestedServerId,
-                authenticated = false,
-                username = "",
-                classifier = new {
-                    server = requestedServerId,
-                    model = "",
-                    transport = "heuristic"
-                }
-            });
-        }
         AccountRecord? account = AuthenticateRequest(request, out _);
+        bool toolsRouteAvailable = IsAutoToolsRouteAvailable(
+            request,
+            requestedServerId,
+            originMode,
+            autoPoolEnabled,
+            premiumModelsEnabled,
+            account,
+            out int toolsRouteEligibleCount,
+            out int toolsPremiumBlockedCount);
 
         if (!TryResolveAutoModeDecisionTarget(
                 requestedServerId,
@@ -10216,13 +10552,18 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             selectedServer == null ||
             selectedBaseUri == null) {
             string fallbackMode = InferAutoModeFromPrompt(prompt);
-            string fallbackCommand = BuildAutoModeDecisionCommand(fallbackMode, InferAutoParallelAgentCount(prompt, fallbackMode));
+            AutoModeDecision fallbackDecision = CreateAutoModeDecision("run_single", fallbackMode, 0, "");
+            fallbackDecision = PreferAutoToolsWhenAvailable(fallbackDecision, toolsRouteAvailable, prompt);
             return Json(request, new {
                 ok = true,
-                mode = fallbackMode,
-                command = fallbackCommand,
-                parallelAgents = AutoModeDecisionParallelAgentCount(fallbackCommand),
-                parallelMode = AutoModeDecisionParallelAgentMode(fallbackCommand),
+                mode = fallbackDecision.Mode,
+                command = fallbackDecision.Command,
+                parallelAgents = fallbackDecision.Count,
+                parallelMode = AutoModeDecisionParallelAgentMode(fallbackDecision),
+                decision = AutoModeDecisionPayload(fallbackDecision),
+                toolsAvailable = toolsRouteAvailable,
+                toolsEligible = toolsRouteEligibleCount,
+                toolsPremiumBlocked = toolsPremiumBlockedCount,
                 source = "fallback",
                 error = reason,
                 origin = originMode,
@@ -10240,7 +10581,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             });
         }
 
-        byte[] bodyBytes = BuildAutoModeDecisionRequestBody(prompt, classifierModel);
+        byte[] bodyBytes = BuildAutoModeDecisionRequestBody(prompt, classifierModel, toolsRouteAvailable);
 
         try {
             AutoApiForwardResult result;
@@ -10256,25 +10597,21 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             string raw = DecodeAutoApiResponseText(result.BodyBytes);
             string decisionText = ExtractAutoModeDecisionText(raw);
             string inferredMode = InferAutoModeFromPrompt(prompt);
-            bool llmDecision = TryParseAutoModeDecision(decisionText, out string command, out string mode);
-            if (!llmDecision) {
-                mode = inferredMode;
-                command = BuildAutoModeDecisionCommand(mode, InferAutoParallelAgentCount(prompt, mode));
-            } else if (mode.Equals("tools", StringComparison.OrdinalIgnoreCase)) {
-                mode = "text";
-                command = BuildAutoModeDecisionCommand(mode, InferAutoParallelAgentCount(prompt, mode));
-                llmDecision = false;
-            }
-            int inferredAgentCount = InferAutoParallelAgentCount(prompt, mode);
-            if (inferredAgentCount > 1 && AutoModeDecisionParallelAgentCount(command) <= 1)
-                command = BuildAutoModeDecisionCommand(mode, inferredAgentCount);
+            bool llmDecision = TryParseAutoModeDecision(decisionText, out AutoModeDecision decision);
+            if (!llmDecision)
+                decision = CreateAutoModeDecision("run_single", inferredMode, 0, "");
+            decision = PreferAutoToolsWhenAvailable(decision, toolsRouteAvailable, prompt);
 
             return Json(request, new {
                 ok = true,
-                mode,
-                command,
-                parallelAgents = AutoModeDecisionParallelAgentCount(command),
-                parallelMode = AutoModeDecisionParallelAgentMode(command),
+                mode = decision.Mode,
+                command = decision.Command,
+                parallelAgents = decision.Count,
+                parallelMode = AutoModeDecisionParallelAgentMode(decision),
+                decision = AutoModeDecisionPayload(decision),
+                toolsAvailable = toolsRouteAvailable,
+                toolsEligible = toolsRouteEligibleCount,
+                toolsPremiumBlocked = toolsPremiumBlockedCount,
                 source = llmDecision ? "llm" : "fallback",
                 rawDecision = decisionText,
                 origin = originMode,
@@ -10295,13 +10632,18 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             });
         } catch (Exception ex) when (ex is HttpRequestException || ex is IOException || ex is InvalidOperationException || ex is TimeoutException || ex is TaskCanceledException) {
             string fallbackMode = InferAutoModeFromPrompt(prompt);
-            string fallbackCommand = BuildAutoModeDecisionCommand(fallbackMode, InferAutoParallelAgentCount(prompt, fallbackMode));
+            AutoModeDecision fallbackDecision = CreateAutoModeDecision("run_single", fallbackMode, 0, "");
+            fallbackDecision = PreferAutoToolsWhenAvailable(fallbackDecision, toolsRouteAvailable, prompt);
             return Json(request, new {
                 ok = true,
-                mode = fallbackMode,
-                command = fallbackCommand,
-                parallelAgents = AutoModeDecisionParallelAgentCount(fallbackCommand),
-                parallelMode = AutoModeDecisionParallelAgentMode(fallbackCommand),
+                mode = fallbackDecision.Mode,
+                command = fallbackDecision.Command,
+                parallelAgents = fallbackDecision.Count,
+                parallelMode = AutoModeDecisionParallelAgentMode(fallbackDecision),
+                decision = AutoModeDecisionPayload(fallbackDecision),
+                toolsAvailable = toolsRouteAvailable,
+                toolsEligible = toolsRouteEligibleCount,
+                toolsPremiumBlocked = toolsPremiumBlockedCount,
                 source = "fallback",
                 error = "Auto mode router failed: " + ex.Message,
                 origin = originMode,
@@ -10458,19 +10800,60 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         return "";
     }
 
-    private static byte[] BuildAutoModeDecisionRequestBody(string prompt, string model) {
+    private static byte[] BuildAutoModeDecisionRequestBody(string prompt, string model, bool toolsRouteAvailable) {
+        string maxBatch = AutoParallelBatchLimit.ToString(CultureInfo.InvariantCulture);
+        string toolsAvailability = toolsRouteAvailable ? "available" : "unavailable";
         var body = new JsonObject {
             ["temperature"] = 0,
-            ["max_tokens"] = 32,
+            ["max_tokens"] = 256,
             ["sessionId"] = "auto_router_" + Guid.NewGuid().ToString("N"),
             ["messages"] = new JsonArray {
                 new JsonObject {
                     ["role"] = "system",
-                    ["content"] = "You are SocketJack Auto Router. Classify the user's prompt into exactly one command. Respond with only the command. Do not explain, think aloud, include reasoning, or write any other text. Allowed single-route commands: USE TEXT, USE MULTIMODAL, USE IMAGE, USE VIDEO, USE AUDIO, USE EMBEDDING. SocketJack can also run multiple independent slave agents at once and then route the results through a master answer. For true parallel generation or explicitly independent-agent work, return one Start_N command where N is 2-12: Start_N_Image_Gen for N independent JackONNX image generator slaves, Start_N_Video_Gen for video generator slaves, Start_N_Audio_Gen for audio generator slaves, or Start_N_Text for text/reasoning agents. Do not use Start_N_* merely because the final answer needs several websites, URLs, links, citations, search queries, facts, bullets, sections, or comparison rows. Route URL/link/source/citation compilation, search, documentation lookup, official homepage lookup, browser work, file, code, shell, admin, external actions, workstation model delegation, and current/latest/live lookup to USE TEXT. Use Start_N_Image_Gen when the user asks for multiple separate visual outputs, including N images, a batch, set, series, collection, pack, several/multiple options, variants, variations, versions, concepts, drafts, logos, portraits, icons, thumbnails, posters, renders, or similar visual outputs. Do not use Start_N_Image_Gen when the user asks for several subjects inside one image, collage, sprite sheet, contact sheet, grid, or single canvas. Use USE VIDEO for one video or clip. Use USE IMAGE for one image/art request. Use USE AUDIO for one speech, sound, voice, music, or audio request. Use USE MULTIMODAL for analyzing attached/linked media. Use USE EMBEDDING for vector or semantic-search tasks. Use USE TEXT for ordinary chat, writing, explanation, Q&A, current-info questions, URLs, files, and source requests."
+                    ["content"] = "You are SocketJack Auto Router. Call the auto_route tool exactly once. Choose run_single unless the user clearly asks for multiple independent outputs or parallel agents. Tools route availability for this request: " + toolsAvailability + ". Use tools instead of text only when tools are available and the prompt requires reasoning, planning, analysis, multi-step synthesis, browser work, live visual testing, web page manipulation, file/code/shell/admin actions, current/latest/live lookups, sourced URL/link gathering, or workstation model delegation. Use text for ordinary direct chatbot replies, and also use text when tools are unavailable. Use image, video, or audio for generation in those media lanes; use multimodal for analyzing attached or linked media; use embedding for vector/semantic-search work. For run_batch, set count from the user's requested number when present and keep it between 2 and " + maxBatch + ". Do not infer a batch merely because an answer needs several bullets, sources, websites, citations, rows, or sections."
                 },
                 new JsonObject {
                     ["role"] = "user",
-                    ["content"] = "/no_think\nPrompt: " + (prompt ?? "").Trim() + "\nCommand:"
+                    ["content"] = "Prompt:\n" + (prompt ?? "").Trim()
+                }
+            },
+            ["tools"] = new JsonArray {
+                new JsonObject {
+                    ["type"] = "function",
+                    ["function"] = new JsonObject {
+                        ["name"] = "auto_route",
+                        ["description"] = "Choose one SocketJack Auto routing action for the user's prompt.",
+                        ["parameters"] = new JsonObject {
+                            ["type"] = "object",
+                            ["additionalProperties"] = false,
+                            ["properties"] = new JsonObject {
+                                ["action"] = new JsonObject {
+                                    ["type"] = "string",
+                                    ["enum"] = new JsonArray(JsonValue.Create("run_single"), JsonValue.Create("run_batch"))
+                                },
+                                ["mode"] = new JsonObject {
+                                    ["type"] = "string",
+                                    ["enum"] = new JsonArray(JsonValue.Create("text"), JsonValue.Create("tools"), JsonValue.Create("image"), JsonValue.Create("video"), JsonValue.Create("audio"), JsonValue.Create("multimodal"), JsonValue.Create("embedding"))
+                                },
+                                ["count"] = new JsonObject {
+                                    ["type"] = "integer",
+                                    ["minimum"] = 2,
+                                    ["maximum"] = AutoParallelBatchLimit
+                                },
+                                ["batchKind"] = new JsonObject {
+                                    ["type"] = "string",
+                                    ["enum"] = new JsonArray(JsonValue.Create("independent_agents"), JsonValue.Create("media_variants"), JsonValue.Create("tool_runs"), JsonValue.Create("explicit_parallel"))
+                                }
+                            },
+                            ["required"] = new JsonArray(JsonValue.Create("action"), JsonValue.Create("mode"))
+                        }
+                    }
+                }
+            },
+            ["tool_choice"] = new JsonObject {
+                ["type"] = "function",
+                ["function"] = new JsonObject {
+                    ["name"] = "auto_route"
                 }
             }
         };
@@ -10596,6 +10979,12 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 
     private static string ExtractAutoModeDecisionText(JsonElement element) {
         if (element.ValueKind == JsonValueKind.Object) {
+            string toolArguments = ExtractAutoModeDecisionToolArguments(element);
+            if (!string.IsNullOrWhiteSpace(toolArguments))
+                return toolArguments;
+            if (element.TryGetProperty("action", out _) || element.TryGetProperty("mode", out _))
+                return element.GetRawText();
+
             string direct = FirstNonEmpty(
                 GetJsonString(element, "content"),
                 GetJsonString(element, "text"),
@@ -10646,54 +11035,235 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         return "";
     }
 
-    private static bool TryParseAutoModeDecision(string value, out string command, out string mode) {
-        string text = Regex.Replace((value ?? "").Trim().ToUpperInvariant(), @"\s+", " ");
-        command = "";
-        mode = "";
-        bool Has(string pattern) => Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase);
-        Match startMatch = Regex.Match(text, @"\bSTART[_\s-]*(\d{1,2})[_\s-]*(IMAGE[_\s-]*GEN|IMAGE|VIDEO[_\s-]*GEN|VIDEO|AUDIO[_\s-]*GEN|AUDIO|TOOLS?|AGENTS?|TEXT|REASONING)\b", RegexOptions.IgnoreCase);
-        if (startMatch.Success) {
-            int count = Math.Clamp(ParseInt(startMatch.Groups[1].Value, 0, 0, 12), 0, 12);
-            string kind = startMatch.Groups[2].Value.Replace(" ", "_").Replace("-", "_").ToUpperInvariant();
-            if (kind.StartsWith("IMAGE", StringComparison.OrdinalIgnoreCase))
-                mode = "image";
-            else if (kind.StartsWith("VIDEO", StringComparison.OrdinalIgnoreCase))
-                mode = "video";
-            else if (kind.StartsWith("AUDIO", StringComparison.OrdinalIgnoreCase))
-                mode = "audio";
-            else if (kind.StartsWith("TOOL", StringComparison.OrdinalIgnoreCase) || kind.StartsWith("AGENT", StringComparison.OrdinalIgnoreCase))
-                mode = "text";
-            else
-                mode = "text";
-            command = BuildAutoModeDecisionCommand(mode, count);
-            return count > 1 && !string.IsNullOrWhiteSpace(mode);
+    private static string ExtractAutoModeDecisionToolArguments(JsonElement element) {
+        if (element.ValueKind != JsonValueKind.Object)
+            return "";
+
+        string FromCall(JsonElement call) {
+            if (call.ValueKind != JsonValueKind.Object)
+                return "";
+            if (call.TryGetProperty("function", out JsonElement functionElement) && functionElement.ValueKind == JsonValueKind.Object) {
+                string name = GetJsonString(functionElement, "name");
+                string args = GetJsonString(functionElement, "arguments");
+                if ((string.IsNullOrWhiteSpace(name) || name.Equals("auto_route", StringComparison.OrdinalIgnoreCase)) && !string.IsNullOrWhiteSpace(args))
+                    return args;
+            }
+            string directArgs = GetJsonString(call, "arguments");
+            if (!string.IsNullOrWhiteSpace(directArgs))
+                return directArgs;
+            if (call.TryGetProperty("arguments", out JsonElement argsElement) && argsElement.ValueKind == JsonValueKind.Object)
+                return argsElement.GetRawText();
+            return "";
         }
 
-        if (Has(@"\bUSE VIDEO\b|\bGENERATE VIDEO\b|^VIDEO$|\b(?:generate|create|make|render|animate)\b.{0,160}\b(?:video|clip|movie|animation|mp4|webm|gif)\b|\b(?:video|clip|movie|animation)\b.{0,160}\b(?:generate|create|make|render|animate|request)\b")) {
-            command = "USE VIDEO";
-            mode = "video";
-        } else if (Has(@"\bUSE IMAGE\b|\bGENERATE IMAGE\b|^IMAGE$|\b(?:generate|create|make|draw|render)\b.{0,160}\b(?:image|picture|photo|illustration|art|logo|poster|thumbnail|wallpaper)\b|\b(?:image|picture|photo|illustration|art|logo|poster|thumbnail|wallpaper)\b.{0,160}\b(?:generate|create|make|draw|render|request)\b")) {
-            command = "USE IMAGE";
-            mode = "image";
-        } else if (Has(@"\bUSE AUDIO\b|\bGENERATE AUDIO\b|^AUDIO$|\b(?:generate|create|make|speak|narrate)\b.{0,160}\b(?:audio|sound|music|song|voice|speech|tts|narration)\b|\b(?:audio|sound|music|song|voice|speech|tts|narration)\b.{0,160}\b(?:generate|create|make|request)\b")) {
-            command = "USE AUDIO";
-            mode = "audio";
-        } else if (Has(@"\bUSE TOOLS\b|^TOOLS?$|^AGENT$|\b(?:browser|website|file|folder|download|upload|code|shell|terminal|command|admin|tool|agent|open|click|run)\b|\b(?:find|compile|collect|gather|list|search|look\s*up|return|provide|compare|verify|cite|source)\b.{0,160}\b(?:urls?|links?|sources?|citations?|references?|websites?|web\s+pages?|pages?|docs?|documentation|home\s*pages?|official)\b|\b(?:official|urls?|links?|sources?|citations?|references?|websites?|web\s+pages?|pages?|docs?|documentation|home\s*pages?)\b.{0,160}\b(?:find|compile|collect|gather|list|search|look\s*up|return|provide|compare|verify|cite|source)\b|\b(?:another|other|enabled|workstation|runtime|web\s*chat)\s+models?\b|\bmodels?\b.{0,160}\b(?:consult|compare|delegate|run|ask|signal|load|enabled|workstation|runtime|web\s*chat)\b|\b(?:consult|compare|delegate|ask|signal|load|run)\b.{0,160}\b(?:another|other|enabled|workstation|runtime|web\s*chat)\s+models?\b|\b(?:ask|consult|delegate|compare\s+with|run|load)\b.{0,160}\b(?:qwen|llama|mistral|gemma|phi|deepseek|gpt[-_ ]?oss|model)\b|\b(?:current|latest|live|right now|today|recent|up[- ]?to[- ]?date)\b.{0,160}\b(?:lookup|search|fact|answer|question|president|weather|price|news)\b")) {
-            command = "USE TEXT";
-            mode = "text";
-        } else if (Has(@"\bUSE EMBEDDINGS?\b|\bCREATE EMBEDDINGS?\b|\bGENERATE EMBEDDINGS?\b|^EMBEDDINGS?$|^VECTOR$")) {
-            command = "USE EMBEDDING";
-            mode = "embedding";
-        } else if (Has(@"\bUSE MULTIMODAL\b|\bGENERATE MULTIMODAL\b|\bANALYZE MULTIMODAL\b|^MULTIMODAL$|^VISION$")) {
-            command = "USE MULTIMODAL";
-            mode = "multimodal";
-        } else if (Has(@"\bUSE TEXT\b|\bGENERATE TEXT\b|\bANSWER TEXT\b|^TEXT$|^CHAT$|\b(?:ordinary|straightforward|simple|factual)\b.{0,160}\b(?:question|answer|q&a|chat|text)\b")) {
-            command = "USE TEXT";
-            mode = "text";
+        if (element.TryGetProperty("tool_calls", out JsonElement toolCalls) && toolCalls.ValueKind == JsonValueKind.Array) {
+            foreach (JsonElement call in toolCalls.EnumerateArray()) {
+                string args = FromCall(call);
+                if (!string.IsNullOrWhiteSpace(args))
+                    return args;
+            }
         }
 
-        return !string.IsNullOrWhiteSpace(mode);
+        if (element.TryGetProperty("function_call", out JsonElement functionCall)) {
+            string args = FromCall(functionCall);
+            if (!string.IsNullOrWhiteSpace(args))
+                return args;
+        }
+
+        if (element.TryGetProperty("arguments", out JsonElement argumentsElement)) {
+            if (argumentsElement.ValueKind == JsonValueKind.String)
+                return argumentsElement.GetString() ?? "";
+            if (argumentsElement.ValueKind == JsonValueKind.Object)
+                return argumentsElement.GetRawText();
+        }
+
+        return "";
     }
+
+    private static bool TryParseAutoModeDecision(string value, out AutoModeDecision decision) {
+        decision = CreateAutoModeDecision("run_single", "text", 0, "");
+        string text = StripJsonCodeFence(value ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        if (TryParseAutoModeDecisionJson(text, out decision))
+            return true;
+
+        Match batchMatch = Regex.Match(text, @"\brun_batch[:\s-]+(?<mode>text|tools?|agents?|image|video|audio)[:\s-]+(?<count>\d{1,3})(?:[:\s-]+(?<kind>[a-z0-9_-]+))?\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (batchMatch.Success) {
+            decision = CreateAutoModeDecision(
+                "run_batch",
+                NormalizeAutoMode(batchMatch.Groups["mode"].Value),
+                ParseInt(batchMatch.Groups["count"].Value, 0, 0, AutoParallelBatchLimit),
+                batchMatch.Groups["kind"].Value);
+            return decision.Action.Equals("run_batch", StringComparison.OrdinalIgnoreCase);
+        }
+
+        Match singleMatch = Regex.Match(text, @"\brun_single[:\s-]+(?<mode>text|tools?|agents?|image|video|audio|multimodal|vision|embedding|vector)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (singleMatch.Success) {
+            decision = CreateAutoModeDecision("run_single", NormalizeAutoMode(singleMatch.Groups["mode"].Value), 0, "");
+            return true;
+        }
+
+        string upper = Regex.Replace(text.ToUpperInvariant(), @"\s+", " ");
+        if (Regex.IsMatch(upper, @"\bUSE VIDEO\b|\bGENERATE VIDEO\b|^VIDEO$", RegexOptions.CultureInvariant)) {
+            decision = CreateAutoModeDecision("run_single", "video", 0, "");
+            return true;
+        }
+        if (Regex.IsMatch(upper, @"\bUSE IMAGE\b|\bGENERATE IMAGE\b|^IMAGE$", RegexOptions.CultureInvariant)) {
+            decision = CreateAutoModeDecision("run_single", "image", 0, "");
+            return true;
+        }
+        if (Regex.IsMatch(upper, @"\bUSE AUDIO\b|\bGENERATE AUDIO\b|^AUDIO$", RegexOptions.CultureInvariant)) {
+            decision = CreateAutoModeDecision("run_single", "audio", 0, "");
+            return true;
+        }
+        if (Regex.IsMatch(upper, @"\bUSE TOOLS\b|^TOOLS?$|^AGENT$", RegexOptions.CultureInvariant)) {
+            decision = CreateAutoModeDecision("run_single", "tools", 0, "");
+            return true;
+        }
+        if (Regex.IsMatch(upper, @"\bUSE EMBEDDINGS?\b|\bCREATE EMBEDDINGS?\b|\bGENERATE EMBEDDINGS?\b|^EMBEDDINGS?$|^VECTOR$", RegexOptions.CultureInvariant)) {
+            decision = CreateAutoModeDecision("run_single", "embedding", 0, "");
+            return true;
+        }
+        if (Regex.IsMatch(upper, @"\bUSE MULTIMODAL\b|\bGENERATE MULTIMODAL\b|\bANALYZE MULTIMODAL\b|^MULTIMODAL$|^VISION$", RegexOptions.CultureInvariant)) {
+            decision = CreateAutoModeDecision("run_single", "multimodal", 0, "");
+            return true;
+        }
+        if (Regex.IsMatch(upper, @"\bUSE TEXT\b|\bGENERATE TEXT\b|\bANSWER TEXT\b|^TEXT$|^CHAT$", RegexOptions.CultureInvariant)) {
+            decision = CreateAutoModeDecision("run_single", "text", 0, "");
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string StripJsonCodeFence(string value) {
+        string text = (value ?? "").Trim();
+        Match match = Regex.Match(text, @"^```(?:json)?\s*(?<json>[\s\S]*?)\s*```$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? match.Groups["json"].Value.Trim() : text;
+    }
+
+    private static bool TryParseAutoModeDecisionJson(string value, out AutoModeDecision decision) {
+        decision = CreateAutoModeDecision("run_single", "text", 0, "");
+        try {
+            using JsonDocument document = JsonDocument.Parse(value);
+            return TryParseAutoModeDecisionJson(document.RootElement, out decision);
+        } catch {
+            return false;
+        }
+    }
+
+    private static bool TryParseAutoModeDecisionJson(JsonElement element, out AutoModeDecision decision) {
+        decision = CreateAutoModeDecision("run_single", "text", 0, "");
+        if (element.ValueKind == JsonValueKind.String)
+            return TryParseAutoModeDecision(element.GetString() ?? "", out decision);
+        if (element.ValueKind != JsonValueKind.Object)
+            return false;
+
+        if (element.TryGetProperty("decision", out JsonElement nested) && TryParseAutoModeDecisionJson(nested, out decision))
+            return true;
+
+        string toolArguments = ExtractAutoModeDecisionToolArguments(element);
+        if (!string.IsNullOrWhiteSpace(toolArguments) && !toolArguments.Equals(element.GetRawText(), StringComparison.Ordinal) && TryParseAutoModeDecision(toolArguments, out decision))
+            return true;
+
+        string action = FirstNonEmpty(GetJsonString(element, "action"), GetJsonString(element, "routeAction"), GetJsonString(element, "route_action"));
+        string mode = FirstNonEmpty(GetJsonString(element, "mode"), GetJsonString(element, "type"), GetJsonString(element, "modality"));
+        string batchKind = FirstNonEmpty(GetJsonString(element, "batchKind"), GetJsonString(element, "batch_kind"), GetJsonString(element, "kind"));
+        int count = 0;
+        foreach (string countName in new[] { "count", "parallelAgents", "parallel_agents", "n" }) {
+            if (element.TryGetProperty(countName, out JsonElement countElement)) {
+                if (countElement.ValueKind == JsonValueKind.Number && countElement.TryGetInt32(out int number)) {
+                    count = number;
+                    break;
+                }
+                if (countElement.ValueKind == JsonValueKind.String) {
+                    count = ParseInt(countElement.GetString() ?? "", 0, 0, AutoParallelBatchLimit);
+                    if (count > 0)
+                        break;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(action)) {
+            action = count > 1 ? "run_batch" : "run_single";
+        }
+        if (string.IsNullOrWhiteSpace(mode))
+            return false;
+
+        decision = CreateAutoModeDecision(action, mode, count, batchKind);
+        return !string.IsNullOrWhiteSpace(decision.Mode);
+    }
+
+    private static AutoModeDecision CreateAutoModeDecision(string action, string mode, int count, string batchKind) {
+        string normalizedMode = NormalizeAutoMode(mode);
+        string normalizedAction = (action ?? "").Trim().Equals("run_batch", StringComparison.OrdinalIgnoreCase) ? "run_batch" : "run_single";
+        if (normalizedAction.Equals("run_batch", StringComparison.OrdinalIgnoreCase)) {
+            if (!AutoModeAllowsStructuredBatch(normalizedMode))
+                normalizedAction = "run_single";
+            count = Math.Clamp(count, 0, AutoParallelBatchLimit);
+            if (count <= 1)
+                normalizedAction = "run_single";
+        } else {
+            count = 0;
+        }
+
+        string cleanBatchKind = Regex.Replace(batchKind ?? "", @"[^a-zA-Z0-9_-]+", "_").Trim('_').ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(cleanBatchKind)) {
+            cleanBatchKind = normalizedAction.Equals("run_batch", StringComparison.OrdinalIgnoreCase)
+                ? (IsAutoMediaBatchMode(normalizedMode) ? "media_variants" : normalizedMode.Equals("tools", StringComparison.OrdinalIgnoreCase) ? "tool_runs" : "independent_agents")
+                : "";
+        }
+
+        string command = normalizedAction.Equals("run_batch", StringComparison.OrdinalIgnoreCase)
+            ? "run_batch:" + normalizedMode + ":" + count.ToString(CultureInfo.InvariantCulture)
+            : "run_single:" + normalizedMode;
+        return new AutoModeDecision {
+            Action = normalizedAction,
+            Mode = normalizedMode,
+            Count = count,
+            BatchKind = cleanBatchKind,
+            Command = command
+        };
+    }
+
+    private static AutoModeDecision PreferAutoToolsWhenAvailable(AutoModeDecision decision, bool toolsRouteAvailable, string prompt) {
+        if (!toolsRouteAvailable) {
+            if (decision.Mode.Equals("tools", StringComparison.OrdinalIgnoreCase))
+                return CreateAutoModeDecision(decision.Action, "text", decision.Count, "");
+            return decision;
+        }
+        if (!decision.Mode.Equals("text", StringComparison.OrdinalIgnoreCase))
+            return decision;
+        if (!AutoPromptNeedsReasoningOrTools(prompt))
+            return decision;
+        return CreateAutoModeDecision(decision.Action, "tools", decision.Count, "");
+    }
+
+    private static bool AutoModeAllowsStructuredBatch(string mode) {
+        string normalized = NormalizeAutoMode(mode);
+        return normalized.Equals("text", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("tools", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("video", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("audio", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAutoMediaBatchMode(string mode) {
+        string normalized = NormalizeAutoMode(mode);
+        return normalized.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("video", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("audio", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static object AutoModeDecisionPayload(AutoModeDecision decision) =>
+        new {
+            action = decision.Action,
+            mode = decision.Mode,
+            count = decision.Count,
+            batchKind = decision.BatchKind
+        };
 
     private static bool AutoPromptNeedsTools(string text) {
         if (string.IsNullOrWhiteSpace(text))
@@ -10717,6 +11287,25 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         return false;
     }
 
+    private static bool AutoPromptNeedsReasoning(string text) {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        if (Regex.IsMatch(text, @"\b(reason(?:ing)?|think\s+(?:through|about|hard|carefully|step\s*by\s*step)|analy[sz]e|analysis|compare|evaluate|decide|choose|recommend|trade[-\s]?offs?|strategy|plan|architect|design|diagnose|debug|troubleshoot|root\s+cause|investigate|review|refactor|implement|solve|prove|derive|calculate|estimate|optimi[sz]e)\b", RegexOptions.IgnoreCase))
+            return true;
+
+        if (Regex.IsMatch(text, @"\b(?:why|how\s+should|what\s+should|which\s+(?:is|one|option)|best\s+(?:way|approach|option|choice))\b", RegexOptions.IgnoreCase))
+            return true;
+
+        if (Regex.IsMatch(text, @"\b(?:multi[-\s]?step|step[-\s]?by[-\s]?step|break\s+(?:it|this)\s+down|walk\s+me\s+through|pros\s+and\s+cons|risk(?:s)?|edge\s+cases?)\b", RegexOptions.IgnoreCase))
+            return true;
+
+        return false;
+    }
+
+    private static bool AutoPromptNeedsReasoningOrTools(string text) =>
+        AutoPromptNeedsTools(text) || AutoPromptNeedsReasoning(text);
+
     private static string InferAutoModeFromPrompt(string prompt) {
         string text = (prompt ?? "").Trim().ToLowerInvariant();
         if (Regex.IsMatch(text, @"\b(video|clip|movie|animation|animate|mp4|webm|gif)\b", RegexOptions.IgnoreCase))
@@ -10728,171 +11317,32 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         if (Regex.IsMatch(text, @"\b(embed|embedding|vector|semantic search)\b", RegexOptions.IgnoreCase))
             return "embedding";
         if (AutoPromptNeedsTools(text))
-            return "text";
+            return "tools";
         if (Regex.IsMatch(text, @"\b(attached|upload|image analysis|vision|multimodal|describe this|what is in)\b", RegexOptions.IgnoreCase))
             return "multimodal";
         return "text";
     }
 
-    private static int AutoBatchCountWord(string text) {
-        text = Regex.Replace((text ?? "").Trim().ToLowerInvariant(), @"\s+", " ");
-        if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
-            return value;
-        return text switch {
-            "one" => 1,
-            "two" => 2,
-            "three" => 3,
-            "four" => 4,
-            "five" => 5,
-            "six" => 6,
-            "seven" => 7,
-            "eight" => 8,
-            "nine" => 9,
-            "ten" => 10,
-            "eleven" => 11,
-            "twelve" => 12,
-            "a couple" => 2,
-            "couple" => 2,
-            "pair" => 2,
-            "a few" => 3,
-            "few" => 3,
-            "several" => 4,
-            "handful" => 5,
-            "half a dozen" => 6,
-            "half dozen" => 6,
-            "dozen" => 12,
-            _ => 0
-        };
-    }
-
-    private static bool AutoPromptRequestsSingleMediaCanvas(string text) {
-        if (string.IsNullOrWhiteSpace(text))
-            return false;
-        if (Regex.IsMatch(text, @"\b(?:all|everything)\s+(?:in|into|as|on)\s+(?:one|a|an|single)\b", RegexOptions.IgnoreCase))
-            return true;
-        if (Regex.IsMatch(text, @"\b(?:in|into|as|on|within|inside)\s+(?:one|a|an|single)\s+(?:image|picture|photo|render|illustration|poster|canvas|composition|scene|video|clip|track|audio|file)\b", RegexOptions.IgnoreCase))
-            return true;
-        if (Regex.IsMatch(text, @"\b(?:one|single)\s+(?:image|picture|photo|render|illustration|poster|canvas|video|clip|audio|track|file)\s+(?:with|containing|of|showing)\b", RegexOptions.IgnoreCase))
-            return true;
-        if (Regex.IsMatch(text, @"\b(?:collage|contact\s+sheet|sprite\s+sheet|multi[-\s]?panel|composite|grid)\b", RegexOptions.IgnoreCase) &&
-            !Regex.IsMatch(text, @"\b(?:not|no|without)\s+(?:a\s+)?(?:collage|contact\s+sheet|sprite\s+sheet|multi[-\s]?panel|composite|grid)\b", RegexOptions.IgnoreCase))
-            return true;
-        return false;
-    }
-
-    private static int AutoMediaBatchDefaultCount(string text) {
-        if (Regex.IsMatch(text, @"\bhalf\s+(?:a\s+)?dozen\b", RegexOptions.IgnoreCase))
-            return 6;
-        if (Regex.IsMatch(text, @"\bdozen\b", RegexOptions.IgnoreCase))
-            return 12;
-        if (Regex.IsMatch(text, @"\b(?:a\s+couple|couple|pair)\b", RegexOptions.IgnoreCase))
-            return 2;
-        if (Regex.IsMatch(text, @"\b(?:a\s+few|few)\b", RegexOptions.IgnoreCase))
-            return 3;
-        if (Regex.IsMatch(text, @"\bseveral\b", RegexOptions.IgnoreCase))
-            return 4;
-        if (Regex.IsMatch(text, @"\bhandful\b", RegexOptions.IgnoreCase))
-            return 5;
-        if (Regex.IsMatch(text, @"\b(?:batch|multiple|various|set|series|collection|pack|bundle|variants?|variations?|versions?|options?|concepts?|alternatives?|samples?|drafts?)\b", RegexOptions.IgnoreCase))
-            return 4;
-        return 0;
-    }
-
-    private static bool AutoPromptLooksMediaBatchGeneration(string text, string noun) {
-        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(noun))
-            return false;
-        bool hasBatchSignal = Regex.IsMatch(text, @"\b(?:batch|multiple|several|various|a\s+few|few|set|series|collection|pack|bundle|variants?|variations?|versions?|options?|concepts?|alternatives?|samples?|drafts?)\b", RegexOptions.IgnoreCase);
-        bool hasGenerationSignal = Regex.IsMatch(text, @"\b(?:generate|create|make|draw|render|design|paint|illustrate|produce|draft|mock\s*up|mockup)\b", RegexOptions.IgnoreCase);
-        bool hasMediaNoun = Regex.IsMatch(text, @"\b" + noun + @"\b", RegexOptions.IgnoreCase);
-        return hasBatchSignal && hasGenerationSignal && hasMediaNoun;
-    }
-
-    private static int InferAutoParallelAgentCount(string prompt, string mode) {
-        string text = (prompt ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(text))
-            return 0;
-        string normalizedMode = NormalizeAutoMode(mode);
-        if (AutoPromptRequestsSingleMediaCanvas(text))
-            return 0;
-        string noun = normalizedMode switch {
-            "image" => @"(?:images?|pictures?|photos?|renders?|illustrations?|variants?|variations?|versions?|options?|concepts?|alternatives?|samples?|drafts?|generations?|outputs?|thumbnails?|logos?|posters?|portraits?|characters?|designs?|icons?|avatars?|stickers?|banners?|covers?|mockups?|scenes?|wallpapers?|backgrounds?|graphics?|visuals?|assets?)",
-            "video" => @"(?:videos?|movies?|animations?|clips?|video\s+outputs?|video\s+generations?)",
-            "audio" => @"(?:audio(?:\s+clips?)?|sounds?|tracks?|audio\s+outputs?|audio\s+generations?)",
-            "tools" => @"(?:agents?|workers?|tasks?|searches?|lookups?|tool\s+runs?)",
-            "text" => @"(?:agents?|branches?|drafts?|answers?|approaches?|options?|analyses?)",
-            _ => ""
-        };
-        string count = @"(?<count>\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+couple|couple|pair|a\s+few|few|several|handful|half\s+a\s+dozen|half\s+dozen|dozen)";
-        if (!string.IsNullOrWhiteSpace(noun)) {
-            string modifiers = @"(?:\s+(?:different|distinct|unique|separate|individual|alternate|alternative|varied|new|quick|sample|sampled|draft|drafts?|style|styled|concept|concepts?))*";
-            Match nounMatch = Regex.Match(text, @"\b" + count + modifiers + @"\s+" + noun + @"\b", RegexOptions.IgnoreCase);
-            if (nounMatch.Success) {
-                int value = AutoBatchCountWord(nounMatch.Groups["count"].Value);
-                if (value > 1)
-                    return Math.Clamp(value, 2, 12);
-            }
-            Match batchCountMatch = Regex.Match(text, @"\b(?:batch|set|series|collection|pack|bundle|round|run)\s+(?:of\s+)?" + count + @"\b.{0,180}\b" + noun + @"\b", RegexOptions.IgnoreCase);
-            if (batchCountMatch.Success) {
-                int value = AutoBatchCountWord(batchCountMatch.Groups["count"].Value);
-                if (value > 1)
-                    return Math.Clamp(value, 2, 12);
-            }
-            Match broadCountMatch = Regex.Match(text, @"\b" + count + @"\b(?=.{0,160}\b" + noun + @"\b)", RegexOptions.IgnoreCase);
-            if (broadCountMatch.Success && Regex.IsMatch(text, @"\b(?:generate|create|make|draw|render|design|paint|illustrate|produce|draft|mock\s*up|mockup)\b", RegexOptions.IgnoreCase)) {
-                int value = AutoBatchCountWord(broadCountMatch.Groups["count"].Value);
-                if (value > 1)
-                    return Math.Clamp(value, 2, 12);
-            }
-            if (AutoPromptLooksMediaBatchGeneration(text, noun)) {
-                int value = AutoMediaBatchDefaultCount(text);
-                if (value > 1)
-                    return Math.Clamp(value, 2, 12);
-            }
-        }
-
-        Match startMatch = Regex.Match(text, @"\bstart[_\s-]*" + count + @"[_\s-]*(?:image[_\s-]*gen|video[_\s-]*gen|audio[_\s-]*gen|tools?|agents?|text)\b", RegexOptions.IgnoreCase);
-        if (startMatch.Success) {
-            int value = AutoBatchCountWord(startMatch.Groups["count"].Value);
-            if (value > 1)
-                return Math.Clamp(value, 2, 12);
-        }
-
-        return 0;
-    }
-
     private static string BuildAutoModeDecisionCommand(string mode, int parallelAgents = 0) {
         mode = NormalizeAutoMode(mode);
         if (parallelAgents > 1) {
-            int count = Math.Clamp(parallelAgents, 2, 12);
-            if (mode.Equals("video", StringComparison.OrdinalIgnoreCase)) return "Start_" + count.ToString(CultureInfo.InvariantCulture) + "_Video_Gen";
-            if (mode.Equals("image", StringComparison.OrdinalIgnoreCase)) return "Start_" + count.ToString(CultureInfo.InvariantCulture) + "_Image_Gen";
-            if (mode.Equals("audio", StringComparison.OrdinalIgnoreCase)) return "Start_" + count.ToString(CultureInfo.InvariantCulture) + "_Audio_Gen";
-            if (mode.Equals("tools", StringComparison.OrdinalIgnoreCase)) return "Start_" + count.ToString(CultureInfo.InvariantCulture) + "_Tools";
-            return "Start_" + count.ToString(CultureInfo.InvariantCulture) + "_Text";
+            int count = Math.Clamp(parallelAgents, 2, AutoParallelBatchLimit);
+            return "run_batch:" + mode + ":" + count.ToString(CultureInfo.InvariantCulture);
         }
-        if (mode.Equals("video", StringComparison.OrdinalIgnoreCase)) return "USE VIDEO";
-        if (mode.Equals("image", StringComparison.OrdinalIgnoreCase)) return "USE IMAGE";
-        if (mode.Equals("audio", StringComparison.OrdinalIgnoreCase)) return "USE AUDIO";
-        if (mode.Equals("tools", StringComparison.OrdinalIgnoreCase)) return "USE TEXT";
-        if (mode.Equals("embedding", StringComparison.OrdinalIgnoreCase)) return "USE EMBEDDING";
-        if (mode.Equals("multimodal", StringComparison.OrdinalIgnoreCase)) return "USE MULTIMODAL";
-        return "USE TEXT";
+        return "run_single:" + mode;
     }
 
     private static int AutoModeDecisionParallelAgentCount(string command) {
-        Match match = Regex.Match(command ?? "", @"\bStart_(\d{1,2})_", RegexOptions.IgnoreCase);
-        return match.Success ? Math.Clamp(ParseInt(match.Groups[1].Value, 0, 0, 12), 0, 12) : 0;
+        Match match = Regex.Match(command ?? "", @"\brun_batch[:\s-]+[a-z_]+[:\s-]+(\d{1,3})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? Math.Clamp(ParseInt(match.Groups[1].Value, 0, 0, AutoParallelBatchLimit), 0, AutoParallelBatchLimit) : 0;
     }
 
+    private static string AutoModeDecisionParallelAgentMode(AutoModeDecision decision) =>
+        decision != null && decision.Count > 1 ? decision.Mode : "";
+
     private static string AutoModeDecisionParallelAgentMode(string command) {
-        string text = (command ?? "").Trim();
-        if (!Regex.IsMatch(text, @"\bStart_\d{1,2}_", RegexOptions.IgnoreCase))
-            return "";
-        if (text.Contains("Image", StringComparison.OrdinalIgnoreCase)) return "image";
-        if (text.Contains("Video", StringComparison.OrdinalIgnoreCase)) return "video";
-        if (text.Contains("Audio", StringComparison.OrdinalIgnoreCase)) return "audio";
-        if (text.Contains("Tools", StringComparison.OrdinalIgnoreCase)) return "tools";
-        return "text";
+        Match match = Regex.Match(command ?? "", @"\brun_batch[:\s-]+(?<mode>text|tools|image|video|audio)[:\s-]+\d{1,3}\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? NormalizeAutoMode(match.Groups["mode"].Value) : "";
     }
 
     private HuggingFaceModelCatalog GetHuggingFaceModelCatalog(CancellationToken cancellationToken) {
@@ -11105,6 +11555,13 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             ? Math.Clamp(value, min, max)
             : fallback;
 
+    private static int ReadAutoParallelBatchLimit() {
+        string raw = Environment.GetEnvironmentVariable("SOCKETJACK_AUTO_PARALLEL_BATCH_LIMIT") ?? "";
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
+            ? Math.Clamp(value, 2, 64)
+            : DefaultAutoParallelBatchLimit;
+    }
+
     private bool TryResolveAutoApiTarget(
         string model,
         string mode,
@@ -11212,6 +11669,60 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         return true;
     }
 
+    private bool IsAutoToolsRouteAvailable(
+        HttpRequest request,
+        string requestedServerId,
+        string originMode,
+        bool poolEnabled,
+        bool premiumModelsEnabled,
+        AccountRecord? account,
+        out int eligibleCount,
+        out int premiumBlockedCount) {
+        eligibleCount = 0;
+        premiumBlockedCount = 0;
+        double minParameterBillions = ExtractAutoMinParameterBillions(request);
+        double maxParameterBillions = ExtractAutoMaxParameterBillions(request);
+        ISet<string> disabledAutoModels = ExtractAutoDisabledModels(request);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        bool sameOriginOnly = originMode.Equals("same-origin", StringComparison.OrdinalIgnoreCase);
+        bool canUsePremium = premiumModelsEnabled && AccountHasAutoPremiumTokens(account);
+
+        foreach (RegisteredServer server in GetServers(refreshAvailability: true).Where(server => !server.WebsiteHidden)) {
+            server.HydrateFromStoredRegistration();
+            TryHydrateAutoServerModelInventory(server);
+            if (!ServerIsAutoOnline(server, "tools"))
+                continue;
+            if (!ServerMatchesAutoRequest(server, requestedServerId))
+                continue;
+            if (!ServerSupportsAutoModel(server, ""))
+                continue;
+            if (!ServerSupportsAutoMode(server, "", "tools"))
+                continue;
+            if (!ServerHasUsableAutoBenchmarkModel(server, "", "tools", minParameterBillions, maxParameterBillions, disabledAutoModels))
+                continue;
+            if (ServerRequiresAutoPremium(server) && !canUsePremium) {
+                premiumBlockedCount++;
+                continue;
+            }
+
+            if (!sameOriginOnly && TryBuildAutoDirectBaseUri(server, out Uri? directBaseUri) && directBaseUri != null) {
+                eligibleCount++;
+                continue;
+            }
+
+            if (!TryResolveAutoRouteName(server, out string routeName))
+                continue;
+
+            MasterShellRelay? relay = ResolveShellRelayForProxy(routeName);
+            if (relay == null || !relay.Enabled || !relay.IsRunning || !ShouldAttemptShellProxyForward(relay, now))
+                continue;
+
+            eligibleCount++;
+        }
+
+        return eligibleCount > 0;
+    }
+
     private static bool ServerMatchesAutoRequest(RegisteredServer server, string requestedServerId) {
         if (string.IsNullOrWhiteSpace(requestedServerId))
             return true;
@@ -11250,24 +11761,24 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         return false;
     }
 
-    private void TryHydrateAutoServerModelInventory(RegisteredServer server) {
+    private bool TryHydrateAutoServerModelInventory(RegisteredServer server) {
         if (server == null)
-            return;
-        if (server.ModelCount > 0 && !string.IsNullOrWhiteSpace(server.ModelCapabilitiesJson))
-            return;
+            return false;
+        if (!AutoServerModelInventoryNeedsRefresh(server))
+            return false;
         if (!TryResolveAutoRouteName(server, out string routeName))
-            return;
+            return false;
 
         MasterShellRelay? relay = ResolveShellRelayForProxy(routeName);
         if (relay == null || !relay.Enabled || !relay.IsRunning || !ShouldAttemptShellProxyForward(relay, DateTimeOffset.UtcNow))
-            return;
+            return false;
 
         try {
             ShellProxyJsonFetchResult result = _shellProxyWebSocketTunnels.HasConnectedTunnel(relay.Id)
                 ? _shellProxyWebSocketTunnels.FetchJson(relay, "/api/models", "", CancellationToken.None)
                 : FetchShellProxyJsonForWebSocket(relay, "/api/models", "", CancellationToken.None);
             if (result.StatusCode < 200 || result.StatusCode >= 300 || string.IsNullOrWhiteSpace(result.Body))
-                return;
+                return false;
 
             JsonObject inventory = ParseShellProxyJsonObject(EnrichShellProxyModelsApiJson(result.Body));
             string modelBenchmarksJson = FirstUsefulModelBenchmarksJson(
@@ -11278,36 +11789,63 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 
             ModelRuntimeHealthInfo runtime = ReadModelRuntimeHealth(inventory.ToJsonString(MasterListJson.Options), server);
             bool changed = false;
-            if (!string.IsNullOrWhiteSpace(runtime.AvailableModels) && string.IsNullOrWhiteSpace(server.AvailableModels)) {
+            if (!string.IsNullOrWhiteSpace(runtime.AvailableModels) &&
+                !string.Equals(server.AvailableModels, runtime.AvailableModels, StringComparison.Ordinal)) {
                 server.AvailableModels = runtime.AvailableModels;
                 changed = true;
             }
-            if (!string.IsNullOrWhiteSpace(runtime.ModelInventoryJson) && string.IsNullOrWhiteSpace(server.ModelCapabilitiesJson)) {
+            if (!string.IsNullOrWhiteSpace(runtime.ModelInventoryJson) &&
+                !string.Equals(server.ModelCapabilitiesJson, runtime.ModelInventoryJson, StringComparison.Ordinal)) {
                 server.ModelCapabilitiesJson = runtime.ModelInventoryJson;
                 changed = true;
             }
-            if (!string.IsNullOrWhiteSpace(runtime.ModelBenchmarksJson) && string.IsNullOrWhiteSpace(server.ModelBenchmarksJson)) {
+            if (!string.IsNullOrWhiteSpace(runtime.ModelBenchmarksJson) &&
+                !string.Equals(server.ModelBenchmarksJson, runtime.ModelBenchmarksJson, StringComparison.Ordinal)) {
                 server.ModelBenchmarksJson = runtime.ModelBenchmarksJson;
                 changed = true;
             }
 
             if (!changed || string.IsNullOrWhiteSpace(server.Id))
-                return;
+                return false;
 
+            bool rowChanged = false;
             lock (_sync) {
                 int index = FindRowIndexLocked(server.Id);
                 if (index < 0)
-                    return;
+                    return false;
                 object[] row = _table.Rows[index];
                 if (!string.IsNullOrWhiteSpace(runtime.AvailableModels))
-                    SetCellIfChanged(row, nameof(RegisteredServer.AvailableModels), runtime.AvailableModels);
+                    rowChanged |= SetCellIfChanged(row, nameof(RegisteredServer.AvailableModels), runtime.AvailableModels);
                 if (!string.IsNullOrWhiteSpace(runtime.ModelInventoryJson))
-                    SetCellIfChanged(row, nameof(RegisteredServer.ModelCapabilitiesJson), runtime.ModelInventoryJson);
+                    rowChanged |= SetCellIfChanged(row, nameof(RegisteredServer.ModelCapabilitiesJson), runtime.ModelInventoryJson);
                 if (!string.IsNullOrWhiteSpace(runtime.ModelBenchmarksJson))
-                    SetCellIfChanged(row, nameof(RegisteredServer.ModelBenchmarksJson), runtime.ModelBenchmarksJson);
+                    rowChanged |= SetCellIfChanged(row, nameof(RegisteredServer.ModelBenchmarksJson), runtime.ModelBenchmarksJson);
+                if (rowChanged)
+                    _dataServer.Save();
             }
+
+            if (rowChanged) {
+                NotifyServersChanged();
+                NotifyAutoLiveDataChanged();
+            }
+            return rowChanged;
         } catch {
+            return false;
         }
+    }
+
+    private static bool AutoServerModelInventoryNeedsRefresh(RegisteredServer server) {
+        if (server == null)
+            return false;
+        if (server.ModelCount <= 0 || string.IsNullOrWhiteSpace(server.ModelCapabilitiesJson))
+            return true;
+        if (server.DynamicModelLoadingEnabled && server.LoadedModelCount <= 0)
+            return true;
+
+        string status = FirstNonEmpty(server.ModelRuntimeStatus, server.StatusText, server.LastStatus);
+        return status.Contains("offline", StringComparison.OrdinalIgnoreCase) ||
+               status.Contains("disconnected", StringComparison.OrdinalIgnoreCase) ||
+               status.Contains("did not pong", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> AutoServerIdentityAliases(RegisteredServer server) {
@@ -11836,7 +12374,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 
             string parentSessionId = FirstNonEmpty(JsonNodeText(root["sessionId"]), JsonNodeText(root["autoSession"]), JsonNodeText(root["auto_session"]));
             string parentStreamId = FirstNonEmpty(JsonNodeText(root["streamId"]), JsonNodeText(root["stream_id"]));
-            int maxItems = Math.Min(rawItems.Count, 12);
+            int maxItems = Math.Min(rawItems.Count, AutoParallelBatchLimit);
             for (int i = 0; i < maxItems; i++) {
                 JsonNode? rawItem = rawItems[i];
                 string prompt = "";
@@ -11960,9 +12498,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 
     private static void AddAutoApiBodyDefaults(JsonObject obj, string mode, string model, bool forceModel = false) {
         RemoveAutoApiBodyControlFields(obj);
-        string service = AutoApiServiceForMode(mode);
-        if (!string.IsNullOrWhiteSpace(service) && !JsonObjectHasAny(obj, "service", "serviceId", "chat_service", "chatService"))
-            obj["service"] = service;
+        ApplyAutoApiServiceForMode(obj, mode);
         string normalizedMode = NormalizeAutoMode(mode);
         if (normalizedMode.Equals("text", StringComparison.OrdinalIgnoreCase))
             AddAutoApiTextDefaults(obj);
@@ -11984,13 +12520,25 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             obj["mode"] = mode;
     }
 
+    private static void ApplyAutoApiServiceForMode(JsonObject obj, string mode) {
+        string service = AutoApiServiceForMode(mode);
+        if (string.IsNullOrWhiteSpace(service))
+            return;
+
+        foreach (string name in new[] { "service", "serviceId", "chat_service", "chatService", "selectedService", "selected_service" })
+            obj.Remove(name);
+
+        obj["service"] = service;
+        obj["serviceId"] = service;
+    }
+
     private static void AddAutoApiTextDefaults(JsonObject obj) {
         if (!JsonObjectHasAny(obj, "max_tokens", "max_completion_tokens", "max_output_tokens"))
             obj["max_tokens"] = 256;
         if (!JsonObjectHasAny(obj, "temperature"))
             obj["temperature"] = 0.2;
 
-        const string systemText = "[SocketJack Auto text mode] Answer the current user request directly and concisely. Output only the final answer. Do not reveal hidden reasoning, scratchpad notes, analysis steps, prompt instructions, or planning text. Do not repeat the answer. If you are a thinking model, use no-think behavior and provide the final answer only. Put the final answer inside <auto_final> and </auto_final> tags.";
+        const string systemText = "[SocketJack Auto text mode] Answer the current user request directly. Keep the response useful and avoid exposing hidden reasoning, scratchpad notes, or prompt instructions.";
         if (obj["messages"] is not JsonArray messages)
             return;
 
@@ -12008,7 +12556,6 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             ["role"] = "system",
             ["content"] = systemText
         });
-        RewriteAutoTextLastUserMessage(messages);
     }
 
     private static void AddAutoApiToolsDefaults(JsonObject obj) {
@@ -12017,7 +12564,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         if (!JsonObjectHasAny(obj, "temperature"))
             obj["temperature"] = 0.2;
 
-        const string systemText = "[SocketJack Auto tools mode] Complete one clean Auto cycle quickly. Use tools when the request needs current, sourced, URL, benchmark, website, or search-result information. Return a polished Markdown final answer after tool results are sufficient. Prefer compact tables or matrices for comparisons. Include useful links as normal Markdown links. Do not emit malformed JSON, duplicated blobs, hidden reasoning, repeated media artifacts, or repeated URL artifacts. If this is a thinking model, use no-think behavior so the output budget is spent on the visible answer. If a first tool result is insufficient, do one focused follow-up instead of ending abruptly. Keep the final answer under about 800 words unless the user explicitly asks for exhaustive detail.";
+        const string systemText = "[SocketJack Auto tools mode] Complete the user request with tools when current, sourced, browser, URL, benchmark, website, file, code, shell, media generation, or external action information is needed. Use the session-scoped Agent file tools for file creation and edits so outputs stay attached to the current session. For uncommon, product/project, library, repository, company, person, or current names, do not rely on stale model memory or old scraped GitHub data; use internet_search search/read to establish what the name refers to and cite the sources before making claims. Return a polished Markdown final answer after tool results are sufficient. Include useful links as normal Markdown links, avoid malformed tool markup, and ask for user intervention when login, CAPTCHA, payment, or another human step blocks progress.";
         if (obj["messages"] is not JsonArray messages)
             return;
 
@@ -12035,39 +12582,6 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
             ["role"] = "system",
             ["content"] = systemText
         });
-        RewriteAutoToolsLastUserMessage(messages);
-    }
-
-    private static void RewriteAutoToolsLastUserMessage(JsonArray messages) {
-        for (int i = messages.Count - 1; i >= 0; i--) {
-            if (messages[i] is not JsonObject message)
-                continue;
-            string role = JsonNodeText(message["role"]);
-            if (!role.Equals("user", StringComparison.OrdinalIgnoreCase))
-                continue;
-            string content = JsonNodeText(message["content"]).Trim();
-            if (string.IsNullOrWhiteSpace(content) ||
-                content.Contains("[SocketJack Auto tools request]", StringComparison.OrdinalIgnoreCase))
-                return;
-            message["content"] = "[SocketJack Auto tools request]\n/no_think\nComplete this as a single clean tools cycle. Search or use tools when current/source/URL/benchmark/site information is needed, then finish with a concise Markdown answer. Use a compact grid/matrix for comparisons when useful. Do not show hidden reasoning or malformed JSON.\n\nUser request:\n" + content;
-            return;
-        }
-    }
-
-    private static void RewriteAutoTextLastUserMessage(JsonArray messages) {
-        for (int i = messages.Count - 1; i >= 0; i--) {
-            if (messages[i] is not JsonObject message)
-                continue;
-            string role = JsonNodeText(message["role"]);
-            if (!role.Equals("user", StringComparison.OrdinalIgnoreCase))
-                continue;
-            string content = JsonNodeText(message["content"]).Trim();
-            if (string.IsNullOrWhiteSpace(content) ||
-                content.Contains("[SocketJack Auto text request]", StringComparison.OrdinalIgnoreCase))
-                return;
-            message["content"] = "[SocketJack Auto text request]\n/no_think\nRespond with the final answer only. Be concise. Do not show reasoning, analysis, prompt instructions, or repeated text. Put only the final answer inside <auto_final> and </auto_final> tags.\n\nUser request:\n" + content;
-            return;
-        }
     }
 
     private static void RemoveAutoApiBodyControlFields(JsonObject obj) {
@@ -12164,7 +12678,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
         if (item == null)
             return score;
 
-        if (item.Loaded) score += 20;
+        if (item.Loaded) score += 90;
         if (item.Enabled) score += 8;
         if (item.RuntimeLoadEnabled || item.DynamicLoadEnabled) score += 3;
 
@@ -12607,7 +13121,8 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 <title>SocketJack AI</title>
 <meta name="description" content="SocketJack AI routes prompts through a same-origin Auto page that selects healthy local JackLLM servers for text, image, audio, video, tools, and model generation.">
 <link rel="canonical" href="https://socketjack.com/Auto">
-<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="256x256">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta property="og:title" content="SocketJack AI - Auto Model Routing">
 <meta property="og:description" content="Ask once and let SocketJack Auto choose a healthy local AI server for text, media generation, tools, and model work through secure proxy routes.">
 <meta property="og:type" content="website">
@@ -12626,9 +13141,9 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 <style>
 :root{--auto-star-x:0px;--auto-star-y:0px;--auto-bg-x:0px;--auto-bg-y:0px;--auto-glass-x:0px;--auto-glass-y:0px;--auto-glass-point-x:50%;--auto-glass-point-y:34%}
 .messages{overflow-x:hidden}.bubble,.bubble-card{min-width:0}.bubble-card{max-width:100%;overflow:hidden}.markdown-body{white-space:normal;overflow-wrap:anywhere;line-height:1.55}.markdown-body>:first-child{margin-top:0}.markdown-body>:last-child{margin-bottom:0}.markdown-body h2,.markdown-body h3{margin:.15rem 0 .45rem;color:#f8fbff;line-height:1.2}.markdown-body h2{font-size:1.02rem}.markdown-body h3{font-size:.9rem;color:#bdf7ff}.markdown-body p{margin:.45rem 0}.markdown-body ul,.markdown-body ol{margin:.42rem 0 .42rem 1.1rem;padding:0}.markdown-body li{margin:.22rem 0}.markdown-body code:not(pre code){border:1px solid rgba(125,211,252,.18);border-radius:6px;background:rgba(2,8,16,.74);padding:.08rem .32rem;color:#d9fbff;font:800 .82em "Cascadia Code",monospace}.markdown-body a{color:#9eeeff;text-decoration:none}.markdown-body a:hover{text-decoration:underline}.markdown-body blockquote{margin:.5rem 0;padding:.35rem .7rem;border-left:3px solid rgba(46,230,170,.58);background:rgba(46,230,170,.07);color:#c8d8eb}.code-block{margin:.62rem 0;border:1px solid rgba(96,201,255,.22);border-radius:8px;background:#020816;overflow:hidden}.code-title{display:flex;justify-content:space-between;gap:10px;padding:6px 9px;border-bottom:1px solid rgba(155,176,211,.16);color:#9eeeff;background:rgba(96,201,255,.075);font:900 .62rem "Cascadia Code",monospace;text-transform:uppercase}.code-block pre{margin:0;max-width:100%;overflow:auto;padding:10px 12px;white-space:pre;tab-size:2}.code-block code{font:800 .76rem/1.5 "Cascadia Code","Consolas",monospace;color:#dbeafe}.tok-comment{color:#7a8da8;font-style:italic}.tok-string{color:#a7f3d0}.tok-keyword{color:#93c5fd}.tok-number{color:#fcd34d}.tok-type{color:#f0abfc}.tok-fn{color:#67e8f9}.tok-var{color:#f9a8d4}.tok-tag{color:#7dd3fc}.tok-attr{color:#fbbf24}.welcome-readme .bubble-card{border-color:rgba(96,201,255,.30);background:linear-gradient(135deg,rgba(46,230,170,.13),rgba(96,201,255,.08),rgba(11,24,40,.72))}.bubble-progress,.bubble-insights{max-width:100%;min-width:0;margin-top:8px;border:1px solid rgba(155,176,211,.16);border-radius:8px;background:rgba(2,8,16,.58);color:#b7c7db;font:.72rem "Cascadia Code",monospace;overflow:hidden}
-.prompt-progress-track{height:2px;background:rgba(148,163,184,.16);overflow:hidden}
-.prompt-progress-fill{height:100%;width:4%;background:linear-gradient(90deg,#ff3df2,#8b5cf6,#38bdf8,#2ee6aa,#facc15,#ff3df2);background-size:360% 100%;animation:autoTokenRgb 1.8s linear infinite;box-shadow:0 0 12px rgba(46,230,170,.7);transition:width .28s ease}
-.bubble-progress.complete .prompt-progress-fill{width:100%!important}
+.prompt-progress-track{--prompt-progress:4%;height:2px;background:rgba(148,163,184,.16);overflow:hidden}
+.prompt-progress-fill{height:100%;width:100%;background:linear-gradient(90deg,#ff3df2,#8b5cf6,#38bdf8,#2ee6aa,#facc15,#ff3df2);clip-path:inset(0 calc(100% - var(--prompt-progress,4%)) 0 0);box-shadow:0 0 12px rgba(46,230,170,.7);transition:clip-path .28s ease}
+.bubble-progress.complete .prompt-progress-fill{clip-path:inset(0 0 0 0)!important}
 .bubble-progress-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"meter status elapsed" "toggle status .";align-items:flex-start;gap:5px 9px;min-height:42px;padding:7px 8px;cursor:pointer}
 .prompt-progress-meter{grid-area:meter;display:inline-flex;align-items:center;gap:7px;min-height:20px}
 .prompt-progress-spinner{width:13px;height:13px;border:2px solid rgba(125,211,252,.24);border-top-color:#2ee6aa;border-right-color:#ff3df2;border-radius:999px;animation:autoSpin .9s linear infinite;box-shadow:0 0 12px rgba(46,230,170,.34)}
@@ -12657,7 +13172,7 @@ render();setInterval(render,620);setInterval(probe,1300);setTimeout(probe,550);
 .session-drawer{position:fixed;z-index:12;inset:0 auto 0 0;width:min(420px,calc(100vw - 18px));display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:10px;padding:14px;border-right:1px solid rgba(96,201,255,.30);background:linear-gradient(180deg,rgba(7,13,24,.98),rgba(9,18,30,.96));box-shadow:28px 0 90px rgba(0,0,0,.46),inset -1px 0 0 rgba(255,255,255,.06);transform:translateX(-104%);transition:transform .2s ease}
 .session-drawer[aria-hidden="false"]{transform:translateX(0)}
 body.sessions-open .session-backdrop{opacity:1}
-.session-drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.session-drawer-head strong{display:block;font:900 .98rem "Cascadia Code",monospace}.session-drawer-head span{display:block;color:var(--muted);font:800 .64rem "Cascadia Code",monospace}
+.session-drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.session-drawer-head strong{display:block;font:900 .98rem "Cascadia Code",monospace}.session-drawer-head span{display:block;color:var(--muted);font:800 .64rem "Cascadia Code",monospace}.drawer-actions{display:flex;align-items:center;gap:7px;flex:0 0 auto}.drawer-actions .button:disabled{opacity:.56;cursor:wait}
 .session-search-wrap{display:grid;gap:6px}.session-search-wrap input{font:800 .76rem "Cascadia Code",monospace}.session-list{min-height:0;overflow:auto;display:grid;align-content:start;gap:10px;padding-right:4px}
 .session-card{display:grid;gap:8px;border:1px solid rgba(155,176,211,.18);border-radius:8px;background:rgba(5,12,22,.78);padding:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
 .session-card.active{border-color:rgba(46,230,170,.54);background:linear-gradient(135deg,rgba(46,230,170,.14),rgba(5,12,22,.82))}
@@ -12666,8 +13181,8 @@ body.sessions-open .session-backdrop{opacity:1}
 .session-detail{display:grid;gap:3px;color:#94a8c3;font:700 .63rem/1.35 "Cascadia Code",monospace;overflow-wrap:anywhere}.session-actions button,.session-actions a{min-height:28px;border:1px solid rgba(96,201,255,.24);border-radius:7px;background:rgba(4,10,20,.68);color:#e5f6ff;padding:5px 8px;text-decoration:none;font:900 .62rem "Cascadia Code",monospace;cursor:pointer}.session-actions button:hover,.session-actions a:hover,.session-actions button:focus-visible,.session-actions a:focus-visible{border-color:rgba(46,230,170,.52);outline:none}.session-empty{border:1px dashed rgba(155,176,211,.22);border-radius:8px;padding:16px;color:#b7c7db;background:rgba(4,10,20,.54);font:800 .72rem "Cascadia Code",monospace}
 .buy-tokens{justify-self:end;display:inline-flex;align-items:center;justify-content:center;min-height:30px;border:1px solid rgba(251,191,36,.36);border-radius:8px;padding:6px 10px;background:linear-gradient(135deg,rgba(251,191,36,.20),rgba(244,114,182,.12));color:#fff7cc;text-decoration:none;font:900 .68rem "Cascadia Code",monospace;white-space:nowrap}
 .token-meter{grid-column:1/-1;position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;margin:2px -14px -12px;padding:0 14px 10px}
-.token-meter-line{grid-column:1/-1;height:6px;border-radius:999px;overflow:hidden;background:rgba(3,9,18,.82);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 0 18px rgba(46,230,170,.16)}
-.token-meter-fill{height:100%;width:0%;border-radius:inherit;background:linear-gradient(90deg,#ff3df2,#8b5cf6,#38bdf8,#2ee6aa,#facc15,#ff3df2);background-size:360% 100%;animation:autoTokenRgb 3.8s linear infinite;box-shadow:0 0 16px rgba(46,230,170,.8),0 0 28px rgba(96,201,255,.45)}
+.token-meter-line{--token-progress:0%;grid-column:1/-1;height:6px;border-radius:999px;overflow:hidden;background:rgba(3,9,18,.82);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 0 18px rgba(46,230,170,.16)}
+.token-meter-fill{height:100%;width:100%;border-radius:inherit;background:linear-gradient(90deg,#ff3df2,#8b5cf6,#38bdf8,#2ee6aa,#facc15,#ff3df2);clip-path:inset(0 calc(100% - var(--token-progress,0%)) 0 0 round 999px);box-shadow:0 0 16px rgba(46,230,170,.8),0 0 28px rgba(96,201,255,.45);transition:clip-path .24s ease}
 .token-meter-text,.token-meter-cost{color:#c9d8ef;font:900 .62rem "Cascadia Code",monospace;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.token-meter-cost{text-align:right;color:#fde68a}
 .token-delta{position:absolute;right:18px;top:-7px;border:1px solid rgba(251,113,133,.44);border-radius:999px;padding:2px 7px;background:rgba(69,10,10,.88);color:#fecaca;font:1000 .68rem "Cascadia Code",monospace;opacity:0;transform:translateY(6px);transition:opacity .22s ease,transform .22s ease}.token-delta.visible{opacity:1;transform:translateY(-4px)}
 .premium-switch{display:inline-flex;align-items:center;gap:7px;min-height:30px;border:1px solid rgba(251,191,36,.30);border-radius:8px;padding:5px 9px;background:rgba(4,10,20,.62);color:#fde68a;font:900 .68rem "Cascadia Code",monospace;cursor:pointer}.premium-switch input{width:14px;height:14px;accent-color:#fbbf24}
@@ -12729,9 +13244,10 @@ body::after{opacity:.42}
 .top{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"brand server" "route route" "tokens tokens";align-items:start}.brand{grid-area:brand}.server-capsule{grid-area:server;justify-items:end}.server-name{display:inline-flex;align-items:center;justify-content:flex-end;gap:8px;max-width:min(470px,46vw);color:#ecfff9;text-decoration:none;cursor:pointer}.server-name[aria-disabled="true"]{cursor:default;color:#c4d2e6;border-color:rgba(155,176,211,.22);background:rgba(4,10,20,.58)}.server-name span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.server-name .server-arrow{color:#bdf7ff;font-weight:1000}.server-name:not([aria-disabled="true"]):hover,.server-name:not([aria-disabled="true"]):focus-visible{border-color:rgba(46,230,170,.64);background:linear-gradient(135deg,rgba(46,230,170,.20),rgba(96,201,255,.12));outline:none}.auth-status{justify-self:end;color:#c8ffe8;text-decoration:none;font:900 .64rem "Cascadia Code",monospace}.auth-status.warn{color:#fde68a}.auth-status.good{color:#c8ffe8}.continue-server,.pool-status-silent{display:none!important}.top-route-row{grid-area:route;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.top-route-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;min-width:0}.masterlist-top{min-height:32px}.token-meter{grid-area:tokens;grid-column:1/-1;margin:2px -14px -12px;padding:0 14px 10px}.route-panel-actions{display:none}.premium-switch.disabled{opacity:.48;cursor:not-allowed}.premium-switch.disabled input{cursor:not-allowed}.session-edge-toggle{position:fixed;left:0;top:50%;z-index:13;width:46px;height:122px;transform:translateY(-50%);border:0;border-radius:0 18px 18px 0;background:linear-gradient(90deg,rgba(0,0,0,.94),rgba(0,0,0,.62),rgba(0,0,0,0));color:#dbeafe;font:1000 1.25rem "Cascadia Code",monospace;cursor:pointer;opacity:.86;box-shadow:18px 0 44px rgba(0,0,0,.38);transition:left .2s ease,opacity .16s ease,color .16s ease}.session-edge-toggle:hover,.session-edge-toggle:focus-visible{opacity:1;color:#bdf7ff;outline:none}body.sessions-open .session-edge-toggle{left:min(420px,calc(100vw - 18px));border-radius:18px 0 0 18px;background:linear-gradient(270deg,rgba(0,0,0,.86),rgba(0,0,0,.48),rgba(0,0,0,0));color:#9fb0c8}.composer{grid-template-columns:minmax(210px,300px) minmax(0,1fr) 116px;grid-template-areas:"meta meta meta" "model prompt send";align-items:stretch}.composer-meta{grid-area:meta;grid-column:auto}.model-combo{grid-area:model;display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px;align-self:stretch}.model-origin-dock{display:grid;grid-template-columns:1fr;gap:6px;align-content:start;padding:7px 8px;border:1px solid rgba(155,176,211,.16);border-radius:8px;background:rgba(3,9,18,.48)}.model-origin-dock>span{color:#8fb5d6;font:1000 .56rem "Cascadia Code",monospace;text-transform:uppercase;white-space:nowrap}.model-origin-dock .origin-toggle{width:100%;display:flex}.model-origin-dock .origin-toggle button{flex:1;min-height:32px;padding:5px 6px;font-size:.58rem;line-height:1.1;white-space:normal}.composer textarea{grid-area:prompt;height:106px;min-height:106px;max-height:260px}.send{grid-area:send;min-height:106px;border:0;background:linear-gradient(135deg,rgba(255,255,255,.13),rgba(46,230,170,.10),rgba(96,201,255,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.20),0 14px 32px rgba(0,0,0,.20);backdrop-filter:blur(14px)}
 @media(max-width:960px){.chat-head{grid-template-columns:1fr}.route-panel-actions{justify-content:stretch}.chat-actions{justify-content:flex-start}}
 @media(max-width:780px){.top{grid-template-columns:1fr;grid-template-areas:"server" "brand" "route" "tokens"}.server-capsule{justify-items:start;text-align:left}.server-name{max-width:100%}.top-route-row{grid-template-columns:1fr}.top-route-actions{justify-content:flex-start;flex-wrap:wrap}.session-artifacts{grid-template-columns:1fr}.session-artifacts-label{font-size:.58rem}.artifact-chip{max-width:240px}.composer{grid-template-columns:1fr;grid-template-areas:"meta" "model" "prompt" "send"}.send{min-height:68px}.session-edge-toggle{height:94px;width:38px}}
-.session-edge-toggle,.files-edge-toggle{position:fixed;top:50%;z-index:13;width:46px;height:122px;transform:translateY(-50%);border:0;color:#dbeafe;font:1000 1.25rem "Cascadia Code",monospace;cursor:pointer;opacity:.86;transition:left .2s ease,right .2s ease,opacity .16s ease,color .16s ease}.session-edge-toggle{left:0;border-radius:0 18px 18px 0;background:linear-gradient(90deg,rgba(0,0,0,.94),rgba(0,0,0,.62),rgba(0,0,0,0));box-shadow:18px 0 44px rgba(0,0,0,.38)}.files-edge-toggle{right:0;border-radius:18px 0 0 18px;background:linear-gradient(270deg,rgba(0,0,0,.94),rgba(0,0,0,.62),rgba(0,0,0,0));box-shadow:-18px 0 44px rgba(0,0,0,.38)}.session-edge-toggle:hover,.session-edge-toggle:focus-visible,.files-edge-toggle:hover,.files-edge-toggle:focus-visible{opacity:1;color:#bdf7ff;outline:none}body.sessions-open .session-edge-toggle{left:min(var(--auto-session-width,420px),calc(100vw - 18px));border-radius:18px 0 0 18px;background:linear-gradient(270deg,rgba(0,0,0,.86),rgba(0,0,0,.48),rgba(0,0,0,0));color:#9fb0c8}body.files-open .files-edge-toggle{right:min(var(--auto-files-width,360px),calc(100vw - 18px));border-radius:0 18px 18px 0;background:linear-gradient(90deg,rgba(0,0,0,.86),rgba(0,0,0,.48),rgba(0,0,0,0));color:#9fb0c8}.session-drawer{width:min(var(--auto-session-width,420px),calc(100vw - 18px))}.files-drawer{position:fixed;z-index:12;inset:0 0 0 auto;width:min(var(--auto-files-width,360px),calc(100vw - 18px));display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;padding:14px;border-left:1px solid rgba(96,201,255,.30);background:linear-gradient(180deg,rgba(7,13,24,.98),rgba(9,18,30,.96));box-shadow:-28px 0 90px rgba(0,0,0,.46),inset 1px 0 0 rgba(255,255,255,.06);transform:translateX(104%);transition:transform .2s ease}.files-drawer[aria-hidden="false"]{transform:translateX(0)}.drawer-resize-handle{position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;background:linear-gradient(180deg,transparent,rgba(125,211,252,.18),transparent);opacity:.16}.drawer-resize-handle:hover{opacity:.58}.session-resize{right:-4px}.files-resize{left:-4px}.files-drawer .session-artifacts{min-height:0;display:grid!important;grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);align-items:stretch;border:1px solid rgba(155,176,211,.16);border-radius:8px;padding:10px;background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(3,9,18,.44));overflow:hidden}.files-drawer .session-artifact-list{display:grid;align-content:start;gap:8px;overflow:auto;padding:2px;scrollbar-width:thin}.files-drawer .artifact-chip{max-width:100%}.chat-shell{grid-template-rows:auto minmax(0,1fr) auto}.session-tabs{min-width:0;display:flex;gap:7px;align-items:center;overflow-x:auto;padding:8px 12px;border-bottom:1px solid rgba(155,176,211,.16);background:linear-gradient(135deg,rgba(10,20,36,.72),rgba(3,9,18,.54));scrollbar-width:thin}.session-tab,.session-tab-new{position:relative;min-width:36px;max-width:148px;min-height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid rgba(125,211,252,.20);border-radius:8px;background:linear-gradient(135deg,rgba(255,255,255,.10),rgba(96,201,255,.08),rgba(46,230,170,.05));color:#e8f6ff;font:900 .66rem "Cascadia Code",monospace;box-shadow:inset 0 1px 0 rgba(255,255,255,.18);backdrop-filter:blur(12px);cursor:pointer}.session-tab{padding:6px 10px;justify-content:flex-start}.session-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.session-tab.active{border-color:rgba(46,230,170,.54);background:linear-gradient(135deg,rgba(46,230,170,.22),rgba(96,201,255,.10),rgba(244,143,177,.08));color:#f7fffd}.session-tab.processing::after{content:"";width:12px;height:12px;flex:0 0 auto;border-radius:50%;background:conic-gradient(from 0deg,#2ee6aa,#60c9ff,#f48fb1,#fbbf24,#2ee6aa);mask:radial-gradient(circle,transparent 42%,#000 45%);animation:autoSpin .9s linear infinite}.session-tab-new{flex:0 0 auto;font-size:1rem}.composer{grid-template-columns:44px minmax(0,1fr) 116px;grid-template-areas:"meta meta meta" ". model send" "upload prompt send";align-items:stretch}.upload-button{grid-area:upload;align-self:stretch;min-height:96px;border:1px solid rgba(125,211,252,.22);border-radius:8px;background:linear-gradient(135deg,rgba(255,255,255,.10),rgba(96,201,255,.08));color:#e7fbff;font:1000 1.3rem "Cascadia Code",monospace;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.16);backdrop-filter:blur(12px)}.upload-button:hover,.upload-button:focus-visible{border-color:rgba(46,230,170,.58);background:linear-gradient(135deg,rgba(46,230,170,.18),rgba(96,201,255,.10));outline:none}
+.session-edge-toggle,.files-edge-toggle{position:fixed;top:50%;z-index:13;width:46px;height:122px;transform:translateY(-50%);border:0;color:#dbeafe;font:1000 1.25rem "Cascadia Code",monospace;cursor:pointer;opacity:.86;transition:left .2s ease,right .2s ease,opacity .16s ease,color .16s ease}.session-edge-toggle{left:0;border-radius:0 18px 18px 0;background:linear-gradient(90deg,rgba(0,0,0,.94),rgba(0,0,0,.62),rgba(0,0,0,0));box-shadow:18px 0 44px rgba(0,0,0,.38)}.files-edge-toggle{right:0;border-radius:18px 0 0 18px;background:linear-gradient(270deg,rgba(0,0,0,.94),rgba(0,0,0,.62),rgba(0,0,0,0));box-shadow:-18px 0 44px rgba(0,0,0,.38)}.session-edge-toggle:hover,.session-edge-toggle:focus-visible,.files-edge-toggle:hover,.files-edge-toggle:focus-visible{opacity:1;color:#bdf7ff;outline:none}body.sessions-open .session-edge-toggle{left:min(var(--auto-session-width,420px),calc(100vw - 18px));border-radius:18px 0 0 18px;background:linear-gradient(270deg,rgba(0,0,0,.86),rgba(0,0,0,.48),rgba(0,0,0,0));color:#9fb0c8}body.files-open .files-edge-toggle{right:min(var(--auto-files-width,360px),calc(100vw - 18px));z-index:24;border-radius:0 18px 18px 0;background:linear-gradient(90deg,rgba(0,0,0,.86),rgba(0,0,0,.48),rgba(0,0,0,0));color:#9fb0c8}.session-drawer{width:min(var(--auto-session-width,420px),calc(100vw - 18px))}.files-drawer{position:fixed;z-index:23;inset:0 0 0 auto;width:min(var(--auto-files-width,360px),calc(100vw - 18px));display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;padding:14px;border-left:1px solid rgba(96,201,255,.30);background:linear-gradient(180deg,rgba(7,13,24,.98),rgba(9,18,30,.96));box-shadow:-28px 0 90px rgba(0,0,0,.46),inset 1px 0 0 rgba(255,255,255,.06);transform:translateX(104%);transition:transform .2s ease}.files-drawer[aria-hidden="false"]{transform:translateX(0)}.drawer-resize-handle{position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;background:linear-gradient(180deg,transparent,rgba(125,211,252,.18),transparent);opacity:.16}.drawer-resize-handle:hover{opacity:.58}.session-resize{right:-4px}.files-resize{left:-4px}.files-drawer .session-artifacts{min-height:0;display:grid!important;grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);align-items:stretch;border:1px solid rgba(155,176,211,.16);border-radius:8px;padding:10px;background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(3,9,18,.44));overflow:hidden}.files-drawer .session-artifact-list{display:grid;align-content:start;gap:8px;overflow:auto;padding:2px;scrollbar-width:thin}.files-drawer .artifact-chip{max-width:100%}.chat-shell{grid-template-rows:auto minmax(0,1fr) auto}.session-tabs{min-width:0;display:flex;gap:7px;align-items:center;overflow-x:auto;padding:8px 12px;border-bottom:1px solid rgba(155,176,211,.16);background:linear-gradient(135deg,rgba(10,20,36,.72),rgba(3,9,18,.54));scrollbar-width:thin}.session-tab,.session-tab-new{position:relative;min-width:36px;max-width:148px;min-height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid rgba(125,211,252,.20);border-radius:8px;background:linear-gradient(135deg,rgba(255,255,255,.10),rgba(96,201,255,.08),rgba(46,230,170,.05));color:#e8f6ff;font:900 .66rem "Cascadia Code",monospace;box-shadow:inset 0 1px 0 rgba(255,255,255,.18);backdrop-filter:blur(12px);cursor:pointer}.session-tab{padding:6px 10px;justify-content:flex-start}.session-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.session-tab.active{border-color:rgba(46,230,170,.54);background:linear-gradient(135deg,rgba(46,230,170,.22),rgba(96,201,255,.10),rgba(244,143,177,.08));color:#f7fffd}.session-tab.processing::after{content:"";width:12px;height:12px;flex:0 0 auto;border-radius:50%;background:conic-gradient(from 0deg,#2ee6aa,#60c9ff,#f48fb1,#fbbf24,#2ee6aa);mask:radial-gradient(circle,transparent 42%,#000 45%);animation:autoSpin .9s linear infinite}.session-tab-new{flex:0 0 auto;font-size:1rem}.composer{grid-template-columns:44px minmax(0,1fr) 116px;grid-template-areas:"meta meta meta" ". model send" "upload prompt send";align-items:stretch}.upload-button{grid-area:upload;align-self:stretch;min-height:96px;border:1px solid rgba(125,211,252,.22);border-radius:8px;background:linear-gradient(135deg,rgba(255,255,255,.10),rgba(96,201,255,.08));color:#e7fbff;font:1000 1.3rem "Cascadia Code",monospace;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.16);backdrop-filter:blur(12px)}.upload-button:hover,.upload-button:focus-visible{border-color:rgba(46,230,170,.58);background:linear-gradient(135deg,rgba(46,230,170,.18),rgba(96,201,255,.10));outline:none}
 .session-tab{overflow:visible;padding-left:24px}.session-tab-close{position:absolute;left:-6px;top:-7px;z-index:2;width:19px;height:19px;display:none;place-items:center;border:1px solid rgba(255,155,155,.72);border-radius:50%;background:linear-gradient(135deg,rgba(255,24,64,.96),rgba(135,5,24,.94));color:#fff;font:1000 .74rem/1 "Cascadia Code",monospace;box-shadow:0 8px 24px rgba(255,0,64,.34),inset 0 1px 0 rgba(255,255,255,.28);cursor:pointer}.session-tab:hover .session-tab-close,.session-tab:focus-within .session-tab-close{display:grid}.session-tab-close:hover,.session-tab-close:focus-visible{border-color:#fff;background:linear-gradient(135deg,#ff3b5f,#b30028);outline:none}.session-tab.active{border-color:rgba(64,255,214,.82);background:linear-gradient(135deg,rgba(26,255,183,.34),rgba(0,162,255,.22),rgba(255,39,160,.18));box-shadow:0 0 0 1px rgba(255,255,255,.12),0 0 28px rgba(46,230,170,.22),inset 0 1px 0 rgba(255,255,255,.26)}.session-tab.active:hover{background:linear-gradient(120deg,rgba(255,40,96,.38),rgba(255,210,38,.28),rgba(34,255,160,.34),rgba(38,180,255,.34),rgba(190,88,255,.38),rgba(255,40,96,.38));background-size:380% 100%;border-color:rgba(255,255,255,.78);animation:autoSessionTabRgb 1.8s linear infinite;box-shadow:0 0 0 1px rgba(255,255,255,.18),0 0 32px rgba(96,201,255,.32),0 0 56px rgba(244,143,177,.20),inset 0 1px 0 rgba(255,255,255,.32)}@keyframes autoSessionTabRgb{from{background-position:0% 50%;filter:saturate(1.2)}50%{filter:saturate(1.8)}to{background-position:380% 50%;filter:saturate(1.2)}}
 .session-tree-root{display:grid;gap:5px;min-width:0}.session-folder{min-width:0}.session-folder-label{height:28px;display:flex;align-items:center;gap:7px;min-width:0;border:1px solid rgba(155,176,211,.14);border-radius:7px;padding:0 8px;background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(96,201,255,.06));color:#cde4ff;font:900 .62rem "Cascadia Code",monospace;cursor:pointer;list-style:none}.session-folder-label::-webkit-details-marker{display:none}.session-folder-label::before{content:"";width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:6px solid #9be8ff;transition:transform .14s ease}.session-folder[open]>.session-folder-label::before{transform:rotate(90deg)}.session-folder-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.session-folder-count{margin-left:auto;color:#89a3c3;font-size:.54rem}.session-folder-children{display:grid;gap:5px;margin:5px 0 2px 10px;padding-left:10px;border-left:1px solid rgba(155,176,211,.16)}.session-file-row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto 24px;align-items:center;gap:6px;min-width:0}.session-file-row .artifact-chip{max-width:100%;min-height:34px}.session-file-row .artifact-chip small{font-size:.54rem}.session-file-actions{display:flex;gap:4px;opacity:0;pointer-events:none;transform:translateX(4px);transition:opacity .12s ease,transform .12s ease}.session-file-row:hover .session-file-actions,.session-file-row:focus-within .session-file-actions{opacity:1;pointer-events:auto;transform:none}.session-file-action{min-height:23px;border:1px solid rgba(96,201,255,.28);border-radius:6px;background:rgba(4,10,20,.78);color:#e5f6ff;padding:3px 6px;font:900 .55rem "Cascadia Code",monospace;cursor:pointer}.session-file-action.vision{border-color:rgba(46,230,170,.34);color:#c8ffe8}.session-file-action:hover,.session-file-action:focus-visible{border-color:rgba(46,230,170,.62);outline:none}.session-file-action:disabled{opacity:.48;cursor:wait}.session-file-remove{width:21px;height:21px;display:grid;place-items:center;border:1px solid rgba(255,171,171,.82);border-radius:50%;background:linear-gradient(135deg,rgba(255,35,70,.96),rgba(129,6,24,.98));color:white;font:1000 .72rem/1 "Cascadia Code",monospace;box-shadow:0 10px 26px rgba(255,0,64,.28),inset 0 1px 0 rgba(255,255,255,.28);cursor:pointer;opacity:0;pointer-events:none;transform:scale(.88);transition:opacity .12s ease,transform .12s ease,border-color .12s ease}.session-file-row:hover .session-file-remove,.session-file-row:focus-within .session-file-remove{opacity:1;pointer-events:auto;transform:scale(1)}.session-file-remove:hover,.session-file-remove:focus-visible{border-color:#fff;background:linear-gradient(135deg,#ff3b5f,#ad0028);outline:none}.session-file-remove:disabled{opacity:.42;cursor:wait}
+.session-file-row.file-changed .artifact-chip,.session-folder.folder-changed>.session-folder-label{animation:autoFileChangeFlash 1.7s ease-out both}.files-drawer.files-changed,.files-edge-toggle.files-changed{animation:autoFilesPanelFlash 1.45s ease-out both}@keyframes autoFileChangeFlash{0%{border-color:rgba(251,146,60,1);background:linear-gradient(135deg,rgba(251,146,60,.48),rgba(4,10,20,.72));box-shadow:0 0 0 1px rgba(255,237,213,.24),0 0 30px rgba(251,146,60,.55)}72%{border-color:rgba(251,146,60,.52);box-shadow:0 0 22px rgba(251,146,60,.26)}100%{}}@keyframes autoFilesPanelFlash{0%{border-color:rgba(251,146,60,.95);box-shadow:-28px 0 90px rgba(0,0,0,.46),0 0 36px rgba(251,146,60,.48),inset 1px 0 0 rgba(255,255,255,.12)}100%{}}
 @media(max-width:780px){.composer{grid-template-columns:42px minmax(0,1fr);grid-template-areas:"meta meta" "model model" "upload prompt" "send send"}.upload-button{min-height:82px}.session-edge-toggle,.files-edge-toggle{height:94px;width:38px}.session-tab{max-width:118px}.drawer-resize-handle{display:none}}
 .parallel-prompt-stack{display:grid;gap:0;margin:0;max-height:min(66vh,640px);overflow:auto;scrollbar-width:thin}
 .parallel-prompt-card{position:relative;display:grid;gap:8px;margin:0;border:1px solid rgba(155,176,211,.20);border-radius:0;padding:10px 12px;background:linear-gradient(135deg,rgba(8,18,34,.72),rgba(4,10,20,.62));box-shadow:inset 0 1px 0 rgba(255,255,255,.055)}
@@ -12803,10 +13319,14 @@ body::after{opacity:.42}
 .model-suggestions .model-suggestion.server{cursor:pointer}
 .model-suggestions .model-suggestion.server:hover,.model-suggestions .model-suggestion.server:focus-visible{outline:none;transform:translateX(2px);border-color:rgba(56,189,248,.42)!important;box-shadow:0 0 18px rgba(56,189,248,.20),inset 0 0 0 1px rgba(255,255,255,.05)}
 .model-suggestions .model-suggestion.disabled-model{opacity:.58;background:linear-gradient(135deg,rgba(75,85,99,.22),rgba(2,8,16,.58));text-decoration:line-through;text-decoration-thickness:1px;text-decoration-color:rgba(248,113,113,.70)}
+.model-suggestions .model-suggestion.online-model:not(.disabled-model),.model-suggestions .model-suggestion.loaded-model:not(.disabled-model){border-color:rgba(34,197,94,.44)!important;background:linear-gradient(135deg,rgba(34,197,94,.16),rgba(2,8,16,.52));box-shadow:0 0 16px rgba(34,197,94,.18),inset 0 0 0 1px rgba(255,255,255,.05)}
+.model-suggestions .model-suggestion.online-model:not(.disabled-model)>span,.model-suggestions .model-suggestion.loaded-model:not(.disabled-model)>span{color:#bbf7d0}
 .model-suggestions .model-suggestion.soloed{border-color:rgba(255,255,255,.66)!important;box-shadow:0 0 20px rgba(56,189,248,.28),0 0 38px rgba(236,72,153,.18)}
 .model-suggestions .model-suggestion.model-pop{animation:autoModelPop .34s ease both}
 .model-solo{width:18px;height:18px;display:grid;place-items:center;align-self:center;justify-self:end;border:1px solid rgba(148,163,184,.46);border-radius:50%;background:rgba(75,85,99,.54);color:#9ca3af;font-size:.54rem;line-height:1;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.12);transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease,color .15s ease}
 .model-solo:hover,.model-solo:focus-visible{outline:none;transform:scale(1.12);border-color:rgba(255,255,255,.72);box-shadow:0 0 14px rgba(148,163,184,.32)}
+.model-solo.enable-action{border-color:rgba(34,197,94,.58);color:#bbf7d0;background:rgba(22,101,52,.54)}
+.model-solo.disable-action{border-color:rgba(248,113,113,.52);color:#fecaca;background:rgba(127,29,29,.46)}
 .model-solo.active{border-color:rgba(255,255,255,.82);color:#fff;background:linear-gradient(120deg,#22c55e,#38bdf8,#8b5cf6,#ec4899,#22c55e);background-size:320% 100%;animation:autoParamValueRgb 1.5s linear infinite;box-shadow:0 0 16px rgba(56,189,248,.48),0 0 30px rgba(236,72,153,.24)}
 @keyframes autoModelPop{0%{transform:scale(.985)}45%{transform:scale(1.018);box-shadow:0 0 26px rgba(56,189,248,.34),0 0 44px rgba(236,72,153,.18)}100%{transform:scale(1)}}
 @keyframes autoRouteRgb{from{background-position:0% 50%}to{background-position:360% 50%}}
@@ -12819,6 +13339,7 @@ body::after{opacity:.42}
 .send:hover::before,.send:focus-visible::before{opacity:.58;animation-duration:3.6s}
 body.prompt-loading .send,.send:disabled{opacity:1!important;cursor:wait;animation:autoSendFlash .62s ease-in-out infinite alternate;box-shadow:0 0 26px rgba(56,189,248,.44),0 0 52px rgba(139,92,246,.28),0 0 72px rgba(34,197,94,.16),inset 0 1px 0 rgba(255,255,255,.26)}
 body.prompt-loading .send::before,.send:disabled::before{opacity:.86;animation-duration:.9s}
+.send .send-content{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;gap:7px}.send-throbber{width:14px;height:14px;border:2px solid rgba(226,244,255,.28);border-top-color:#eaffff;border-right-color:#2ee6aa;border-radius:999px;animation:autoSpin .74s linear infinite;box-shadow:0 0 12px rgba(46,230,170,.32)}.send.submitting,.send.submitting:disabled{opacity:.92!important;cursor:wait;animation:none!important;filter:saturate(1.06) brightness(.96);border-color:rgba(125,211,252,.42)!important;box-shadow:0 0 16px rgba(96,201,255,.20),inset 0 1px 0 rgba(255,255,255,.16)}.send.submitting::before,.send.submitting:disabled::before{opacity:.52;animation-duration:1.8s}.composer textarea.auto-submitting,.composer textarea.auto-submitting:disabled{opacity:.84;cursor:wait;border-color:rgba(125,211,252,.34);background:rgba(3,9,18,.68);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px rgba(96,201,255,.06)}
 @keyframes autoSendRgb{from{background-position:0% 50%}to{background-position:380% 50%}}
 @keyframes autoSendFlash{from{filter:saturate(1.15) brightness(1);transform:translateY(0) scale(1)}to{filter:saturate(2) brightness(1.28);transform:translateY(-1px) scale(1.012)}}
 .token-actions{position:relative;isolation:isolate;display:flex;align-items:stretch;min-width:260px;border:1px solid transparent;border-radius:8px;overflow:visible;background:linear-gradient(145deg,rgba(255,249,196,.96) 0%,rgba(250,204,21,.94) 18%,rgba(180,83,9,.90) 52%,rgba(254,240,138,.94) 76%,rgba(113,63,18,.90) 100%) padding-box,linear-gradient(110deg,#ff2bd6,#38d5ff,#22c55e,#facc15,#ff2bd6) border-box;box-shadow:0 14px 38px rgba(120,73,5,.34),0 0 22px rgba(56,213,255,.22),inset 0 1px 0 rgba(255,255,255,.70),inset 0 -1px 0 rgba(92,56,4,.58)}
@@ -12853,6 +13374,7 @@ body.upload-visible .composer{grid-template-columns:44px minmax(0,1fr) 116px!imp
 @keyframes autoTokenBorderReverse{from{background-position:0 0,340% 50%}to{background-position:0 0,0% 50%}}
 .composer textarea{height:var(--auto-composer-control-height);min-height:72px!important;max-height:260px;resize:vertical!important;overflow:auto}.send,.upload-button{height:var(--auto-composer-control-height);min-height:72px!important;max-height:260px;resize:vertical;overflow:auto}.send,.upload-button{display:grid;place-items:center}.upload-button[hidden]{display:none!important}.upload-queue{grid-area:upload;align-self:end;justify-self:stretch;z-index:2;margin:0 5px 5px;padding:5px 6px;border:1px solid rgba(46,230,170,.34);border-radius:7px;background:rgba(2,8,16,.78);box-shadow:0 10px 24px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.12);color:#e8fff7;font:900 .54rem/1.18 "Cascadia Code",monospace;text-align:center;pointer-events:none;overflow:hidden}.upload-queue strong{display:block;color:#bfffea;font-size:.56rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.upload-queue span{display:block;color:#9fd8ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.upload-queue.error{border-color:rgba(251,113,133,.48);color:#fecaca}.send.stop::before{background:linear-gradient(120deg,#ef4444,#f97316,#facc15,#ef4444)}.send.steer::before{background:linear-gradient(120deg,#60c9ff,#8b5cf6,#f48fb1,#60c9ff)}
 html.auto-masterlist-frame .app,body.master-list-embed .app{width:100%;max-width:none;padding-left:10px;padding-right:10px}html.auto-masterlist-frame .chat-shell,body.master-list-embed .chat-shell{width:100%}html.auto-masterlist-frame .bubble,html.auto-masterlist-frame .bubble.assistant,body.master-list-embed .bubble,body.master-list-embed .bubble.assistant{width:100%;max-width:100%}html.auto-masterlist-frame .bubble.user,body.master-list-embed .bubble.user{width:auto;max-width:min(920px,82%)}
+html.auto-masterlist-frame .top,body.master-list-embed .top{display:none!important}html.auto-masterlist-frame .app,body.master-list-embed .app{grid-template-rows:minmax(0,1fr)!important;gap:0!important;padding-top:10px;padding-bottom:10px}
 @media(max-width:780px){.top{grid-template-areas:"server" "tokens"!important}html:not(.auto-masterlist-frame) .top{grid-template-areas:"brand" "server" "tokens"!important}.composer{--auto-composer-control-height:72px;grid-template-columns:minmax(0,1fr)!important;grid-template-areas:"model" "route" "token" "prompt" "send"!important}body.upload-visible .composer{grid-template-columns:42px minmax(0,1fr)!important;grid-template-areas:"model model" "route route" "token token" "upload prompt" "send send"!important}.composer-token-actions.token-actions{width:min(220px,100%);justify-self:end}.composer-route .mode-toggle button{font-size:.56rem}.auth-status{top:10px!important;left:10px!important}}
 .auto-login-modal{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:18px;background:rgba(2,6,23,.56);backdrop-filter:blur(18px) saturate(1.18)}.auto-login-modal[hidden]{display:none!important}.auto-login-card{width:min(420px,calc(100vw - 24px));display:grid;gap:12px;border:1px solid rgba(125,211,252,.36);border-radius:8px;padding:16px;background:linear-gradient(145deg,rgba(6,15,28,.96),rgba(10,22,38,.92));box-shadow:0 28px 90px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.14)}.auto-login-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.auto-login-head strong{font:1000 .94rem "Cascadia Code",monospace}.auto-login-close{width:30px;height:28px;border:1px solid rgba(155,176,211,.24);border-radius:7px;background:rgba(4,10,20,.74);color:#e5f6ff;cursor:pointer}.auto-login-message{margin:0;color:#b7c7db;font:800 .7rem/1.45 "Cascadia Code",monospace}.auto-login-card label{display:grid;gap:5px;color:#dbeafe;font:900 .62rem "Cascadia Code",monospace;text-transform:uppercase}.auto-login-card input[type=text],.auto-login-card input[type=password]{min-height:38px;border:1px solid rgba(226,244,255,.18);border-radius:8px;background:rgba(3,9,18,.78);color:#f4f8ff;padding:9px 10px;text-transform:none;font:14px "Segoe UI",system-ui,sans-serif}.auto-login-remember{grid-template-columns:auto 1fr!important;align-items:center;text-transform:none!important;color:#c9d8ef!important}.auto-login-remember input{width:16px;height:16px;accent-color:#2ee6aa}.auto-login-error{min-height:18px;color:#fecaca;font:800 .68rem/1.35 "Cascadia Code",monospace}.auto-login-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.auto-login-actions button,.auto-login-actions a{min-height:34px;border:1px solid rgba(46,230,170,.42);border-radius:8px;background:linear-gradient(135deg,rgba(46,230,170,.22),rgba(96,201,255,.11));color:#eafff8;text-decoration:none;padding:7px 11px;font:900 .68rem "Cascadia Code",monospace;cursor:pointer}.auto-login-actions a{border-color:rgba(155,176,211,.24);background:rgba(4,10,20,.64);color:#dbeafe}
 .prompt-progress-spinner{position:relative;width:18px;height:18px;border:0;border-radius:999px;background:conic-gradient(from 0deg,#ff2bd6,#8b5cf6,#38d5ff,#2df4b4,#ffd166,#ff2bd6);animation:autoSpin .72s linear infinite;box-shadow:0 0 16px rgba(56,213,255,.38),0 0 26px rgba(45,244,180,.20)}.prompt-progress-spinner::before{content:"";position:absolute;inset:4px;border-radius:inherit;background:#06101e}.prompt-progress-spinner::after{content:"";position:absolute;inset:-3px;border-radius:inherit;background:conic-gradient(from 0deg,#ff2bd6,#8b5cf6,#38d5ff,#2df4b4,#ffd166,#ff2bd6);filter:blur(5px);opacity:.56;z-index:-1}.bubble-progress.complete .prompt-progress-spinner{animation:none;background:#22c55e;box-shadow:0 0 18px rgba(34,197,94,.48),inset 0 1px 0 rgba(255,255,255,.28)}.bubble-progress.complete .prompt-progress-spinner::before{content:"✓";inset:0;display:grid;place-items:center;background:transparent;color:#04150c;font:1000 13px/1 "Segoe UI",sans-serif}.bubble-progress.complete .prompt-progress-spinner::after{display:none}.bubble.assistant.completed-condensed .bubble-card{border-color:rgba(96,165,250,.18);background:linear-gradient(135deg,rgba(8,18,34,.66),rgba(5,12,22,.58));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.bubble.assistant.completed-condensed .prompt-progress-track,.bubble.assistant.completed-condensed .prompt-progress-percent,.bubble.assistant.completed-condensed .bubble-progress-result,.bubble.assistant.completed-condensed .bubble-progress-lines,.bubble.assistant.completed-condensed .bubble-insights-lines{display:none!important}.bubble.assistant.completed-condensed .bubble-progress,.bubble.assistant.completed-condensed .bubble-insights{border-color:rgba(155,176,211,.12);background:rgba(2,8,16,.32)}.auto-step-stack{display:grid;gap:8px;margin-top:9px}.auto-step-card{display:grid;gap:7px;border:1px solid rgba(96,201,255,.24);border-radius:8px;background:rgba(4,10,15,.82);padding:8px}.auto-step-card.complete{border-color:rgba(46,230,170,.24);background:rgba(4,12,18,.48);opacity:.88}.auto-step-card.failed{border-color:rgba(251,113,133,.36)}.auto-step-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;cursor:pointer}.auto-step-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#eaffff;font:1000 .66rem "Cascadia Code",monospace}.auto-step-next{color:#9fb0c8;font:800 .56rem "Cascadia Code",monospace;text-transform:uppercase}.auto-step-body{display:grid;gap:7px}.auto-step-context{border-left:3px solid rgba(96,201,255,.34);background:rgba(96,201,255,.055);padding:6px 8px;color:#cde8ff;font:.68rem/1.35 "Cascadia Code",monospace;overflow-wrap:anywhere}.auto-step-card.collapsed .auto-step-body{display:none}.auto-step-card.collapsed .auto-step-next::after{content:" v";color:#8ea3bd}.auto-step-card.expanded .auto-step-next::after{content:" ^";color:#9eeeff}.progress-status-dot{position:relative;width:18px;height:18px;border-radius:999px;display:grid;place-items:center;flex:0 0 auto;background:rgba(15,23,42,.86);border:1px solid rgba(148,163,184,.28)}.progress-status-dot.running{border:0;background:conic-gradient(from 0deg,#ff2bd6,#8b5cf6,#38d5ff,#2df4b4,#ffd166,#ff2bd6);animation:autoSpin .82s linear infinite;box-shadow:0 0 16px rgba(56,213,255,.34)}.progress-status-dot.running::before{content:"";position:absolute;inset:4px;border-radius:inherit;background:#06101e}.progress-status-dot.done{background:#22c55e;border-color:rgba(187,247,208,.46);box-shadow:0 0 16px rgba(34,197,94,.34)}.progress-status-dot.done::before{content:"✓";color:#04150c;font:1000 13px/1 "Segoe UI",sans-serif}.progress-status-dot.failed{background:#ef4444;border-color:rgba(254,202,202,.48)}.progress-status-dot.failed::before{content:"!";color:#fff;font:1000 12px/1 "Segoe UI",sans-serif}.current-progress-panel{position:fixed;top:14px;right:14px;z-index:24;width:min(360px,calc(100vw - 28px));max-height:min(72vh,680px);display:grid;grid-template-rows:auto minmax(0,1fr);border:1px solid rgba(125,211,252,.24);border-radius:8px;background:rgba(5,12,22,.78);box-shadow:0 24px 90px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(18px) saturate(1.12);opacity:.33;transition:opacity .16s ease,right .2s ease}.current-progress-panel:hover,.current-progress-panel:focus-within{opacity:1;border-color:rgba(46,230,170,.42)}body.auto-browser-open .current-progress-panel{right:calc(min(var(--auto-browser-width,440px),calc(100vw - 72px)) + 20px)}.current-progress-panel.collapsed{width:auto}.current-progress-panel.collapsed .current-progress-body{display:none}.current-progress-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;border-bottom:1px solid rgba(155,176,211,.14)}.current-progress-head strong{font:1000 .72rem "Cascadia Code",monospace;text-transform:uppercase;color:#eaffff}.current-progress-toggle{width:28px;height:26px;border:1px solid rgba(125,211,252,.24);border-radius:7px;background:rgba(2,8,16,.74);color:#dffbff;font:1000 .75rem "Cascadia Code",monospace;cursor:pointer}.current-progress-body{min-height:0;overflow:auto;padding:9px;display:grid;gap:9px;scrollbar-width:thin}.current-progress-next{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;border:1px solid rgba(46,230,170,.20);border-radius:8px;background:rgba(46,230,170,.06);padding:8px;color:#dffcf3;font:.68rem/1.38 "Cascadia Code",monospace}.current-progress-section{display:grid;gap:6px}.current-progress-section h3{margin:0;color:#9eeeff;font:1000 .56rem "Cascadia Code",monospace;text-transform:uppercase}.current-progress-list{display:grid;gap:5px}.current-progress-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center;border:1px solid rgba(155,176,211,.13);border-radius:7px;background:rgba(2,8,16,.46);padding:6px 7px;color:#dbeafe;font:.64rem/1.28 "Cascadia Code",monospace}.current-progress-item button,.current-progress-item a{min-width:0;color:#dffbff;background:transparent;border:0;padding:0;text-align:left;text-decoration:none;font:inherit;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.current-progress-item button:hover,.current-progress-item a:hover{text-decoration:underline}.current-progress-item small{color:#8ea3bd;text-transform:uppercase;font-size:.52rem}.auto-browser-panel{position:fixed;z-index:21;top:0;right:0;bottom:0;width:min(var(--auto-browser-width,440px),calc(100vw - 72px));display:grid;grid-template-columns:8px minmax(0,1fr);border-left:1px solid rgba(96,201,255,.30);background:linear-gradient(180deg,rgba(7,13,24,.98),rgba(9,18,30,.96));box-shadow:-28px 0 90px rgba(0,0,0,.46),inset 1px 0 0 rgba(255,255,255,.06);transform:translateX(104%);transition:transform .2s ease;overflow:hidden}.auto-browser-panel[aria-hidden="false"]{transform:translateX(0)}.auto-browser-resize{grid-column:1;grid-row:1/-1;cursor:ew-resize;background:linear-gradient(180deg,transparent,rgba(125,211,252,.20),transparent);opacity:.22}.auto-browser-resize:hover,body.auto-browser-resizing .auto-browser-resize{opacity:.70}.auto-browser-content{grid-column:2;min-width:0;display:grid;grid-template-rows:auto minmax(0,1fr)}.auto-browser-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:7px;align-items:center;padding:9px;border-bottom:1px solid rgba(155,176,211,.16);background:rgba(10,18,31,.72)}.auto-browser-collapse,.auto-browser-go,.auto-browser-external,.auto-browser-edge-toggle{border:1px solid rgba(125,211,252,.24);border-radius:7px;background:rgba(2,8,16,.72);color:#dffbff;font:1000 .66rem "Cascadia Code",monospace;cursor:pointer}.auto-browser-collapse,.auto-browser-go,.auto-browser-external{min-height:30px;padding:5px 8px}.auto-browser-address{min-width:0;height:30px;padding:5px 8px;font:.68rem "Cascadia Code",monospace}.auto-browser-stage{position:relative;min-height:0;background:#e6f3ff}.auto-browser-frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#e6f3ff}.auto-browser-empty{position:absolute;inset:0;display:grid;place-items:center;padding:18px;text-align:center;color:#64748b;font:900 .72rem "Cascadia Code",monospace;pointer-events:none}.auto-browser-panel.has-page .auto-browser-empty{display:none}.auto-browser-edge-toggle{position:fixed;right:0;top:50%;z-index:22;transform:translateY(-50%);width:42px;height:104px;border-radius:18px 0 0 18px;background:linear-gradient(270deg,rgba(0,0,0,.94),rgba(0,0,0,.62),rgba(0,0,0,0));box-shadow:-18px 0 44px rgba(0,0,0,.38);opacity:.84}body.auto-browser-open .auto-browser-edge-toggle{right:min(var(--auto-browser-width,440px),calc(100vw - 72px));border-radius:0 18px 18px 0;background:linear-gradient(90deg,rgba(0,0,0,.86),rgba(0,0,0,.48),rgba(0,0,0,0));color:#9fb0c8}body.auto-browser-resizing .auto-browser-frame{pointer-events:none}@media(max-width:780px){.current-progress-panel{top:8px;right:8px;width:min(320px,calc(100vw - 16px))}body.auto-browser-open .current-progress-panel{right:8px}.auto-browser-panel{width:calc(100vw - 38px)}body.auto-browser-open .auto-browser-edge-toggle{right:calc(100vw - 38px)}}
@@ -12907,6 +13429,7 @@ body.auto-browser-open .session-top-row .current-progress-panel{
 .auto-browser-edge-toggle{top:calc(50% + 34px)!important;border-radius:14px 0 0 14px!important}
 body.files-open .files-edge-toggle{top:calc(50% - 34px)!important;border-radius:0 14px 14px 0!important}
 body.auto-browser-open .auto-browser-edge-toggle{top:calc(50% + 34px)!important;border-radius:0 14px 14px 0!important}
+body.auto-browser-open .files-edge-toggle{z-index:23}
 .edge-icon{position:relative;width:23px;height:23px;display:block;color:#dffbff}
 .edge-icon::before,.edge-icon::after{content:"";position:absolute;box-sizing:border-box}
 .edge-icon.session-icon::before{left:4px;top:3px;width:15px;height:17px;border:2px solid currentColor;border-radius:5px;box-shadow:-4px 3px 0 -1px rgba(223,251,255,.55)}
@@ -12919,6 +13442,116 @@ body.auto-browser-open .auto-browser-edge-toggle{top:calc(50% + 34px)!important;
 .auto-preview-window{position:fixed;z-index:70;left:var(--auto-preview-left,calc(50vw - 330px));top:var(--auto-preview-top,72px);width:var(--auto-preview-width,min(660px,calc(100vw - 34px)));height:var(--auto-preview-height,min(620px,calc(100vh - 96px)));min-width:280px;min-height:220px;display:grid;grid-template-rows:auto minmax(0,1fr);border:1px solid rgba(125,211,252,.36);border-radius:8px;background:linear-gradient(180deg,rgba(7,13,24,.98),rgba(9,18,30,.96));box-shadow:0 26px 110px rgba(0,0,0,.58),inset 0 1px 0 rgba(255,255,255,.08);overflow:hidden}
 .auto-preview-window[hidden]{display:none!important}.auto-preview-head{min-height:42px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 9px;border-bottom:1px solid rgba(155,176,211,.16);background:rgba(10,18,31,.78);cursor:move;user-select:none}.auto-preview-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#eaffff;font:1000 .72rem "Cascadia Code",monospace}.auto-preview-actions{display:flex;gap:6px;align-items:center}.auto-preview-download,.auto-preview-close{min-height:28px;border:1px solid rgba(125,211,252,.25);border-radius:7px;background:rgba(2,8,16,.76);color:#dffbff;text-decoration:none;padding:5px 8px;font:1000 .62rem "Cascadia Code",monospace;cursor:pointer}.auto-preview-close{width:30px;padding:0}.auto-preview-body{min-height:0;display:grid;place-items:center;padding:10px;background:#020817;overflow:auto}.auto-preview-body img,.auto-preview-body video{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}.auto-preview-body audio{width:min(520px,100%)}.auto-preview-body iframe{width:100%;height:100%;border:0;background:#f8fafc;border-radius:6px}.auto-preview-message{color:#cde8ff;font:900 .72rem/1.45 "Cascadia Code",monospace;text-align:center;overflow-wrap:anywhere}.auto-preview-resize{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 0 45%,rgba(125,211,252,.35) 45% 58%,transparent 58% 64%,rgba(125,211,252,.58) 64% 76%,transparent 76%)}
 body.auto-preview-dragging,body.auto-preview-resizing{user-select:none}
+</style>
+<style>
+.composer-route{display:none!important}
+.composer{grid-template-columns:minmax(0,1fr) minmax(154px,193px)!important;grid-template-areas:"prompt send" "model token"!important;align-items:stretch}
+body.upload-visible .composer{grid-template-columns:44px minmax(0,1fr) minmax(154px,193px)!important;grid-template-areas:"upload prompt send" ". model token"!important}
+.composer .model-combo{grid-area:model;align-self:start}
+.composer .composer-token-actions.token-actions{grid-area:token;align-self:start;justify-self:stretch;width:100%;min-width:154px;height:34px;min-height:34px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.12fr);gap:0;align-items:stretch}
+.composer .composer-token-actions .premium-switch,.composer .composer-token-actions .buy-tokens{width:auto;min-width:0;min-height:32px;height:100%;justify-content:center;padding:6px 7px;line-height:1}
+.composer .composer-token-actions .premium-switch{border-left:1px solid rgba(92,56,4,.34)}
+.send{grid-area:send;display:grid!important;grid-template-rows:auto auto;align-content:center;justify-items:center;gap:5px;min-width:154px}
+.send .send-capability-row{display:flex;align-items:center;justify-content:center;gap:8px;min-height:20px}
+.send .send-cap{position:relative;width:22px;height:22px;display:grid;place-items:center;border-radius:999px;background:rgba(2,8,16,.42);border:1px solid rgba(255,255,255,.14);font-size:14px;line-height:1}
+.send .send-cap::before{display:block;filter:drop-shadow(0 0 6px currentColor)}
+.send .send-cap.tool{color:#38bdf8}
+.send .send-cap.tool::before{content:"\1F527"}
+.send .send-cap.vision{color:#fb923c}
+.send .send-cap.vision::before{content:"\25C9";font-size:16px}
+.send .send-cap.disabled{color:rgba(203,213,225,.52);border-color:rgba(148,163,184,.24);background:rgba(15,23,42,.45)}
+.send .send-cap.disabled::after{content:"";position:absolute;left:4px;right:4px;top:10px;height:2px;border-radius:2px;background:currentColor;transform:rotate(-38deg);box-shadow:0 0 0 1px rgba(2,8,16,.65)}
+.send .send-label{font:1000 .72rem "Cascadia Code",monospace;text-transform:uppercase;letter-spacing:0}
+.bubble.user .bubble-card{position:relative;padding-top:30px}
+.prompt-run-meta{position:absolute;top:7px;right:8px;z-index:4;display:flex;align-items:center;gap:6px;max-width:min(62%,520px);opacity:.5;transition:opacity .14s ease;color:rgba(255,255,255,.94);font:1000 .56rem "Cascadia Code",monospace}
+.prompt-run-meta:hover,.prompt-run-meta:focus-within{opacity:1}
+.prompt-run-detail-trigger{min-width:0;border:0;background:transparent;color:inherit;padding:0;font:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.prompt-run-detail-trigger:hover,.prompt-run-detail-trigger:focus-visible{text-decoration:underline;outline:none}
+.prompt-run-spinner{width:11px;height:11px;border:2px solid rgba(255,255,255,.26);border-top-color:#7dd3fc;border-radius:50%;animation:autoSpin .8s linear infinite}
+.prompt-run-stop{width:18px;height:18px;border:1px solid rgba(248,113,113,.55);border-radius:999px;background:rgba(127,29,29,.52);color:#fee2e2;font:1000 .6rem "Cascadia Code",monospace;line-height:1;display:grid;place-items:center;padding:0;cursor:pointer}
+.prompt-run-meta.done .prompt-run-spinner,.prompt-run-meta.error .prompt-run-spinner,.prompt-run-meta.stopped .prompt-run-spinner{display:none}
+.prompt-run-meta.done .prompt-run-stop,.prompt-run-meta.error .prompt-run-stop,.prompt-run-meta.stopped .prompt-run-stop{display:none}
+.auto-run-detail-window{position:fixed;z-index:74;left:var(--auto-run-left,calc(50vw - 360px));top:var(--auto-run-top,86px);width:var(--auto-run-width,min(720px,calc(100vw - 34px)));max-height:min(720px,calc(100vh - 96px));display:grid;grid-template-rows:auto minmax(0,1fr);border:1px solid rgba(125,211,252,.36);border-radius:8px;background:linear-gradient(180deg,rgba(7,13,24,.98),rgba(9,18,30,.96));box-shadow:0 26px 110px rgba(0,0,0,.58),inset 0 1px 0 rgba(255,255,255,.08);overflow:hidden}
+.auto-run-detail-window[hidden]{display:none!important}
+.auto-run-detail-body{min-height:0;overflow:auto;padding:12px;display:grid;gap:10px;background:#020817}
+.auto-run-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.auto-run-detail-card{border:1px solid rgba(155,176,211,.14);border-radius:8px;background:rgba(15,23,42,.5);padding:9px;min-width:0}
+.auto-run-detail-card strong{display:block;margin-bottom:4px;color:#9eeeff;font:1000 .58rem "Cascadia Code",monospace;text-transform:uppercase}
+.auto-run-detail-card span,.auto-run-detail-card a,.auto-run-detail-list li{color:#e5f3ff;font:800 .68rem/1.45 "Cascadia Code",monospace;overflow-wrap:anywhere}
+.auto-run-detail-list{display:grid;gap:5px;margin:0;padding-left:18px}
+.auto-run-detail-wide{grid-column:1/-1}
+.auto-session-server-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end;margin-top:7px}
+.auto-session-server-tools button,.session-select input{cursor:pointer}
+.auto-session-server-tools button{border:1px solid rgba(125,211,252,.23);border-radius:7px;background:rgba(2,8,16,.58);color:#dffbff;padding:5px 8px;font:1000 .58rem "Cascadia Code",monospace}
+.auto-session-server-tools .delete-selected{border-color:rgba(248,113,113,.42);color:#fee2e2}
+.session-card{position:relative}
+.session-card.selected{border-color:rgba(125,211,252,.5);box-shadow:inset 0 0 0 1px rgba(125,211,252,.2)}
+.session-select{position:absolute;top:9px;right:9px;display:grid;place-items:center;width:22px;height:22px;border-radius:999px;background:rgba(2,8,16,.74);border:1px solid rgba(125,211,252,.28)}
+.session-select input{width:14px;height:14px;margin:0;accent-color:#38bdf8}
+@media(max-width:780px){.composer,body.upload-visible .composer{grid-template-columns:1fr!important;grid-template-areas:"prompt" "send" "model" "token"!important}.send,.composer .composer-token-actions.token-actions,.composer .composer-token-actions .premium-switch,.composer .composer-token-actions .buy-tokens{width:100%;min-width:0}.auto-run-detail-grid{grid-template-columns:1fr}.prompt-run-meta{max-width:72%;font-size:.52rem}}
+.bubble.assistant.completed-condensed .bubble-card{position:relative;padding-top:26px}
+.response-elapsed-badge{position:absolute;top:8px;right:10px;z-index:3;color:rgba(224,242,254,.72);font:1000 .58rem "Cascadia Code",monospace;opacity:.50;transition:opacity .14s ease,color .14s ease;pointer-events:auto}
+.response-elapsed-badge:hover,.response-elapsed-badge:focus-visible{opacity:1;color:#eaffff;outline:none}
+.bubble.assistant.completed-condensed .bubble-progress{display:none!important}
+.bubble.assistant.completed-condensed .bubble-insights{border-color:rgba(155,176,211,.10);background:rgba(2,8,16,.22);padding:0}
+.bubble.assistant.completed-condensed .bubble-insights-row{display:none!important}
+.bubble.assistant.completed-condensed .bubble-insights-lines{display:block!important;max-height:none!important;overflow:visible!important;border-top:0;background:transparent;padding:0}
+.bubble.assistant.completed-condensed .bubble-insights-lines:empty,.bubble.assistant.completed-condensed .bubble-insights:empty{display:none!important}
+.bubble.assistant.completed-condensed .insight-thought{display:none!important}
+.tool-expandable{position:relative;min-width:0}
+.tool-expandable .tool-expand-body{min-width:0}
+.tool-marquee-viewport{position:relative;min-width:0;overflow:hidden;white-space:nowrap;mask-image:linear-gradient(90deg,transparent 0,#000 22px,#000 calc(100% - 44px),transparent 100%);-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 22px,#000 calc(100% - 44px),transparent 100%)}
+.tool-marquee-track{display:inline-flex;align-items:center;gap:42px;min-width:max-content;white-space:nowrap;animation:toolTextMarquee var(--tool-marquee-duration,34s) linear infinite}
+.tool-marquee-copy{flex:0 0 auto;max-width:none}
+.tool-marquee-copy a{display:inline;color:#7dd3fc;text-decoration:none}
+.tool-marquee-copy a:hover{text-decoration:underline}
+.tool-expandable.expanded .tool-marquee-viewport{overflow:visible;white-space:normal;mask-image:none;-webkit-mask-image:none}
+.tool-expandable.expanded .tool-marquee-track{display:block;min-width:0;white-space:normal;animation:none!important;transform:none!important}
+.tool-expandable.expanded .tool-marquee-copy{white-space:normal;overflow-wrap:anywhere}
+.tool-expandable.expanded .tool-marquee-copy[aria-hidden="true"]{display:none}
+.tool-call-read.tool-expandable.expanded .tool-marquee-copy{white-space:pre-wrap}
+@keyframes toolTextMarquee{0%{transform:translateX(0)}100%{transform:translateX(calc(-50% - 21px))}}
+.auto-hover-tooltip{position:fixed;z-index:120;max-width:min(760px,calc(100vw - 24px));max-height:min(280px,calc(100vh - 24px));overflow:auto;padding:8px 10px;border:1px solid rgba(125,211,252,.34);border-radius:7px;background:rgba(2,8,16,.96);box-shadow:0 18px 70px rgba(0,0,0,.48);color:#eaffff;font:800 .68rem/1.45 "Cascadia Code",monospace;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none}
+.tool-expand-actions,.auto-citation-actions{display:flex;align-items:center;gap:8px;margin-top:4px}
+.tool-expand-button,.auto-citation-button{border:0;background:transparent;color:rgba(255,255,255,.58);padding:0;font:1000 .58rem "Cascadia Code",monospace;cursor:pointer}
+.tool-expand-button:hover,.tool-expand-button:focus-visible,.auto-citation-button:hover,.auto-citation-button:focus-visible{color:#fff;outline:none}
+.auto-citation-panel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:10px;padding-top:9px;border-top:1px solid rgba(155,176,211,.14)}
+.auto-citation-column{min-width:0;border:1px solid rgba(155,176,211,.13);border-radius:8px;background:rgba(2,8,16,.34);padding:8px}
+.auto-citation-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;color:#9eeeff;font:1000 .58rem "Cascadia Code",monospace;text-transform:uppercase}
+.auto-citation-list{display:grid;gap:5px;margin:0;padding:0;list-style:none}
+.auto-citation-list li{min-width:0;color:#dbeafe;font:.68rem/1.35 "Cascadia Code",monospace}
+.auto-citation-text{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auto-citation-column.expanded .auto-citation-text,.auto-citation-panel.all-expanded .auto-citation-text{-webkit-line-clamp:unset;display:block;overflow:visible}
+.auto-citation-column.expanded .auto-citation-text,.auto-citation-panel.all-expanded .auto-citation-text{white-space:normal;overflow-wrap:anywhere}
+.auto-citation-column:not(.expanded) .auto-citation-list li:nth-child(4):not(:first-child){opacity:.42;max-height:1.05rem;overflow:hidden;mask-image:linear-gradient(90deg,#000 0,#000 56%,transparent 100%);-webkit-mask-image:linear-gradient(90deg,#000 0,#000 56%,transparent 100%)}
+.auto-citation-column:not(.expanded) .auto-citation-list li:nth-child(n+5):not(:first-child){display:none}
+.auto-citation-panel.all-expanded .auto-citation-list li{display:block!important}
+.auto-citation-source a,.auto-citation-source .auto-link-chip{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auto-citation-column.expanded .auto-citation-source a,.auto-citation-panel.all-expanded .auto-citation-source a,.auto-citation-column.expanded .auto-citation-source .auto-link-chip,.auto-citation-panel.all-expanded .auto-citation-source .auto-link-chip{white-space:normal;overflow-wrap:anywhere}
+.auto-site-brand{display:grid!important;grid-template-columns:40px max-content;grid-template-areas:"mark title" "mark auth";align-self:center;justify-self:start!important;align-items:center;column-gap:10px;row-gap:2px;width:max-content!important;max-width:100%;min-width:0}
+.auto-site-brand-main{display:contents;color:#f4f8ff;text-decoration:none;min-width:0}
+.auto-site-brand-mark{grid-area:mark}
+.auto-site-brand-title{grid-area:title;line-height:1.06;white-space:nowrap}
+.auto-site-brand small{display:none!important}
+.auto-site-brand .auth-status{grid-area:auth;position:static!important;top:auto!important;left:auto!important;right:auto!important;bottom:auto!important;z-index:auto!important;justify-self:start!important;margin-left:0!important;min-height:20px;padding:2px 7px;border-color:rgba(46,230,170,.38);border-radius:6px;background:rgba(6,78,59,.36);box-shadow:inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:none;opacity:.84;color:#bfffea!important;font:900 .54rem "Cascadia Code",monospace;text-decoration:none;white-space:nowrap}
+.auto-site-brand .auth-status.warn{border-color:rgba(251,191,36,.36);background:rgba(120,53,15,.30);color:#fde68a!important}
+.auto-site-brand .auth-status.good{border-color:rgba(46,230,170,.42);background:rgba(6,95,70,.36);color:#c8ffe8!important}
+.auto-site-brand .auth-status:hover,.auto-site-brand .auth-status:focus-visible{opacity:1;outline:none;border-color:rgba(96,201,255,.54)}
+.send{overflow:hidden!important;resize:none!important;scrollbar-width:none}
+.send::-webkit-scrollbar{display:none}
+.send .send-capability-row,.send .send-label{max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.welcome-readme{width:min(940px,100%);max-width:min(940px,100%)}
+.welcome-readme .bubble-card{padding:0!important;overflow:hidden;border-color:transparent!important;background:linear-gradient(135deg,rgba(255,255,255,.12),rgba(46,230,170,.085),rgba(96,201,255,.075),rgba(244,143,177,.075))!important}
+.welcome-orbit-card{position:relative;isolation:isolate;min-height:230px;padding:22px}
+.welcome-particles{position:absolute;inset:0;z-index:0;width:100%;height:100%;opacity:.92;background:radial-gradient(circle at 18% 18%,rgba(46,230,170,.16),transparent 30%),radial-gradient(circle at 82% 22%,rgba(96,201,255,.14),transparent 32%),rgba(2,8,16,.18)}
+.welcome-content{position:relative;z-index:1;display:grid;gap:10px;max-width:760px;padding:20px;text-shadow:0 1px 18px rgba(0,0,0,.32)}
+.welcome-kicker{color:#9eeeff;font:1000 .58rem "Cascadia Code",monospace;text-transform:uppercase}
+.welcome-content h2{width:max-content;max-width:100%;margin:0;background:linear-gradient(100deg,#2ee6aa,#60c9ff,#8b5cf6,#f48fb1,#fbbf24,#2ee6aa);background-size:340% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;font-size:1.12rem;line-height:1.18;animation:autoParamValueRgb 3s linear infinite}
+.welcome-content p{max-width:720px;margin:0;color:#eef7ff;line-height:1.55}
+.welcome-chips,.welcome-prompts{display:flex;flex-wrap:wrap;gap:7px;margin-top:2px}
+.welcome-chip,.welcome-prompt{display:inline-flex;align-items:center;min-height:28px;border:1px solid rgba(125,211,252,.24);border-radius:999px;background:rgba(2,8,16,.44);color:#dffbff;padding:5px 9px;font:900 .62rem "Cascadia Code",monospace;box-shadow:inset 0 1px 0 rgba(255,255,255,.10)}
+.welcome-prompt{border-color:rgba(46,230,170,.30);background:linear-gradient(135deg,rgba(46,230,170,.14),rgba(96,201,255,.08))}
+@media(max-width:780px){.auto-citation-panel{grid-template-columns:1fr}.bubble.assistant.completed-condensed .bubble-card{padding-top:30px}.welcome-orbit-card{min-height:260px;padding:18px}.welcome-content h2{font-size:1rem}}
 </style>
 </head>
 <body>
@@ -12935,7 +13568,7 @@ body.auto-preview-dragging,body.auto-preview-resizing{user-select:none}
 </aside>
 <button class="session-edge-toggle" id="sessionToggle" type="button" title="Open saved Auto sessions. Sessions are tied to this IP or SocketJack account, then merged into the account after login or registration." aria-label="Open Auto sessions" aria-expanded="false"><span class="edge-icon session-icon" aria-hidden="true"></span></button>
 <aside class="files-drawer" id="filesDrawer" aria-label="Current Auto session files" aria-hidden="true">
-  <div class="session-drawer-head"><div><strong>Session files</strong><span id="filesOwner">Uploads and generated files</span></div><button class="button" id="filesClose" type="button">Close</button></div>
+  <div class="session-drawer-head"><div><strong>Session files</strong><span id="filesOwner">Uploads and generated files</span></div><div class="drawer-actions"><button class="button" id="filesRefresh" type="button">Refresh</button><button class="button" id="filesClose" type="button">Close</button></div></div>
   <div class="session-artifacts" id="sessionArtifacts"><div class="session-artifacts-label">Current session files</div><div class="session-artifact-list" id="sessionArtifactList" aria-label="Files for this Auto session"></div></div>
   <div class="drawer-resize-handle files-resize" id="filesResize" title="Drag to resize files"></div>
 </aside>
@@ -12961,6 +13594,11 @@ body.auto-preview-dragging,body.auto-preview-resizing{user-select:none}
   <div class="auto-preview-body" id="autoPreviewBody"><div class="auto-preview-message">Loading preview...</div></div>
   <div class="auto-preview-resize" id="autoPreviewResize" aria-hidden="true"></div>
 </div>
+<div class="auto-run-detail-window" id="autoRunDetailWindow" hidden role="dialog" aria-modal="false" aria-label="Prompt run details">
+  <div class="auto-preview-head" id="autoRunDetailHead"><strong class="auto-preview-title" id="autoRunDetailTitle">Prompt details</strong><div class="auto-preview-actions"><button class="auto-preview-close" id="autoRunDetailClose" type="button" aria-label="Close prompt details">X</button></div></div>
+  <div class="auto-run-detail-body" id="autoRunDetailBody"></div>
+  <div class="auto-preview-resize" id="autoRunDetailResize" aria-hidden="true"></div>
+</div>
 <div class="auto-login-modal" id="autoLoginModal" hidden role="dialog" aria-modal="true" aria-labelledby="autoLoginTitle">
   <form class="auto-login-card" id="autoLoginForm">
     <div class="auto-login-head"><strong id="autoLoginTitle">Sign in</strong><button class="auto-login-close" id="autoLoginClose" type="button" aria-label="Close sign in">X</button></div>
@@ -12969,14 +13607,14 @@ body.auto-preview-dragging,body.auto-preview-resizing{user-select:none}
     <label>Password <input id="autoLoginPass" type="password" autocomplete="current-password" required></label>
     <label class="auto-login-remember"><input id="autoLoginRemember" type="checkbox" checked> Remember this browser</label>
     <div class="auto-login-error" id="autoLoginError" role="status" aria-live="polite"></div>
-    <div class="auto-login-actions"><a id="autoLoginFullPage" href="/Login">Full page login</a><button id="autoLoginSubmit" type="submit">Sign in</button></div>
+    <div class="auto-login-actions"><a id="autoLoginFullPage" href="/login">Full page login</a><button id="autoLoginSubmit" type="submit">Sign in</button></div>
   </form>
 </div>
 <a class="masterlist-slide-zone" href="/MasterList" title="Open SocketJack MasterList" aria-label="Open SocketJack MasterList"><span class="masterlist-slide-button">MasterList</span></a>
 <main class="app">
   <header class="top">
-    <a class="auto-site-brand" href="/Download" aria-label="SocketJack downloads"><span class="auto-site-brand-mark" aria-hidden="true">SJ</span><span>SocketJack<small>Auto</small></span></a>
-    <div class="server-capsule"><div class="server-label">Server used</div><a class="server-name" id="serverName" href="#" aria-disabled="true"><span>Selecting...</span><span class="server-arrow" aria-hidden="true">-&gt;</span></a><a class="auth-status" id="authStatus" href="/Login">Guest</a><span class="pool-status-silent" id="poolStatus" hidden>Checking pool</span><a class="continue-server" id="continueServer" href="#" hidden>Continue in server</a></div>
+    <div class="auto-site-brand"><a class="auto-site-brand-main" href="/Download" aria-label="SocketJack downloads"><span class="auto-site-brand-mark" aria-hidden="true">SJ</span><span class="auto-site-brand-title">SocketJack</span></a><a class="auth-status" id="authStatus" href="/login">Guest</a></div>
+    <div class="server-capsule"><div class="server-label">Server used</div><a class="server-name" id="serverName" href="#" aria-disabled="true"><span>Selecting...</span><span class="server-arrow" aria-hidden="true">-&gt;</span></a><span class="pool-status-silent" id="poolStatus" hidden>Checking pool</span><a class="continue-server" id="continueServer" href="#" hidden>Continue in server</a></div>
     <div class="token-meter" id="tokenMeter" aria-live="polite"><div class="token-meter-line"><div class="token-meter-fill" id="tokenFill"></div></div><div class="token-meter-text" id="tokenText">Tokens left: checking</div><div class="token-meter-cost" id="tokenCost"></div><div class="token-delta" id="tokenDelta" hidden>-1</div></div>
   </header>
   <section class="chat-shell">
@@ -12997,7 +13635,7 @@ body.auto-preview-dragging,body.auto-preview-resizing{user-select:none}
       <div class="composer-meta" hidden><span id="promptCostText"></span><span class="premium-note" id="premiumNote"></span></div>
       <div class="composer-route"><div class="mode-toggle" id="modes" aria-label="Model mode"></div></div>
       <div class="model-combo" id="modelCombo"><button id="advancedToggle" class="model-advanced-summary" type="button" aria-expanded="false" aria-controls="advancedPanel"><span class="model-summary-arrow" aria-hidden="true">&gt;</span><span id="modelSummary" class="model-summary-text">Auto model</span></button><div class="model-advanced-panel" id="advancedPanel"><input id="model" placeholder="Model id" autocomplete="off" spellcheck="false" aria-autocomplete="list" aria-expanded="false" aria-controls="modelSuggestions"><div id="modelSuggestions" class="model-suggestions" role="listbox" hidden></div><div class="model-route-controls" aria-label="GPU routing controls"><div class="model-origin-dock route-neon-dock" aria-label="GPU Origin controls"><span>GPU Origin</span><div class="origin-toggle route-neon-toggle" id="originModes" aria-label="Origin policy"></div></div><div class="model-origin-dock route-neon-dock" aria-label="Pooling controls"><span>Pooling</span><div class="pool-toggle route-neon-toggle" id="poolModes" aria-label="Multi-GPU pool"></div></div><div class="model-origin-dock route-neon-dock param-neon-dock" aria-label="Parameter range limit"><div class="param-slider-head"><span>Params</span><span class="param-range-values"><output id="minParamValue" class="param-value" for="minParamSlider">Any</output><span class="param-range-separator">to</span><output id="paramValue" class="param-value" for="paramSlider">Any</output></span></div><div class="param-range-sliders"><input id="minParamSlider" class="param-slider" type="range" min="0" max="1000" step="1" value="0" aria-label="Minimum model parameters"><input id="paramSlider" class="param-slider" type="range" min="0" max="1000" step="1" value="0" aria-label="Maximum model parameters"></div></div></div></div></div>
-      <div class="composer-token-actions token-actions" data-tip="Tokens pay for premium Auto routes. Cost factoring estimates each prompt from model size, hardware class, media mode, and server multiplier before the run."><a class="buy-tokens" id="buyTokens" href="/MasterList?buyTokens=1">$ Tok $</a><label class="premium-switch" title="Use token-backed premium Auto servers when available."><input id="premiumModels" type="checkbox"> PREM</label></div>
+      <div class="composer-token-actions token-actions" data-tip="Tokens pay for premium Auto routes. Cost factoring estimates each prompt from model size, hardware class, media mode, and server multiplier before the run."><a class="buy-tokens" id="buyTokens" href="/MasterList?buyTokens=1" target="_blank" rel="noopener noreferrer">$ Tok $</a><label class="premium-switch" title="Use token-backed premium Auto servers when available."><input id="premiumModels" type="checkbox"> Premium</label></div>
       <button id="fileUploadButton" class="upload-button" type="button" title="Attach files to this Auto session. Shown for Tools, multimodal/vision, image-to-image, and image editing models when signed in." aria-label="Attach files" hidden>+</button>
       <div id="uploadQueue" class="upload-queue" hidden aria-live="polite"></div>
       <input id="fileUploadInput" type="file" multiple hidden>
@@ -13008,8 +13646,8 @@ body.auto-preview-dragging,body.auto-preview-resizing{user-select:none}
 </main>
 <script>
 const TYPES=[
-{mode:'auto',label:'Auto',tip:'Auto: send the prompt to a small chat reasoning model first. It replies with USE TEXT, USE IMAGE, USE VIDEO, USE AUDIO, USE MULTIMODAL, or USE EMBEDDING, then SocketJack routes the original prompt to a compatible enabled model.'},
-{mode:'text',label:'Text',tip:'Text: use a chat or completion model for normal conversation, writing, reasoning, summaries, explanations, and question answering. Media-only generation models are excluded.'},
+{mode:'auto',label:'Auto',tip:'Auto: send the prompt to a small chat reasoning model first. If reasoning or tools are needed and a tools route is available, SocketJack uses Tools instead of Text.'},
+{mode:'text',label:'Text',tip:'Text: use a chat or completion model for ordinary direct replies, writing, summaries, explanations, and question answering that do not need tools or substantial reasoning. Media-only generation models are excluded.'},
 {mode:'multimodal',label:'Multimodal',tip:'Multimodal: use a vision or mixed-media chat model when the request is about analyzing attached images, video, audio, screenshots, or other non-text context.'},
 {mode:'image',label:'Image',tip:'Image: use an enabled image generation model to create or edit pictures, illustrations, logos, thumbnails, posters, and other visual assets from the prompt.'},
 {mode:'video',label:'Video',tip:'Video: use an enabled video generation model to create clips, animations, motion renders, MP4/WebM output, or other moving media from the prompt.'},
@@ -13026,14 +13664,10 @@ const POOL_TYPES=[
 {enabled:true,label:'Multi-GPU pool',tip:'Multi-GPU pool: rotate across the eligible server pool for the chosen origin policy, model, and mode.'}
 ];
 const AUTO_WELCOME_MD=[
-'## SocketJack Auto',
-'Chat naturally, like you would with ChatGPT or Claude. SocketJack.LlmRuntime checks the available model pool and routes your request to a healthy Jack LLM Workstation server.',
+'## SocketJack AI',
+'Ask for code, research, media, files, browser work, or a plain answer. Auto picks the route and keeps the chat moving.',
 '',
-'> Ask a question, paste code, attach files, describe an image, request media, or ask for tool work. Auto chooses the lane; you stay in one chat.',
-'',
-'Use the route buttons above the chat box when you want to steer the request yourself: Auto, Text, Multimodal, Image, Video, Audio, Tools, or Embeddings.',
-'',
-'+ Attach files when you want the session to include images, documents, or other context.'
+'> Tools, vision, files, and premium routes stay in one chat.'
 ].join('\n');
 const qs=new URLSearchParams(location.search);
 if(qs.get('embedded')==='masterlist'||qs.get('embed')==='masterlist')document.body.classList.add('master-list-embed');
@@ -13053,20 +13687,23 @@ const CURRENT_PROGRESS_COLLAPSED_STORAGE_KEY='SocketJackAutoCurrentProgressColla
 const AUTO_BROWSER_WIDTH_STORAGE_KEY='SocketJackAutoBrowserWidth';
 const AUTO_BROWSER_STATE_STORAGE_KEY='SocketJackAutoBrowserState';
 const AUTO_PREVIEW_STATE_STORAGE_KEY='SocketJackAutoPreviewState';
-const els={modes:document.getElementById('modes'),originModes:document.getElementById('originModes'),poolModes:document.getElementById('poolModes'),modelCombo:document.getElementById('modelCombo'),advancedToggle:document.getElementById('advancedToggle'),modelSummary:document.getElementById('modelSummary'),minParamSlider:document.getElementById('minParamSlider'),minParamValue:document.getElementById('minParamValue'),paramSlider:document.getElementById('paramSlider'),paramValue:document.getElementById('paramValue'),pool:document.getElementById('poolStatus'),auth:document.getElementById('authStatus'),server:document.getElementById('serverName'),continueServer:document.getElementById('continueServer'),buyTokens:document.getElementById('buyTokens'),tokenText:document.getElementById('tokenText'),tokenFill:document.getElementById('tokenFill'),tokenCost:document.getElementById('tokenCost'),tokenDelta:document.getElementById('tokenDelta'),promptCost:document.getElementById('promptCostText'),premiumNote:document.getElementById('premiumNote'),premium:document.getElementById('premiumModels'),model:document.getElementById('model'),modelSuggestions:document.getElementById('modelSuggestions'),prompt:document.getElementById('prompt'),send:document.getElementById('send'),messages:document.getElementById('messages'),sessionTabs:document.getElementById('sessionTabs'),fileUploadButton:document.getElementById('fileUploadButton'),fileUploadInput:document.getElementById('fileUploadInput'),uploadQueue:document.getElementById('uploadQueue'),sessionArtifacts:document.getElementById('sessionArtifacts'),sessionArtifactList:document.getElementById('sessionArtifactList'),sessionToggle:document.getElementById('sessionToggle'),sessionBackdrop:document.getElementById('sessionBackdrop'),sessionDrawer:document.getElementById('sessionDrawer'),sessionClose:document.getElementById('sessionClose'),sessionSearch:document.getElementById('sessionSearch'),sessionSuggestions:document.getElementById('sessionSearchSuggestions'),sessionList:document.getElementById('sessionList'),sessionOwner:document.getElementById('sessionOwner'),sessionResize:document.getElementById('sessionResize'),filesToggle:document.getElementById('filesToggle'),filesDrawer:document.getElementById('filesDrawer'),filesClose:document.getElementById('filesClose'),filesResize:document.getElementById('filesResize'),filesOwner:document.getElementById('filesOwner'),autoLoginModal:document.getElementById('autoLoginModal'),autoLoginForm:document.getElementById('autoLoginForm'),autoLoginUser:document.getElementById('autoLoginUser'),autoLoginPass:document.getElementById('autoLoginPass'),autoLoginRemember:document.getElementById('autoLoginRemember'),autoLoginError:document.getElementById('autoLoginError'),autoLoginClose:document.getElementById('autoLoginClose'),autoLoginMessage:document.getElementById('autoLoginMessage'),autoLoginFullPage:document.getElementById('autoLoginFullPage')};
+const AUTO_PARALLEL_BATCH_LIMIT=Math.max(2,Number('__AUTO_PARALLEL_BATCH_LIMIT__')||2);
+const els={modes:document.getElementById('modes'),originModes:document.getElementById('originModes'),poolModes:document.getElementById('poolModes'),modelCombo:document.getElementById('modelCombo'),advancedToggle:document.getElementById('advancedToggle'),modelSummary:document.getElementById('modelSummary'),minParamSlider:document.getElementById('minParamSlider'),minParamValue:document.getElementById('minParamValue'),paramSlider:document.getElementById('paramSlider'),paramValue:document.getElementById('paramValue'),pool:document.getElementById('poolStatus'),auth:document.getElementById('authStatus'),server:document.getElementById('serverName'),continueServer:document.getElementById('continueServer'),buyTokens:document.getElementById('buyTokens'),tokenText:document.getElementById('tokenText'),tokenFill:document.getElementById('tokenFill'),tokenCost:document.getElementById('tokenCost'),tokenDelta:document.getElementById('tokenDelta'),promptCost:document.getElementById('promptCostText'),premiumNote:document.getElementById('premiumNote'),premium:document.getElementById('premiumModels'),model:document.getElementById('model'),modelSuggestions:document.getElementById('modelSuggestions'),prompt:document.getElementById('prompt'),send:document.getElementById('send'),messages:document.getElementById('messages'),sessionTabs:document.getElementById('sessionTabs'),fileUploadButton:document.getElementById('fileUploadButton'),fileUploadInput:document.getElementById('fileUploadInput'),uploadQueue:document.getElementById('uploadQueue'),sessionArtifacts:document.getElementById('sessionArtifacts'),sessionArtifactList:document.getElementById('sessionArtifactList'),sessionToggle:document.getElementById('sessionToggle'),sessionBackdrop:document.getElementById('sessionBackdrop'),sessionDrawer:document.getElementById('sessionDrawer'),sessionClose:document.getElementById('sessionClose'),sessionSearch:document.getElementById('sessionSearch'),sessionSuggestions:document.getElementById('sessionSearchSuggestions'),sessionList:document.getElementById('sessionList'),sessionOwner:document.getElementById('sessionOwner'),sessionResize:document.getElementById('sessionResize'),filesToggle:document.getElementById('filesToggle'),filesDrawer:document.getElementById('filesDrawer'),filesClose:document.getElementById('filesClose'),filesRefresh:document.getElementById('filesRefresh'),filesResize:document.getElementById('filesResize'),filesOwner:document.getElementById('filesOwner'),autoLoginModal:document.getElementById('autoLoginModal'),autoLoginForm:document.getElementById('autoLoginForm'),autoLoginUser:document.getElementById('autoLoginUser'),autoLoginPass:document.getElementById('autoLoginPass'),autoLoginRemember:document.getElementById('autoLoginRemember'),autoLoginError:document.getElementById('autoLoginError'),autoLoginClose:document.getElementById('autoLoginClose'),autoLoginMessage:document.getElementById('autoLoginMessage'),autoLoginFullPage:document.getElementById('autoLoginFullPage')};
 const progressEls={panel:document.getElementById('currentProgressPanel'),toggle:document.getElementById('currentProgressToggle'),count:document.getElementById('currentProgressCount'),dot:document.getElementById('currentProgressDot'),next:document.getElementById('currentProgressNext'),plan:document.getElementById('currentProgressPlan'),outputs:document.getElementById('currentProgressOutputs'),sources:document.getElementById('currentProgressSources')};
 const autoBrowserEls={panel:document.getElementById('autoBrowserPanel'),toggle:document.getElementById('autoBrowserToggle'),collapse:document.getElementById('autoBrowserCollapse'),resize:document.getElementById('autoBrowserResize'),address:document.getElementById('autoBrowserAddress'),go:document.getElementById('autoBrowserGo'),external:document.getElementById('autoBrowserExternal'),frame:document.getElementById('autoBrowserFrame'),empty:document.getElementById('autoBrowserEmpty')};
 const previewEls={window:document.getElementById('autoPreviewWindow'),head:document.getElementById('autoPreviewHead'),title:document.getElementById('autoPreviewTitle'),body:document.getElementById('autoPreviewBody'),download:document.getElementById('autoPreviewDownload'),close:document.getElementById('autoPreviewClose'),resize:document.getElementById('autoPreviewResize')};
+const runDetailEls={window:document.getElementById('autoRunDetailWindow'),head:document.getElementById('autoRunDetailHead'),title:document.getElementById('autoRunDetailTitle'),body:document.getElementById('autoRunDetailBody'),close:document.getElementById('autoRunDetailClose'),resize:document.getElementById('autoRunDetailResize')};
 function readOpenSessionTabsSnapshot(){try{const tabs=JSON.parse(safeStorageGet(OPEN_TABS_STORAGE_KEY)||'[]');return Array.isArray(tabs)?tabs.filter(tab=>tab&&cleanAutoSessionId(tab.id)):[]}catch{return[]}}
 function sessionStateLooksBlank(id){id=cleanAutoSessionId(id);if(!id)return false;try{const raw=sessionStorage.getItem('SocketJackAutoSessionState:'+id);if(!raw)return true;const state=JSON.parse(raw);const transcript=Array.isArray(state.transcript)?state.transcript:[];const artifacts=Array.isArray(state.artifacts)?state.artifacts:[];return !String(state.title||'').trim()&&!String(state.selectedServerId||'').trim()&&!String(state.suggestedModel||'').trim()&&!artifacts.length&&!transcript.some(item=>String(item&&item.content||'').trim())}catch{return false}}
 function chooseInitialAutoSessionId(){const explicit=cleanAutoSessionId(qs.get('sessionId')||qs.get('autoSession')||'');if(explicit)return explicit;const tabs=readOpenSessionTabsSnapshot();const active=cleanAutoSessionId(safeStorageGet(ACTIVE_TAB_STORAGE_KEY));if(active&&tabs.some(tab=>cleanAutoSessionId(tab.id)===active))return active;const blank=tabs.find(tab=>{const title=String(tab.title||'').replace(/\s+/g,' ').trim().toLowerCase();return (!title||title==='new session'||title==='new')&&sessionStateLooksBlank(tab.id)});return cleanAutoSessionId(blank&&blank.id)}
 const initialOriginMode=qs.get('origin')||qs.get('origin_mode')||safeStorageGet(ORIGIN_STORAGE_KEY)||'hybrid';
 let forcedAutoServerId=String(qs.get('server')||qs.get('server_id')||qs.get('serverId')||qs.get('selectedServer')||qs.get('selectedServerId')||'').trim();
-let mode=normalizeMode(qs.get('mode')||qs.get('type')||'auto'),originMode=normalizeOrigin(initialOriginMode),autoPoolEnabled=readPoolEnabled(initialOriginMode),autoMinParamsB=readInitialMinParamsB(),autoMaxParamsB=readInitialMaxParamsB(),premiumModelsEnabled=isTruthy(qs.get('premium')||qs.get('premiumModels')||safeStorageGet(PREMIUM_STORAGE_KEY)),selectedServer=null,selectedServerId=forcedAutoServerId,suggestedModel='',sessionId=chooseInitialAutoSessionId()||('auto_'+Math.random().toString(16).slice(2)+Date.now().toString(16));
+let mode=normalizeMode(qs.get('mode')||qs.get('type')||'tools'),originMode=normalizeOrigin(initialOriginMode),autoPoolEnabled=readPoolEnabled(initialOriginMode),autoMinParamsB=readInitialMinParamsB(),autoMaxParamsB=readInitialMaxParamsB(),premiumModelsEnabled=isTruthy(qs.get('premium')||qs.get('premiumModels')||safeStorageGet(PREMIUM_STORAGE_KEY)),selectedServer=null,selectedServerId=forcedAutoServerId,suggestedModel='',sessionId=chooseInitialAutoSessionId()||('auto_'+Math.random().toString(16).slice(2)+Date.now().toString(16));
 let autoRouteDecision=null;
 const transcript=[];
-let hfModelCatalog=[],hfModelCatalogMode='',modelSuggestionIndex=-1,modelCatalogRequest=0,liveModelCatalogRequest=0,autoModeSwitchRequest=0,modelSuggestionBrowseAll=false,usageState=null,authState={known:false,authenticated:false,username:''},tokenToastTimer=0,autoSessions=[],autoSessionGroups=[],autoSessionGroupFilters={},autoSessionLiveSocket=null,autoSessionLiveReconnectTimer=0,autoSessionLiveOpen=false,autoLiveImportResolvers={},sessionSearchTimer=0,currentSessionTitle='',currentArtifacts=[],openSessionTabs=[],processingSessionIds=new Set(),freshUploadKeys=new Set(),queuedReferenceKeys=new Set(),autoLoginResolver=null,activeAutoRun=null,disabledAutoModels=new Set(parseDisabledModelList(safeStorageGet(DISABLED_MODELS_STORAGE_KEY))),soloModelByMode={},soloDisabledSnapshotByMode={},serverModelSuggestionCache=[],urlAutoRunPrompt='',urlAutoRunSessionId='',urlAutoRunStarted=false,lastSubmittedPromptKey='',lastSubmittedPromptAt=0;
+let hfModelCatalog=[],hfModelCatalogMode='',modelSuggestionIndex=-1,modelCatalogRequest=0,liveModelCatalogRequest=0,autoModeSwitchRequest=0,modelSuggestionBrowseAll=false,usageState=null,authState={known:false,authenticated:false,username:''},tokenToastTimer=0,autoSessions=[],autoSessionGroups=[],autoSessionGroupFilters={},autoSessionLiveSocket=null,autoSessionLiveReconnectTimer=0,autoSessionLiveOpen=false,autoLiveImportResolvers={},sessionSearchTimer=0,currentSessionTitle='',currentArtifacts=[],openSessionTabs=[],processingSessionIds=new Set(),freshUploadKeys=new Set(),queuedReferenceKeys=new Set(),sessionFileUiStateId='',sessionFileCollapsedPaths=new Set(),sessionFileChangedKeys=new Map(),sessionFilesRefreshTimer=0,sessionFilesLoading=false,autoLoginResolver=null,activeAutoRun=null,autoPromptSubmitting=false,disabledAutoModels=new Set(parseDisabledModelList(safeStorageGet(DISABLED_MODELS_STORAGE_KEY))),soloModelByMode={},soloDisabledSnapshotByMode={},serverModelSuggestionCache=[],serverModelSuggestionStates={},autoModelCacheServers=[],urlAutoRunPrompt='',urlAutoRunSessionId='',urlAutoRunStarted=false,lastSubmittedPromptKey='',lastSubmittedPromptAt=0;
 let currentProgressState={running:false,next:'Waiting for the next Auto prompt.',plan:[],outputs:[],sources:[]},currentProgressHitCount=0,currentProgressPulseTimer=0,autoBrowserOpen=false,autoBrowserUrl='',autoBrowserWidth=440,autoBrowserResizeState=null,autoPreviewDragState=null,autoPreviewResizeState=null;
+let selectedAutoSessionIds=new Set();
 els.model.value=cleanModelName(qs.get('model')||'');
 function normalizeMode(value){value=String(value||'auto').toLowerCase();if(value.includes('auto')||value.includes('router')||value.includes('choose'))return'auto';if(value.includes('image'))return'image';if(value.includes('video'))return'video';if(value.includes('audio')||value.includes('speech'))return'audio';if(value.includes('tool')||value.includes('agent'))return'tools';if(value.includes('embed')||value.includes('vector'))return'embedding';if(value.includes('multi')||value.includes('vision')||value.includes('omni'))return'multimodal';return'text'}
 function normalizeOrigin(value){value=String(value||'hybrid').toLowerCase().replace(/_/g,'-');if(value.includes('same')||value.includes('relay')||value.includes('master'))return'same-origin';return'hybrid'}
@@ -13085,19 +13722,20 @@ function parameterRangeLabel(){const b=parameterBounds();if(b.min>0&&b.max>0)ret
 function modelMatchesParameterLimit(model,value){if(!parameterFilterApplies(value))return true;const b=parameterBounds();if(b.min<=0&&b.max<=0)return true;const params=modelParameterBillions(model);return params>0&&(b.min<=0||params+.0001>=b.min)&&(b.max<=0||params<=b.max+.0001)}
 function filterModelsByParams(models,value){return (models||[]).filter(model=>modelMatchesParameterLimit(model,value)&&!isModelDisabled(model))}
 function renderAdvancedSummary(){if(!els.modelSummary)return;const model=cleanModelName(els.model&&els.model.value||suggestedModel||'');const filter=parameterRangeLabel();els.modelSummary.textContent=model||'Auto model';if(els.advancedToggle){els.advancedToggle.title=(model||'Auto model')+(filter==='Any'?'':' / '+filter);if(els.modelCombo)els.advancedToggle.setAttribute('aria-expanded',els.modelCombo.classList.contains('advanced-open')?'true':'false')}}
+function setAdvancedPanelOpen(open,focusModel){if(!els.modelCombo)return;els.modelCombo.classList.toggle('advanced-open',!!open);if(!open)hideModelSuggestions();renderAdvancedSummary();if(open&&focusModel)setTimeout(()=>els.model&&els.model.focus(),30)}
 function renderParamSlider(){const minSlider=paramsBToSlider(autoMinParamsB),maxSlider=paramsBToSlider(autoMaxParamsB);if(els.minParamSlider){els.minParamSlider.value=String(minSlider);els.minParamSlider.style.setProperty('--param-fill',(minSlider/10).toFixed(1)+'%');els.minParamSlider.title=autoMinParamsB>0?'Minimum Auto LLM size: '+formatParamsB(autoMinParamsB)+'. Models must include a B/T parameter tag like 2B or 70B.':'No minimum parameter floor.'}if(els.minParamValue){els.minParamValue.value=formatParamsB(autoMinParamsB);els.minParamValue.textContent=formatParamsB(autoMinParamsB)}if(els.paramSlider){els.paramSlider.value=String(maxSlider);els.paramSlider.style.setProperty('--param-fill',(maxSlider/10).toFixed(1)+'%');els.paramSlider.title=autoMaxParamsB>0?'Maximum Auto LLM size: '+formatParamsB(autoMaxParamsB)+'. Models must include a B/T parameter tag like 2B or 70B.':'No maximum parameter cap.'}if(els.paramValue){els.paramValue.value=formatParamsB(autoMaxParamsB);els.paramValue.textContent=formatParamsB(autoMaxParamsB)}renderAdvancedSummary()}
 function isTruthy(value){value=String(value||'').trim().toLowerCase();return value==='1'||value==='true'||value==='yes'||value==='on'||value==='enabled'}
-function requestMode(value){const next=normalizeMode(value||mode);return next==='auto'?'text':next}
+function requestMode(value){const next=normalizeMode(value||mode);return next==='auto'?'tools':next}
 function modeLabel(value){const next=normalizeMode(value);const found=TYPES.find(t=>t.mode===next);return found?found.label:next}
 function isMediaMode(value){value=normalizeMode(value);return value==='image'||value==='video'||value==='audio'}
 function isProtectedMode(value){value=normalizeMode(value);return value!=='text'&&value!=='auto'}
-function serviceForMode(value){value=normalizeMode(value);return value==='image'?'image_generation':value==='audio'?'audio_generation':value==='video'?'video_generation':''}
-function commandForMode(value){value=normalizeMode(value);if(value==='tools')return'USE TEXT';if(value==='embedding')return'USE EMBEDDING';if(value==='multimodal')return'USE MULTIMODAL';return'USE '+value.toUpperCase()}
-function parseAutoAgentCommand(value){const text=String(value||'').trim();const match=/\bstart[_\s-]*(\d{1,2})[_\s-]*(image[_\s-]*gen|image|video[_\s-]*gen|video|audio[_\s-]*gen|audio|tools?|agents?|text|reasoning)\b/i.exec(text);if(!match)return null;const count=Math.max(2,Math.min(12,Number(match[1])||0));if(count<=1)return null;const raw=match[2].replace(/[\s-]+/g,'_').toLowerCase();let mode='text',suffix='Text',label='text agents';if(raw.startsWith('image')){mode='image';suffix='Image_Gen';label='JackONNX image generator slaves'}else if(raw.startsWith('video')){mode='video';suffix='Video_Gen';label='video generator slaves'}else if(raw.startsWith('audio')){mode='audio';suffix='Audio_Gen';label='audio generator slaves'}return{count,mode,suffix,label,command:'Start_'+count+'_'+suffix}}
+function serviceForMode(value){value=normalizeMode(value);return value==='image'?'image_generation':value==='audio'?'audio_generation':value==='video'?'video_generation':value==='tools'?'agent':''}
+function commandForMode(value){value=normalizeMode(value);return'run_single:'+value}
+function parseAutoAgentCommand(value){const text=String(value||'').trim();const match=/\brun_batch[:\s-]+(text|tools|image|video|audio)[:\s-]+(\d{1,3})\b/i.exec(text);if(!match)return null;const mode=normalizeMode(match[1]);const count=Math.max(2,Math.min(AUTO_PARALLEL_BATCH_LIMIT,Number(match[2])||0));if(count<=1)return null;const suffix=autoAgentSuffixForMode(mode),label=mode==='image'?'JackONNX image generator slaves':mode==='video'?'video generator slaves':mode==='audio'?'audio generator slaves':mode==='tools'?'tool agents':'text agents';return{count,mode,suffix,label,command:'run_batch:'+mode+':'+count}}
 function autoAgentSuffixForMode(routeMode){routeMode=normalizeMode(routeMode);return routeMode==='image'?'Image_Gen':routeMode==='video'?'Video_Gen':routeMode==='audio'?'Audio_Gen':'Text'}
-function autoAgentCommandForMode(routeMode,count){count=Math.max(2,Math.min(12,Number(count)||0));return count>1?'Start_'+count+'_'+autoAgentSuffixForMode(routeMode):commandForMode(routeMode)}
-function cleanAutoCommand(value,routeMode){const agent=parseAutoAgentCommand(value);if(agent&&agent.mode!=='tools')return agent.command;const text=String(value||'').trim().toUpperCase();const legacy={GENERATE_TEXT:'USE TEXT',GENERATE_MULTIMODAL:'USE MULTIMODAL',GENERATE_IMAGE:'USE IMAGE',GENERATE_VIDEO:'USE VIDEO',GENERATE_AUDIO:'USE AUDIO',CREATE_EMBEDDING:'USE EMBEDDING',GENERATE_EMBEDDING:'USE EMBEDDING'};if(text==='USE TOOLS'||text==='TOOLS'||text==='TOOL'||text==='AGENT')return'USE TEXT';if(['USE TEXT','USE MULTIMODAL','USE IMAGE','USE VIDEO','USE AUDIO','USE EMBEDDING'].includes(text))return text;const key=text.replace(/\s+/g,'_');return legacy[key]||commandForMode(routeMode)}
-function autoRouteDecisionFromData(data,routeMode,promptText){const command=cleanAutoCommand(data&&data.command,routeMode),agent=parseAutoAgentCommand(command)||parseAutoAgentCommand(data&&data.command);const count=Number(data&&data.parallelAgents||data&&data.parallel_agents||0);let modeFromData=normalizeMode(data&&data.parallelMode||data&&data.parallel_mode||routeMode);if(modeFromData==='tools')modeFromData='text';if(agent)return Object.assign({prompt:String(promptText||'')},agent);if(count>1){const n=Math.max(2,Math.min(12,count));const suffix=modeFromData==='image'?'Image_Gen':modeFromData==='video'?'Video_Gen':modeFromData==='audio'?'Audio_Gen':'Text';return{prompt:String(promptText||''),count:n,mode:modeFromData,suffix,label:modeFromData==='image'?'JackONNX image generator slaves':modeFromData+' agents',command:'Start_'+n+'_'+suffix}}return{prompt:String(promptText||''),count:0,mode:normalizeMode(routeMode),command}}
+function autoAgentCommandForMode(routeMode,count){routeMode=normalizeMode(routeMode);count=Math.max(2,Math.min(AUTO_PARALLEL_BATCH_LIMIT,Number(count)||0));return count>1?'run_batch:'+routeMode+':'+count:commandForMode(routeMode)}
+function cleanAutoCommand(value,routeMode){const agent=parseAutoAgentCommand(value);if(agent)return agent.command;const text=String(value||'').trim();const upper=text.toUpperCase();if(/^RUN_SINGLE[:\s-]/i.test(text)||/^RUN_BATCH[:\s-]/i.test(text))return text.toLowerCase().replace(/\s+/g,':');const legacy={GENERATE_TEXT:'text',USE_TEXT:'text',GENERATE_MULTIMODAL:'multimodal',USE_MULTIMODAL:'multimodal',GENERATE_IMAGE:'image',USE_IMAGE:'image',GENERATE_VIDEO:'video',USE_VIDEO:'video',GENERATE_AUDIO:'audio',USE_AUDIO:'audio',CREATE_EMBEDDING:'embedding',GENERATE_EMEDDING:'embedding',GENERATE_EMBEDDING:'embedding',USE_EMBEDDING:'embedding'};if(upper==='USE TOOLS'||upper==='TOOLS'||upper==='TOOL'||upper==='AGENT')return commandForMode('tools');const key=upper.replace(/\s+/g,'_');return legacy[key]?commandForMode(legacy[key]):commandForMode(routeMode)}
+function autoRouteDecisionFromData(data,routeMode,promptText){const decision=data&&data.decision&&typeof data.decision==='object'?data.decision:{};const rawCommand=firstText(decision.command,data&&data.command);let command=cleanAutoCommand(rawCommand,routeMode);let modeFromData=normalizeMode(firstText(decision.mode,data&&data.parallelMode,data&&data.parallel_mode,routeMode));const count=Number(firstText(decision.count,data&&data.parallelAgents,data&&data.parallel_agents,0));const action=String(firstText(decision.action,count>1?'run_batch':'run_single')).toLowerCase();if(action==='run_batch'||count>1){const n=Math.max(2,Math.min(AUTO_PARALLEL_BATCH_LIMIT,count));if(n>1){command=autoAgentCommandForMode(modeFromData,n);const suffix=autoAgentSuffixForMode(modeFromData),label=modeFromData==='image'?'JackONNX image generator slaves':modeFromData==='video'?'video generator slaves':modeFromData==='audio'?'audio generator slaves':modeFromData==='tools'?'tool agents':modeFromData+' agents';return{prompt:String(promptText||''),count:n,mode:modeFromData,suffix,label,command,batchKind:firstText(decision.batchKind,decision.batch_kind,'')}}}return{prompt:String(promptText||''),count:0,mode:normalizeMode(routeMode),command}}
 function isModelArtifactPart(value){const text=String(value||'').trim().replace(/^[._\-/\\]+|[._\-/\\]+$/g,'').toLowerCase();if(!text)return true;return ['auth','chat','main','model','models','local','pytorch','diffusers','onnx','cuda','cpu','video','image','audio','text','vision','video_generation','image_generation','audio_generation','text_generation','complete-model','completemodel','complete-models','completemodels','gguf','stor','stor2','storage','manifest','manifest.json','config','config.json','model_index','model_index.json'].includes(text)||text.includes('complete-model')||text.includes('completemodel')||text.includes(' stay in models')||text.startsWith('standard ')||/^q[0-9]+(?:_[a-z0-9]+)+$/i.test(text)||(!/\d/.test(text)&&!text.includes('-')&&!text.includes('/')&&text.length<12)||/^(tokenizer|preprocessor|scheduler|vae|unet|text_encoder|generation_config)(\..*)?$/i.test(text)||/\.(json|txt|md|yaml|yml|lock)$/i.test(text)}
 function modelNameLooksSpecific(value){const text=String(value||'').trim().toLowerCase();return !!text&&(/(flux|stable|diffusion|sdxl|qwen|llama|mistral|gemma|phi|wan|ltx|hunyuan|whisper|embedding|instruct|claude)/i.test(text)||(/\d/.test(text)&&(text.includes('-')||text.includes('.')))||(text.includes('-')&&text.length>=12))}
 function sanitizeModelName(value){let text=String(value||'').trim().replace(/^["'`]+|["'`]+$/g,'').replace(/\\/g,'/');if(!text)return'';text=text.replace(/[?#].*$/,'').replace(/\.(gguf|safetensors|bin|onnx|json|yaml|yml|txt|md)$/i,'').replace(/^(huggingface|hf|models?|complete[-_ ]?models?|storage|stor2?)[\s._/-]+/i,'').replace(/^(lightricks|fastvideo)[\s._-]+(?=.+(\d|ltx|wan|video|image))/i,'').replace(/[\s._-]+(pytorch|diffusers|onnx|cuda|cpu|safetensors|checkpoint|weights)$/i,'').replace(/[\s._-]+q[0-9]+(?:_[a-z0-9]+)+$/i,'').replace(/[),.;:!?]+$/g,'').replace(/\s{2,}/g,' ').trim().replace(/^[._\-/\\]+|[._\-/\\]+$/g,'');return text}
@@ -13111,6 +13749,10 @@ function setModelDisabled(value,disabled){const key=normalizeModelId(value);if(!
 function currentSoloKey(){return soloModelByMode[requestMode(mode)]||''}
 function isModelSolo(value){const key=normalizeModelId(value);return !!key&&currentSoloKey()===key&&!isModelDisabled(value)}
 function clearSoloForCurrentMode(){const key=requestMode(mode);delete soloModelByMode[key];delete soloDisabledSnapshotByMode[key]}
+function rememberServerModelState(value,state){const key=normalizeModelId(value);if(!key)return;const current=serverModelSuggestionStates[key]||{};serverModelSuggestionStates[key]=Object.assign({},current,state||{},{known:true})}
+function serverModelState(value){return serverModelSuggestionStates[normalizeModelId(value)]||{}}
+function modelArrayFromValue(value){const models=[];addAutoServerCatalogModelHints(models,value);return models}
+function rememberServerModelStatesFromServer(server){if(!server)return;const online=server.isOnline!==false&&(server.hostResponding!==false||server.modelRuntimeConnected||server.lmStudioConnected||server.llmRuntimeConnected);modelArrayFromValue(server.loadedModels||server.LoadedModels).forEach(model=>rememberServerModelState(model,{online,loaded:true,enabled:true}));modelArrayFromValue(server.enabledModels||server.EnabledModels).forEach(model=>rememberServerModelState(model,{online,enabled:true}));const records=Array.isArray(server.models||server.Models)?(server.models||server.Models):[];records.forEach(model=>{const id=liveModelId(model);if(!id)return;rememberServerModelState(id,{online,loaded:readTruthy(model,['isLoaded','loaded','active','ready']),enabled:readTruthy(model,['enabled','isEnabled','web_chat_model_enabled','dynamicLoadEnabled','runtimeLoadEnabled','runtime_load','canLoad'])})});modelArrayFromValue(server.availableModels||server.AvailableModels).forEach(model=>rememberServerModelState(model,{online}))}
 function rememberServerModelSuggestions(values,replaceEmpty){const seen=new Set(),next=[];(values||[]).forEach(value=>{const display=cleanModelName(value);const key=normalizeModelId(display);if(!key||seen.has(key))return;seen.add(key);next.push(display)});if(next.length||replaceEmpty)serverModelSuggestionCache=next}
 function activeServerModelSuggestions(){const values=[];if(suggestedModel)values.push(suggestedModel);splitModels(selectedServer&&selectedServer.models||'').forEach(id=>values.push(id));if(values.length){rememberServerModelSuggestions(values);return serverModelSuggestionCache.slice()}return serverModelSuggestionCache.slice()}
 function modelFilterChanged(refresh){rememberServerModelSuggestions(activeServerModelSuggestions());selectedServer=null;selectedServerId=forcedAutoServerId||'';suggestedModel='';hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');writeAutoHistory();persistCurrentSessionState();renderModelSuggestions(document.activeElement===els.model);if(refresh)refreshStatus()}
@@ -13120,7 +13762,7 @@ function chooseModelForMode(models,value){const list=filterModelsByParams(splitM
 function requestModel(){return cleanModelName(els.model.value.trim()||suggestedModel||'')}
 function modelBaseName(id){return cleanModelName(id)}
 function modelSuggestionScore(item,q){const id=String(item.display||item.id||''),low=id.toLowerCase(),base=modelBaseName(id).toLowerCase(),needle=cleanModelName(q).toLowerCase();let score=item.source==='server'?8000000:0;score+=Number(item.downloads||0);score+=Number(item.likes||0)*2000;if(!needle)return score;if(low===needle||base===needle)score+=30000000;else if(low.startsWith(needle)||base.startsWith(needle))score+=16000000;else if(low.includes(needle))score+=3000000;else score-=100000000;return score}
-function collectModelSuggestions(){const q=modelSuggestionBrowseAll?'':els.model.value.trim(),map=new Map();function add(id,source,meta){const raw=String(id||'').trim();const display=cleanModelName(raw);if(!display||!modelMatchesParameterLimit(display,mode))return;const key=normalizeModelId(display);if(!key)return;const value=raw&&!/[\\/:]/.test(raw)&&!isModelArtifactPart(raw)?raw:display;const existing=map.get(key);if(existing){if(source==='server'){existing.source='server';existing.group='Available on SocketJack';existing.value=value||existing.value}existing.downloads=Math.max(existing.downloads||0,Number(meta&&meta.downloads||0));existing.likes=Math.max(existing.likes||0,Number(meta&&meta.likes||0));return}map.set(key,{id:value||display,value:value||display,display,raw,source,group:source==='server'?'Available on SocketJack':'Hugging Face cache',downloads:Number(meta&&meta.downloads||0),likes:Number(meta&&meta.likes||0)})}activeServerModelSuggestions().forEach(id=>add(id,'server'));hfModelCatalog.forEach(model=>add(model.modelId||model.id,'hf',model));return Array.from(map.values()).map(item=>Object.assign(item,{score:modelSuggestionScore(item,q)})).filter(item=>!q||item.source==='server'||item.score>-50000000).sort((a,b)=>(a.source==='server'?0:1)-(b.source==='server'?0:1)||b.score-a.score||a.display.localeCompare(b.display)).slice(0,36)}
+function collectModelSuggestions(){const q=modelSuggestionBrowseAll?'':els.model.value.trim(),map=new Map();function add(id,source,meta){const raw=String(id||'').trim();const display=cleanModelName(raw);if(!display||!modelMatchesParameterLimit(display,mode))return;const key=normalizeModelId(display);if(!key)return;const value=raw&&!/[\\/:]/.test(raw)&&!isModelArtifactPart(raw)?raw:display;const state=source==='server'?serverModelState(display):{};const existing=map.get(key);if(existing){if(source==='server'){existing.source='server';existing.group='Available on SocketJack';existing.value=value||existing.value;existing.state=Object.assign({},existing.state||{},state)}existing.downloads=Math.max(existing.downloads||0,Number(meta&&meta.downloads||0));existing.likes=Math.max(existing.likes||0,Number(meta&&meta.likes||0));return}map.set(key,{id:value||display,value:value||display,display,raw,source,group:source==='server'?'Available on SocketJack':'Hugging Face cache',downloads:Number(meta&&meta.downloads||0),likes:Number(meta&&meta.likes||0),state})}activeServerModelSuggestions().forEach(id=>add(id,'server'));hfModelCatalog.forEach(model=>add(model.modelId||model.id,'hf',model));return Array.from(map.values()).map(item=>Object.assign(item,{score:modelSuggestionScore(item,q)})).filter(item=>!q||item.source==='server'||item.score>-50000000).sort((a,b)=>(a.source==='server'?0:1)-(b.source==='server'?0:1)||Number(!!(b.state&&b.state.loaded))-Number(!!(a.state&&a.state.loaded))||Number(!!(b.state&&b.state.online))-Number(!!(a.state&&a.state.online))||b.score-a.score||a.display.localeCompare(b.display)).slice(0,36)}
 function hideModelSuggestions(){if(!els.modelSuggestions)return;els.modelSuggestions.hidden=true;els.model.setAttribute('aria-expanded','false');modelSuggestionIndex=-1}
 function modelSuggestionBulkItems(){return collectModelSuggestions().filter(item=>item.source==='server')}
 function pulseModelControl(node){if(!node)return;node.classList.remove('model-pop');void node.offsetWidth;node.classList.add('model-pop');setTimeout(()=>node&&node.classList&&node.classList.remove('model-pop'),360)}
@@ -13128,7 +13770,7 @@ function chooseModelSuggestion(item,node){if(!item||item.source!=='server')retur
 function enableFilteredModels(){modelSuggestionBulkItems().forEach(item=>setModelDisabled(item.value||item.display||item.id,false));clearSoloForCurrentMode();modelFilterChanged(true)}
 function disableFilteredModels(){modelSuggestionBulkItems().forEach(item=>setModelDisabled(item.value||item.display||item.id,true));clearSoloForCurrentMode();modelFilterChanged(true)}
 function soloModelSuggestion(item,node){if(!item||item.source!=='server')return;const value=item.value||item.display||item.id,key=normalizeModelId(value);if(!key)return;const modeKey=requestMode(mode),items=modelSuggestionBulkItems();if(currentSoloKey()===key){const snapshot=Array.isArray(soloDisabledSnapshotByMode[modeKey])?soloDisabledSnapshotByMode[modeKey]:null;if(snapshot){disabledAutoModels=new Set(parseDisabledModelList(JSON.stringify(snapshot)));persistDisabledModels()}else{activeServerModelSuggestions().forEach(model=>setModelDisabled(model,false));items.forEach(other=>setModelDisabled(other.value||other.display||other.id,false))}clearSoloForCurrentMode();if(mode!=='auto'&&normalizeModelId(els.model.value)===key){els.model.value='';writeAutoHistory()}pulseModelControl(node);modelSuggestionBrowseAll=false;modelFilterChanged(true);return}soloDisabledSnapshotByMode[modeKey]=disabledModelsArray();items.forEach(other=>{const otherValue=other.value||other.display||other.id;setModelDisabled(otherValue,normalizeModelId(otherValue)!==key)});soloModelByMode[modeKey]=key;if(mode!=='auto')els.model.value=value;safeStorageSet(DISABLED_MODELS_STORAGE_KEY,JSON.stringify(disabledModelsArray()));pulseModelControl(node);modelSuggestionBrowseAll=false;modelFilterChanged(true)}
-function renderModelSuggestions(open){if(!els.modelSuggestions)return;const items=collectModelSuggestions();els.modelSuggestions.textContent='';modelSuggestionIndex=Math.max(-1,Math.min(modelSuggestionIndex,items.length-1));if(items.some(item=>item.source==='server')){const tools=document.createElement('div');tools.className='model-suggestion-tools';const enable=document.createElement('button');enable.type='button';enable.className='model-list-action enable';enable.textContent='+';enable.title='Enable all models currently shown by this filter';enable.setAttribute('aria-label','Enable all shown models');enable.onmousedown=e=>e.preventDefault();enable.onclick=enableFilteredModels;const disable=document.createElement('button');disable.type='button';disable.className='model-list-action disable';disable.textContent='-';disable.title='Disable all models currently shown by this filter';disable.setAttribute('aria-label','Disable all shown models');disable.onmousedown=e=>e.preventDefault();disable.onclick=disableFilteredModels;tools.append(enable,disable);els.modelSuggestions.appendChild(tools)}let lastGroup='';items.forEach((item,index)=>{if(item.group!==lastGroup){lastGroup=item.group;const group=document.createElement('div');group.className='model-suggestion-group';group.textContent=lastGroup;els.modelSuggestions.appendChild(group)}const value=item.value||item.display||item.id;const disabled=isModelDisabled(value);const solo=isModelSolo(value);const row=document.createElement('div');row.tabIndex=item.source==='server'?0:-1;row.className='model-suggestion '+item.source+(item.source==='server'?'':' offline')+(index===modelSuggestionIndex?' active':'')+(disabled?' disabled-model':'')+(solo?' soloed':'');row.setAttribute('role','option');row.setAttribute('aria-selected',(!disabled&&item.source==='server')?'true':'false');if(item.source!=='server')row.setAttribute('aria-disabled','true');row.innerHTML='<strong></strong><span></span>';row.querySelector('strong').textContent=item.display||item.id;row.querySelector('span').textContent=item.source!=='server'?'offline':solo?'solo':disabled?'disabled':'enabled';row.onmousedown=e=>e.preventDefault();if(item.source==='server'){row.title=disabled?'Click to enable this model for Auto.':'Click to disable this model from Auto.';row.onclick=()=>chooseModelSuggestion(item,row);row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();chooseModelSuggestion(item,row)}};const soloButton=document.createElement('button');soloButton.type='button';soloButton.className='model-solo'+(solo?' active':'');soloButton.textContent='S';soloButton.title='Solo this model for '+modeLabel(requestMode(mode));soloButton.setAttribute('aria-label','Solo '+(item.display||item.id));soloButton.onmousedown=e=>e.preventDefault();soloButton.onclick=e=>{e.stopPropagation();soloModelSuggestion(item,soloButton)};row.appendChild(soloButton)}els.modelSuggestions.appendChild(row)});const show=(open||document.activeElement===els.model)&&items.length>0;els.modelSuggestions.hidden=!show;els.model.setAttribute('aria-expanded',show?'true':'false');renderAdvancedSummary()}
+function renderModelSuggestions(open){if(!els.modelSuggestions)return;const items=collectModelSuggestions();els.modelSuggestions.textContent='';modelSuggestionIndex=Math.max(-1,Math.min(modelSuggestionIndex,items.length-1));if(items.some(item=>item.source==='server')){const tools=document.createElement('div');tools.className='model-suggestion-tools';const enable=document.createElement('button');enable.type='button';enable.className='model-list-action enable';enable.textContent='+';enable.title='Enable all models currently shown by this filter';enable.setAttribute('aria-label','Enable all shown models');enable.onmousedown=e=>e.preventDefault();enable.onclick=enableFilteredModels;const disable=document.createElement('button');disable.type='button';disable.className='model-list-action disable';disable.textContent='-';disable.title='Disable all models currently shown by this filter';disable.setAttribute('aria-label','Disable all shown models');disable.onmousedown=e=>e.preventDefault();disable.onclick=disableFilteredModels;tools.append(enable,disable);els.modelSuggestions.appendChild(tools)}let lastGroup='';items.forEach((item,index)=>{if(item.group!==lastGroup){lastGroup=item.group;const group=document.createElement('div');group.className='model-suggestion-group';group.textContent=lastGroup;els.modelSuggestions.appendChild(group)}const value=item.value||item.display||item.id;const disabled=isModelDisabled(value);const solo=isModelSolo(value);const state=item.state||{};const loaded=!!state.loaded,online=!!state.online,enabled=!!state.enabled||loaded;const row=document.createElement('div');row.tabIndex=item.source==='server'?0:-1;row.className='model-suggestion '+item.source+(item.source==='server'?'':' offline')+(index===modelSuggestionIndex?' active':'')+(disabled?' disabled-model':'')+(solo?' soloed':'')+(online?' online-model':'')+(loaded?' loaded-model':'');row.setAttribute('role','option');row.setAttribute('aria-selected',((solo||!disabled)&&item.source==='server')?'true':'false');if(item.source!=='server')row.setAttribute('aria-disabled','true');row.innerHTML='<strong></strong><span></span>';row.querySelector('strong').textContent=item.display||item.id;row.querySelector('span').textContent=item.source!=='server'?'offline':solo?'solo':disabled?'disabled':loaded?'loaded':online?'online':enabled?'enabled':'available';row.onmousedown=e=>e.preventDefault();if(item.source==='server'){row.title=solo?'Click to unsolo this model for Auto.':'Click to solo this model for Auto.';row.onclick=()=>soloModelSuggestion(item,row);row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();soloModelSuggestion(item,row)}};const actionButton=document.createElement('button');actionButton.type='button';const disableAction=!disabled;actionButton.className='model-solo '+(disableAction?'disable-action':'enable-action');actionButton.textContent=disableAction?'D':'E';actionButton.title=disableAction?'Disable this model for Auto.':'Enable this model for Auto.';actionButton.setAttribute('aria-label',(disableAction?'Disable ':'Enable ')+(item.display||item.id));actionButton.onmousedown=e=>e.preventDefault();actionButton.onclick=e=>{e.stopPropagation();chooseModelSuggestion(item,actionButton)};row.appendChild(actionButton)}els.modelSuggestions.appendChild(row)});const show=(open||document.activeElement===els.model)&&items.length>0;els.modelSuggestions.hidden=!show;els.model.setAttribute('aria-expanded',show?'true':'false');renderAdvancedSummary()}
 async function loadHuggingFaceModelCatalog(){const requestId=++modelCatalogRequest,hfMode=requestMode(mode);try{const p=new URLSearchParams({mode:hfMode,limit:'500'});const r=await fetch('/auto/models?'+p.toString(),{cache:'no-store',credentials:'include'});const data=await r.json();if(requestId!==modelCatalogRequest)return;if(r.ok&&data&&data.ok){hfModelCatalog=Array.isArray(data.models)?data.models:[];hfModelCatalogMode=hfMode;renderModelSuggestions(false)}}catch{}}
 function moveModelSuggestion(delta){const items=collectModelSuggestions();if(!items.length)return;modelSuggestionIndex=(modelSuggestionIndex+delta+items.length)%items.length;renderModelSuggestions(true)}
 function readCookie(name){return document.cookie.split(';').map(x=>x.trim()).reduce((found,part)=>{if(found)return found;const eq=part.indexOf('=');if(eq<0)return'';return part.slice(0,eq)===name?decodeURIComponent(part.slice(eq+1)):''},'')}
@@ -13137,11 +13779,12 @@ function deleteCookie(name){document.cookie=name+'=; Path=/; Max-Age=0; SameSite
 function safeStorageGet(name){for(const key of ['localStorage','sessionStorage']){try{const store=window[key];const value=store&&store.getItem(name);if(value)return value}catch{}}return''}
 function safeStorageSet(name,value){let saved=false;for(const key of ['localStorage','sessionStorage']){try{const store=window[key];if(store){store.setItem(name,value);saved=true}}catch{}}return saved}
 function safeStorageRemove(name){for(const key of ['localStorage','sessionStorage']){try{const store=window[key];if(store)store.removeItem(name)}catch{}}}
+function clearAutoAuthToken(){safeStorageRemove('SocketJackAccessToken');deleteCookie('SocketJackAuth')}
 function readToken(){return safeStorageGet('SocketJackAccessToken')||readCookie('SocketJackAuth')||''}
 function saveTokenFromUrl(){const token=qs.get('socketjack_auth')||qs.get('access_token')||qs.get('token')||'';if(!token)return;safeStorageSet('SocketJackAccessToken',token);writeCookie('SocketJackAuth',token,1);qs.delete('socketjack_auth');qs.delete('access_token');qs.delete('token');const next=location.pathname+(qs.toString()?'?'+qs.toString():'');history.replaceState(null,'',next)}
 function authHeaders(extra){const headers=Object.assign({},extra||{});const token=readToken();const user=readCookie('SocketJackLoginName');if(token)headers.Authorization='Bearer '+token;if(user)headers['X-SocketJack-User']=user;return headers}
-function loginUrl(){return '/Login?returnUrl='+encodeURIComponent(location.pathname+location.search)}
-function hasAutoAuth(){return !!readToken()||!!(authState&&authState.authenticated)}
+function loginUrl(){return '/login?returnUrl='+encodeURIComponent(location.pathname+location.search)}
+function hasAutoAuth(){return !!(authState&&authState.authenticated)||(!(authState&&authState.known&&authState.authenticated===false)&&!!readToken())}
 function storePendingAutoPrompt(prompt){prompt=String(prompt||'').trim();if(!prompt)return;try{writeAutoHistory()}catch{}try{sessionStorage.setItem(PENDING_PROMPT_STORAGE_KEY,JSON.stringify({prompt,sessionId,mode,originMode,autoPoolEnabled,autoMinParamsB,autoMaxParamsB,premiumModelsEnabled,model:els.model&&els.model.value||'',created:Date.now()}))}catch{}}
 function clearPendingAutoPrompt(){try{sessionStorage.removeItem(PENDING_PROMPT_STORAGE_KEY)}catch{}}
 function readPendingAutoPrompt(){try{const raw=sessionStorage.getItem(PENDING_PROMPT_STORAGE_KEY);if(!raw)return null;const data=JSON.parse(raw);const prompt=String(data&&data.prompt||'').trim();if(!prompt||Date.now()-Number(data.created||0)>30*60*1000){clearPendingAutoPrompt();return null}return Object.assign({},data,{prompt})}catch{clearPendingAutoPrompt();return null}}
@@ -13153,11 +13796,11 @@ function urlPromptMatchesPending(pending){return !!(pending&&urlAutoRunPrompt&&n
 function transcriptHasRecentUserPrompt(prompt){const wanted=normalizePromptForDedupe(prompt);return !!wanted&&transcript.slice(-8).some(item=>item&&item.role==='user'&&normalizePromptForDedupe(item.content)===wanted)}
 function resumePendingAutoPrompt(){const pending=readPendingAutoPrompt();if(!pending||!hasAutoAuth()||hasActiveAutoRun())return;if(urlPromptMatchesPending(pending)){clearPendingAutoPrompt();return}clearPendingAutoPrompt();applyPendingAutoPromptState(pending);if(els.prompt)els.prompt.value=pending.prompt;updateAutoSendButton();window.setTimeout(run,0)}
 function rememberAutoLoginUser(username,remember){username=String(username||'').trim();if(username)writeCookie('SocketJackLoginName',username,remember?365:1);else if(!remember)deleteCookie('SocketJackLoginName')}
-function applyAuthSnapshot(data,remember){if(!data)return;const token=String(data.accessToken||data.access_token||data.token||'');if(token){safeStorageSet('SocketJackAccessToken',token);writeCookie('SocketJackAuth',token,remember?365:1)}const user=String(data.username||data.userName||'').trim();if(user)rememberAutoLoginUser(user,remember!==false);if(Object.prototype.hasOwnProperty.call(data,'authenticated')){authState.known=true;authState.authenticated=!!data.authenticated;authState.username=user||authState.username||''}else if(token){authState.known=true;authState.authenticated=true;authState.username=user||authState.username||''}setAuthStatus()}
+function applyAuthSnapshot(data,remember){if(!data)return;const hasAuthenticated=Object.prototype.hasOwnProperty.call(data,'authenticated');const token=String(data.accessToken||data.access_token||data.token||'');if(hasAuthenticated&&data.authenticated===false){clearAutoAuthToken()}else if(token){safeStorageSet('SocketJackAccessToken',token);writeCookie('SocketJackAuth',token,remember?365:1)}const user=String(data.username||data.userName||'').trim();if(user)rememberAutoLoginUser(user,remember!==false);if(hasAuthenticated){authState.known=true;authState.authenticated=!!data.authenticated;authState.username=authState.authenticated?(user||authState.username||''):''}else if(token){authState.known=true;authState.authenticated=true;authState.username=user||authState.username||''}setAuthStatus()}
 function closeAutoLogin(success){if(els.autoLoginModal)els.autoLoginModal.hidden=true;const resolver=autoLoginResolver;autoLoginResolver=null;if(resolver)resolver(!!success)}
-function openAutoLogin(reason){if(hasAutoAuth())return Promise.resolve(true);if(els.autoLoginMessage)els.autoLoginMessage.textContent=reason||'Sign in to continue this Auto request.';if(els.autoLoginError)els.autoLoginError.textContent='';if(els.autoLoginFullPage)els.autoLoginFullPage.href=loginUrl();if(els.autoLoginModal)els.autoLoginModal.hidden=false;return new Promise(resolve=>{autoLoginResolver=resolve;setTimeout(()=>{const remembered=readCookie('SocketJackLoginName');if(els.autoLoginUser&&!els.autoLoginUser.value&&remembered)els.autoLoginUser.value=remembered;(els.autoLoginUser&&els.autoLoginUser.value?els.autoLoginPass:els.autoLoginUser)?.focus()},30)})}
-async function submitAutoLogin(event){event&&event.preventDefault();if(!els.autoLoginForm)return;const submit=document.getElementById('autoLoginSubmit');if(els.autoLoginError)els.autoLoginError.textContent='';if(submit)submit.disabled=true;const remember=!!(els.autoLoginRemember&&els.autoLoginRemember.checked);try{const response=await fetch('/api/web-auth/login',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:els.autoLoginUser?els.autoLoginUser.value:'',password:els.autoLoginPass?els.autoLoginPass.value:'',remember})});const data=await readLooseJsonResponse(response);const token=data&&(data.accessToken||data.access_token||data.token);if(!response.ok||!(data&& (data.ok||data.authenticated||token)))throw new Error(data&&data.error||('HTTP '+response.status));applyAuthSnapshot(Object.assign({},data,{authenticated:true}),remember);if(els.autoLoginPass)els.autoLoginPass.value='';closeAutoLogin(true);await loadSessionUsage();loadAutoSessions();loadSessionFiles();refreshStatus()}catch(e){safeStorageRemove('SocketJackAccessToken');deleteCookie('SocketJackAuth');authState.known=true;authState.authenticated=false;setAuthStatus();if(els.autoLoginError)els.autoLoginError.textContent=e.message||String(e)}finally{if(submit)submit.disabled=false}}
-async function ensureAutoAuth(value,reason){const requires=value===true||isProtectedMode(value||mode);if(!requires)return true;const data=await loadSessionUsage();if(!!(data&&data.authenticated)){authState.known=true;authState.authenticated=true;setAuthStatus();return true}if(readToken()&&!(data&&data.authenticated===false)){authState.known=true;authState.authenticated=true;setAuthStatus();return true}return await openAutoLogin(reason||'Sign in to continue this Auto request.')}
+function openAutoLogin(reason,force){if(!force&&hasAutoAuth())return Promise.resolve(true);if(els.autoLoginMessage)els.autoLoginMessage.textContent=reason||'Sign in to continue this Auto request.';if(els.autoLoginError)els.autoLoginError.textContent='';if(els.autoLoginFullPage)els.autoLoginFullPage.href=loginUrl();if(els.autoLoginModal)els.autoLoginModal.hidden=false;return new Promise(resolve=>{autoLoginResolver=resolve;setTimeout(()=>{const remembered=readCookie('SocketJackLoginName');if(els.autoLoginUser&&!els.autoLoginUser.value&&remembered)els.autoLoginUser.value=remembered;(els.autoLoginUser&&els.autoLoginUser.value?els.autoLoginPass:els.autoLoginUser)?.focus()},30)})}
+async function submitAutoLogin(event){event&&event.preventDefault();if(!els.autoLoginForm)return;const submit=document.getElementById('autoLoginSubmit');if(els.autoLoginError)els.autoLoginError.textContent='';if(submit)submit.disabled=true;const remember=!!(els.autoLoginRemember&&els.autoLoginRemember.checked);try{const response=await fetch('/api/web-auth/login',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:els.autoLoginUser?els.autoLoginUser.value:'',password:els.autoLoginPass?els.autoLoginPass.value:'',remember})});const data=await readLooseJsonResponse(response);const token=data&&(data.accessToken||data.access_token||data.token);if(!response.ok||!(data&& (data.ok||data.authenticated||token)))throw new Error(data&&data.error||('HTTP '+response.status));applyAuthSnapshot(Object.assign({},data,{authenticated:true}),remember);if(els.autoLoginPass)els.autoLoginPass.value='';closeAutoLogin(true);await loadSessionUsage();loadAutoSessions();loadSessionFiles();refreshStatus()}catch(e){clearAutoAuthToken();authState.known=true;authState.authenticated=false;setAuthStatus();if(els.autoLoginError)els.autoLoginError.textContent=e.message||String(e)}finally{if(submit)submit.disabled=false}}
+async function ensureAutoAuth(value,reason){const requires=value===true||isProtectedMode(value||mode);if(!requires)return true;const data=await loadSessionUsage();if(!!(data&&data.authenticated)){authState.known=true;authState.authenticated=true;setAuthStatus();return true}if(authState&&authState.authenticated){setAuthStatus();return true}return await openAutoLogin(reason||'Sign in to continue this Auto request.',true)}
 function setAuthStatus(){const authed=hasAutoAuth(),protectedMode=isProtectedMode(mode);els.auth.textContent=authed?'Signed In':(protectedMode?'Login required':'Guest');els.auth.className='auth-status '+(authed?'good':(protectedMode?'warn':''));els.auth.href=authed?'#':loginUrl();els.auth.title=authed?'Signed In':(mode==='auto'?'Login to save sessions and use premium models':'Login to use Auto '+mode);renderTokenMeter();updateFileUploadVisibility()}
 function writeAutoHistory(){const p=new URLSearchParams();p.set('mode',mode);p.set('origin',originMode);const server=String(selectedServerId||forcedAutoServerId||'').trim();if(server)p.set('server',server);if(autoPoolEnabled)p.set('pool','1');if(autoMinParamsB>0)p.set('minParamsB',String(autoMinParamsB));if(autoMaxParamsB>0)p.set('maxParamsB',String(autoMaxParamsB));if(premiumModelsEnabled)p.set('premiumModels','true');const model=cleanModelName(els.model.value.trim());if(model)p.set('model',model);if(sessionId)p.set('sessionId',sessionId);history.replaceState(null,'','/Auto?'+p.toString())}
 function applyAutoRoutingParams(p){p.set('origin',originMode);p.set('pool',autoPoolEnabled?'true':'false');if(autoMinParamsB>0)p.set('minParamsB',String(autoMinParamsB));if(autoMaxParamsB>0)p.set('maxParamsB',String(autoMaxParamsB));const disabled=disabledModelsArray();if(disabled.length)p.set('disabledModels',disabled.join(','));return p}
@@ -13168,34 +13811,38 @@ function releaseForcedAutoServerIfSuperseded(data){if(!forcedAutoServerId||!(dat
 function apiUrl(path,extra,overrideMode,options){options=options||{};const p=applyAutoRoutingParams(new URLSearchParams(extra||{}));p.set('mode',requestMode(overrideMode||mode));p.set('premiumModels',premiumModelsEnabled?'true':'false');const rawModel=options.model!=null?options.model:(els.model&&els.model.value||'');const model=options.omitModel?'':cleanModelName(String(rawModel).trim());if(model&&mode!=='auto')p.set('model',model);if(selectedServerId&&!hasExplicitServerParam(p))p.set('server_id',selectedServerId);return path+'?'+p.toString()}
 function lockedApiUrl(path,extra,overrideMode){const p=applyAutoRoutingParams(new URLSearchParams(extra||{}));const activeMode=requestMode(overrideMode||mode);p.set('mode',activeMode);p.set('premiumModels',premiumModelsEnabled?'true':'false');const model=requestModel();if(model&&mode!=='auto')p.set('model',model);if(selectedServerId&&!hasExplicitServerParam(p))p.set('server_id',selectedServerId);return path+'?'+p.toString()}
 function scheduledAutoApiUrl(path,extra,overrideMode,options){options=options||{};const p=applyAutoRoutingParams(new URLSearchParams(extra||{}));const activeMode=requestMode(overrideMode||mode);p.set('mode',activeMode);p.set('premiumModels',premiumModelsEnabled?'true':'false');if(options.forcePool)p.set('pool','true');const model=requestModel();if(model&&mode!=='auto')p.set('model',model);const useSelectedServer=options.useSelectedServer!==false;if(useSelectedServer&&selectedServerId&&!hasExplicitServerParam(p))p.set('server_id',selectedServerId);else if(forcedAutoServerId&&!hasExplicitServerParam(p))p.set('server_id',forcedAutoServerId);return path+'?'+p.toString()}
-function serverCatalogUrl(overrideMode){const activeMode=requestMode(overrideMode||mode);const p=applyAutoRoutingParams(new URLSearchParams({mode:activeMode,premiumModels:premiumModelsEnabled?'true':'false',endpoint:'/api/models'}));if(selectedServerId)p.set('server_id',selectedServerId);return'/auto/api?'+p.toString()}
+function serverCatalogUrl(overrideMode){const activeMode=requestMode(overrideMode||mode);const p=applyAutoRoutingParams(new URLSearchParams({mode:activeMode,premiumModels:premiumModelsEnabled?'true':'false'}));if(selectedServerId)p.set('server_id',selectedServerId);return'/auto/model-cache?'+p.toString()}
 function setServerButton(label,url,title){if(!els.server)return;label=String(label||'Selecting...').trim()||'Selecting...';url=String(url||'').trim();els.server.textContent='';const text=document.createElement('span');text.textContent=label;const arrow=document.createElement('span');arrow.className='server-arrow';arrow.setAttribute('aria-hidden','true');arrow.textContent='->';els.server.append(text,arrow);if(url){els.server.href=appendAutoSessionUrl(url,sessionId);els.server.removeAttribute('aria-disabled');els.server.target='_blank';els.server.rel='noopener noreferrer';els.server.title=title||('Open current Auto session in '+label)}else{els.server.href='#';els.server.setAttribute('aria-disabled','true');els.server.removeAttribute('target');els.server.removeAttribute('rel');els.server.title=title||label}if(els.continueServer){els.continueServer.hidden=true;els.continueServer.removeAttribute('href')}}
 function hideContinueServer(label){setServerButton(label||'Selecting...','','')}
 function setContinueServer(server){const title=String(server&&server.displayTitle||server&&server.title||server&&server.id||'server').trim()||'server';const url=String(server&&server.continueUrl||server&&server.launchUrl||'').trim();if(!url){hideContinueServer(title);return}setServerButton(title,url,'Open current Auto session in '+title)}
-function promptPlaceholderForMode(value){value=normalizeMode(value);if(value==='auto')return'Describe what you want. Auto will choose text, image, video, audio, tools, or embeddings.';if(value==='image')return'Generate rainbows in a grassy field';if(value==='video')return'Generate a cinematic rainy city street';if(value==='audio')return'Generate traffic noise';if(value==='tools')return'Ask SocketJack AI to use tools for this task';if(value==='embedding')return'Embed this text for semantic search';if(value==='multimodal')return'Describe the image, audio, video, or text task';return'Ask SocketJack AI anything...'}
+function promptPlaceholderForMode(value){value=normalizeMode(value);if(value==='auto')return'Ask SocketJack AI anything. Tools are the default route.';if(value==='image')return'Generate rainbows in a grassy field';if(value==='video')return'Generate a cinematic rainy city street';if(value==='audio')return'Generate traffic noise';if(value==='tools')return'Ask SocketJack AI anything, including media, files, browser, or research work';if(value==='embedding')return'Embed this text for semantic search';if(value==='multimodal')return'Describe the image, audio, video, or text task';return'Ask SocketJack AI anything...'}
 function updatePromptPlaceholder(){els.prompt.placeholder=promptPlaceholderForMode(mode)}
 function formatInt(value){const n=Number(value||0);return Number.isFinite(n)?Math.max(0,Math.floor(n)).toLocaleString():'0'}
 function normalizeUsage(snapshot){if(!snapshot||typeof snapshot!=='object')return{known:false,tokenLimit:0,tokensUsed:0,tokensRemaining:0,unlimited:false,ownerKey:''};const ownerKey=String(snapshot.ownerKey||'').trim();const hasLimit=snapshot.tokenLimit!=null&&snapshot.tokenLimit!=='';const hasUsed=snapshot.tokensUsed!=null&&snapshot.tokensUsed!=='';const hasRemaining=snapshot.tokensRemaining!=null&&snapshot.tokensRemaining!=='';const hasUnlimited=snapshot.unlimited===true||snapshot.tokenUnlimited===true;const limit=Math.max(0,Number(snapshot.tokenLimit||0));const used=Math.max(0,Number(snapshot.tokensUsed||0));const unlimited=hasUnlimited||limit<=0&&!!ownerKey;const remaining=unlimited?0:Math.max(0,Number(snapshot.tokensRemaining!=null?snapshot.tokensRemaining:limit-used));const known=!!(ownerKey||hasUnlimited||hasLimit||hasUsed||hasRemaining);return{known,tokenLimit:limit,tokensUsed:used,tokensRemaining:remaining,unlimited,ownerKey}}
 function currentPromptIsPremium(){return !!(premiumModelsEnabled&&selectedServer&&(selectedServer.premium||selectedServer.requiresPayment))}
 function estimatedPromptTokens(){return currentPromptIsPremium()?Math.max(1,Number(selectedServer.estimatedPromptTokens||1)):0}
 function premiumCanBeEnabled(){if(!hasAutoAuth())return false;if(!usageState)return true;const usage=normalizeUsage(usageState);if(!usage.known)return true;return !!(usage.unlimited||usage.tokensRemaining>0)}
-function renderTokenMeter(){const usage=normalizeUsage(usageState);let percent=0;if(usage.known){if(usage.unlimited)percent=100;else if(usage.tokenLimit>0)percent=Math.max(0,Math.min(100,(usage.tokensRemaining/usage.tokenLimit)*100))}if(usageState&&usage.known&&!premiumCanBeEnabled()&&premiumModelsEnabled){premiumModelsEnabled=false;safeStorageSet(PREMIUM_STORAGE_KEY,'0')}els.tokenFill.style.width=percent.toFixed(2)+'%';els.tokenText.textContent=usage.known?'Tokens left: '+(usage.unlimited?'Unlimited':formatInt(usage.tokensRemaining)):(hasAutoAuth()?'Tokens left: checking':'Tokens: sign in');els.tokenCost.textContent='';els.promptCost.textContent='';els.premiumNote.textContent='';if(els.premium){const can=!!premiumCanBeEnabled();els.premium.checked=premiumModelsEnabled&&can;els.premium.disabled=!can;const label=els.premium.closest('.premium-switch');if(label){label.classList.toggle('disabled',!can);label.title=can?'Use token-backed premium Auto servers when available.':'Premium models require a signed-in account with tokens.'}}}
+function renderTokenMeter(){const usage=normalizeUsage(usageState);let percent=0;if(usage.known){if(usage.unlimited)percent=100;else if(usage.tokenLimit>0)percent=Math.max(0,Math.min(100,(usage.tokensRemaining/usage.tokenLimit)*100))}if(usageState&&usage.known&&!premiumCanBeEnabled()&&premiumModelsEnabled){premiumModelsEnabled=false;safeStorageSet(PREMIUM_STORAGE_KEY,'0')}els.tokenFill.style.setProperty('--token-progress',percent.toFixed(2)+'%');els.tokenText.textContent=usage.known?'Tokens left: '+(usage.unlimited?'Unlimited':formatInt(usage.tokensRemaining)):(hasAutoAuth()?'Tokens left: checking':'Tokens: sign in');els.tokenCost.textContent='';els.promptCost.textContent='';els.premiumNote.textContent='';if(els.premium){const can=!!premiumCanBeEnabled();els.premium.checked=premiumModelsEnabled&&can;els.premium.disabled=!can;const label=els.premium.closest('.premium-switch');if(label){label.classList.toggle('disabled',!can);label.title=can?'Use token-backed premium Auto servers when available.':'Premium models require a signed-in account with tokens.'}}}
 function showTokenLoss(tokens){tokens=Math.max(0,Math.floor(Number(tokens||0)));if(!tokens)return;window.clearTimeout(tokenToastTimer);els.tokenDelta.hidden=false;els.tokenDelta.textContent='-'+formatInt(tokens);els.tokenDelta.classList.add('visible');tokenToastTimer=window.setTimeout(()=>{els.tokenDelta.classList.remove('visible');window.setTimeout(()=>{els.tokenDelta.hidden=true},240)},1800)}
 function applyUsageSnapshot(snapshot){const next=normalizeUsage(snapshot);if(!next.known){const previous=normalizeUsage(usageState);if(hasAutoAuth()&&previous.known)return;usageState=null;renderTokenMeter();return}const previous=normalizeUsage(usageState);if(hasAutoAuth()&&previous.known&&previous.ownerKey&&!next.ownerKey)return;usageState=next;renderTokenMeter()}
-async function loadSessionUsage(beforeUsed,showLoss){try{const r=await fetch('/api/web-auth/session',{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();if(data&&data.authenticated===false){safeStorageRemove('SocketJackAccessToken');deleteCookie('SocketJackAuth');authState.known=true;authState.authenticated=false}applyAuthSnapshot(data);if(data&&data.usage){const next=normalizeUsage(data.usage);if(showLoss&&usageState){const previous=Number(beforeUsed!=null?beforeUsed:usageState.tokensUsed||0);const delta=Math.max(0,next.tokensUsed-previous);if(delta>0)showTokenLoss(delta)}applyUsageSnapshot(next)}return data}catch{return null}}
+async function loadSessionUsage(beforeUsed,showLoss){try{const r=await fetch('/api/web-auth/session',{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();if(data&&data.authenticated===false){authState.known=true;authState.authenticated=false}applyAuthSnapshot(data);if(data&&data.usage){const next=normalizeUsage(data.usage);if(showLoss&&usageState){const previous=Number(beforeUsed!=null?beforeUsed:usageState.tokensUsed||0);const delta=Math.max(0,next.tokensUsed-previous);if(delta>0)showTokenLoss(delta)}applyUsageSnapshot(next)}return data}catch{return null}}
 function consumeUsageEvents(events,showLoss){let shown=false;(events||[]).forEach(e=>{if(!e||typeof e!=='object')return;const hasUsage=e.type==='usage'||e.tokensUsed!=null||e.tokenLimit!=null||e.tokensRemaining!=null;if(!hasUsage)return;const delta=Math.max(0,Number(e.tokenDelta||0));applyUsageSnapshot({tokenLimit:e.tokenLimit,tokensUsed:e.tokensUsed,tokensRemaining:e.tokensRemaining,unlimited:e.tokenUnlimited||e.unlimited,ownerKey:e.ownerKey});if(showLoss&&delta>0){showTokenLoss(delta);shown=true}});return shown}
-async function buyTokens(event){event&&event.preventDefault();if(!await ensureAutoAuth(true,'Sign in before buying SocketJack AI tokens.'))return;try{const productsResponse=await fetch('/api/web-auth/token-products',{cache:'no-store',credentials:'include',headers:authHeaders()});const productsData=await productsResponse.json();const product=(productsData.products||[]).find(p=>p&&p.enabled!==false)||null;if(!product)throw new Error('No token products are configured.');const checkoutResponse=await fetch('/api/web-auth/checkout',{method:'POST',credentials:'include',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({productId:product.productId||product.id||product.priceId,returnUrl:location.href})});const checkoutData=await checkoutResponse.json();if(!checkoutResponse.ok||!checkoutData.ok)throw new Error(checkoutData.error||('HTTP '+checkoutResponse.status));if(checkoutData.url){window.location.href=checkoutData.url;return}throw new Error('Checkout URL was not returned.')}catch(e){els.tokenCost.textContent='Buy tokens failed: '+(e.message||e)}}
+function openCheckoutTabPlaceholder(){try{const tab=window.open('about:blank','_blank');if(tab){try{tab.opener=null;tab.document.title='SocketJack Checkout';tab.document.body.style.cssText='margin:0;min-height:100vh;display:grid;place-items:center;background:#050914;color:#eaffff;font:15px/1.5 system-ui,sans-serif';tab.document.body.textContent='Opening SocketJack checkout...'}catch{}}return tab}catch{return null}}
+function navigateCheckoutTab(tab,url){if(!url)return false;try{if(tab&&!tab.closed){tab.location.href=url;return true}}catch{}try{return !!window.open(url,'_blank','noopener,noreferrer')}catch{}return openStripeCheckoutAtTopLevel(url)}
+async function buyTokens(event){event&&event.preventDefault();let checkoutTab=null;if(hasAutoAuth())checkoutTab=openCheckoutTabPlaceholder();if(!await ensureAutoAuth(true,'Sign in before buying SocketJack AI tokens.')){try{if(checkoutTab&&!checkoutTab.closed)checkoutTab.close()}catch{}return}if(!checkoutTab)checkoutTab=openCheckoutTabPlaceholder();try{const productsResponse=await fetch('/api/web-auth/token-products',{cache:'no-store',credentials:'include',headers:authHeaders()});const productsData=await readLooseJsonResponse(productsResponse);if(!productsResponse.ok||productsData&&productsData.ok===false)throw new Error(productsData&&productsData.error||('HTTP '+productsResponse.status));const product=(productsData.products||[]).find(p=>p&&p.enabled!==false)||null;if(!product)throw new Error('No token products are configured.');const checkoutResponse=await fetch('/api/web-auth/checkout',{method:'POST',credentials:'include',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({productId:product.productId||product.id||product.priceId,returnUrl:location.href})});const checkoutData=await readLooseJsonResponse(checkoutResponse);if(!checkoutResponse.ok||!checkoutData.ok)throw new Error(checkoutData.error||('HTTP '+checkoutResponse.status));if(checkoutData.url){navigateCheckoutTab(checkoutTab,checkoutData.url);els.tokenCost.textContent='Checkout opened in a new tab.';return}throw new Error('Checkout URL was not returned.')}catch(e){try{if(checkoutTab&&!checkoutTab.closed)checkoutTab.close()}catch{}els.tokenCost.textContent='Buy tokens failed: '+(e.message||e)}}
 function resetAutoRoutingTarget(clearModel){suggestedModel='';selectedServer=null;selectedServerId=forcedAutoServerId||'';if(clearModel&&els.model)els.model.value='';els.model.placeholder='Model id';hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');hideModelSuggestions()}
 function renderOriginModes(){if(els.originModes){els.originModes.textContent='';const current=ORIGIN_TYPES.find(t=>t.mode===originMode)||ORIGIN_TYPES[0];const next=ORIGIN_TYPES.find(t=>t.mode!==originMode)||current;const b=document.createElement('button');b.type='button';b.textContent='GPU Origin: '+(current&&current.label||originMode);b.title=(current&&current.tip||'Toggle GPU origin policy')+' Click to switch to '+(next&&next.label||'the other origin mode')+'.';b.setAttribute('aria-label',b.title);b.className='active';b.setAttribute('aria-pressed','true');b.onclick=()=>{originMode=next&&next.mode?next.mode:(originMode==='hybrid'?'same-origin':'hybrid');safeStorageSet(ORIGIN_STORAGE_KEY,originMode);resetAutoRoutingTarget();writeAutoHistory();renderOriginModes();refreshStatus()};els.originModes.appendChild(b)}if(els.poolModes){els.poolModes.textContent='';const current=POOL_TYPES.find(t=>t.enabled===autoPoolEnabled)||POOL_TYPES[0];const next=POOL_TYPES.find(t=>t.enabled!==autoPoolEnabled)||current;const b=document.createElement('button');b.type='button';b.textContent='Pooling: '+(current&&current.label|| (autoPoolEnabled?'On':'Off'));b.title=(current&&current.tip||'Toggle pooling')+' Click to switch to '+(next&&next.label||'the other pooling mode')+'.';b.setAttribute('aria-label',b.title);b.className=autoPoolEnabled?'active':'';b.setAttribute('aria-pressed',autoPoolEnabled?'true':'false');b.onclick=()=>{autoPoolEnabled=next?!!next.enabled:!autoPoolEnabled;safeStorageSet(POOL_STORAGE_KEY,autoPoolEnabled?'1':'0');resetAutoRoutingTarget();writeAutoHistory();renderOriginModes();refreshStatus()};els.poolModes.appendChild(b)}}
 function addAutoServerCatalogModelHints(values,value){if(value==null)return;if(Array.isArray(value)){value.forEach(item=>addAutoServerCatalogModelHints(values,item));return}if(typeof value==='object'){['id','key','modelId','model_id','model','name','displayName','display_name','ModelId','Model','Name','DisplayName'].forEach(name=>addAutoServerCatalogModelHints(values,value[name]));['models','Models','availableModels','AvailableModels','loadedModels','LoadedModels','enabledModels','EnabledModels','modelCapabilities','ModelCapabilities','modelBenchmarks','ModelBenchmarks','data','Data','items','Items'].forEach(name=>addAutoServerCatalogModelHints(values,value[name]));return}const text=String(value||'').trim();if(!text)return;if((text[0]==='['||text[0]==='{')&&text.length<250000){try{addAutoServerCatalogModelHints(values,JSON.parse(text));return}catch{}}splitModels(text).forEach(model=>values.push(model))}
-function rememberAutoServerCatalogModels(data,targetMode){const values=[];(Array.isArray(data&&data.servers)?data.servers:[]).forEach(server=>{['models','Models','availableModels','AvailableModels','loadedModels','LoadedModels','enabledModels','EnabledModels','modelCapabilities','ModelCapabilities','modelCapabilitiesJson','ModelCapabilitiesJson','modelBenchmarks','ModelBenchmarks','modelBenchmarksJson','ModelBenchmarksJson'].forEach(name=>addAutoServerCatalogModelHints(values,server&&server[name]))});const activeMode=requestMode(targetMode||mode);rememberServerModelSuggestions(filterModelsByParams(values,activeMode),true)}
+function rememberAutoServerCatalogModels(data,targetMode){const values=[],servers=Array.isArray(data&&data.servers)?data.servers:[];autoModelCacheServers=servers.slice();servers.forEach(server=>{rememberServerModelStatesFromServer(server);['models','Models','availableModels','AvailableModels','loadedModels','LoadedModels','enabledModels','EnabledModels','modelCapabilities','ModelCapabilities','modelCapabilitiesJson','ModelCapabilitiesJson','modelBenchmarks','ModelBenchmarks','modelBenchmarksJson','ModelBenchmarksJson'].forEach(name=>addAutoServerCatalogModelHints(values,server&&server[name]))});const activeMode=requestMode(targetMode||mode);rememberServerModelSuggestions(filterModelsByParams(values,activeMode),true)}
 function applyAutoModelCachePayload(data,targetMode){const cache=data&&(data.modelCache||data.autoModelCache||data.serverModelCache||data);const servers=Array.isArray(cache&&cache.servers)?cache.servers:[];if(!servers.length)return false;rememberAutoServerCatalogModels(cache,targetMode);if(selectedServer){const currentId=String(selectedServer.id||selectedServerId||'').toLowerCase();const match=servers.find(server=>String(server&&server.id||'').toLowerCase()===currentId);if(match){selectedServer=Object.assign({},selectedServer,match);const models=extractLiveModelIds({models:match.models||match.Models,loadedModels:match.loadedModels||match.LoadedModels,enabledModels:match.enabledModels||match.EnabledModels,availableModels:match.availableModels||match.AvailableModels,modelCapabilitiesJson:match.modelCapabilitiesJson||match.ModelCapabilitiesJson,modelBenchmarksJson:match.modelBenchmarksJson||match.ModelBenchmarksJson});if(models.length)applyServerModelList(models,false)}}renderModelSuggestions(document.activeElement===els.model);return true}
-async function refreshAutoServerCatalogForMode(targetMode){try{const p=new URLSearchParams({fresh:'true',mode:requestMode(targetMode||mode),premiumModels:premiumModelsEnabled?'true':'false'});const r=await fetch('/api/lmvsproxy/servers?'+p.toString(),{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();if(r.ok)rememberAutoServerCatalogModels(data,targetMode);return data}catch{return null}}
+function cachedServerMatchesSelection(server){const current=String(selectedServer&&selectedServer.id||selectedServerId||'').toLowerCase();if(!current||!server)return false;return [server.id,server.Id,server.relay,server.Relay,server.routeName,server.RouteName].some(value=>String(value||'').toLowerCase()===current)}
+function applySelectedServerModelsFromCache(autoFill){if(!selectedServer||!autoModelCacheServers.length)return false;const match=autoModelCacheServers.find(cachedServerMatchesSelection);if(!match)return false;selectedServer=Object.assign({},selectedServer,match);const models=extractLiveModelIds({models:match.models||match.Models,loadedModels:match.loadedModels||match.LoadedModels,enabledModels:match.enabledModels||match.EnabledModels,availableModels:match.availableModels||match.AvailableModels,modelCapabilitiesJson:match.modelCapabilitiesJson||match.ModelCapabilitiesJson,modelBenchmarksJson:match.modelBenchmarksJson||match.ModelBenchmarksJson});if(!models.length)return false;applyServerModelList(models,!!autoFill);return true}
+async function refreshAutoServerCatalogForMode(targetMode){try{const p=new URLSearchParams({mode:requestMode(targetMode||mode),premiumModels:premiumModelsEnabled?'true':'false'});const r=await fetch('/auto/model-cache?'+p.toString(),{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();if(r.ok)applyAutoModelCachePayload(data,targetMode);return data}catch{return null}}
 function modelNameCompatibleWithMode(id,value){const k=requestMode(value),text=String(id||'').toLowerCase();if(!text)return false;if(k==='image')return modelNameLooksGenerationMode(id,'image');if(k==='audio')return modelNameLooksGenerationMode(id,'audio');if(k==='video')return modelNameLooksGenerationMode(id,'video');if(k==='embedding')return /(^|[\/\s._-])(embed|embedding|bge|e5|gte)([\/\s._-]|$)|nomic-embed/i.test(text);if(k==='multimodal')return /vision|vl|omni|multi|llava/i.test(text)&&!modelNameLooksGenerationMode(id,'any');if(k==='tools')return !modelNameLooksGenerationMode(id,'any')&&!/(^|[\/\s._-])(embed|embedding|bge|e5|gte)([\/\s._-]|$)|nomic-embed/i.test(text);return !modelNameLooksGenerationMode(id,'any')&&!/(^|[\/\s._-])(embed|embedding|bge|e5|gte)([\/\s._-]|$)|nomic-embed/i.test(text)}
 function compatibleModeModelsFromSelection(targetMode){const activeMode=requestMode(targetMode||mode);return filterModelsByParams(splitModels(selectedServer&&selectedServer.models||''),activeMode).filter(model=>modelNameCompatibleWithMode(model,activeMode))}
 function chooseValidModelForMode(targetMode){const nextMode=normalizeMode(targetMode||mode),activeMode=requestMode(nextMode);if(nextMode==='auto'){suggestedModel='';if(els.model)els.model.value='';renderAdvancedSummary();renderModelSuggestions(false);updateFileUploadVisibility();writeAutoHistory();return''}const current=cleanModelName(els.model&&els.model.value||''),available=compatibleModeModelsFromSelection(activeMode),currentKey=normalizeModelId(current);if(currentKey&&available.some(model=>normalizeModelId(model)===currentKey)){suggestedModel=current;renderAdvancedSummary();renderModelSuggestions(false);updateFileUploadVisibility();return current}let next=chooseModelForMode(available.join(', '),activeMode);if(!next){const catalog=filterModelsByParams(activeServerModelSuggestions(),activeMode).filter(model=>modelNameCompatibleWithMode(model,activeMode));next=chooseModelForMode(catalog.join(', '),activeMode)}suggestedModel=next||'';if(els.model)els.model.value=next||'';if(next)els.model.placeholder='AI model: '+next;else els.model.placeholder=parameterRangeLabel()!=='Any'?'No '+parameterRangeLabel()+' tagged model':'Model id';writeAutoHistory();renderAdvancedSummary();renderModelSuggestions(false);updateFileUploadVisibility();return next||''}
-async function changeAutoMode(nextMode){nextMode=normalizeMode(nextMode);if(nextMode===mode)return;const switchRequest=++autoModeSwitchRequest;mode=nextMode;resetAutoRoutingTarget(true);updatePromptPlaceholder();writeAutoHistory();renderModes();setAuthStatus();loadHuggingFaceModelCatalog();renderAdvancedSummary();if(els.pool){els.pool.textContent='Refreshing';els.pool.className='pool-status-silent'}await refreshAutoServerCatalogForMode(nextMode);if(switchRequest!==autoModeSwitchRequest)return;await refreshStatus({mode:nextMode,omitModel:true});if(switchRequest!==autoModeSwitchRequest)return;if(selectedServer)await loadSelectedServerModels(true);if(switchRequest!==autoModeSwitchRequest)return;chooseValidModelForMode(nextMode);persistCurrentSessionState()}
-function renderModes(){els.modes.textContent='';TYPES.forEach(t=>{const b=document.createElement('button');b.type='button';b.textContent=t.label;b.title=t.tip;b.setAttribute('aria-label',t.tip);b.className=t.mode===mode?'active':'';b.setAttribute('aria-pressed',t.mode===mode?'true':'false');b.onclick=()=>changeAutoMode(t.mode);els.modes.appendChild(b)});updatePromptPlaceholder();renderOriginModes();renderParamSlider();renderTokenMeter()}
+async function changeAutoMode(nextMode){nextMode=normalizeMode(nextMode);if(nextMode===mode){renderModes();return}const switchRequest=++autoModeSwitchRequest;mode=nextMode;resetAutoRoutingTarget(true);updatePromptPlaceholder();writeAutoHistory();renderModes();setAuthStatus();loadHuggingFaceModelCatalog();renderAdvancedSummary();if(els.pool){els.pool.textContent='Refreshing';els.pool.className='pool-status-silent'}await refreshAutoServerCatalogForMode(nextMode);if(switchRequest!==autoModeSwitchRequest)return;await refreshStatus({mode:nextMode,omitModel:true});if(switchRequest!==autoModeSwitchRequest)return;if(selectedServer)await loadSelectedServerModels(true);if(switchRequest!==autoModeSwitchRequest)return;chooseValidModelForMode(nextMode);persistCurrentSessionState()}
+function renderModes(){if(els.modes){els.modes.hidden=false;els.modes.textContent='';TYPES.forEach(t=>{const b=document.createElement('button');b.type='button';b.textContent=t.label;b.title=t.tip;b.setAttribute('aria-label',t.tip);b.className=t.mode===mode?'active':'';b.setAttribute('aria-pressed',t.mode===mode?'true':'false');b.onclick=()=>changeAutoMode(t.mode);els.modes.appendChild(b)})}updatePromptPlaceholder();renderOriginModes();renderParamSlider();renderTokenMeter();updateAutoSendButton()}
 function modelFlag(o,names){return readTruthy(o,names)||readTruthy(o&&o.capabilities,names)||readTruthy(o&&o.Capabilities,names)}
 function readTruthy(o,names){if(!o)return false;return names.some(n=>{if(!Object.prototype.hasOwnProperty.call(o,n))return false;const v=o[n];if(v===true)return true;if(typeof v==='number')return v>0;const t=String(v??'').trim();return !!t&&!/^(false|0|no|none|unknown|n\/a|null|undefined|disabled)$/i.test(t)})}
 function liveModelId(item){const raw=String(item&& (item.id||item.key||item.modelId||item.model_id||item.selected_variant||item.selectedVariant||item.name||item.display_name||item.displayName)||'').trim();if(raw&&!/[\\/:]/.test(raw)&&!isModelArtifactPart(raw))return raw;return cleanModelName(raw)}
@@ -13207,7 +13854,7 @@ function liveModelLooksGenerationOnly(item,id,svc,type,tags){return modelFlag(it
 function liveModelSupportsMode(item,value){const id=liveModelId(item),k=normalizeMode(value),svc=liveModelService(item),type=String(item&&item.type||'').toLowerCase(),tags=liveModelTags(item);if(!id||!liveModelSelectable(item))return false;if(k==='image')return modelFlag(item,['supportsImageGeneration','imageGeneration','image_generation','generatesImages'])||svc==='image_generation'||type==='image'||tags.includes('image_generation')||modelNameLooksGenerationMode(id,'image');if(k==='audio')return modelFlag(item,['supportsAudioGeneration','audioGeneration','audio_generation','generatesAudio'])||svc==='audio_generation'||type==='audio'||tags.includes('audio_generation')||modelNameLooksGenerationMode(id,'audio');if(k==='video')return modelFlag(item,['supportsVideoGeneration','videoGeneration','video_generation','generatesVideo'])||svc==='video_generation'||type==='video'||tags.includes('video_generation')||modelNameLooksGenerationMode(id,'video');if(k==='multimodal')return modelFlag(item,['supportsImages','supportsVision','vision','multimodal','supportsImageUpload'])||modelScore(id,'multimodal')>1;if(k==='tools')return modelFlag(item,['supportsTools','tools','toolUse','toolCalling','functionCalling'])||(!liveModelLooksGenerationOnly(item,id,svc,type,tags)&&(svc===''||svc==='chat'||svc==='chat_completion'||type==='llm'||modelScore(id,'text')>1||/tool|function|qwen|llama|mistral|gemma|phi|claude|opus|instruct|chat|llm|gguf|unsloth|gpt/i.test(id)));if(k==='embedding')return /(^|[\/\s._-])(embed|embedding|bge|e5|gte)([\/\s._-]|$)/i.test(id);if(liveModelLooksGenerationOnly(item,id,svc,type,tags))return false;return svc===''||svc==='chat'||svc==='chat_completion'||modelFlag(item,['chat_completion','chatCompletion'])||type==='llm'||modelScore(id,'text')>1}
 function extractLiveModelIds(data){const seen=new Map(),activeMode=requestMode(mode);function add(value){const clean=cleanModelName(value);if(!clean)return;const key=normalizeModelId(clean);if(key&&!seen.has(key))seen.set(key,clean)}const list=Array.isArray(data&&data.models)?data.models:[];list.forEach(item=>{if(liveModelSupportsMode(item,activeMode))add(liveModelId(item))});if(!seen.size&&data){splitModels(data.loadedModels||data.enabledModels||data.availableModels||data.selected||'').forEach(add)}return[...seen.values()]}
 function applyServerModelList(models,autoFill){if(!models||!models.length||!selectedServer)return;selectedServer.models=models.join(', ');rememberServerModelSuggestions(models);const activeMode=requestMode(mode),filterLabel=parameterRangeLabel(),hasParamFilter=filterLabel!=='Any';const filtered=filterModelsByParams(models,activeMode).filter(model=>modelNameCompatibleWithMode(model,activeMode));const next=filtered.length?filtered.map(m=>({m,score:modelScore(m,activeMode)})).sort((a,b)=>b.score-a.score||a.m.localeCompare(b.m))[0].m:'';const current=cleanModelName(els.model&&els.model.value||''),currentKey=normalizeModelId(current),currentValid=!!(currentKey&&filtered.some(model=>normalizeModelId(model)===currentKey));if(mode==='auto'){suggestedModel='';els.model.placeholder=hasParamFilter?'Auto chooses a '+filterLabel+' model':'Auto chooses a model after routing';renderAdvancedSummary();renderModelSuggestions(false);renderTokenMeter();updateFileUploadVisibility();return}if(next){suggestedModel=currentValid?current:next;els.model.placeholder='AI model: '+(currentValid?current:next);if(autoFill&&(!currentValid||!current||normalizeModelId(current)===normalizeModelId(qs.get('model')||''))){els.model.value=next;writeAutoHistory()}}else{suggestedModel='';if(autoFill&&current){els.model.value='';writeAutoHistory()}els.model.placeholder=hasParamFilter?'No '+filterLabel+' tagged model':'Model id'}renderAdvancedSummary();renderModelSuggestions(false);renderTokenMeter();updateFileUploadVisibility()}
-async function loadSelectedServerModels(autoFill){if(!selectedServer)return;const requestId=++liveModelCatalogRequest;try{const r=await fetch(serverCatalogUrl(),{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();if(requestId!==liveModelCatalogRequest)return;if(!r.ok)return;applyServerModelList(extractLiveModelIds(data),autoFill)}catch{}}
+async function loadSelectedServerModels(autoFill){if(!selectedServer)return;if(applySelectedServerModelsFromCache(autoFill))return;const requestId=++liveModelCatalogRequest;try{const r=await fetch('/auto/model-cache',{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();if(requestId!==liveModelCatalogRequest)return;if(!r.ok)return;applyAutoModelCachePayload(data,mode);applySelectedServerModelsFromCache(autoFill)}catch{}}
 function updateServerDisplay(data,options){options=options||{};if(data&&data.selected){releaseForcedAutoServerIfSuperseded(data);selectedServer=data.selected;selectedServerId=data.selected.id||data.selected.relay||forcedAutoServerId||selectedServerId||'';selectedServer.displayTitle=(data.selected.title||'AI server')+' | '+(data.transport||data.origin||data.selected.relay||'auto');const cachedModels=splitModels(data.selected.models||'');applyServerModelList(cachedModels,!!options.autoFillModel);if(!cachedModels.length)loadSelectedServerModels(options.autoFillModel!==false);else if(!els.model.value.trim()||options.autoFillModel)applyServerModelList(cachedModels,true);els.model.placeholder=mode==='auto'?'Auto chooses a model after routing':(suggestedModel?'AI model: '+suggestedModel:'Model id');setContinueServer(selectedServer);renderModelSuggestions(false);renderTokenMeter()}else if(!selectedServer){hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');renderTokenMeter()}}
 async function refreshStatus(options){options=options||{};const activeMode=requestMode(options.mode||mode);if(els.pool)els.pool.textContent='Checking';try{const r=await fetch(apiUrl('/auto/api',{},activeMode,{omitModel:!!options.omitModel}),{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();applyAuthSnapshot(data);if(data&&data.usage)applyUsageSnapshot(data.usage);if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));if(mode!=='auto'&&data&&data.requested_model&&cleanModelName(data.requested_model)!==cleanModelName(data.model||'')&&cleanModelName(els.model.value)===cleanModelName(data.requested_model)){els.model.value=cleanModelName(data.model||'');writeAutoHistory()}if(els.pool){els.pool.textContent='Ready';els.pool.className='pool-status-silent'}updateServerDisplay(data,{autoFillModel:options.autoFillModel!==false});return data}catch(e){if(els.pool){els.pool.textContent='AI unavailable';els.pool.className='pool-status-silent'}setServerButton(e.message||'No server','','');renderTokenMeter();return null}}
 function messagesScrollRatio(){const max=els.messages.scrollHeight-els.messages.clientHeight;return max<=0?1:els.messages.scrollTop/max}
@@ -13237,6 +13884,19 @@ function renderAutoMarkdown(markdown){const lines=String(markdown||'').replace(/
 function renderMessageBody(body,role,text){let value=String(text||'');if(role==='assistant')value=cleanAutoHiddenMarkup(value,false);body.dataset.rawText=value;body.textContent='';if(role==='assistant'){body.classList.add('markdown-body');body.innerHTML=renderAutoMarkdown(value)}else{body.classList.remove('markdown-body');body.textContent=value}}
 function setMessageBody(message,text){if(!message||!message.body)return;renderMessageBody(message.body,message.wrap&&message.wrap.classList.contains('assistant')?'assistant':'user',text)}
 function addMessage(role,text,options){const stick=shouldStickMessages();const wrap=document.createElement('article');wrap.className='bubble '+role;const card=document.createElement('div');card.className='bubble-card';const label=document.createElement('div');label.className='bubble-role';label.textContent=role==='user'?'You':'SocketJack AI';const body=document.createElement('div');body.className='bubble-text';renderMessageBody(body,role,text||'');card.append(label,body);wrap.appendChild(card);els.messages.appendChild(wrap);const message={wrap,card,body,label,progressLines:[],insightLines:[],thoughtCache:'',thoughtLineIndex:-1,insightPreview:'',progressPercent:0,progressTimer:0,progressStarted:0};const artifacts=options&&Array.isArray(options.artifacts)?options.artifacts:[];if(artifacts.length)renderMessageArtifacts(message,artifacts);const insights=options&&Array.isArray(options.insights)?options.insights.map(x=>String(x||'')).filter(Boolean):[];if(insights.length){message.insightLines=insights.slice(-80);message.insightPreview=message.insightLines[message.insightLines.length-1]||'';addInsights(message,message.insightLines.join('\n'),message.insightPreview)}stickMessagesToBottom(stick);return message}
+function formatAutoBytes(value){const n=Math.max(0,Number(value||0));if(n<1024)return Math.round(n)+' B';const units=['KB','MB','GB','TB'];let size=n/1024,index=0;while(size>=1024&&index<units.length-1){size/=1024;index++}return size.toFixed(size>=10||index>0?1:2).replace(/\.0$/,'')+' '+units[index]}
+function promptRunDefaultDetail(message){const text=String(message&&message.body&&message.body.dataset&&message.body.dataset.rawText||message&&message.body&&message.body.textContent||'');return{prompt:text,startedAt:Date.now(),endedAt:0,status:'running',routeMode:mode,server:'Selecting...',model:firstText(requestModel(),suggestedModel,'Auto model'),elapsed:'',progressPercent:0,cpu:'Not reported by server',gpu:'Not reported by server',storageBytes:new Blob([text]).size,processes:[],outputs:[],sources:[]}}
+function promptRunDetail(message){if(!message)return null;if(!message.runDetail)message.runDetail=promptRunDefaultDetail(message);return message.runDetail}
+function compactPromptRunMeta(detail){const parts=[firstText(detail.server,'Selecting...'),firstText(detail.elapsed,detail.status==='running'?'running':''),firstText(detail.model,'Auto model')].filter(Boolean);return parts.join(' | ')}
+function ensurePromptRunMeta(message){if(!message||!message.card)return null;const detail=promptRunDetail(message);let meta=message.card.querySelector('.prompt-run-meta');if(!meta){meta=document.createElement('div');meta.className='prompt-run-meta running';const spinner=document.createElement('span');spinner.className='prompt-run-spinner';spinner.setAttribute('aria-hidden','true');const trigger=document.createElement('button');trigger.type='button';trigger.className='prompt-run-detail-trigger';trigger.title='Open prompt run details';trigger.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openPromptRunDetails(message)});const stop=document.createElement('button');stop.type='button';stop.className='prompt-run-stop';stop.textContent='x';stop.title='Stop this prompt';stop.setAttribute('aria-label','Stop this prompt');stop.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();stopAutoRun()});meta.append(spinner,trigger,stop);message.card.appendChild(meta)}meta.classList.remove('running','done','error','stopped');meta.classList.add(detail.status==='completed'||detail.status==='done'?'done':detail.status==='error'?'error':detail.status==='stopped'?'stopped':'running');const trigger=meta.querySelector('.prompt-run-detail-trigger');if(trigger){trigger.textContent=compactPromptRunMeta(detail);trigger.title='Open prompt run details: '+trigger.textContent}return meta}
+function updatePromptRunMeta(message,patch){const detail=promptRunDetail(message);if(!detail)return;Object.assign(detail,patch||{});if(detail.status==='completed'&&!detail.endedAt)detail.endedAt=Date.now();if(detail.status==='done')detail.status='completed';if(!detail.elapsed&&detail.startedAt){const total=Math.max(0,Math.floor(((detail.endedAt||Date.now())-detail.startedAt)/1000));detail.elapsed=total<60?total+'s':Math.floor(total/60)+'m '+String(total%60).padStart(2,'0')+'s'}ensurePromptRunMeta(message)}
+function recordPromptRunProcess(message,text){const detail=promptRunDetail(message);if(!detail)return;const clean=sanitizeAutoLogLine(text);if(!clean)return;detail.processes=detail.processes||[];if(!detail.processes.includes(clean)){detail.processes.push(clean);if(detail.processes.length>80)detail.processes=detail.processes.slice(-80)}updatePromptRunMeta(message,{status:detail.status||'running',elapsed:''})}
+function promptRunLinkedAssistant(message){return message&&message.linkedAssistant||null}
+function promptRunOutputs(message){const detail=promptRunDetail(message)||{},assistant=promptRunLinkedAssistant(message),items=[];(detail.outputs||[]).forEach(item=>items.push(item));(assistant&&assistant.artifacts||[]).filter(entry=>entry&&entry.type==='file').forEach(entry=>items.push(entry));(currentProgressState.outputs||[]).forEach(item=>item&&items.push(item.entry||item));const seen=new Set();return items.filter(item=>{const key=artifactKey(item)||String(item&&item.path||item&&item.name||item&&item.label||'');if(!key||seen.has(key))return false;seen.add(key);return true})}
+function promptRunSources(message){const detail=promptRunDetail(message)||{},assistant=promptRunLinkedAssistant(message),urls=[];(detail.sources||[]).forEach(item=>urls.push(item.url||item));(currentProgressState.sources||[]).forEach(item=>urls.push(item&&item.url));(assistant&&assistant.insightLines||[]).forEach(line=>extractInsightUrls(line,6).forEach(url=>urls.push(url)));const seen=new Set();return urls.map(url=>String(url||'').trim()).filter(url=>url&&!seen.has(url.toLowerCase())&&seen.add(url.toLowerCase())).slice(0,24)}
+function detailCard(label,value,wide){const card=document.createElement('div');card.className='auto-run-detail-card'+(wide?' auto-run-detail-wide':'');const strong=document.createElement('strong');strong.textContent=label;const span=document.createElement('span');span.textContent=String(value||'Not reported');card.append(strong,span);return card}
+function detailListCard(label,items,wide){const card=document.createElement('div');card.className='auto-run-detail-card'+(wide?' auto-run-detail-wide':'');const strong=document.createElement('strong');strong.textContent=label;const list=document.createElement('ol');list.className='auto-run-detail-list';(items&&items.length?items:['None reported yet']).forEach(item=>{const li=document.createElement('li');if(typeof item==='string'&&/^https?:\/\//i.test(item)){const a=document.createElement('a');a.href=item;a.target='_blank';a.rel='noopener noreferrer';a.textContent=item;li.appendChild(a)}else li.textContent=String(item&& (item.name||item.path||item.label)||item||'');list.appendChild(li)});card.append(strong,list);return card}
+function openPromptRunDetails(message){const detail=promptRunDetail(message);if(!detail||!runDetailEls.window||!runDetailEls.body)return;const assistant=promptRunLinkedAssistant(message),outputs=promptRunOutputs(message),sources=promptRunSources(message),storage=Math.max(Number(detail.storageBytes||0),outputs.reduce((sum,item)=>sum+Number(item&&item.sizeBytes||0),0));runDetailEls.title.textContent='Prompt details';runDetailEls.body.textContent='';const grid=document.createElement('div');grid.className='auto-run-detail-grid';grid.append(detailCard('Status',detail.status||'running'),detailCard('Progress',Math.max(0,Math.min(100,Math.round(Number(detail.progressPercent||0))))+'%'),detailCard('Server',firstText(detail.server,assistant&&assistant.undoServerId,selectedServerId,'Selecting...')),detailCard('Model',firstText(detail.model,assistant&&assistant.modelUsed,'Auto model')),detailCard('Route',modeLabel(detail.routeMode||mode)),detailCard('Elapsed',detail.elapsed||'running'),detailCard('CPU compute',detail.cpu||'Not reported by server'),detailCard('GPU compute',detail.gpu||'Not reported by server'),detailCard('Storage used',formatAutoBytes(storage)),detailCard('Prompt',detail.prompt||'',true),detailListCard('Running processes',(detail.processes||[]).slice(-32),true),detailListCard('Generated files',outputs.map(item=>item.name||item.path||item.label).filter(Boolean),true),detailListCard('Sources / citations',sources,true));runDetailEls.body.appendChild(grid);runDetailEls.window.hidden=false}
 function setBubbleProgressExpanded(progress,expanded){progress.classList.toggle('expanded',expanded);const toggle=progress.querySelector('.bubble-progress-toggle');const lines=progress.querySelector('.bubble-progress-lines');if(toggle){toggle.textContent=expanded?'^':'>';toggle.setAttribute('aria-expanded',expanded?'true':'false')}if(lines)lines.hidden=!expanded}
 function scrollInsightPanelToEnd(panel){if(!panel)return;requestAnimationFrame(()=>{const status=panel.querySelector('.bubble-insights-status'),lines=panel.querySelector('.bubble-insights-lines');if(status)status.scrollTop=status.scrollHeight;if(lines)lines.scrollTop=lines.scrollHeight})}
 function setBubbleInsightsExpanded(panel,expanded){panel.classList.toggle('expanded',expanded);const toggle=panel.querySelector('.bubble-insights-toggle');const lines=panel.querySelector('.bubble-insights-lines');if(toggle){toggle.textContent=expanded?'^':'>';toggle.setAttribute('aria-expanded',expanded?'true':'false')}if(lines)lines.hidden=!expanded;scrollInsightPanelToEnd(panel)}
@@ -13245,14 +13905,20 @@ function parseAutoKeepAliveElapsed(line){const m=/\bstill connected after\s+(?:(
 function promptProgressDisplay(text){const elapsed=parseAutoKeepAliveElapsed(text);if(elapsed)return{status:'Processing prompt...',elapsed:elapsed.label};return{status:String(text||''),elapsed:''}}
 function updatePromptProgressText(progress,text){if(!progress)return;const display=promptProgressDisplay(text);const status=progress.querySelector('.bubble-progress-status');const elapsed=progress.querySelector('.prompt-progress-elapsed');if(status)status.textContent=display.status||'Working...';if(elapsed&&display.elapsed)elapsed.textContent=display.elapsed}
 function setPromptElapsed(message,label){if(!message||!message.card)return;const progress=message.card.querySelector('.bubble-progress');if(!progress||progress.classList.contains('complete'))return;const elapsed=progress.querySelector('.prompt-progress-elapsed');if(elapsed)elapsed.textContent=label||''}
-function promptResultPreview(message,fallback){const bodyText=message&&message.body&&String(message.body.dataset.rawText||message.body.textContent||'').replace(/\s+/g,' ').trim();const text=String(message&&message.progressResultText||bodyText||fallback||'').replace(/\s+/g,' ').trim();if(!text||/^(completed|done\.?|stopped\.?)$/i.test(text))return'';return text.length>360?text.slice(0,359).trim()+'...':text}
+function promptResultPreview(message,fallback){if(message&&message.progressTerminalState==='completed')return'';const bodyText=message&&message.body&&String(message.body.dataset.rawText||message.body.textContent||'').replace(/\s+/g,' ').trim();const text=String(message&&message.progressResultText||bodyText||fallback||'').replace(/\s+/g,' ').trim();if(!text||/^(completed|done\.?|stopped\.?)$/i.test(text))return'';return text.length>360?text.slice(0,359).trim()+'...':text}
 function setPromptProgressResult(message,text){const progress=message&&message.card&&message.card.querySelector('.bubble-progress');if(!progress)return;const result=progress.querySelector('.bubble-progress-result');if(!result)return;const preview=promptResultPreview(message,text);result.innerHTML=preview?'<span class="prompt-progress-result-label">Result</span>'+escapeHtml(preview):''}
 function promptTerminalLabel(message,label){const state=String(message&&message.progressTerminalState||'').toLowerCase();if(state==='error')return'Error';if(state==='stopped')return'Stopped';if(state==='login')return'Needs login';if(/^error:/i.test(String(label||'')))return'Error';if(/^stopped\.?$/i.test(String(label||'')))return'Stopped';return'Completed'}
-function setPromptProgress(message,percent,label,complete,forcePercent){if(!message||!message.card)return null;const progress=addProgress(message);const next=Math.max(1,Math.min(100,Math.round(Number(percent)||1)));message.progressPercent=forcePercent?next:Math.max(message.progressPercent||0,next);const fill=progress.querySelector('.prompt-progress-fill');const pct=progress.querySelector('.prompt-progress-percent');if(fill)fill.style.width=message.progressPercent+'%';if(pct)pct.textContent=message.progressPercent+'%';if(label)updatePromptProgressText(progress,label);const done=!!complete||message.progressPercent>=100;progress.classList.toggle('complete',done);if(done&&message.progressTimer){window.clearInterval(message.progressTimer);message.progressTimer=0}return progress}
+function setPromptProgress(message,percent,label,complete,forcePercent){if(!message||!message.card)return null;const progress=addProgress(message);const numeric=Number(percent),base=Number.isFinite(numeric)?Math.round(numeric):(forcePercent?0:1),next=Math.max(forcePercent?0:1,Math.min(100,base));message.progressPercent=forcePercent?next:Math.max(message.progressPercent||0,next);const fill=progress.querySelector('.prompt-progress-fill');const pct=progress.querySelector('.prompt-progress-percent');if(fill)fill.style.setProperty('--prompt-progress',message.progressPercent+'%');if(pct)pct.textContent=message.progressPercent+'%';if(label)updatePromptProgressText(progress,label);const done=!!complete||message.progressPercent>=100;progress.classList.toggle('complete',done);if(done&&message.progressTimer){window.clearInterval(message.progressTimer);message.progressTimer=0}return progress}
 function startPromptProgress(message){if(!message||message.progressTimer)return;message.progressStarted=Date.now();message.progressPercent=Math.max(message.progressPercent||0,4);message.progressTimer=window.setInterval(()=>{if(!message.card||!document.body.classList.contains('prompt-loading'))return;const elapsed=Math.max(0,Math.floor((Date.now()-(message.progressStarted||Date.now()))/1000));const label=elapsed<60?elapsed+'s':(Math.floor(elapsed/60)+'m '+String(elapsed%60).padStart(2,'0')+'s');setPromptElapsed(message,label)},1000)}
 function promptProgressForLine(line,current){const text=String(line||''),lower=text.toLowerCase();let p=Math.max(4,Number(current||4));if(parseAutoKeepAliveElapsed(text))return p;const explicit=/\b(\d+(?:\.\d+)?)%\b/.exec(text);if(explicit)p=Math.max(p,Math.round(Number(explicit[1])||p));if(lower.includes('choosing mode'))p=Math.max(p,8);else if(lower.includes('use ')&&lower.includes(' ->'))p=Math.max(p,16);else if(lower.includes('routing '))p=Math.max(p,22);else if(lower.includes('connected to auto server'))p=Math.max(p,30);else if(lower.includes('checking llmruntime'))p=Math.max(p,40);else if(lower.includes('is loaded')||lower.includes('opening chat stream'))p=Math.max(p,50);else if(lower.includes('running prompt'))p=Math.max(p,62);else if(lower.includes('tool')||lower.includes('download')||lower.includes('file'))p=Math.max(p,70);else if(lower.includes('rendering generated')||lower.includes('loading generated'))p=Math.max(p,82);else if(lower.includes('generated ')&&lower.includes('ready'))p=Math.max(p,96);else if(lower==='done'||lower==='done.'||lower.includes('server completed'))p=100;return p}
 function updatePromptProgressFromLine(message,line){const progress=promptProgressForLine(line,message&&message.progressPercent);setPromptProgress(message,progress,line,progress>=100,false)}
-function finishPromptProgress(message,label){if(!message)return;if(message.progressTimer){window.clearInterval(message.progressTimer);message.progressTimer=0}const terminal=promptTerminalLabel(message,label);setPromptProgress(message,100,terminal,true,true);setPromptProgressResult(message,label);finishAutoToolSteps(message);if(message.wrap)message.wrap.classList.add('completed-condensed');completeCurrentProgressFromMessage(message,terminal);attachPromptUndoButton(message,terminal)}
+function responseElapsedLabel(message){const progress=message&&message.card&&message.card.querySelector('.bubble-progress'),existing=progress&&progress.querySelector('.prompt-progress-elapsed');let label=existing&&existing.textContent?existing.textContent.trim():'';if(label)return label;const started=Number(message&&message.progressStarted||0);if(!started)return'';const total=Math.max(0,Math.floor((Date.now()-started)/1000));return total<60?total+'s':Math.floor(total/60)+'m '+String(total%60).padStart(2,'0')+'s'}
+function setResponseElapsedBadge(message){if(!message||!message.card)return;const label=responseElapsedLabel(message);if(!label)return;let badge=message.card.querySelector('.response-elapsed-badge');if(!badge){badge=document.createElement('span');badge.className='response-elapsed-badge';badge.tabIndex=0;message.card.appendChild(badge)}badge.textContent=label;badge.title='Response completed in '+label}
+function retireCompletedPromptProgress(message){const progress=message&&message.card&&message.card.querySelector('.bubble-progress');if(progress)progress.remove()}
+function finalizeCompletedInsightsPanel(message){const panel=message&&message.card&&message.card.querySelector('.bubble-insights');if(!panel)return;panel.querySelectorAll('.insight-thought').forEach(node=>node.remove());const row=panel.querySelector('.bubble-insights-row');if(row)row.remove();const lines=panel.querySelector('.bubble-insights-lines');if(lines){lines.hidden=false;if(!lines.textContent.trim())panel.remove()}panel.classList.add('completed-static','expanded')}
+function scrollResponseTopIntoView(message){if(!message||!message.wrap)return;requestAnimationFrame(()=>{try{message.wrap.scrollIntoView({block:'start',behavior:window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}catch{const top=message.wrap.offsetTop||0;if(els&&els.messages)els.messages.scrollTop=Math.max(0,top-8)}})}
+function finalizeCompletedResponseChrome(message,terminal){if(!/^completed$/i.test(String(terminal||'')))return;setResponseElapsedBadge(message);retireCompletedPromptProgress(message);finalizeCompletedInsightsPanel(message);scrollResponseTopIntoView(message)}
+function finishPromptProgress(message,label){if(!message)return;if(message.progressTimer){window.clearInterval(message.progressTimer);message.progressTimer=0}const terminal=promptTerminalLabel(message,label);setPromptProgress(message,100,terminal,true,true);setPromptProgressResult(message,label);finishAutoToolSteps(message);if(message.wrap)message.wrap.classList.add('completed-condensed');if(message.promptMessage)updatePromptRunMeta(message.promptMessage,{status:terminal.toLowerCase()==='error'?'error':terminal.toLowerCase()==='stopped'?'stopped':'completed',elapsed:responseElapsedLabel(message),endedAt:Date.now(),server:firstText(message.promptMessage.runDetail&&message.promptMessage.runDetail.server,message.undoServerId,selectedServerId,'selected server'),model:firstText(message.promptMessage.runDetail&&message.promptMessage.runDetail.model,message.modelUsed,requestModel(),suggestedModel,'Auto model')});finalizeCompletedResponseChrome(message,terminal);completeCurrentProgressFromMessage(message,terminal);attachPromptUndoButton(message,terminal)}
 function promptUndoAllowed(message,terminal){const state=String(message&&message.progressTerminalState||'').toLowerCase();if(state==='completed'||state==='error'||state==='partial')return true;const label=String(terminal||'').toLowerCase();return label==='completed'||label==='error'}
 function ensureBubbleActions(message){if(!message||!message.card)return null;let actions=message.card.querySelector('.bubble-actions');if(!actions){actions=document.createElement('div');actions.className='bubble-actions';message.card.appendChild(actions)}return actions}
 function transcriptRunMatches(item,runId){return !!(runId&&item&&String(item.runId||'')===String(runId))}
@@ -13269,6 +13935,12 @@ function parseToolEventLine(line){let text=String(line||'').trim();const match=/
 function toolEventName(e){return String(e&& (e.name||e.toolName||e.tool||e.label)||'tool').trim()||'tool'}
 function toolEventStatus(e){return String(e&& (e.status||e.state)||'').trim().toLowerCase()||'running'}
 function toolEventStatusClass(status){status=String(status||'').toLowerCase();if(/fail|error|cancel|blocked/.test(status))return'failed';if(/complete|done|success|succeeded/.test(status))return'done';return'running'}
+function isCoordinationToolName(name){return/^(goal_checkpoint|continue_with_tools)$/i.test(String(name||'').trim())}
+function isCoordinationToolEvent(e){return isAutoToolEventObject(e)&&isCoordinationToolName(toolEventName(e))}
+function coordinationToolPayload(e){const args=parseToolArgs(e&& (e.argumentsPreview||e.arguments||''))||{},result=parseToolArgs(e&& (e.resultPreview||e.result||e.content||e.message||''))||{};return Object.assign({},result,args)}
+function toolEventProgressPercent(e){let pct=eventProgressPercent(e);if(pct!=null)return pct;const payload=coordinationToolPayload(e);pct=eventProgressPercent(payload);return pct==null?null:pct}
+function coordinationProgressLabel(e,payload){payload=payload||coordinationToolPayload(e);return currentProgressCleanGoalText(firstText(payload.goal,payload.nextStep,payload.remaining,payload.evidenceNeeded,toolEventSummary(e),toolEventName(e)))||toolEventName(e)}
+function applyCoordinationToolEvent(message,e,activeMode){const payload=coordinationToolPayload(e),pct=toolEventProgressPercent(e),name=toolEventName(e),status=firstText(payload.status,toolEventStatus(e),'running'),goal=coordinationProgressLabel(e,payload),detail=truncateInsightText(firstText(payload.nextStep,payload.remaining,payload.evidenceNeeded,payload.reason,payload.successCriteria,payload.blockedReason,toolEventSummary(e)),300),meta=(pct==null?'coordination':('coordination '+Math.round(pct)+'%'));upsertCurrentProgressGoal('coord-'+name,goal,status,detail,meta,'tail');if(pct!=null&&message){setPromptProgress(message,pct,goal+' '+Math.round(pct)+'%',false,true)}if(message&&message.promptMessage){recordPromptRunProcess(message.promptMessage,name+': '+goal+(pct==null?'':' '+Math.round(pct)+'%'));const patch={status:'running'};if(pct!=null)patch.progressPercent=Math.round(pct);updatePromptRunMeta(message.promptMessage,patch)}}
 function toolEventSummary(e){return truncateInsightText(e&& (e.summary||e.error||e.resultPreview||e.argumentsPreview||e.label)||'',260)}
 function toolEventPreview(e){const name=toolEventName(e),status=toolEventStatus(e),summary=toolEventSummary(e);return name+' '+status+(summary?': '+summary:'')}
 function extractInsightUrls(text,limit){const out=[],seen=new Set();decodeAutoDisplayText(text,{keepWhitespace:true}).replace(/\bhttps?:\/\/[^\s<>"'`]+/gi,url=>{url=trimAutoUrl(url).text;const key=url.toLowerCase();if(url&&!seen.has(key)&&out.length<(limit||8)){seen.add(key);out.push(url)}return url});return out}
@@ -13290,29 +13962,44 @@ function clearMessageProgress(message){if(message&&message.progressTimer){window
 function sanitizeAutoLogLine(value){return cleanAutoHiddenMarkup(String(value||''),false).replace(/404\s+Not\s+Found:\s*GET\s+\/?(?:[A-Za-z]:[\\/]|\\\\|\/)[^\r\n;]*/gi,'404 Not Found from media endpoint').replace(/((?:[A-Za-z]:[\\/]|\\\\|\/)[^`\r\n<>]*?[\\/]SessionFiles[\\/][^\s;,)]+)/gi,match=>match.split(/[\\/]+/).pop()||'generated media').replace(/((?:[A-Za-z]:[\\/]|\\\\|\/)[^`\r\n<>]*?\.(?:png|jpe?g|webp|gif|bmp|svg|mp4|webm|mov|m4v|ogv|wav|mp3|ogg|flac|m4a|aac))/gi,match=>match.split(/[\\/]+/).pop()||'generated media').replace(/\s+/g,' ').trim()}
 function latestProgressLine(message,fallback){const lines=message&&message.progressLines||[];return lines.length?lines[lines.length-1]:(fallback||'Working...')}
 function updateMediaDebugTargets(message,line){(message.mediaDebugTargets||[]).forEach(target=>{const text=line||latestProgressLine(message,target.fallback);if(target.status)target.status.textContent=text;if(target.debug)target.debug.textContent=(message.progressLines||[]).join('\n')||text})}
-function appendProgressLine(message,text){const stick=shouldStickMessages();text=sanitizeAutoLogLine(text);if(!text)return;message.progressLines=message.progressLines||[];if(!message.progressLines.includes(text)){message.progressLines.push(text);if(message.progressLines.length>32)message.progressLines=message.progressLines.slice(-32)}addProgress(message,message.progressLines.join('\n'));updatePromptProgressFromLine(message,text);currentProgressFromLine(message,text);if(message.mediaDebugTargets&&message.mediaDebugTargets.length)updateMediaDebugTargets(message,text);stickMessagesToBottom(stick)}
-function parseEventLine(line){let text=String(line||'').trim();if(!text)return[];if(text.startsWith('event:')||text.startsWith('id:')||text.startsWith('retry:'))return[];if(text.startsWith('data:'))text=text.slice(5).trim();if(!text||text==='[DONE]')return[{type:'done'}];try{const parsed=JSON.parse(text);return Array.isArray(parsed)?parsed:[parsed]}catch{return[{type:'text',content:text}]}}
-function parseEvents(raw,contentType){const text=String(raw||'');if((contentType||'').includes('application/json')){try{const parsed=JSON.parse(text);return Array.isArray(parsed)?parsed:[parsed]}catch{}}const events=[];text.split(/\r?\n/).forEach(line=>parseEventLine(line).forEach(e=>events.push(e)));return events}
+function appendProgressLine(message,text){const stick=shouldStickMessages();text=sanitizeAutoLogLine(text);if(!text)return;if(message&&message.promptMessage)recordPromptRunProcess(message.promptMessage,text);message.progressLines=message.progressLines||[];if(!message.progressLines.includes(text)){message.progressLines.push(text);if(message.progressLines.length>32)message.progressLines=message.progressLines.slice(-32)}addProgress(message,message.progressLines.join('\n'));updatePromptProgressFromLine(message,text);currentProgressFromLine(message,text);if(message.mediaDebugTargets&&message.mediaDebugTargets.length)updateMediaDebugTargets(message,text);stickMessagesToBottom(stick)}
+function looksAutoSseStream(text){return/(?:^|\n)\s*(?:event|data|id|retry):/i.test(String(text||''))}
+function autoStreamFormat(contentType,sample){const ct=String(contentType||'').toLowerCase();if(ct.includes('text/event-stream')||looksAutoSseStream(sample))return'sse';if(ct.includes('x-ndjson')||ct.includes('json-seq'))return'ndjson';if(ct.includes('application/json'))return'json';return'text'}
+function parseAutoSseData(data,eventName){const text=String(data||''),trimmed=text.trim();if(!trimmed)return eventName?[{type:eventName}]:[];if(trimmed==='[DONE]')return[{type:'done'}];try{const parsed=JSON.parse(text),items=Array.isArray(parsed)?parsed:[parsed];return items.map(item=>{if(item&&typeof item==='object'&&!Array.isArray(item)){if(eventName&&!item.type&&!item.event)return Object.assign({type:eventName},item);return item}return{type:eventName||'text',content:String(item??'')}})}catch{return[{type:eventName||'text',content:text}]}}
+function parseAutoSseFrame(frame){let eventName='';const data=[];String(frame||'').split(/\r?\n/).forEach(raw=>{if(!raw||raw[0]===':')return;const colon=raw.indexOf(':');let field=colon>=0?raw.slice(0,colon).trim():raw.trim(),value=colon>=0?raw.slice(colon+1):'';if(value.startsWith(' '))value=value.slice(1);if(field==='event')eventName=value.trim();else if(field==='data')data.push(value)});if(data.length)return parseAutoSseData(data.join('\n'),eventName);return eventName?[{type:eventName}]:[]}
+function splitCompleteAutoSseFrames(buffer){const text=String(buffer||''),frames=[];let start=0,match;const rx=/\r?\n\r?\n/g;while((match=rx.exec(text))!==null){frames.push(text.slice(start,match.index));start=rx.lastIndex}return{frames,rest:text.slice(start)}}
+function parseAutoSseFrames(frames){const events=[];(frames||[]).forEach(frame=>parseAutoSseFrame(frame).forEach(e=>events.push(e)));return events}
+function parseAutoSseEvents(text){const split=splitCompleteAutoSseFrames(String(text||''));const frames=split.frames.slice();if(split.rest.trim())frames.push(split.rest);return parseAutoSseFrames(frames)}
+function parseEventLine(line){let text=String(line||'').trim();if(!text)return[];if(text.startsWith('event:')||text.startsWith('id:')||text.startsWith('retry:'))return[];if(text.startsWith('data:'))return parseAutoSseData(text.slice(5).trim(),'');if(!text||text==='[DONE]')return[{type:'done'}];try{const parsed=JSON.parse(text);return Array.isArray(parsed)?parsed:[parsed]}catch{return[{type:'text',content:text}]}}
+function parseEvents(raw,contentType){const text=String(raw||''),format=autoStreamFormat(contentType,text);if(format==='sse')return parseAutoSseEvents(text);if(format==='json'){try{const parsed=JSON.parse(text);return Array.isArray(parsed)?parsed:[parsed]}catch{}}const events=[];text.split(/\r?\n/).forEach(line=>parseEventLine(line).forEach(e=>events.push(e)));return events}
 function stripAutoThinkTags(value,trim){let text=String(value||'').replace(/\r\n/g,'\n');let previous='';for(let i=0;i<8&&previous!==text;i++){previous=text;text=text.replace(/<\s*(think|thinking|thought|analysis)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi,'')}text=text.replace(/<\s*(?:think|thinking|thought|analysis)\b[^>]*>[\s\S]*$/i,'');text=text.replace(/<\s*\/?\s*(?:think|thinking|thought|analysis)\b[^>]*>?/gi,'');return trim===false?text:text.trim()}
-function autoToolNamePattern(){return'internet|internet_search|github|github_code|nuget_package_info|read_file|vs_read_file|vs_list_files|browser_open|browser_read_page|browser_click_link|browser_find_text|browser_skill|search_query|download_file|write_file|run_command_in_terminal|shell|powershell|tool_call|tool_result|function_call|function_result'}
+function autoToolNamePattern(){return'internet|internet_search|github|github_code|nuget_package_info|read_file|vs_read_file|vs_list_files|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|search_query|download_file|write_file|run_command_in_terminal|goal_checkpoint|continue_with_tools|shell|powershell|tool_call|tool_result|function_call|function_result'}
 function looksAutoToolCallFragment(fragment){const text=String(fragment||'');if(!text||text.length>2800)return false;const tools=autoToolNamePattern();return new RegExp("(?:[\"']?name[\"']?\\s*[:=]\\s*[\"']?(?:"+tools+")\\b|[\"']?name\\s*:\\s*(?:"+tools+")\\b|\\b(?:"+tools+")\\b[\\s\\S]{0,200}\\barguments\\b|\\barguments\\s*[:=][\\s\\S]{0,260}\\b(?:query|q|search|path|root_path|filePath|package_name|take|url|uri|href)\\b)","i").test(text)}
 function matchingAutoToolFragmentEnd(text,start){let depth=0,quote='',escape=false;for(let i=start;i<text.length;i++){const ch=text[i];if(quote){if(escape){escape=false;continue}if(ch==='\\'){escape=true;continue}if(ch===quote)quote='';continue}if(ch==='"'||ch==="'"||ch==='`'){quote=ch;continue}if(ch==='{')depth++;else if(ch==='}'){depth--;if(depth===0)return i}}return-1}
 function stripAutoToolCallJsonFragments(value){const text=String(value||'');let out='',last=0;for(let i=0;i<text.length;i++){if(text[i]!=='{')continue;const end=matchingAutoToolFragmentEnd(text,i);if(end<0)continue;const fragment=text.slice(i,end+1);if(!looksAutoToolCallFragment(fragment))continue;out+=text.slice(last,i);const before=out.slice(-1),after=text[end+1]||'';if(before&&!/\s/.test(before)&&after&&!/[\s.,;:!?)]/.test(after))out+=' ';last=end+1;i=end}if(!last)return text;out+=text.slice(last);return out.replace(/[ \t]{2,}/g,' ').replace(/[ \t]+([,.;!?])/g,'$1').replace(/:\s*(?=$|\n)/g,'').replace(/[ \t]+\n/g,'\n')}
 function stripAutoToolCallTranscriptFragments(value){let text=String(value||'');text=text.replace(/\bAssistant requested tool call\(s\):\s*/gi,' ');const callRx=/\s*tool_call\s+id\s*=\s*[^\s]+?(?=tool_call\s+id\s*=|\s|$)(?:\s+name\s*=\s*[A-Za-z0-9_./-]+?(?=tool_call\s+id\s*=|\s|$))?(?:\s+arguments\s*=\s*\{[\s\S]*?\})?/gi;let previous='';for(let i=0;i<8&&previous!==text;i++){previous=text;text=text.replace(callRx,' ')}return text.replace(/\s+\bid\s*=\s*call_[A-Za-z0-9_-]+\b/gi,' ').replace(/[ \t]{2,}/g,' ').replace(/[ \t]+([,.;!?])/g,'$1').replace(/[ \t]+\n/g,'\n').trimEnd()}
-function stripAutoToolPlanningTags(value,trim){let text=String(value||'').replace(/\r\n/g,'\n');const names='search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|browser_skill|tool_call|tool_result|function_call|function_result|arguments|result|query';const complete=new RegExp('<\\s*(?:'+names+')\\b[^>]*>[\\s\\S]*?(?:<\\s*\\/\\s*(?:'+names+')\\s*>|<\\s*\\/\\s*>)','gi');let previous='';for(let i=0;i<8&&previous!==text;i++){previous=text;text=text.replace(complete,'')}text=text.replace(new RegExp('<\\s*(?:'+names+')\\b[^>]*>[^\\n]*(?:<\\s*\\/\\s*)?','gi'),'');text=text.replace(new RegExp('<\\s*\\/\\s*(?:'+names+')\\s*>','gi'),'');text=text.replace(/^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|tool_call|function_call)\s*$/gim,'');text=stripAutoToolCallTranscriptFragments(stripAutoToolCallJsonFragments(text));return trim===false?text:text.trim()}
+function autoHiddenAnswerMarkerIndex(text){const patterns=[/(?:^|\n)\s*#{1,6}\s*(?:summary|overview|answer|result)\b/i,/(?:^|\n)\s*(?:\*\*)?\s*(?:summary|overview|answer|result)\s*[:\-]/i,/(?:^|\n)\s*(?:SocketJack|Summary)\s+is\s+/i];let best=-1;patterns.forEach(rx=>{const match=rx.exec(text);if(match&&(best<0||match.index<best))best=match.index});return best}
+function autoLooksLikeHiddenToolPreamble(text){const s=String(text||'');if(!s.trim())return false;const emptyTags=(s.match(/<>\s*[^<>\n]{1,180}\s*<\/>/g)||[]).length;const searchTags=(s.match(/<\s*\/?\s*search\b/gi)||[]).length;return emptyTags>=2||searchTags>=1||/<--[\s\S]*?-->|<\/\s*search\s*>|<\/>|<\s*(?:tool_call|function_call|internet_search|search_query)\b/i.test(s)||(/(?:^|\s)(?:browser|tools?|saved|downloads?)\s*(?:\n|$)/i.test(s)&&/(?:<search|<\/search|<>|tool_call|internet_search)/i.test(s))}
+function stripAutoToolPlanningPreamble(value){let text=String(value||'');const marker=autoHiddenAnswerMarkerIndex(text);if(marker>0&&marker<5000&&autoLooksLikeHiddenToolPreamble(text.slice(0,marker)))return text.slice(marker).trimStart();return text}
+function stripAutoMalformedToolTags(value){let text=String(value||'');text=text.replace(/<--[\s\S]*?-->/g,' ');text=text.replace(/(?:<>\s*[^<>\n]{1,180}\s*<\/>\s*){1,}/g,' ');text=text.replace(/<\s*\/?\s*>/g,' ');return text}
+function stripAutoToolPlanningTags(value,trim){let text=String(value||'').replace(/\r\n/g,'\n');text=stripAutoToolPlanningPreamble(text);const names='search|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|goal_checkpoint|continue_with_tools|tool_call|tool_result|function_call|function_result|arguments|result|query';const complete=new RegExp('<\\s*(?:'+names+')\\b[^>]*>[\\s\\S]*?(?:<\\s*\\/\\s*(?:'+names+')\\s*>|<\\s*\\/\\s*>)','gi');let previous='';for(let i=0;i<8&&previous!==text;i++){previous=text;text=text.replace(complete,'')}text=stripAutoMalformedToolTags(text);text=text.replace(new RegExp('<\\s*(?:'+names+')\\b[^>]*>[^\\n]*(?:<\\s*\\/\\s*)?','gi'),'');text=text.replace(new RegExp('<\\s*\\/\\s*(?:'+names+')\\s*>','gi'),'');text=text.replace(/^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|goal_checkpoint|continue_with_tools|tool_call|function_call)\s*$/gim,'');text=stripAutoToolPlanningPreamble(stripAutoToolCallTranscriptFragments(stripAutoToolCallJsonFragments(text)));return trim===false?text:text.trim()}
 function cleanAutoHiddenMarkup(value,trim){const text=stripAutoToolPlanningTags(stripAutoThinkTags(value,false),false);return trim===false?text:text.trim()}
-function summarizeAutoToolPlanning(value){const text=String(value||'');const query=/<\s*search_query\b[^>]*>([\s\S]*?)(?:<\s*\/\s*search_query\s*>|<\s*\/\s*>|$)/i.exec(text);if(query&&String(query[1]||'').trim())return'Tool requested: internet_search for "'+sanitizeAutoLogLine(query[1]).slice(0,180)+'"';if(/<\s*(?:tool_call|function_call|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text)\b/i.test(text))return'Tool requested by model.';return''}
-function isAutoToolPlanningText(value){const text=String(value||'').trim();if(!text)return false;return looksAutoToolCallFragment(text)||/<\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|tool_call|tool_result|function_call|arguments|result)\b/i.test(text)||/^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|tool_call|function_call)\s*$/i.test(text)||/\btool_call\s+id\s*=/i.test(text)||/^Assistant requested tool call\(s\):/i.test(text)||/(?:^|[{\s,])["']name["']\s*:\s*["'](?:internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text|download_file|read_file|write_file|run_command_in_terminal|tool_call|function_call)["'][\s\S]*["']arguments["']\s*:/i.test(text)||/^(?:_?search|browser\/searchtool|browser\/opentool)\b/i.test(text)}
+function summarizeAutoToolPlanning(value){const text=String(value||'');const query=/<\s*search_query\b[^>]*>([\s\S]*?)(?:<\s*\/\s*search_query\s*>|<\s*\/\s*>|$)/i.exec(text);if(query&&String(query[1]||'').trim())return'Tool requested: internet_search for "'+sanitizeAutoLogLine(query[1]).slice(0,180)+'"';if(/<\s*(?:tool_call|function_call|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\b/i.test(text))return'Tool requested by model.';return''}
+function isAutoToolPlanningText(value){const text=String(value||'').trim();if(!text)return false;return looksAutoToolCallFragment(text)||/<\s*(?:search|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|tool_call|tool_result|function_call|arguments|result)\b/i.test(text)||/^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|tool_call|function_call)\s*$/i.test(text)||/\btool_call\s+id\s*=/i.test(text)||/^Assistant requested tool call\(s\):/i.test(text)||/(?:^|[{\s,])["']name["']\s*:\s*["'](?:internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|download_file|read_file|write_file|run_command_in_terminal|tool_call|function_call)["'][\s\S]*["']arguments["']\s*:/i.test(text)||/^(?:_?search|browser\/searchtool|browser\/opentool)\b/i.test(text)}
 function isAutoToolResultText(value){const text=String(value||'').trim();if(!text)return false;return /^\[(?:Search)?Internet service\]/i.test(text)||/^Internet search results for:/i.test(text)||/^Cite web-backed claims with bracket citations/i.test(text)}
 function normalizeAutoFinalTags(value){return String(value||'').replace(/<\s*auto\s*[_\s-]*final\s*>/gi,'<auto_final>').replace(/<\s*\/\s*auto\s*[_\s-]*final\s*>/gi,'</auto_final>')}
 function summarizeToolResultsJson(text){text=String(text||'').trim();if(!text.startsWith('{')&&!text.startsWith('['))return'';try{const root=JSON.parse(text);const results=Array.isArray(root)?root:(Array.isArray(root.results)?root.results:[]);const lines=[];results.forEach(item=>{if(!item||typeof item!=='object')return;const name=item.name||item.id||'tool';const ok=item.success===true;const content=stripAutoThinkTags(String(item.content||item.message||item.error||'').trim());if(content)lines.push((ok?'Completed ':'Failed ')+name+': '+content);else lines.push((ok?'Completed ':'Failed ')+name+'.')});return lines.join('\n')}catch{return''}}
 function cleanEventContent(value){const text=cleanAutoHiddenMarkup(value);if(!text)return'';const summary=summarizeToolResultsJson(text);if(summary)return summary;return text}
 function isAutoProgressLikeText(value){const text=String(value||'').trim();if(!text)return true;if(isAutoToolPlanningText(text)||isAutoToolResultText(text))return true;const lower=text.toLowerCase();if(lower==='done'||lower==='done.'||lower==='failed'||lower==='[done]')return true;if(/\bstill connected after \d+s\b/i.test(text))return true;return /^(choosing mode|use (text|image|video|audio|tools|embedding|multimodal) ->|routing |connected to auto server|waiting for |checking llmruntime model|llmruntime model .* is loaded|opening chat stream|running prompt on llmruntime|server started|server is working|server completed|selected server|disabled .* until|re-running auto|rendering generated|generated media completed|generated .* ready|loading generated|preview failed|image generation did not complete|video generation did not complete|audio generation did not complete|running (image|video|audio) generation|error: image generation|error: video generation|error: audio generation)/i.test(text)}
 function shouldJoinGeneratedFragmentsWithoutSpace(left,right){if(!left||!right||/^\s/.test(right))return true;const inTag=left.lastIndexOf('<')>left.lastIndexOf('>');if(inTag||/^[_>/\\]/.test(right)||/[_</\\]$/.test(left))return true;if(/(?:^|\s)https?:\/\/\S*$/i.test(left)&&/^[A-Za-z0-9/?#=&._%:+-]/.test(right))return true;if(/[$#@]$/.test(left)||/^[#$@]/.test(right))return true;if(/[-+]$/.test(left)||/^[-+]/.test(right))return true;if(/^'(?:s|re|ve|ll|d|m|t)\b/i.test(right)&&/[A-Za-z]$/.test(left))return true;if(/^(?:s|es|ed|er|ers|ing|ly|ion|ions|ment|ments|al|ally|able|ible|ive|ous|ness|less|ful|est|ic|ics|ical|ity|ities|ize|ized|izes|ise|ised|ises|ization|isation)\b/i.test(right)&&/[A-Za-z]$/.test(left))return true;if(/^[,.;:!?%)]/.test(right)||/[([{\"']$/.test(left))return true;return false}
-function joinGeneratedFragments(left,right){if(!left)return right;if(!right)return left;if(shouldJoinGeneratedFragmentsWithoutSpace(left,right))return left+right;if(/[A-Za-z0-9)"'\]]$/.test(left)&&/[A-Za-z0-9("'[]/.test(right))return left+' '+right;if(/[.!?)]$/.test(left)&&/^\w/.test(right))return left+' '+right;return left+right}
-function appendAutoTextPart(joined,text){text=String(text||'');if(!joined)return text;if(text.startsWith(joined))return text;if(text.length>12&&joined.endsWith(text))return joined;const max=Math.min(joined.length,text.length,600);for(let i=max;i>12;i--){if(joined.slice(-i)===text.slice(0,i))return joined+text.slice(i)}return joinGeneratedFragments(joined,text)}
-function joinAutoTextParts(parts){let joined='';(parts||[]).forEach(part=>{const text=cleanAutoHiddenMarkup(part);if(!text.trim()||isAutoProgressLikeText(text))return;joined=appendAutoTextPart(joined,text)});return joined.replace(/\r\n/g,'\n').trim()}
-function splitAutoAnswerAndInsight(value){const text=normalizeAutoFinalTags(cleanAutoHiddenMarkup(value,false));const match=/(?:^|\n|\s)(?:\*\*)?\s*(?:reason\s*ing|analysis|thoughts?|thinking|tool\s*(?:usage|calls?)|tools?)\s*(?:\*\*)?\s*:/i.exec(text);if(!match)return{answer:text,insight:''};return{answer:text.slice(0,match.index).trim(),insight:text.slice(match.index).trim()}}
+function joinGeneratedFragments(left,right){if(!left)return right;if(!right)return left;return left+right}
+function autoStreamDedupeKey(value){return decodeAutoDisplayText(cleanAutoHiddenMarkup(value),{keepWhitespace:true}).toLowerCase().replace(/<[^>]*>/g,' ').replace(/[`*_#[\]()>|:;.,!?'"\\/-]+/g,'').replace(/\s+/g,'').slice(0,6000)}
+function autoStreamAnswerQuality(value){const text=decodeAutoDisplayText(value,{keepWhitespace:true});return(text.match(/\n/g)||[]).length*4+(text.match(/(?:^|\n)\s*(?:#{1,6}\s+|\d+[.)]\s+|[-*]\s+)/g)||[]).length*12+Math.min(text.length,4000)/4000}
+function chooseAutoAnswerVersion(left,right){const l=String(left||''),r=String(right||'');if(!l)return r;if(!r)return l;return autoStreamAnswerQuality(r)>=autoStreamAnswerQuality(l)?r:l}
+function appendAutoTextPart(joined,text){text=String(text||'');if(!joined)return text;if(text.startsWith(joined))return text;if(text.length>12&&joined.endsWith(text))return joined;const leftKey=autoStreamDedupeKey(joined),rightKey=autoStreamDedupeKey(text);if(leftKey.length>80&&rightKey.length>80&&(leftKey.includes(rightKey)||rightKey.includes(leftKey)))return chooseAutoAnswerVersion(joined,text);const max=Math.min(joined.length,text.length,600);for(let i=max;i>12;i--){if(joined.slice(-i)===text.slice(0,i))return joined+text.slice(i)}return joinGeneratedFragments(joined,text)}
+function repairAutoMarkdownBoundaries(value){let text=String(value||'').replace(/\r\n/g,'\n');if(!text.trim())return text;const sectionLabels='Overview|Key Features|Features|Documentation and Examples|Documentation|Security|Performance Optimization|Performance|Examples|Conclusion|Summary';text=text.replace(/([^#\n])(\s*)(#{2,6}\s*)/g,(m,a,space,hashes)=>a+'\n\n'+hashes);text=text.replace(/(^|\n)(#{2,6})(?=\S)/g,(m,lead,hashes)=>lead+hashes+' ');text=text.replace(new RegExp('([:.;!?])\\s*('+sectionLabels+')\\s*:','g'),(m,a,label)=>a+'\n\n'+label+':');text=text.replace(/(^|\n)(#{1,6}\s+(?:[A-Z][A-Za-z0-9#/+&.-]*\s+){0,8}[A-Z][a-z]{2,})(This|Here|The|An|A|Below|It|These)\b/g,(m,lead,title,next)=>lead+title+'\n\n'+next);text=text.replace(/([:.;!?])\s*(\d+[.)])\s*(?=[A-Za-z])/g,(m,a,item)=>a+'\n'+item+' ');text=text.replace(/(^|\n)\s*(\d+[.)])\s*(?=[A-Za-z])/g,(m,lead,item)=>lead+item+' ');text=text.replace(/([:.;!?])\s*([-*])\s*(?=[A-Za-z])/g,(m,a,item)=>a+'\n'+item+' ');text=text.replace(new RegExp('([A-Za-z0-9)])('+sectionLabels+')\\s*:','g'),(m,a,label)=>a+'\n\n'+label+':');return text}
+function joinAutoTextParts(parts){let joined='';(parts||[]).forEach(part=>{const text=cleanAutoHiddenMarkup(part,false);if(!text.trim()||isAutoProgressLikeText(text))return;joined=appendAutoTextPart(joined,text)});return joined.replace(/\r\n/g,'\n').trim()}
+function splitAutoAnswerAndInsight(value){const text=normalizeAutoFinalTags(cleanAutoHiddenMarkup(value,false));const match=/(?:^|\n)\s*(?:\*\*)?\s*(?:reason\s*ing|thoughts?|thinking|tool\s*(?:usage|calls?))\s*(?:\*\*)?\s*:/i.exec(text);if(!match)return{answer:text,insight:''};const before=text.slice(0,match.index).trim(),after=text.slice(match.index).trim();if(!before)return{answer:'',insight:after};if(/<\/?(?:tool_call|tool_result|function_call|search_query|think|thinking)\b|Tool event:|\"(?:tool_calls|function_call|arguments)\"|(?:^|\n)\s*(?:Use|Call|Run)\s+[A-Za-z0-9_.-]+\s+(?:because|to)\b/i.test(after))return{answer:before,insight:after};return{answer:text,insight:''}}
 function normalizeAutoAnswerText(value){let text=cleanAutoHiddenMarkup(value);if(!text)return'';const lines=text.split('\n'),nonEmpty=lines.map(line=>line.trim()).filter(Boolean);if(nonEmpty.length<6)return text;const structural=nonEmpty.filter(line=>/^\s*(```|[-*+>]|#{1,6}\s|\d+[.)]\s|\|)/.test(line)).length;if(structural>=2)return text;const shortLines=nonEmpty.filter(line=>line.length<=18&&!/[.!?;:]$/.test(line)).length;const singleWords=nonEmpty.filter(line=>/^[\w'"()[\]{}.,!?;:-]+$/.test(line)&&line.length<=22).length;if(shortLines/nonEmpty.length<.66&&singleWords/nonEmpty.length<.66)return text;return nonEmpty.join(' ').replace(/\s+([,.;:!?%])/g,'$1').replace(/([([{])\s+/g,'$1').replace(/\s+([)\]}])/g,'$1').replace(/\s{2,}/g,' ').trim()}
 function extractAutoFinalText(value){const text=normalizeAutoFinalTags(cleanAutoHiddenMarkup(value));if(!text.trim())return'';const tagged=[];for(const match of text.matchAll(/<auto_final\b[^>]*>([\s\S]*?)<\/auto_final>/gi)){const content=cleanEventContent(match[1]);if(content)tagged.push(content)}if(tagged.length)return normalizeAutoAnswerText(tagged[tagged.length-1]);const openTag=text.match(/<auto_final\b[^>]*>([\s\S]*)$/i);if(openTag){const content=cleanEventContent(String(openTag[1]||'').replace(/<\s*\/?\s*auto\s*[_\s-]*final?\s*[^>]*$/i,'').replace(/<\s*\/\s*$/,'').trim());if(content)return normalizeAutoAnswerText(content)}const markerRegex=/(?:^|\n)\s*(?:\*\*)?(?:final\s+answer|answer)(?:\*\*)?\s*:?\s*([\s\S]*?)(?=(?:\n\s*(?:\*\*)?(?:final\s+answer|answer)(?:\*\*)?\s*:)|$)/gi;const candidates=[];for(const match of text.matchAll(markerRegex)){const candidate=normalizeAutoAnswerText(cleanEventContent(match[1]));if(candidate)candidates.push(candidate)}if(!candidates.length)return'';return[...candidates].reverse().find(candidate=>/[.!?)]$/.test(candidate.trim()))||candidates[candidates.length-1]}
 function visibleAutoAnswerText(value){const final=extractAutoFinalText(value);if(final)return final;const split=splitAutoAnswerAndInsight(value);return normalizeAutoAnswerText(split.answer||value)}
@@ -13324,21 +14011,21 @@ function finalEventReasoning(e){if(!e||typeof e!=='object')return'';const type=S
 function bodyJsonObject(e){if(!e||typeof e!=='object'||typeof e.body!=='string'||!e.body.trim())return null;try{return JSON.parse(e.body)}catch{return null}}
 function bodyJsonReasoning(e){const body=bodyJsonObject(e);return body?finalEventReasoning(body):''}
 function eventErrorText(e){let detail=e&&e.content?e.content:(e&&e.error?e.error:'');if(e&&e.body){try{const parsed=JSON.parse(e.body);detail=(parsed.error&&parsed.error.message)||parsed.message||detail}catch{if(!detail)detail=e.body}}return detail||'AI request failed.'}
-function eventProgressPercent(e){if(!e||typeof e!=='object')return null;let value=null;['progress','percent','percentage','completion','completedPercent'].some(name=>{if(e[name]==null)return false;const n=Number(e[name]);if(Number.isFinite(n)){value=n;return true}return false});if(value==null)return null;if(value<=1)value*=100;return Math.max(0,Math.min(100,value))}
-function progressTextForEvent(e,activeMode){activeMode=activeMode||mode;if(!e)return'';if(typeof e==='string')return isAutoProgressLikeText(e)?e:'';const type=String(e.type||e.event||'').toLowerCase();if(type==='usage')return'';if(type==='error')return'Error: '+eventErrorText(e);const pct=eventProgressPercent(e);const pctText=pct==null?'':(' '+pct.toFixed(pct%1?1:0)+'%');const content=cleanEventContent(e.content||e.message||e.status||e.text||e.error||'');if(content){if(/^(completed|complete|done)$/i.test(type)&&!isAutoProgressLikeText(content)&&pct==null)return'';const line=/%/.test(content)||!pctText?content:content+pctText;return isAutoProgressLikeText(line)||/^(progress|status|started)$/i.test(type)?line:''}if(type==='started')return'Server started the '+activeMode+' job.';if(type==='progress')return'Server is working'+pctText+'...';if(type==='completed'||type==='complete'||type==='done')return'Server completed the '+activeMode+' job'+(pctText||'')+'.';if(e.name&&Object.prototype.hasOwnProperty.call(e,'success'))return(e.success?'Completed ':'Failed ')+e.name;return''}
+function eventProgressPercent(e){if(!e||typeof e!=='object')return null;let value=null;['progressPercent','progress_percent','progress','percent','percentage','completion','completedPercent'].some(name=>{if(e[name]==null)return false;const n=Number(e[name]);if(Number.isFinite(n)){value=n;return true}return false});if(value==null)return null;if(value<=1)value*=100;return Math.max(0,Math.min(100,value))}
+function progressTextForEvent(e,activeMode){activeMode=activeMode||mode;if(!e)return'';if(typeof e==='string')return isAutoProgressLikeText(e)?e:'';if(isCoordinationToolEvent(e))return'';const type=String(e.type||e.event||'').toLowerCase();if(type==='usage')return'';if(type==='error')return'Error: '+eventErrorText(e);const pct=eventProgressPercent(e);const pctText=pct==null?'':(' '+pct.toFixed(pct%1?1:0)+'%');const content=cleanEventContent(e.content||e.message||e.status||e.text||e.error||'');if(content){if(/^(completed|complete|done)$/i.test(type)&&!isAutoProgressLikeText(content)&&pct==null)return'';const line=/%/.test(content)||!pctText?content:content+pctText;return isAutoProgressLikeText(line)||/^(progress|status|started)$/i.test(type)?line:''}if(type==='started')return'Server started the '+activeMode+' job.';if(type==='progress')return'Server is working'+pctText+'...';if(type==='completed'||type==='complete'||type==='done')return'Server completed the '+activeMode+' job'+(pctText||'')+'.';if(e.name&&Object.prototype.hasOwnProperty.call(e,'success'))return(e.success?'Completed ':'Failed ')+e.name;return''}
 function compactEventJson(value){try{return JSON.stringify(value).replace(/\s+/g,' ').slice(0,1400)}catch{return String(value||'').slice(0,1400)}}
 function collectInlineInsightLines(source){const lines=[];String(source||'').split(/\r?\n/).forEach(raw=>{const text=String(raw||'').trim();if(!text||text.length>900||/^\{.*chat\.completion/i.test(text))return;if(/(tool|function_call|tool_call|download|saved|wrote|read file|write file|created file|browser|search|shell|powershell|cmd\.exe|vs_|SessionFiles)/i.test(text)&&!isAutoProgressLikeText(text))lines.push(text)});return lines.slice(-24)}
 function liveThoughtContentForEvent(e){if(!e||typeof e!=='object')return'';return finalEventReasoning(e)||bodyJsonReasoning(e)}
-function insightLinesForEvent(e,activeMode){const lines=[];if(!e)return lines;if(typeof e==='string')return collectInlineInsightLines(e);const type=String(e.type||e.event||'').toLowerCase();['reasoning_summary','reasoningSummary','thought_summary','thoughtSummary'].forEach(key=>{if(Object.prototype.hasOwnProperty.call(e,key)&&e[key])lines.push(key.replace(/_/g,' ')+': '+normalizeAutoAnswerText(cleanEventContent(e[key])).slice(0,1200))});const content=String(e.content||e.message||e.text||'');const summary=summarizeToolResultsJson(content);if(summary)lines.push('Tool summary: '+summary);if(type.includes('tool')||type.includes('function')||type.includes('agent')||e.tool||e.toolName||e.function_call||e.functionCall||e.tool_calls||e.toolCalls){lines.push('Tool event: '+compactEventJson(e))}if(e.name&&Object.prototype.hasOwnProperty.call(e,'success')){const contentText=cleanEventContent(e.content||e.message||e.error||'');lines.push((e.success?'Tool complete: ':'Tool failed: ')+e.name+(contentText?': '+contentText.slice(0,900):''))}collectInlineInsightLines(content).forEach(line=>lines.push(line));return lines.map(line=>sanitizeAutoLogLine(line)).filter(Boolean)}
+function insightLinesForEvent(e,activeMode){const lines=[];if(!e)return lines;if(typeof e==='string')return collectInlineInsightLines(e);if(isCoordinationToolEvent(e))return lines;const type=String(e.type||e.event||'').toLowerCase();['reasoning_summary','reasoningSummary','thought_summary','thoughtSummary'].forEach(key=>{if(Object.prototype.hasOwnProperty.call(e,key)&&e[key])lines.push(key.replace(/_/g,' ')+': '+normalizeAutoAnswerText(cleanEventContent(e[key])).slice(0,1200))});const content=String(e.content||e.message||e.text||'');const summary=summarizeToolResultsJson(content);if(summary)lines.push('Tool summary: '+summary);if(type.includes('tool')||type.includes('function')||type.includes('agent')||e.tool||e.toolName||e.function_call||e.functionCall||e.tool_calls||e.toolCalls){lines.push('Tool event: '+compactEventJson(e))}if(e.name&&Object.prototype.hasOwnProperty.call(e,'success')){const contentText=cleanEventContent(e.content||e.message||e.error||'');lines.push((e.success?'Tool complete: ':'Tool failed: ')+e.name+(contentText?': '+contentText.slice(0,900):''))}collectInlineInsightLines(content).forEach(line=>lines.push(line));return lines.map(line=>sanitizeAutoLogLine(line)).filter(Boolean)}
 function bodyJsonContent(e){const body=bodyJsonObject(e);return body?finalEventContent(body):''}
-function liveAnswerContentForEvent(e){if(!e)return'';let content=finalEventContent(e);if(!content&&typeof e==='object')content=bodyJsonContent(e);const visible=stripAutoThinkTags(content);return visible&&!isAutoProgressLikeText(visible)?content:''}
-function updateLiveAnswer(message,text){if(!message)return;text=String(text||'');if(!text.trim())return;message.liveAnswerRaw=appendAutoTextPart(message.liveAnswerRaw||'',text);const clean=stripAutoThinkTags(message.liveAnswerRaw,false);const split=splitAutoAnswerAndInsight(clean);if(split.insight)appendInsightLine(message,split.insight);const visible=split.answer||(!split.insight?clean:'');if(!visible.trim())return;const answer=visibleAutoAnswerText(visible);if(!answer)return;const stick=shouldStickMessages();setMessageBody(message,answer);stickMessagesToBottom(stick)}
+function liveAnswerContentForEvent(e){if(!e)return'';let content=finalEventContent(e);if(!content&&typeof e==='object')content=bodyJsonContent(e);const visible=cleanAutoHiddenMarkup(content,false);return visible&&!isAutoProgressLikeText(visible)?content:''}
+function updateLiveAnswer(message,text){if(!message)return;text=String(text||'');if(!text.trim())return;message.liveAnswerRaw=appendAutoTextPart(message.liveAnswerRaw||'',text);const clean=cleanAutoHiddenMarkup(message.liveAnswerRaw,false);const split=splitAutoAnswerAndInsight(clean);if(split.insight)appendInsightLine(message,split.insight);const visible=split.answer||(!split.insight?clean:'');if(!visible.trim())return;const answer=visibleAutoAnswerText(visible);if(!answer)return;const stick=shouldStickMessages();setMessageBody(message,answer);stickMessagesToBottom(stick)}
 function showProgressEvents(events,message,activeMode){(events||[]).forEach(e=>{trackBridgeUndoFromEvent(message,e,activeMode);updateCurrentProgressFromEvent(e,message,activeMode);const line=progressTextForEvent(e,activeMode);if(line)appendProgressLine(message,line);const thought=liveThoughtContentForEvent(e);if(thought)appendThoughtPiece(message,thought);insightLinesForEvent(e,activeMode).forEach(insight=>appendInsightLine(message,insight));const live=liveAnswerContentForEvent(e);if(live)updateLiveAnswer(message,live)})}
 function rememberStreamedEvents(message,events){if(!message||!events||!events.length)return;message.streamedEvents=message.streamedEvents||[];events.forEach(e=>message.streamedEvents.push(e))}
 function terminalFailureForEvent(e,activeMode){const eventFailure=eventObjectFailure(e);if(eventFailure)return sanitizeAutoLogLine(eventFailure);const line=progressTextForEvent(e,activeMode);if(/^\s*failed\s*$/i.test(line))return'Auto '+(activeMode||mode)+' request failed.';return''}
 function eventText(events){const out=[],reasoning=[];events.forEach(e=>{if(!e)return;if(e.type==='error')throw new Error(eventErrorText(e));const content=finalEventContent(e)||bodyJsonContent(e);if(content)out.push(content);const thought=finalEventReasoning(e)||bodyJsonReasoning(e);if(thought)reasoning.push(thought)});const joined=joinAutoTextParts(out);const answer=visibleAutoAnswerText(joined);if(answer)return answer;return extractAutoReasoningFallback(reasoning.join(''))}
-function rawAutoTextFallback(raw,contentType){const parsed=parseEvents(raw,contentType||'');const structured=parsed.filter(e=>e&&typeof e==='object'&&String(e.type||e.event||'').toLowerCase()!=='text');if(structured.length){const fromEvents=eventText(structured);if(fromEvents)return fromEvents}const out=[];String(raw||'').split(/\r?\n/).forEach(line=>{let text=String(line||'').trim();if(!text||text.startsWith('event:')||text.startsWith('id:')||text.startsWith('retry:'))return;if(text.startsWith('data:'))text=text.slice(5).trim();if(!text||text==='[DONE]')return;if(text.startsWith('{')||text.startsWith('[')){try{const obj=JSON.parse(text);const content=finalEventContent(obj)||bodyJsonContent(obj);if(content&&!isAutoProgressLikeText(content))out.push(content)}catch{}}else if(!isAutoProgressLikeText(text))out.push(text)});return visibleAutoAnswerText(out.join('\n'))}
-function isAutoInternalToolLine(value){const text=String(value||'').trim();if(!text)return false;if(looksAutoToolCallFragment(text))return true;if(/^Tool (event|summary|complete|failed):/i.test(text))return true;if(/^<\/?(?:tool_call|tool_result|search_query|function_call)\b/i.test(text))return true;if(/^\s*(?:data:\s*)?[\[{]/.test(text)&&/(tool|function_call|tool_call|browser_|internet_search|search_query|vs_|shell|powershell)/i.test(text))return true;return false}
+function rawAutoTextFallback(raw,contentType){const parsed=parseEvents(raw,contentType||'');if(parsed.length){try{const fromEvents=eventText(parsed);if(fromEvents)return fromEvents}catch{}}const out=[];String(raw||'').split(/\r?\n/).forEach(line=>{let text=String(line||'').trim();if(!text||text.startsWith('event:')||text.startsWith('id:')||text.startsWith('retry:'))return;if(text.startsWith('data:'))text=text.slice(5).trim();if(!text||text==='[DONE]')return;if(text.startsWith('{')||text.startsWith('[')){try{const obj=JSON.parse(text);const content=finalEventContent(obj)||bodyJsonContent(obj);if(content&&!isAutoProgressLikeText(content))out.push(content)}catch{}}else if(!isAutoProgressLikeText(text))out.push(text)});return visibleAutoAnswerText(out.join('\n'))}
+function isAutoInternalToolLine(value){const text=String(value||'').trim();if(!text)return false;if(looksAutoToolCallFragment(text))return true;if(/\b(?:goal_checkpoint|continue_with_tools)\b/i.test(text))return true;if(/^Tool (event|summary|complete|failed):/i.test(text))return true;if(/^<\/?(?:tool_call|tool_result|search_query|function_call)\b/i.test(text))return true;if(/^\s*(?:data:\s*)?[\[{]/.test(text)&&/(tool|function_call|tool_call|browser_|internet_search|search_query|goal_checkpoint|continue_with_tools|vs_|shell|powershell)/i.test(text))return true;return false}
 function compactEventJson(value){const e=value&&typeof value==='object'?value:{};const out={name:toolEventName(e),status:toolEventStatus(e)};const eventType=String(e.type||e.event||'').trim();if(eventType)out.type=eventType.slice(0,48);const duration=Number(e.durationMs||e.elapsedMs||0);if(duration>0)out.durationMs=duration;const args=readableToolValue(e.argumentsPreview||e.arguments||e.args||'');if(args)out.argumentsPreview=truncateInsightText(args,420);const rawResult=firstText(e.summary,e.error,summarizeToolResultsJson(e.resultPreview||e.result||e.content||e.message||e.text||''),extractReadingSnippet(e.resultPreview||e.result||e.content||e.message||e.text||''),e.resultPreview,e.result,e.content,e.message,e.text);if(rawResult)out.summary=truncateInsightText(rawResult,520);const read=extractReadingSnippet(e.resultPreview||e.result||e.content||e.message||e.text||'');if(read&&read!==out.summary)out.resultPreview=truncateInsightText(read,620);try{return JSON.stringify(out)}catch{return JSON.stringify({name:'tool',status:'started',summary:'Tool event received.'})}}
 function parseToolEventLine(line){const text=String(line||'').trim();const match=/^Tool event:\s*(\{[\s\S]*\})$/i.exec(text);if(!match)return null;const parsed=parseInsightJson(match[1]);if(parsed)return parsed;const raw=match[1];const pick=name=>{const rx=new RegExp('\"'+name+'\"\\\\s*:\\\\s*\"([^\"\\\\n]{1,220})\"','i');const m=rx.exec(raw);return m?m[1]:''};return{name:firstText(pick('name'),pick('toolName'),pick('tool'),'tool'),status:firstText(pick('status'),pick('state'),'started'),summary:firstText(pick('summary'),pick('error'),pick('resultPreview'),pick('message'),'Tool event received.')}}
 function toolEventSummary(e){return truncateInsightText(e&& (e.summary||e.error||e.resultPreview||e.result||e.content||e.message)||'',260)}
@@ -13351,18 +14038,35 @@ function canonicalInsightLine(text){const tool=parseToolEventLine(text);if(tool)
 function appendInsightLine(message,text){const stick=shouldStickMessages();text=canonicalInsightLine(sanitizeAutoLogLine(text));if(!text)return;currentProgressFromInsightLine(message,text);message.insightLines=message.insightLines||[];if(/^Reasoning:\s*/i.test(text)){appendThoughtPiece(message,text.replace(/^Reasoning:\s*/i,''));stickMessagesToBottom(stick);return}if(/^(thoughts?|thinking|analysis):\s*/i.test(text)){appendThoughtPiece(message,text.replace(/^(thoughts?|thinking|analysis):\s*/i,''));stickMessagesToBottom(stick);return}if(message.insightLines.includes(text))return;message.insightLines.push(text);if(message.insightLines.length>80){message.insightLines=message.insightLines.slice(-80);message.thoughtLineIndex=message.insightLines.findIndex(line=>/^Thinking:/i.test(line))}const toolLine=/^Tool (event|summary|complete|failed):/i.test(text);message.insightPreview=toolLine?text:(message.thoughtCache?('Thinking: '+sanitizeAutoLogLine(message.thoughtCache)):text);addInsights(message,message.insightLines.join('\n'),message.insightPreview);stickMessagesToBottom(stick)}
 function collectInlineInsightLines(source){const lines=[];String(source||'').split(/\r?\n/).forEach(raw=>{const text=String(raw||'').trim();if(!text||text.length>900||/^\{.*chat\.completion/i.test(text))return;if(isAutoInternalToolLine(text)&&!/^Tool event:/i.test(text))return;if(/(tool|function_call|tool_call|download|saved|wrote|read file|write file|created file|browser|search|shell|powershell|cmd\.exe|vs_|SessionFiles)/i.test(text)&&!isAutoProgressLikeText(text))lines.push(text)});return lines.slice(-24)}
 function isAutoProgressLikeText(value){const text=String(value||'').trim();if(!text)return true;if(isAutoInternalToolLine(text))return true;if(isAutoToolPlanningText(text)||isAutoToolResultText(text))return true;const lower=text.toLowerCase();if(lower==='done'||lower==='done.'||lower==='failed'||lower==='[done]')return true;if(/\bstill connected after \d+s\b/i.test(text))return true;return /^(choosing mode|use (text|image|video|audio|tools|embedding|multimodal) ->|routing |connected to auto server|waiting for |checking llmruntime model|llmruntime model .* is loaded|opening chat stream|running prompt on llmruntime|server started|server is working|server completed|selected server|disabled .* until|re-running auto|rendering generated|generated media completed|generated .* ready|loading generated|preview failed|image generation did not complete|video generation did not complete|audio generation did not complete|running (image|video|audio) generation|error: image generation|error: video generation|error: audio generation)/i.test(text)}
-function autoLinkAnchorHtml(href,label,title){const cleanHref=safeAutoUrl(href),text=decodeAutoUrlLabel(label||href);if(cleanHref==='#')return inlineAutoPlainMarkdown(text);return'<a class="auto-link-chip" href="'+escapeHtml(cleanHref)+'" target="_blank" rel="noopener noreferrer" title="'+escapeHtml(decodeAutoUrlLabel(title||href))+'">'+inlineAutoPlainMarkdown(text)+'</a>'}
+function autoTooltipAttr(value){const text=decodeAutoDisplayText(value,{keepWhitespace:true}).replace(/\r\n/g,'\n').trim();return text?' data-auto-tooltip="'+escapeHtml(text)+'"':''}
+function autoLinkAnchorHtml(href,label,title){const cleanHref=safeAutoUrl(href),text=decodeAutoUrlLabel(label||href),tip=decodeAutoDisplayText(title||href,{keepWhitespace:true}).trim();if(cleanHref==='#')return inlineAutoPlainMarkdown(text);return'<a class="auto-link-chip" href="'+escapeHtml(cleanHref)+'" target="_blank" rel="noopener noreferrer" title="'+escapeHtml(tip)+'"'+autoTooltipAttr(tip)+'>'+inlineAutoPlainMarkdown(text)+'</a>'}
 function inlineAutoMarkdown(text){const source=decodeAutoDisplayText(text,{keepWhitespace:true}),rx=/\[([^\]\n]{1,220})\]\(([^)\s]+(?:\)[^)\s]*)?)\)|https?:\/\/[^\s<>"'`]+/gi;let html='',last=0,match;while((match=rx.exec(source))!==null){html+=inlineAutoPlainMarkdown(source.slice(last,match.index));if(match[2]!=null){const label=autoMarkdownLinkText(match[1],match[2]);html+=autoLinkAnchorHtml(match[2],label,match[2])}else{const parts=trimAutoUrl(match[0]);html+=autoLinkAnchorHtml(parts.text,decodeAutoUrlLabel(parts.text),parts.text);html+=inlineAutoPlainMarkdown(parts.trail)}last=rx.lastIndex}html+=inlineAutoPlainMarkdown(source.slice(last));return html}
 function autoMarkdownCells(line){return String(line||'').trim().replace(/^\||\|$/g,'').split('|').map(cell=>cell.trim())}
 function isAutoMarkdownTableSeparator(line){return /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(String(line||''))}
 function renderAutoMarkdownTable(header,rows){let html='<table><thead><tr>'+header.map(cell=>'<th>'+inlineAutoMarkdown(cell)+'</th>').join('')+'</tr></thead><tbody>';rows.forEach(row=>{html+='<tr>';for(let i=0;i<header.length;i++)html+='<td>'+inlineAutoMarkdown(row[i]||'')+'</td>';html+='</tr>'});return html+'</tbody></table>'}
-function renderAutoMarkdown(markdown){const lines=decodeAutoDisplayText(markdown,{keepWhitespace:true}).replace(/\r\n/g,'\n').split('\n');let html='',paragraph=[],listType='',inFence=false,fenceLang='text',fence=[],tableHeader=null,tableRows=[];const closeParagraph=()=>{if(paragraph.length){html+='<p>'+inlineAutoMarkdown(paragraph.join(' '))+'</p>';paragraph=[]}};const closeList=()=>{if(listType){html+='</'+listType+'>';listType=''}};const closeTable=()=>{if(tableHeader){html+=renderAutoMarkdownTable(tableHeader,tableRows);tableHeader=null;tableRows=[]}};const openList=type=>{if(listType!==type){closeParagraph();closeTable();closeList();html+='<'+type+'>';listType=type}};const closeFence=()=>{const lang=normalizeCodeLanguage(fenceLang);html+='<div class="code-block lang-'+escapeHtml(lang)+'"><div class="code-title"><span>'+escapeHtml(lang)+'</span><span>code</span></div><pre><code>'+highlightAutoCode(fence.join('\n'),lang)+'</code></pre></div>';inFence=false;fence=[];fenceLang='text'};for(let i=0;i<lines.length;i++){const line=lines[i];const fenceMatch=/^\s*```([A-Za-z0-9+#._-]*)\s*$/.exec(line);if(fenceMatch){closeTable();if(inFence)closeFence();else{closeParagraph();closeList();inFence=true;fenceLang=fenceMatch[1]||'text';fence=[]}continue}if(inFence){fence.push(line);continue}if(tableHeader){if(line.includes('|')&&line.trim()){tableRows.push(autoMarkdownCells(line));continue}closeTable()}if(line.includes('|')&&i+1<lines.length&&isAutoMarkdownTableSeparator(lines[i+1])){closeParagraph();closeList();tableHeader=autoMarkdownCells(line);tableRows=[];i++;continue}const trimmed=line.trim();if(!trimmed){closeParagraph();closeTable();closeList();continue}if(/^\s*---+\s*$/.test(trimmed)){closeParagraph();closeTable();closeList();html+='<hr>';continue}const heading=/^(#{1,6})\s+(.+)$/.exec(trimmed);if(heading){closeParagraph();closeTable();closeList();const level=Math.min(6,Math.max(2,heading[1].length));html+='<h'+level+'>'+inlineAutoMarkdown(heading[2])+'</h'+level+'>';continue}if(/^[-*]\s+/.test(trimmed)){openList('ul');html+='<li>'+inlineAutoMarkdown(trimmed.replace(/^[-*]\s+/,''))+'</li>';continue}if(/^\d+[.)]\s+/.test(trimmed)){openList('ol');html+='<li>'+inlineAutoMarkdown(trimmed.replace(/^\d+[.)]\s+/,''))+'</li>';continue}if(/^>\s+/.test(trimmed)){closeParagraph();closeTable();closeList();html+='<blockquote>'+inlineAutoMarkdown(trimmed.replace(/^>\s+/,''))+'</blockquote>';continue}paragraph.push(trimmed)}if(inFence)closeFence();closeParagraph();closeTable();closeList();return html}
-function renderMessageBody(body,role,text){let value=decodeAutoDisplayText(text,{keepWhitespace:true});if(role==='assistant')value=cleanAutoHiddenMarkup(value,false);body.dataset.rawText=value;body.textContent='';if(role==='assistant'){body.classList.add('markdown-body');body.innerHTML=renderAutoMarkdown(value)}else{body.classList.remove('markdown-body');body.textContent=value}}
+function autoMarkdownEchoKey(value){return decodeAutoDisplayText(value,{keepWhitespace:true}).toLowerCase().replace(/<[^>]*>/g,' ').replace(/[`*_#[\]()>|:;.,!?'"\\/-]+/g,' ').replace(/\s+/g,'').slice(0,3000)}
+function looksAutoMarkdownSourceEcho(source,after){const s=String(source||'').trim(),a=String(after||'').trim();if(!s||!a||s.length<40)return false;if(!/(?:^|\n)\s*#{1,6}\s*\S|```|\|.*\||\*\*[^*]+\*\*/.test(s)&&!/##|###/.test(s))return false;const sk=autoMarkdownEchoKey(s),ak=autoMarkdownEchoKey(a);if(sk.length<40||ak.length<40)return true;const ap=ak.slice(0,Math.min(160,ak.length)),sp=sk.slice(0,Math.min(160,sk.length));return sk.includes(ap)||ak.includes(sp)||sk.slice(0,80)===ak.slice(0,80)}
+function stripAutoMarkdownSourceEcho(value){const text=String(value||'').replace(/\r\n/g,'\n'),line=/(^|\n)\s*---+\s*\n([\s\S]*?)\n\s*---+\s*(?:\n|$)([\s\S]*)$/.exec(text);if(line&&line[3].trim()&&looksAutoMarkdownSourceEcho(line[2],line[3])){const before=text.slice(0,line.index).trim();return(before?before+'\n\n':'')+line[3].trimStart()}const inline=/^\s*---+\s*([\s\S]{80,}?)\s*---+\s+([\s\S]+)$/.exec(text);if(inline&&looksAutoMarkdownSourceEcho(inline[1],inline[2]))return inline[2].trimStart();return value}
+function renderAutoMarkdown(markdown){const lines=repairAutoMarkdownBoundaries(decodeAutoDisplayText(markdown,{keepWhitespace:true})).replace(/\r\n/g,'\n').split('\n');let html='',paragraph=[],listType='',inFence=false,fenceLang='text',fence=[],tableHeader=null,tableRows=[];const closeParagraph=()=>{if(paragraph.length){html+='<p>'+inlineAutoMarkdown(paragraph.join(' '))+'</p>';paragraph=[]}};const closeList=()=>{if(listType){html+='</'+listType+'>';listType=''}};const closeTable=()=>{if(tableHeader){html+=renderAutoMarkdownTable(tableHeader,tableRows);tableHeader=null;tableRows=[]}};const openList=type=>{if(listType!==type){closeParagraph();closeTable();closeList();html+='<'+type+'>';listType=type}};const closeFence=()=>{const lang=normalizeCodeLanguage(fenceLang);html+='<div class="code-block lang-'+escapeHtml(lang)+'"><div class="code-title"><span>'+escapeHtml(lang)+'</span><span>code</span></div><pre><code>'+highlightAutoCode(fence.join('\n'),lang)+'</code></pre></div>';inFence=false;fence=[];fenceLang='text'};for(let i=0;i<lines.length;i++){const line=lines[i];const fenceMatch=/^\s*```([A-Za-z0-9+#._-]*)\s*$/.exec(line);if(fenceMatch){closeTable();if(inFence)closeFence();else{closeParagraph();closeList();inFence=true;fenceLang=fenceMatch[1]||'text';fence=[]}continue}if(inFence){fence.push(line);continue}if(tableHeader){if(line.includes('|')&&line.trim()){tableRows.push(autoMarkdownCells(line));continue}closeTable()}if(line.includes('|')&&i+1<lines.length&&isAutoMarkdownTableSeparator(lines[i+1])){closeParagraph();closeList();tableHeader=autoMarkdownCells(line);tableRows=[];i++;continue}const trimmed=line.trim();if(!trimmed){closeParagraph();closeTable();closeList();continue}if(/^\s*---+\s*$/.test(trimmed)){closeParagraph();closeTable();closeList();html+='<hr>';continue}const heading=/^(#{1,6})\s+(.+)$/.exec(trimmed);if(heading){closeParagraph();closeTable();closeList();const level=Math.min(6,Math.max(2,heading[1].length));html+='<h'+level+'>'+inlineAutoMarkdown(heading[2])+'</h'+level+'>';continue}if(/^[-*]\s+/.test(trimmed)){openList('ul');html+='<li>'+inlineAutoMarkdown(trimmed.replace(/^[-*]\s+/,''))+'</li>';continue}if(/^\d+[.)]\s+/.test(trimmed)){openList('ol');html+='<li>'+inlineAutoMarkdown(trimmed.replace(/^\d+[.)]\s+/,''))+'</li>';continue}if(/^>\s+/.test(trimmed)){closeParagraph();closeTable();closeList();html+='<blockquote>'+inlineAutoMarkdown(trimmed.replace(/^>\s+/,''))+'</blockquote>';continue}paragraph.push(trimmed)}if(inFence)closeFence();closeParagraph();closeTable();closeList();return html}
+function parseAutoCitationSourceLine(line){let text=decodeAutoDisplayText(line).trim().replace(/^[-*]\s+/,'');if(!text)return null;const bracket=/^\[?\s*(\d{1,3})\s*\]?\s*(.+)$/i.exec(text);let number='',rest=text;if(bracket){number=bracket[1];rest=bracket[2].trim()}const urlMatch=/https?:\/\/[^\s<>"'`]+/i.exec(rest);const url=urlMatch?trimAutoUrl(urlMatch[0]).text:'';let title=rest;if(url){title=(rest.slice(0,urlMatch.index)+rest.slice(urlMatch.index+urlMatch[0].length)).replace(/\s*[-–—:]\s*$/,'').replace(/^\s*[-–—:]\s*/,'').trim()}title=title.replace(/^Source\s*\d{0,3}\s*[:.-]\s*/i,'').trim();if(!number&&url)return{number:'',title:title||decodeAutoUrlLabel(url),url};if(number||url)return{number,title:title||url,url};return null}
+function extractAutoCitationSourceData(markdown){const lines=decodeAutoDisplayText(markdown,{keepWhitespace:true}).replace(/\r\n/g,'\n').split('\n');const body=[],items=[];let inSection=false;for(const line of lines){const trimmed=line.trim();if(/^(?:#{1,6}\s*)?(?:sources?|citations?|references?)\s*:?\s*$/i.test(trimmed)){inSection=true;continue}if(inSection){if(!trimmed){continue}const item=parseAutoCitationSourceLine(trimmed);if(item){items.push(item);continue}if(/^#{1,6}\s+/.test(trimmed)){inSection=false;body.push(line);continue}body.push(line);continue}body.push(line)}const seen=new Set(),unique=[];items.forEach((item,index)=>{const key=(item.url||item.title||String(index)).toLowerCase();if(seen.has(key))return;seen.add(key);unique.push(Object.assign({number:item.number||String(unique.length+1)},item))});return{body:body.join('\n').replace(/\n{3,}$/,'\n\n').trim(),items:unique}}
+function renderAutoCitationSourcesHtml(items){items=(items||[]).filter(item=>item&&(item.title||item.url));if(!items.length)return'';const citations=items.map((item,index)=>{const text='['+(item.number||index+1)+'] '+(item.title||decodeAutoUrlLabel(item.url));return'<li><span class="auto-citation-text" title="'+escapeHtml(text)+'"'+autoTooltipAttr(text)+'>'+inlineAutoMarkdown(text)+'</span></li>'}).join('');const sources=items.map(item=>{const text=item.url||item.title||'';return'<li class="auto-citation-source"><span class="auto-citation-text" title="'+escapeHtml(text)+'"'+autoTooltipAttr(text)+'>'+(item.url?autoLinkAnchorHtml(item.url,item.url,item.url):inlineAutoMarkdown(item.title||''))+'</span></li>'}).join('');const controls='<span class="auto-citation-actions"><button class="auto-citation-button" type="button" data-auto-citation-toggle aria-expanded="false">v</button><button class="auto-citation-button" type="button" data-auto-citation-expand-all>Expand All</button></span>';return'<section class="auto-citation-panel"><div class="auto-citation-column" data-auto-citation-column="citations"><div class="auto-citation-title"><span>Citations</span>'+controls+'</div><ol class="auto-citation-list">'+citations+'</ol></div><div class="auto-citation-column" data-auto-citation-column="sources"><div class="auto-citation-title"><span>Sources</span>'+controls+'</div><ol class="auto-citation-list">'+sources+'</ol></div></section>'}
+function renderMessageBody(body,role,text){let value=decodeAutoDisplayText(text,{keepWhitespace:true});if(role==='assistant')value=repairAutoMarkdownBoundaries(stripAutoMarkdownSourceEcho(cleanAutoHiddenMarkup(value,false)));body.dataset.rawText=value;body.textContent='';if(role==='assistant'){const citationData=extractAutoCitationSourceData(value);body.classList.add('markdown-body');body.innerHTML=renderAutoMarkdown(citationData.body)+renderAutoCitationSourcesHtml(citationData.items)}else{body.classList.remove('markdown-body');body.textContent=value}}
+function restartToolMarquee(box){if(!box)return;box.querySelectorAll('.tool-marquee-track').forEach(track=>{track.style.animation='none';void track.offsetWidth;track.style.animation=''})}
+document.addEventListener('click',event=>{const toolButton=event.target&&event.target.closest&&event.target.closest('[data-tool-expand]');if(toolButton){event.preventDefault();event.stopPropagation();const box=toolButton.closest('.tool-expandable');if(box){const expanded=!box.classList.contains('expanded');box.classList.toggle('expanded',expanded);box.querySelectorAll('[data-tool-expand]').forEach(button=>{button.textContent=button.dataset.toolExpand==='label'?(expanded?'Collapse':'Expand'):(expanded?'^':'v');button.setAttribute('aria-expanded',expanded?'true':'false')});if(!expanded)restartToolMarquee(box)}return}const citationToggle=event.target&&event.target.closest&&event.target.closest('[data-auto-citation-toggle]');if(citationToggle){event.preventDefault();const column=citationToggle.closest('.auto-citation-column');if(column){const expanded=!column.classList.contains('expanded');column.classList.toggle('expanded',expanded);citationToggle.textContent=expanded?'^':'v';citationToggle.setAttribute('aria-expanded',expanded?'true':'false')}return}const expandAll=event.target&&event.target.closest&&event.target.closest('[data-auto-citation-expand-all]');if(expandAll){event.preventDefault();const panel=expandAll.closest('.auto-citation-panel');if(panel){const expanded=!panel.classList.contains('all-expanded');panel.classList.toggle('all-expanded',expanded);panel.querySelectorAll('.auto-citation-column').forEach(column=>column.classList.toggle('expanded',expanded));panel.querySelectorAll('[data-auto-citation-toggle]').forEach(button=>{button.textContent=expanded?'^':'v';button.setAttribute('aria-expanded',expanded?'true':'false')});panel.querySelectorAll('[data-auto-citation-expand-all]').forEach(button=>button.textContent=expanded?'Collapse All':'Expand All')}}});
+let autoHoverTooltip=null,autoHoverTarget=null;
+function hideAutoHoverTooltip(){if(autoHoverTooltip){autoHoverTooltip.remove();autoHoverTooltip=null}autoHoverTarget=null}
+function positionAutoHoverTooltip(event){if(!autoHoverTooltip||!event)return;const pad=12;let left=event.clientX+14,top=event.clientY+14;autoHoverTooltip.style.left=left+'px';autoHoverTooltip.style.top=top+'px';const rect=autoHoverTooltip.getBoundingClientRect();if(rect.right>window.innerWidth-pad)left=Math.max(pad,window.innerWidth-pad-rect.width);if(rect.bottom>window.innerHeight-pad)top=Math.max(pad,event.clientY-rect.height-14);autoHoverTooltip.style.left=left+'px';autoHoverTooltip.style.top=top+'px'}
+function showAutoHoverTooltip(target,event){const text=target&&target.dataset&&target.dataset.autoTooltip;if(!text)return;hideAutoHoverTooltip();autoHoverTarget=target;autoHoverTooltip=document.createElement('div');autoHoverTooltip.className='auto-hover-tooltip';autoHoverTooltip.textContent=text;document.body.appendChild(autoHoverTooltip);positionAutoHoverTooltip(event)}
+document.addEventListener('pointerover',event=>{const target=event.target&&event.target.closest&&(event.target.closest('.tool-marquee-viewport[data-auto-tooltip]')||event.target.closest('[data-auto-tooltip]'));if(target)showAutoHoverTooltip(target,event)});
+document.addEventListener('pointermove',event=>{if(autoHoverTarget&&autoHoverTarget.contains(event.target))positionAutoHoverTooltip(event)});
+document.addEventListener('pointerout',event=>{if(autoHoverTarget&&(!event.relatedTarget||!autoHoverTarget.contains(event.relatedTarget)))hideAutoHoverTooltip()});
+document.addEventListener('scroll',hideAutoHoverTooltip,true);
 function readableToolValue(value){if(value==null)return'';if(typeof value==='string'||typeof value==='number'||typeof value==='boolean')return decodeAutoDisplayText(value,{keepWhitespace:true});try{return decodeAutoDisplayText(JSON.stringify(value,null,2),{keepWhitespace:true})}catch{return decodeAutoDisplayText(value,{keepWhitespace:true})}}
 function extractReadingSnippet(text){text=readableToolValue(text);if(!text.trim())return'';const sections=[/\[Visible text\]\s*([\s\S]*?)(?:\n\s*\[Links\]|\n\s*\[HTML excerpt\]|$)/i,/\[HTML excerpt\]\s*([\s\S]{80,900})/i,/(?:content|result|text):\s*([\s\S]{80,900})/i];for(const rx of sections){const m=rx.exec(text);if(m&&m[1])return truncateInsightText(m[1],620)}const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(x=>x&&!/^(\[|url:|title:|fetchedUtc:|Sources?:|Links?:|HTML)/i.test(x)&&!/^https?:\/\//i.test(x));return truncateInsightText(lines.slice(0,6).join(' '),620)}
 function cleanEventContent(value){const text=cleanAutoHiddenMarkup(value);if(!text)return'';const summary=summarizeToolResultsJson(text.trim());return summary?decodeAutoDisplayText(summary):decodeAutoDisplayText(text)}
 function cleanEventTokenContent(value){const text=String(value||'');if(!text.trim())return'';const clean=cleanAutoHiddenMarkup(text,false);const summary=summarizeToolResultsJson(clean.trim());return summary?decodeAutoDisplayText(summary):decodeAutoDisplayText(clean,{keepWhitespace:true})}
-function normalizeAutoAnswerText(value){let text=decodeAutoDisplayText(cleanAutoHiddenMarkup(value),{keepWhitespace:true});if(!text)return'';const lines=text.split('\n'),nonEmpty=lines.map(line=>line.trim()).filter(Boolean);if(nonEmpty.length<6)return text;const structural=nonEmpty.filter(line=>/^\s*(```|[-*+>]|#{1,6}\s|\d+[.)]\s|\|)/.test(line)).length;if(structural>=2)return text;const shortLines=nonEmpty.filter(line=>line.length<=18&&!/[.!?;:]$/.test(line)).length;const singleWords=nonEmpty.filter(line=>/^[\w'"()[\]{}.,!?;:-]+$/.test(line)&&line.length<=22).length;if(shortLines/nonEmpty.length<.66&&singleWords/nonEmpty.length<.66)return text;return nonEmpty.join(' ').replace(/\s+([,.;:!?%])/g,'$1').replace(/([([{])\s+/g,'$1').replace(/\s+([)\]}])/g,'$1').replace(/\s{2,}/g,' ').trim()}
+function normalizeAutoAnswerText(value){let text=repairAutoMarkdownBoundaries(decodeAutoDisplayText(cleanAutoHiddenMarkup(value),{keepWhitespace:true}));if(!text)return'';const lines=text.split('\n'),nonEmpty=lines.map(line=>line.trim()).filter(Boolean);if(nonEmpty.length<6)return text;const structural=nonEmpty.filter(line=>/^\s*(```|[-*+>]|#{1,6}\s|\d+[.)]\s|\|)/.test(line)).length;if(structural>=2)return text;const shortLines=nonEmpty.filter(line=>line.length<=18&&!/[.!?;:]$/.test(line)).length;const singleWords=nonEmpty.filter(line=>/^[\w'"()[\]{}.,!?;:-]+$/.test(line)&&line.length<=22).length;if(shortLines/nonEmpty.length<.66&&singleWords/nonEmpty.length<.66)return text;return nonEmpty.join(' ').replace(/\s+([,.;:!?%])/g,'$1').replace(/([([{])\s+/g,'$1').replace(/\s+([)\]}])/g,'$1').replace(/\s{2,}/g,' ').trim()}
 function sanitizeAutoLogLine(value){return decodeAutoDisplayText(cleanAutoHiddenMarkup(String(value||''),false),{keepWhitespace:true}).replace(/404\s+Not\s+Found:\s*GET\s+\/?(?:[A-Za-z]:[\\/]|\\\\|\/)[^\r\n;]*/gi,'404 Not Found from media endpoint').replace(/((?:[A-Za-z]:[\\/]|\\\\|\/)[^`\r\n<>]*?[\\/]SessionFiles[\\/][^\s;,)]+)/gi,match=>match.split(/[\\/]+/).pop()||'generated media').replace(/((?:[A-Za-z]:[\\/]|\\\\|\/)[^`\r\n<>]*?\.(?:png|jpe?g|webp|gif|bmp|svg|mp4|webm|mov|m4v|ogv|wav|mp3|ogg|flac|m4a|aac))/gi,match=>match.split(/[\\/]+/).pop()||'generated media').replace(/[ \t]*\n[ \t]*/g,' ').replace(/\s+/g,' ').trim()}
 function linkifyInsightText(text){return inlineAutoMarkdown(cleanAutoToolDisplayText(text,true))}
 function toolEventSummary(e){return truncateInsightText(cleanAutoToolSummaryText(readableToolValue(e&& (e.summary||e.error||e.resultPreview||e.result||e.content||e.message)||'')),320)}
@@ -13371,14 +14075,18 @@ function renderToolEventCardHtml(event,lastThought){const e=event||{},status=too
 function decodeAutoDisplayText(value,options){let text=decodeAutoEntities(String(value||''));const opts=options||{};try{if(/^"(?:\\.|[^"\\])*"$/.test(text.trim()))text=JSON.parse(text.trim())}catch{}text=String(text||'').replace(/\\u\{([0-9a-fA-F]{1,6})\}/g,(_,hex)=>decodeAutoCodePoint(hex)).replace(/\\u([0-9a-fA-F]{4})/g,(_,hex)=>decodeAutoCodePoint(hex)).replace(/\\x([0-9a-fA-F]{2})/g,(_,hex)=>decodeAutoCodePoint(hex)).split('\\\\/').join('/').split('\\/').join('/');const pathOnly=/^\s*(?:[A-Za-z]:\\|\\\\)[^\r\n]*\s*$/.test(text);if(!opts.keepEscapedLines&&!pathOnly){text=text.replace(/\\r\\n|\\n\\r/g,'\n').replace(/\\r/g,'\n').replace(/\\n/g,'\n').replace(/\\t/g,'\t')}text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');text=normalizeAutoCitationTokens(repairAutoMojibake(text));return opts.keepWhitespace?text:text.replace(/[ \t]+\n/g,'\n').replace(/\n{4,}/g,'\n\n\n')}
 function toolEventThought(e,lastThought,args,summary){let explicit=cleanAutoToolDisplayText(String(lastThought||'').replace(/^Thinking:\s*/i,'').replace(/^Thought before tool\s*/i,''),false);if(/^Use\s+\S+\s+because\s*\.?$/i.test(explicit)||/^because\s*\.?$/i.test(explicit))explicit='';if(explicit)return explicit;const name=toolEventName(e),query=args&&readableToolValue(args.query||args.q||args.search||''),url=args&&readableToolValue(args.url||args.uri||args.href||''),path=args&&readableToolValue(args.path||args.filePath||args.artifactPath||'');if(query)return'Use '+name+' to look up "'+query+'" before answering.';if(url)return'Use '+name+' to inspect '+url+' before answering.';if(path)return'Use '+name+' to inspect '+path+' before answering.';const cleanSummary=cleanAutoToolSummaryText(summary);if(cleanSummary)return'Use '+name+' because '+cleanSummary.replace(/\.$/,'').toLowerCase()+'.';return'Use '+name+' to gather the next piece of information for this response.'}
 function extractReadingSnippet(text){text=readableToolValue(text);if(!text.trim())return'';const sections=[/\[Visible text\]\s*([\s\S]*?)(?:\n\s*\[Links\]|\n\s*\[HTML excerpt\]|$)/i,/\[HTML excerpt\]\s*([\s\S]{80,900})/i,/(?:content|result|text):\s*([\s\S]{80,900})/i];for(const rx of sections){const m=rx.exec(text);if(m&&m[1])return truncateInsightText(m[1],620)}const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(x=>x&&!/^(\[|url:|title:|fetchedUtc:|Sources?:|Links?:|HTML)/i.test(x)&&!/^https?:\/\//i.test(x)&&!/^\d{1,3}[.)]?$/.test(x)&&!/^\[\s*\d{1,3}\s*\]$/.test(x)&&!/^cited links?$/i.test(x)&&!/^\[(?:search\s*internet|searchinternet|internet[_\s-]*search|browser|tool)\s+service\]$/i.test(x));return truncateInsightText(lines.slice(0,6).join(' '),620)}
-function renderToolEventCardHtml(event,lastThought){const e=event||{},status=toolEventStatus(e),cls=toolEventStatusClass(status),name=decodeAutoDisplayText(toolEventName(e)),summary=toolEventSummary(e),args=parseToolArgs(e.argumentsPreview||e.arguments||''),argEntries=toolArgEntries(args).filter(pair=>/^(query|q|search|url|uri|href|path|filePath|artifactPath|selector|index|reason)$/i.test(pair[0])).slice(0,6),result=readableToolValue(e.resultPreview||e.result||e.content||e.message||''),urls=extractInsightUrls(readableToolValue(e.argumentsPreview||'')+'\n'+result,8),read=extractReadingSnippet(result),duration=Number(e.durationMs||0),thought=toolEventThought(e,lastThought,args,summary);let html='<div class="tool-call-card '+cls+'"><div class="tool-call-head"><span class="tool-call-name">'+escapeHtml(name)+'</span><span class="tool-call-status">'+escapeHtml(status)+(duration>0?' '+duration+'ms':'')+'</span></div>';if(thought)html+='<div class="tool-call-thought"><span class="tool-card-label">Thought before tool</span>'+linkifyInsightText(truncateInsightText(thought,360))+'</div>';if(summary)html+='<div class="tool-call-summary">'+linkifyInsightText(summary)+'</div>';if(argEntries.length){html+='<div class="tool-call-fields"><span class="tool-card-label">Arguments</span>'+argEntries.map(([k,v])=>'<div class="tool-call-field"><span class="tool-call-key">'+escapeHtml(decodeAutoDisplayText(k))+'</span><span class="tool-call-value">'+linkifyInsightText(truncateInsightText(v,420))+'</span></div>').join('')+'</div>'}html+=renderToolLinksHtml(urls);if(read)html+='<div class="tool-call-read"><span class="tool-card-label">Reading</span>'+linkifyInsightText(read)+'</div>';else if(result&&!summary&&urls.length===0)html+='<div class="tool-call-result">'+linkifyInsightText(truncateInsightText(result,620))+'</div>';if(e.error)html+='<div class="tool-call-result error">'+linkifyInsightText(e.error)+'</div>';html+='</div>';return html}
-function renderInsightLinesHtml(value,latest){const rows=String(value||latest||'').split(/\r?\n/).filter(Boolean);let html='<div class="insight-stack">',lastThought='';rows.forEach(row=>{const raw=String(row||'').trim();if(!raw)return;const tool=parseToolEventLine(raw);const clean=tool?raw:decodeAutoDisplayText(raw).trim();if(!clean)return;if(/^Thinking:/i.test(clean)){lastThought=clean;html+='<div class="insight-thought"><strong>Thought process</strong>'+linkifyInsightText(truncateInsightText(clean.replace(/^Thinking:\s*/i,''),620))+'</div>';return}if(/^Reasoning:/i.test(clean)||/^(thoughts?|analysis):/i.test(clean)){lastThought=clean.replace(/^(Reasoning|thoughts?|analysis):\s*/i,'Thinking: ');html+='<div class="insight-thought"><strong>Thought process</strong>'+linkifyInsightText(truncateInsightText(lastThought.replace(/^Thinking:\s*/i,''),620))+'</div>';return}if(tool){html+=renderToolEventCardHtml(tool,lastThought);return}if(/^Tool summary:/i.test(clean)){html+='<div class="tool-call-card done"><div class="tool-call-head"><span class="tool-call-name">Tool summary</span><span class="tool-call-status">done</span></div><div class="tool-call-result">'+linkifyInsightText(clean.replace(/^Tool summary:\s*/i,''))+'</div></div>';return}if(/^Tool (complete|failed):/i.test(clean)){const failed=/^Tool failed:/i.test(clean);html+='<div class="tool-call-card '+(failed?'failed':'done')+'"><div class="tool-call-result">'+linkifyInsightText(clean.replace(/^Tool (?:complete|failed):\s*/i,''))+'</div></div>';return}if(isAutoInternalToolLine(clean))return;html+='<div class="insight-line">'+linkifyInsightText(clean)+'</div>'});return html+'</div>'}
-function insightStatusPreview(text){text=decodeAutoDisplayText(text).trim();if(!text)return'Reasoning, thoughts, and tool usage';const tool=parseToolEventLine(text);if(tool)return toolEventPreview(tool);if(isAutoInternalToolLine(text))return'Tool activity';if(/^Thinking:/i.test(text))return'Thinking: '+truncateInsightText(text.replace(/^Thinking:\s*/i,''),300);if(text.length>520||/^\s*\{/.test(text))return truncateInsightText(text,300);return text}
+function toolMarqueeDuration(label,value){const chars=String(value||'').length;let seconds=Math.max(18,Math.min(68,Math.round(chars/7.5)));if(/thought/i.test(label))seconds=Math.min(78,Math.round(seconds*1.18));return seconds}
+function toolExpandableSectionHtml(className,label,text,limit){const value=String(text||'').trim();if(!value)return'';const singleLine=value.replace(/\s+/g,' ').trim(),expandedNeeded=value.length>Math.max(80,Number(limit)||360),duration=toolMarqueeDuration(label,singleLine),tooltip=autoTooltipAttr(value),style=' style="--tool-marquee-duration:'+duration+'s"';const marquee='<div class="tool-marquee-viewport"'+tooltip+'><span class="tool-marquee-track"'+style+'><span class="tool-marquee-copy">'+linkifyInsightText(singleLine)+'</span><span class="tool-marquee-copy" aria-hidden="true">'+linkifyInsightText(singleLine)+'</span></span></div>';return'<div class="'+className+' tool-expandable'+(expandedNeeded?'':' expanded')+'"><span class="tool-card-label">'+escapeHtml(label)+'</span><div class="tool-expand-body">'+marquee+'</div>'+(expandedNeeded?'<div class="tool-expand-actions"><button class="tool-expand-button" type="button" data-tool-expand aria-expanded="false">v</button><button class="tool-expand-button" type="button" data-tool-expand data-tool-expand="label" aria-expanded="false">Expand</button></div>':'')+'</div>'}
+function renderToolEventCardHtml(event,lastThought){const e=event||{};if(isCoordinationToolEvent(e))return'';const status=toolEventStatus(e),cls=toolEventStatusClass(status),name=decodeAutoDisplayText(toolEventName(e)),summary=toolEventSummary(e),args=parseToolArgs(e.argumentsPreview||e.arguments||''),argEntries=toolArgEntries(args).filter(pair=>/^(query|q|search|url|uri|href|path|filePath|artifactPath|selector|index|reason)$/i.test(pair[0])).slice(0,6),result=readableToolValue(e.resultPreview||e.result||e.content||e.message||''),urls=extractInsightUrls(readableToolValue(e.argumentsPreview||'')+'\n'+result,8),read=extractReadingSnippet(result),duration=Number(e.durationMs||0),thought=toolEventThought(e,lastThought,args,summary);let html='<div class="tool-call-card '+cls+'"><div class="tool-call-head"><span class="tool-call-name">'+escapeHtml(name)+'</span><span class="tool-call-status">'+escapeHtml(status)+(duration>0?' '+duration+'ms':'')+'</span></div>';html+=toolExpandableSectionHtml('tool-call-thought','Thought before tool',thought,360);if(summary)html+='<div class="tool-call-summary">'+linkifyInsightText(summary)+'</div>';if(argEntries.length){html+='<div class="tool-call-fields"><span class="tool-card-label">Arguments</span>'+argEntries.map(([k,v])=>'<div class="tool-call-field"><span class="tool-call-key">'+escapeHtml(decodeAutoDisplayText(k))+'</span><span class="tool-call-value">'+linkifyInsightText(truncateInsightText(v,420))+'</span></div>').join('')+'</div>'}html+=renderToolLinksHtml(urls);if(read)html+=toolExpandableSectionHtml('tool-call-read','Reading',read,620);else if(result&&!summary&&urls.length===0)html+='<div class="tool-call-result">'+linkifyInsightText(truncateInsightText(result,620))+'</div>';if(e.error)html+='<div class="tool-call-result error">'+linkifyInsightText(e.error)+'</div>';html+='</div>';return html}
+function renderInsightLinesHtml(value,latest){const rows=String(value||latest||'').split(/\r?\n/).filter(Boolean);let html='<div class="insight-stack">',lastThought='';rows.forEach(row=>{const raw=String(row||'').trim();if(!raw)return;const tool=parseToolEventLine(raw);const clean=tool?raw:decodeAutoDisplayText(raw).trim();if(!clean)return;if(/^Thinking:/i.test(clean)){lastThought=clean;html+='<div class="insight-thought"><strong>Thought process</strong>'+linkifyInsightText(truncateInsightText(clean.replace(/^Thinking:\s*/i,''),620))+'</div>';return}if(/^Reasoning:/i.test(clean)||/^(thoughts?|analysis):/i.test(clean)){lastThought=clean.replace(/^(Reasoning|thoughts?|analysis):\s*/i,'Thinking: ');html+='<div class="insight-thought"><strong>Thought process</strong>'+linkifyInsightText(truncateInsightText(lastThought.replace(/^Thinking:\s*/i,''),620))+'</div>';return}if(tool){if(isCoordinationToolEvent(tool))return;html+=renderToolEventCardHtml(tool,lastThought);return}if(/^Tool summary:/i.test(clean)){html+='<div class="tool-call-card done"><div class="tool-call-head"><span class="tool-call-name">Tool summary</span><span class="tool-call-status">done</span></div><div class="tool-call-result">'+linkifyInsightText(clean.replace(/^Tool summary:\s*/i,''))+'</div></div>';return}if(/^Tool (complete|failed):/i.test(clean)){const failed=/^Tool failed:/i.test(clean);html+='<div class="tool-call-card '+(failed?'failed':'done')+'"><div class="tool-call-result">'+linkifyInsightText(clean.replace(/^Tool (?:complete|failed):\s*/i,''))+'</div></div>';return}if(isAutoInternalToolLine(clean))return;html+='<div class="insight-line">'+linkifyInsightText(clean)+'</div>'});return html+'</div>'}
+function insightStatusPreview(text){text=decodeAutoDisplayText(text).trim();if(!text)return'Reasoning, thoughts, and tool usage';const tool=parseToolEventLine(text);if(tool)return isCoordinationToolEvent(tool)?'Goal progress':toolEventPreview(tool);if(isAutoInternalToolLine(text))return'Tool activity';if(/^Thinking:/i.test(text))return'Thinking: '+truncateInsightText(text.replace(/^Thinking:\s*/i,''),300);if(text.length>520||/^\s*\{/.test(text))return truncateInsightText(text,300);return text}
 function collectInlineInsightLines(source){const lines=[];decodeAutoDisplayText(source,{keepWhitespace:true}).split(/\r?\n/).forEach(raw=>{const text=String(raw||'').trim();if(!text||text.length>900||/^\{.*chat\.completion/i.test(text))return;if(isAutoInternalToolLine(text)&&!/^Tool event:/i.test(text))return;if(/(tool|function_call|tool_call|download|saved|wrote|read file|write file|created file|browser|search|shell|powershell|cmd\.exe|vs_|SessionFiles)/i.test(text)&&!isAutoProgressLikeText(text))lines.push(text)});return lines.slice(-24)}
+function isAutoSynthesisFallbackText(value){return/(?:final answer|model)\s+synthesis pass timed out|clean source list instead of a stalled cycle/i.test(String(value||''))}
+function noteAutoSynthesisFallback(message,value){if(!message||message.synthesisFallbackNoted||!isAutoSynthesisFallbackText(value))return;message.synthesisFallbackNoted=true;appendProgressLine(message,'Final answer synthesis timed out; showing the completed source list instead of stalling.');appendThoughtPiece(message,'Tool results are complete; final synthesis timed out, so Auto is rendering the clean source-list fallback.');appendInsightLine(message,'Tool summary: Final synthesis timed out after completed tool results; Auto rendered the clean source-list fallback.');extractInsightUrls(value,12).forEach((url,index)=>addCurrentProgressSource(url,urlLabel(url,index),'source fallback'));setCurrentProgressPlan('synthesize','done','Final synthesis timed out; clean source list fallback is ready.')}
 async function readResponseTextWithProgress(response,message,activeMode){
 activeMode=activeMode||mode;
 const contentType=response.headers.get('content-type')||'';
-const structured=/text\/event-stream|application\/x-ndjson|application\/json-seq|application\/json/i.test(contentType);
+const streamFormat=autoStreamFormat(contentType,'');
 let lastPaint=0;
 const paint=async(force)=>{
 const now=(window.performance&&performance.now)?performance.now():Date.now();
@@ -13414,7 +14122,25 @@ const chunk=decoder.decode(next.value,{stream:true});
 if(!chunk)continue;
 raw+=chunk;
 pending+=chunk;
-if(!structured&&pending.indexOf('\n')<0){
+const effectiveFormat=autoStreamFormat(contentType,pending);
+if(effectiveFormat==='sse'){
+const split=splitCompleteAutoSseFrames(pending);
+pending=split.rest;
+const events=parseAutoSseFrames(split.frames);
+const terminalFailure=await emitEvents(events);
+if(terminalFailure){
+const errorEvent={type:'error',content:terminalFailure};
+await emitEvents([errorEvent]);
+try{await reader.cancel()}catch{}
+return raw+'\n'+JSON.stringify(errorEvent);
+}
+continue;
+}
+if(effectiveFormat==='json'){
+await paint(false);
+continue;
+}
+if(effectiveFormat==='text'&&pending.indexOf('\n')<0){
 rememberStreamedEvents(message,[{type:'text',content:chunk}]);
 const live=cleanEventTokenContent(chunk);
 if(live&&!isAutoProgressLikeText(live))updateLiveAnswer(message,live);
@@ -13436,7 +14162,7 @@ return raw+'\n'+JSON.stringify(errorEvent);
 const tail=decoder.decode();
 if(tail){raw+=tail;pending+=tail}
 if(pending.trim()){
-const events=parseEvents(pending,contentType);
+const events=autoStreamFormat(contentType,pending)==='sse'?parseAutoSseFrames([pending]):parseEvents(pending,contentType);
 const terminalFailure=await emitEvents(events);
 if(terminalFailure)return raw+'\n'+JSON.stringify({type:'error',content:terminalFailure});
 }
@@ -13480,22 +14206,34 @@ function pushAssistantTranscript(message,content,artifacts,insights){const item=
 function llmTranscriptMessages(limit){return transcript.slice(-Math.max(1,Number(limit)||12)).map(item=>({role:item&&item.role==='user'?'user':'assistant',content:String(item&&item.content||'')})).filter(item=>item.content.trim())}
 function artifactRelativePath(entry){let path=String(entry&&entry.relativePath||entry&&entry.path||entry&&entry.name||'').trim().replace(/^file:\/\/\/?/i,'').replace(/^["'`]+|["'`]+$/g,'');const session=/[\\/]SessionFiles[\\/]([^\\/]+)[\\/](.+)$/i.exec(path);if(session)path=session[2];path=path.replace(/[\\/]+/g,'/').replace(/^\/+/,'').replace(/[?#].*$/,'').replace(/[),.;:!?]+$/g,'');return path||String(entry&&entry.name||'file')}
 function artifactPathParts(entry){const parts=artifactRelativePath(entry).split('/').map(part=>part.trim()).filter(Boolean);if(parts.length<=1)return{folders:[],file:parts[0]||entry&&entry.name||'file',relative:parts[0]||entry&&entry.name||'file'};return{folders:parts.slice(0,-1),file:parts[parts.length-1],relative:parts.join('/')}}
-function buildSessionArtifactTree(entries){const root={name:'',folders:new Map(),files:[]};(entries||[]).forEach(entry=>{if(!entry||entry.type!=='file')return;const parts=artifactPathParts(entry);let node=root;parts.folders.forEach(name=>{const key=name.toLowerCase();if(!node.folders.has(key))node.folders.set(key,{name,folders:new Map(),files:[]});node=node.folders.get(key)});node.files.push(Object.assign({},entry,{displayName:parts.file,relativePath:parts.relative}))});return root}
+function sessionFileStateId(){return cleanAutoSessionId(sessionId)||'local'}
+function sessionFileStateKey(suffix){return'SocketJackAutoSessionFiles:'+sessionFileStateId()+':'+suffix}
+function ensureSessionFileUiState(){const id=sessionFileStateId();if(sessionFileUiStateId===id)return;sessionFileUiStateId=id;sessionFileChangedKeys.clear();try{sessionFileCollapsedPaths=new Set(JSON.parse(safeStorageGet(sessionFileStateKey('collapsed'))||'[]').map(x=>String(x||'').toLowerCase()).filter(Boolean))}catch{sessionFileCollapsedPaths=new Set()}}
+function saveSessionFileCollapsedState(){ensureSessionFileUiState();safeStorageSet(sessionFileStateKey('collapsed'),JSON.stringify(Array.from(sessionFileCollapsedPaths)))}
+function saveSessionFileScroll(){if(!els.sessionArtifactList)return;ensureSessionFileUiState();safeStorageSet(sessionFileStateKey('scroll'),String(Math.max(0,Math.round(els.sessionArtifactList.scrollTop||0))))}
+function restoreSessionFileScroll(scrollTop){if(!els.sessionArtifactList)return;const next=Math.max(0,Number(scrollTop)||0);requestAnimationFrame(()=>{if(els.sessionArtifactList)els.sessionArtifactList.scrollTop=next})}
+function sessionFileChangeKey(entry){return String(entry&&entry.sessionId||sessionId||'')+'|'+artifactRelativePath(entry).toLowerCase()}
+function sessionFileFingerprint(entry){return[artifactRelativePath(entry).toLowerCase(),Number(entry&&entry.sizeBytes||0)||0,String(entry&& (entry.uploadedUtc||entry.lastWriteUtc||entry.modifiedUtc)||''),String(entry&&entry.mimeType||''),String(entry&&entry.kind||'')].join('|')}
+function markSessionFileChanged(entry){const key=sessionFileChangeKey(entry);if(key)sessionFileChangedKeys.set(key,Date.now()+2600)}
+function isSessionFileChanged(entry){const key=sessionFileChangeKey(entry),until=sessionFileChangedKeys.get(key)||0;if(!until)return false;if(until<Date.now()){sessionFileChangedKeys.delete(key);return false}return true}
+function flashFilesPanel(){[els.filesDrawer,els.filesToggle].filter(Boolean).forEach(el=>{el.classList.remove('files-changed');void el.offsetWidth;el.classList.add('files-changed');window.setTimeout(()=>el&&el.classList&&el.classList.remove('files-changed'),1500)})}
+function buildSessionArtifactTree(entries){const root={name:'',path:'',folders:new Map(),files:[]};(entries||[]).forEach(entry=>{if(!entry||entry.type!=='file')return;const parts=artifactPathParts(entry);let node=root;parts.folders.forEach(name=>{const key=name.toLowerCase(),path=(node.path?node.path+'/':'')+name;if(!node.folders.has(key))node.folders.set(key,{name,path,folders:new Map(),files:[]});node=node.folders.get(key)});node.files.push(Object.assign({},entry,{displayName:parts.file,relativePath:parts.relative}))});return root}
 function sortedTreeFolders(node){return Array.from(node.folders.values()).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')))}
 function sortedTreeFiles(node){return node.files.slice().sort((a,b)=>String(a.displayName||a.name||'').localeCompare(String(b.displayName||b.name||'')))}
 function countTreeFiles(node){let count=node.files.length;node.folders.forEach(child=>{count+=countTreeFiles(child)});return count}
+function treeHasChangedFile(node){return node.files.some(isSessionFileChanged)||Array.from(node.folders.values()).some(treeHasChangedFile)}
 function formatArtifactBytes(value){let bytes=Number(value||0);if(!Number.isFinite(bytes)||bytes<=0)return'';const units=['B','KB','MB','GB'];let index=0;while(bytes>=1024&&index<units.length-1){bytes/=1024;index++}return(index?bytes.toFixed(bytes>=10?1:2):Math.round(bytes))+units[index]}
 function sessionArtifactMeta(entry){const bits=[];if(entry.kind)bits.push(entry.kind);const size=formatArtifactBytes(entry.sizeBytes);if(size)bits.push(size);return bits.join(' - ')||'Download'}
 function canRemoveSessionArtifact(entry){return!!(entry&&entry.type==='file'&&entry.source==='auto-upload'&&(entry.sessionId||sessionId)&&(entry.name||entry.path))}
-async function removeSessionArtifact(entry,button){if(!canRemoveSessionArtifact(entry))return;const key=artifactKey(entry);if(button)button.disabled=true;try{const p=new URLSearchParams({sessionId:entry.sessionId||sessionId,name:entry.name||entry.path||''});const r=await fetch('/auto/session-file?'+p.toString(),{method:'DELETE',credentials:'include',headers:authHeaders()});const data=await readLooseJsonResponse(r);applyAuthSnapshot(data);if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));freshUploadKeys.delete(key);currentArtifacts=currentArtifacts.filter(existing=>artifactKey(existing)!==key);renderSessionArtifacts();renderOpenSessionTabs();persistCurrentSessionState()}catch(e){if(button)button.disabled=false;alert('Remove file failed: '+(e.message||e))}}
-function createSessionArtifactRow(entry){const row=document.createElement('div');row.className='session-file-row';const displayEntry=Object.assign({},entry,{name:entry.displayName||entry.name||entry.path||'file'});const link=createArtifactChip(displayEntry);link.querySelector('small').textContent=sessionArtifactMeta(entry);row.appendChild(link);const actions=document.createElement('div');actions.className='session-file-actions';const ref=document.createElement('button');ref.type='button';ref.className='session-file-action';ref.textContent='Ref';ref.title='Reference '+(displayEntry.name||'file')+' in the next prompt';ref.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();queueSessionArtifact(entry,false)});actions.appendChild(ref);if(attachmentSupportsVisionInput(entry)){const vision=document.createElement('button');vision.type='button';vision.className='session-file-action vision';vision.textContent='Vision';vision.title='Attach '+(displayEntry.name||'file')+' as vision input for the next prompt';vision.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();queueSessionArtifact(entry,true,vision)});actions.appendChild(vision)}row.appendChild(actions);if(canRemoveSessionArtifact(entry)){const remove=document.createElement('button');remove.type='button';remove.className='session-file-remove';remove.textContent='x';remove.title='Remove '+(displayEntry.name||'file')+' from this session';remove.setAttribute('aria-label',remove.title);remove.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();removeSessionArtifact(entry,remove)});row.appendChild(remove)}else{const spacer=document.createElement('span');spacer.setAttribute('aria-hidden','true');row.appendChild(spacer)}return row}
+async function removeSessionArtifact(entry,button){if(!canRemoveSessionArtifact(entry))return;const key=artifactKey(entry);if(button)button.disabled=true;try{const p=new URLSearchParams({sessionId:entry.sessionId||sessionId,name:entry.name||entry.path||''});const r=await fetch('/auto/session-file?'+p.toString(),{method:'DELETE',credentials:'include',headers:authHeaders()});const data=await readLooseJsonResponse(r);applyAuthSnapshot(data);if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));freshUploadKeys.delete(key);currentArtifacts=currentArtifacts.filter(existing=>artifactKey(existing)!==key);flashFilesPanel();renderSessionArtifacts();renderOpenSessionTabs();persistCurrentSessionState();scheduleSessionFilesRefresh('delete',250)}catch(e){if(button)button.disabled=false;alert('Remove file failed: '+(e.message||e))}}
+function createSessionArtifactRow(entry){const row=document.createElement('div');row.className='session-file-row'+(isSessionFileChanged(entry)?' file-changed':'');const displayEntry=Object.assign({},entry,{name:entry.displayName||entry.name||entry.path||'file'});const link=createArtifactChip(displayEntry);link.querySelector('small').textContent=sessionArtifactMeta(entry);row.appendChild(link);const actions=document.createElement('div');actions.className='session-file-actions';const ref=document.createElement('button');ref.type='button';ref.className='session-file-action';ref.textContent='Ref';ref.title='Reference '+(displayEntry.name||'file')+' in the next prompt';ref.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();queueSessionArtifact(entry,false)});actions.appendChild(ref);if(attachmentSupportsVisionInput(entry)){const vision=document.createElement('button');vision.type='button';vision.className='session-file-action vision';vision.textContent='Vision';vision.title='Attach '+(displayEntry.name||'file')+' as vision input for the next prompt';vision.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();queueSessionArtifact(entry,true,vision)});actions.appendChild(vision)}row.appendChild(actions);if(canRemoveSessionArtifact(entry)){const remove=document.createElement('button');remove.type='button';remove.className='session-file-remove';remove.textContent='x';remove.title='Remove '+(displayEntry.name||'file')+' from this session';remove.setAttribute('aria-label',remove.title);remove.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();removeSessionArtifact(entry,remove)});row.appendChild(remove)}else{const spacer=document.createElement('span');spacer.setAttribute('aria-hidden','true');row.appendChild(spacer)}return row}
 function appendArtifactTree(container,node,depth){sortedTreeFolders(node).forEach(folder=>container.appendChild(createArtifactTreeFolder(folder,depth)));sortedTreeFiles(node).forEach(file=>container.appendChild(createSessionArtifactRow(file,depth)))}
-function createArtifactTreeFolder(node,depth){const details=document.createElement('details');details.className='session-folder';details.open=true;const summary=document.createElement('summary');summary.className='session-folder-label';summary.title=node.name;const name=document.createElement('span');name.className='session-folder-name';name.textContent=node.name;const count=document.createElement('span');count.className='session-folder-count';const total=countTreeFiles(node);count.textContent=total+' file'+(total===1?'':'s');summary.appendChild(name);summary.appendChild(count);details.appendChild(summary);const children=document.createElement('div');children.className='session-folder-children';appendArtifactTree(children,node,depth+1);details.appendChild(children);return details}
+function createArtifactTreeFolder(node,depth){ensureSessionFileUiState();const details=document.createElement('details');const path=String(node.path||node.name||'').toLowerCase();details.className='session-folder'+(treeHasChangedFile(node)?' folder-changed':'');details.dataset.path=path;details.open=!sessionFileCollapsedPaths.has(path);details.addEventListener('toggle',()=>{if(details.open)sessionFileCollapsedPaths.delete(path);else sessionFileCollapsedPaths.add(path);saveSessionFileCollapsedState()});const summary=document.createElement('summary');summary.className='session-folder-label';summary.title=node.path||node.name;const name=document.createElement('span');name.className='session-folder-name';name.textContent=node.name;const count=document.createElement('span');count.className='session-folder-count';const total=countTreeFiles(node);count.textContent=total+' file'+(total===1?'':'s');summary.appendChild(name);summary.appendChild(count);details.appendChild(summary);const children=document.createElement('div');children.className='session-folder-children';appendArtifactTree(children,node,depth+1);details.appendChild(children);return details}
 function renderMessageArtifacts(message,entries){if(!message||!message.card)return;const unique=[];const seen=new Set();(entries||[]).forEach(entry=>{const key=artifactKey(entry);if(!key||seen.has(key))return;seen.add(key);unique.push(entry)});let box=message.card.querySelector('.bubble-artifacts');if(!unique.length){if(box)box.remove();return}if(!box){box=document.createElement('div');box.className='bubble-artifacts';message.card.appendChild(box)}box.textContent='';unique.forEach(entry=>box.appendChild(createArtifactChip(entry)))}
 function mergeArtifactLists(){const out=[],seen=new Set();Array.from(arguments).forEach(list=>(Array.isArray(list)?list:[]).forEach(entry=>{const key=artifactKey(entry),pathKey=artifactPathIdentity(entry);if(!key||seen.has(key)||(pathKey&&seen.has(pathKey)))return;seen.add(key);if(pathKey)seen.add(pathKey);out.push(entry)}));return out}
-function addArtifactsToMessage(message,entries){if(!message||!entries||!entries.length)return[];message.artifacts=mergeArtifactLists(message.artifacts||[],entries);renderMessageArtifacts(message,message.artifacts);return message.artifacts}
-function renderSessionArtifacts(){if(!els.sessionArtifacts||!els.sessionArtifactList)return;els.sessionArtifacts.hidden=false;els.sessionArtifactList.textContent='';const files=currentArtifacts.filter(entry=>entry&&entry.type==='file');if(!files.length){const empty=document.createElement('div');empty.className='session-empty';empty.textContent='No files in this session yet.';els.sessionArtifactList.appendChild(empty);renderPendingUploadQueue();return}const tree=document.createElement('div');tree.className='session-tree-root';appendArtifactTree(tree,buildSessionArtifactTree(files),0);els.sessionArtifactList.appendChild(tree);renderPendingUploadQueue()}
-function addSessionArtifacts(entries){const files=(entries||[]).filter(entry=>entry&&entry.type==='file');if(!files.length)return;files.forEach(entry=>{const key=artifactKey(entry),pathKey=artifactPathIdentity(entry);currentArtifacts=currentArtifacts.filter(existing=>artifactKey(existing)!==key&&(!pathKey||artifactPathIdentity(existing)!==pathKey));currentArtifacts.unshift(entry);addCurrentProgressOutput(entry)});currentArtifacts=currentArtifacts.slice(0,60);renderSessionArtifacts();renderOpenSessionTabs();persistCurrentSessionState()}
+function addArtifactsToMessage(message,entries){if(!message||!entries||!entries.length)return[];message.artifacts=mergeArtifactLists(message.artifacts||[],entries);renderMessageArtifacts(message,message.artifacts);if(message.promptMessage)updatePromptRunMeta(message.promptMessage,{outputs:message.artifacts.filter(entry=>entry&&entry.type==='file')});return message.artifacts}
+function renderSessionArtifacts(){if(!els.sessionArtifacts||!els.sessionArtifactList)return;const previousStateId=sessionFileUiStateId;ensureSessionFileUiState();const sameSession=previousStateId===sessionFileUiStateId;const scrollTop=sameSession?els.sessionArtifactList.scrollTop:Number(safeStorageGet(sessionFileStateKey('scroll'))||0);els.sessionArtifacts.hidden=false;els.sessionArtifactList.textContent='';const files=currentArtifacts.filter(entry=>entry&&entry.type==='file');if(!files.length){const empty=document.createElement('div');empty.className='session-empty';empty.textContent='No files in this session yet.';els.sessionArtifactList.appendChild(empty);renderPendingUploadQueue();restoreSessionFileScroll(scrollTop);return}const tree=document.createElement('div');tree.className='session-tree-root';appendArtifactTree(tree,buildSessionArtifactTree(files),0);els.sessionArtifactList.appendChild(tree);renderPendingUploadQueue();restoreSessionFileScroll(scrollTop)}
+function addSessionArtifacts(entries){const files=(entries||[]).filter(entry=>entry&&entry.type==='file');if(!files.length)return;files.forEach(markSessionFileChanged);flashFilesPanel();files.forEach(entry=>{const key=artifactKey(entry),pathKey=artifactPathIdentity(entry);currentArtifacts=currentArtifacts.filter(existing=>artifactKey(existing)!==key&&(!pathKey||artifactPathIdentity(existing)!==pathKey));currentArtifacts.unshift(entry);addCurrentProgressOutput(entry)});currentArtifacts=currentArtifacts.slice(0,60);renderSessionArtifacts();renderOpenSessionTabs();persistCurrentSessionState();scheduleSessionFilesRefresh('add',500)}
 function transcriptFileArtifacts(messages){const files=[];(messages||[]).forEach(item=>(Array.isArray(item&&item.artifacts)?item.artifacts:[]).forEach(entry=>{if(entry&&entry.type==='file')files.push(entry)}));return files}
 function uploadModelNames(){return [requestModel(),suggestedModel,selectedServer&&selectedServer.models||'',selectedServer&&selectedServer.model||''].join(' ')}
 function modelSupportsVisionInput(text){return/(vision|multimodal|multi[\s._-]?modal|vl\b|vllm|omni|llava|qwen[\s._-]?vl|pixtral|minicpm[\s._-]?v|moondream|florence|kosmos|gemini|gpt[\s._-]?4o)/i.test(String(text||''))}
@@ -13523,7 +14261,7 @@ async function queueSessionArtifact(entry,asVision,button){if(!entry)return;cons
 function setUploadQueueStatus(title,detail,isError){if(!els.uploadQueue)return;const hasText=!!(title||detail);els.uploadQueue.hidden=!hasText;els.uploadQueue.classList.toggle('error',!!isError);els.uploadQueue.innerHTML='';if(title){const strong=document.createElement('strong');strong.textContent=title;els.uploadQueue.appendChild(strong)}if(detail){const span=document.createElement('span');span.textContent=detail;els.uploadQueue.appendChild(span)}}
 function renderPendingUploadQueue(){if(!els.uploadQueue)return;const fresh=freshUploadEntries(),refs=queuedReferenceEntries(),count=fresh.length+refs.length;if(!count){setUploadQueueStatus('','',false);return}const first=(fresh[0]||refs[0]||{}).name||(fresh[0]||refs[0]||{}).path||'file';if(fresh.length&&refs.length)setUploadQueueStatus('Queued '+count+' files','Next prompt will include uploads and references',false);else if(fresh.length)setUploadQueueStatus(fresh.length===1?'Queued upload':'Queued '+fresh.length+' uploads',fresh.length===1?first:'Next prompt will include these files',false);else setUploadQueueStatus(refs.length===1?'Queued reference':'Queued '+refs.length+' references',refs.length===1?first:'Next prompt will include these files',false)}
 function attachmentSupportsVisionInput(file){const name=String(file&& (file.name||file.path)||'');const kind=String(file&&file.kind||fileKind(name)||'').toLowerCase();const mime=String(file&&file.mimeType||mimeForPath(name)||'').toLowerCase();return mime.startsWith('image/')||kind==='image'||/\.(png|jpe?g|webp|gif|bmp|svg|heic|heif|tiff?)$/i.test(name)}
-function promptLooksImageGenerationRequest(text){text=String(text||'');return/\b(generate|create|make|draw|render|design|paint|illustrate|produce|draft|mock\s*up|mockup)\b.{0,160}\b(image|picture|photo|illustration|art|logo|poster|thumbnail|wallpaper|portrait|character|design|concept|icon|avatar|sticker|banner|cover|mockup|scene|render|graphic|visual|asset)\b/i.test(text)||promptLooksMediaBatchGenerationRequest(text,'image',autoMediaBatchNouns('image'))}
+function promptLooksImageGenerationRequest(text){text=String(text||'');return/\b(generate|create|make|draw|render|design|paint|illustrate|produce|draft|mock\s*up|mockup)\b.{0,160}\b(image|picture|photo|illustration|art|logo|poster|thumbnail|wallpaper|portrait|character|design|concept|icon|avatar|sticker|banner|cover|mockup|scene|render|graphic|visual|asset)\b/i.test(text)}
 function promptLooksFileInspection(text){return/\b(show|read|open|inspect|summari[sz]e|content|contents|cat|parse|extract|display|what(?:'s| is)? in)\b.{0,140}\b(file|txt|text|document|csv|json|xml|yaml|robots)\b/i.test(String(text||''))||/\brobots\.txt\b/i.test(String(text||''))}
 function promptLooksToolUseRequest(text){text=String(text||'');return/\b(agent|tool|browser|open|click|search|internet|current|latest|listing|listings|ebay|amazon|download|upload|file|folder|workspace|project|save|write|delete|rename|patch|code|shell|terminal|command|powershell|run|urls?|links?|sources?|citations?|references?|official|docs?|documentation)\b/i.test(text)||/\b(create|make|build)\b.{0,90}\b(file|folder|project|app|website|code|script)\b/i.test(text)}
 function promptLooksSingleToolAggregationRequest(text){text=String(text||'');if(!text.trim())return false;const hasExternalTarget=/\b(urls?|links?|sources?|citations?|references?|websites?|web\s+pages?|pages?|docs?|documentation|home\s*pages?|search\s+queries?|official)\b/i.test(text);const hasCollectVerb=/\b(find|compile|collect|gather|list|search|look\s*up|return|provide|compare|verify|cite|source)\b/i.test(text);return hasExternalTarget&&hasCollectVerb}
@@ -13534,12 +14272,15 @@ function promptNamesAttachment(promptText,entry){const prompt=normalizedAttachme
 function promptAttachmentReferenceScope(promptText){const text=String(promptText||'');const hasAttachmentNoun=/\b(attachment|attached|upload|uploaded|file|image|picture|photo|screenshot|document|pdf|csv|json|txt|text file|robots|media)\b/i.test(text);const hasPointer=/\b(this|that|it|its|them|these|those|above|previous|last|same|earlier)\b/i.test(text);const hasAction=/\b(show|read|open|inspect|summari[sz]e|content|contents|cat|parse|extract|display|describe|analy[sz]e|use|reference|compare|edit|change|modify|convert|explain|what|who|where|when|why|how)\b/i.test(text);const wantsMany=/\b(all|them|these|those|files|images|pictures|photos|attachments|uploads|documents|screenshots)\b/i.test(text);if(hasAttachmentNoun&&(hasPointer||hasAction||/\b(attached|uploaded|upload|attachment)\b/i.test(text)))return wantsMany?'all':'latest';if(hasPointer&&hasAction)return wantsMany?'all':'latest';return''}
 function referencedSessionAttachmentEntries(promptText){const files=sessionFileEntries().filter(entry=>!isFreshUploadEntry(entry));if(!files.length)return[];const named=files.filter(entry=>promptNamesAttachment(promptText,entry));if(named.length)return named.slice(0,12);const scope=promptAttachmentReferenceScope(promptText);if(!scope)return[];return(scope==='all'?files:files.slice(0,1)).slice(0,12)}
 function promptAttachmentEntries(promptText){const selected=[],seen=new Set();const add=entry=>{const key=artifactKey(entry);if(!key||seen.has(key))return;seen.add(key);selected.push(entry)};sessionFileEntries().filter(entry=>isFreshUploadEntry(entry)||isQueuedReferenceEntry(entry)).forEach(add);referencedSessionAttachmentEntries(promptText).forEach(add);return selected.slice(0,12)}
+function setSessionFilesLoading(loading){sessionFilesLoading=!!loading;if(els.filesRefresh){els.filesRefresh.disabled=sessionFilesLoading;els.filesRefresh.textContent=sessionFilesLoading?'Refreshing':'Refresh';els.filesRefresh.title=sessionFilesLoading?'Refreshing session files':'Refresh session files'}}
+function scheduleSessionFilesRefresh(reason,delay){window.clearTimeout(sessionFilesRefreshTimer);if(!sessionId||!hasAutoAuth())return;sessionFilesRefreshTimer=window.setTimeout(()=>loadSessionFiles({reason:reason||'scheduled'}),Math.max(80,Number(delay)||450))}
+function mergeLoadedSessionFiles(uploaded,options){options=options||{};const activeSession=cleanAutoSessionId(sessionId),before=new Map();currentArtifacts.filter(entry=>entry&&entry.type==='file'&&entry.source==='auto-upload'&&cleanAutoSessionId(entry.sessionId||sessionId)===activeSession).forEach(entry=>before.set(sessionFileChangeKey(entry),{fingerprint:sessionFileFingerprint(entry),entry}));const incomingKeys=new Set(),changed=[];(uploaded||[]).forEach(entry=>{const key=sessionFileChangeKey(entry);incomingKeys.add(key);const prior=before.get(key);if(!prior||prior.fingerprint!==sessionFileFingerprint(entry))changed.push(entry)});let removed=false;currentArtifacts=currentArtifacts.filter(existing=>{if(!existing||existing.type!=='file'||existing.source!=='auto-upload'||cleanAutoSessionId(existing.sessionId||sessionId)!==activeSession)return true;const keep=incomingKeys.has(sessionFileChangeKey(existing));if(!keep)removed=true;return keep});(uploaded||[]).slice().reverse().forEach(entry=>{const key=artifactKey(entry),pathKey=artifactPathIdentity(entry),changeKey=sessionFileChangeKey(entry);const existing=currentArtifacts.find(item=>item&&item.type==='file'&&(artifactKey(item)===key||artifactPathIdentity(item)===pathKey||sessionFileChangeKey(item)===changeKey));if(existing&&existing.inlineDataUrl)entry.inlineDataUrl=existing.inlineDataUrl;if(existing&&isFreshUploadEntry(existing)){entry.freshUpload=true;freshUploadKeys.add(artifactKey(entry))}if(existing&&isQueuedReferenceEntry(existing)){entry.queuedReference=true;queuedReferenceKeys.add(artifactKey(entry))}if(existing&&existing.forceVision)entry.forceVision=true;currentArtifacts=currentArtifacts.filter(item=>artifactKey(item)!==key&&artifactPathIdentity(item)!==pathKey&&(!(item&&item.type==='file')||sessionFileChangeKey(item)!==changeKey));currentArtifacts.unshift(entry)});if(options.flash!==false)changed.forEach(markSessionFileChanged);currentArtifacts=currentArtifacts.slice(0,60);if((changed.length||removed)&&options.flash!==false)flashFilesPanel();return changed.length>0||removed}
 async function uploadSelectedFiles(files){files=Array.from(files||[]);if(!files.length)return;if(!await ensureAutoAuth(true,'Sign in to upload files to this Auto session.'))return;setUploadQueueStatus('Uploading',files.length===1?files[0].name:(files.length+' files'),false);let uploaded=0,failed=false;for(const file of files){try{setUploadQueueStatus('Uploading '+(uploaded+1)+'/'+files.length,file.name,false);const dataUrl=await fileToDataUrl(file);const r=await fetch('/auto/session-files',{method:'POST',credentials:'include',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({sessionId,fileName:file.name,mimeType:file.type||mimeForPath(file.name),sizeBytes:file.size,dataUrl})});const data=await readLooseJsonResponse(r);applyAuthSnapshot(data);if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));const entry=normalizeUploadedFileEntry(data.file,dataUrl,{fresh:true});if(entry){markFreshUpload(entry);addSessionArtifacts([entry]);uploaded++}else{uploaded++;setUploadQueueStatus('Queued upload',file.name,false)}}catch(e){failed=true;setUploadQueueStatus('Upload failed',file.name+': '+sanitizeAutoLogLine(e.message||e),true)}}if(els.fileUploadInput)els.fileUploadInput.value='';if(!failed||freshUploadEntries().length)renderPendingUploadQueue();persistCurrentSessionState()}
-async function loadSessionFiles(){if(!hasAutoAuth()||!sessionId){renderSessionArtifacts();return}try{const p=new URLSearchParams({sessionId});const r=await fetch('/auto/session-files?'+p.toString(),{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await readLooseJsonResponse(r);applyAuthSnapshot(data);if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));const uploaded=(Array.isArray(data.files)?data.files:[]).map(item=>normalizeUploadedFileEntry(item,'')).filter(Boolean);uploaded.reverse().forEach(entry=>{const key=artifactKey(entry);const existing=currentArtifacts.find(item=>artifactKey(item)===key);if(existing&&existing.inlineDataUrl)entry.inlineDataUrl=existing.inlineDataUrl;if(existing&&isFreshUploadEntry(existing))markFreshUpload(entry);currentArtifacts=currentArtifacts.filter(existing=>artifactKey(existing)!==key);currentArtifacts.unshift(entry)});currentArtifacts=currentArtifacts.slice(0,60);renderSessionArtifacts();persistCurrentSessionState()}catch(e){renderSessionArtifacts()}}
+async function loadSessionFiles(options){options=options||{};if(!hasAutoAuth()||!sessionId){renderSessionArtifacts();return}if(sessionFilesLoading&&!options.force)return;setSessionFilesLoading(true);try{const p=new URLSearchParams({sessionId});const server=firstText(selectedServerId,forcedAutoServerId);if(server)p.set('serverId',server);p.set('mode',requestMode(mode));p.set('origin',originMode);p.set('premiumModels',premiumModelsEnabled?'true':'false');if(autoMinParamsB>0)p.set('minParamsB',String(autoMinParamsB));if(autoMaxParamsB>0)p.set('maxParamsB',String(autoMaxParamsB));const r=await fetch('/auto/session-files?'+p.toString(),{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await readLooseJsonResponse(r);applyAuthSnapshot(data);if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));const uploaded=(Array.isArray(data.files)?data.files:[]).map(item=>normalizeUploadedFileEntry(item,'')).filter(Boolean);const changed=mergeLoadedSessionFiles(uploaded,{flash:options.flash!==false});if(changed||options.force){renderSessionArtifacts();renderOpenSessionTabs();persistCurrentSessionState()}else renderPendingUploadQueue()}catch(e){if(options.force)setUploadQueueStatus('Refresh failed',sanitizeAutoLogLine(e.message||e),true);renderSessionArtifacts()}finally{setSessionFilesLoading(false)}}
 function attachmentSummary(entry){return{name:entry.name||entry.path||'file',kind:entry.kind||fileKind(entry.name||entry.path||''),mimeType:entry.mimeType||mimeForPath(entry.name||entry.path||''),sizeBytes:entry.sizeBytes||0,source:entry.source||'',url:entry.url||'',sessionId:entry.sessionId||sessionId,path:entry.path||'',freshUpload:isFreshUploadEntry(entry),queuedReference:isQueuedReferenceEntry(entry),forceVision:!!(entry&&entry.forceVision),hasInlineData:!!entry.inlineDataUrl}}
 function attachmentsForPrompt(promptText,includeData){return promptAttachmentEntries(promptText).map(entry=>{const out=attachmentSummary(entry);if(includeData&&entry.inlineDataUrl&&/^image\//i.test(out.mimeType))out.dataUrl=entry.inlineDataUrl;return out})}
-function guardRouteForPromptAttachments(routeMode,promptText,attachments,message){const files=(attachments||[]).filter(Boolean);if(routeMode==='tools')routeMode='text';if(!files.length)return routeMode;if(routeMode==='multimodal'&&promptLooksToolUseRequest(promptText)){if(message)appendProgressLine(message,'Attached files plus tool intent detected. Routing as Text.');return'text'}const hasVision=files.some(attachmentSupportsVisionInput);if(hasVision)return routeMode;if((routeMode==='multimodal'||routeMode==='image')&&!promptLooksImageGenerationRequest(promptText)){const guarded='text';if(message)appendProgressLine(message,'Attached file is not vision-capable. Routing as Text.');return guarded}return routeMode}
-function promptWithAttachmentRouting(promptText,attachments){const listed=(attachments&&attachments.length?attachments:attachmentsForPrompt(promptText,false));if(!listed.length)return promptText;const fresh=listed.filter(file=>file&&file.freshUpload);const queued=listed.filter(file=>file&&file.queuedReference);const referenced=listed.filter(file=>!(file&&file.freshUpload)&&!(file&&file.queuedReference));const lines=listed.map((file,index)=>(index+1)+'. '+file.name+' ['+file.kind+', '+file.mimeType+(file.freshUpload?', fresh upload':file.queuedReference?', queued file reference':' referenced session file')+(file.forceVision?', vision input':'')+']').join('\n');const notes=[];if(fresh.length){const vision=fresh.filter(attachmentSupportsVisionInput);const other=fresh.filter(file=>!attachmentSupportsVisionInput(file));if(vision.length)notes.push('Fresh image-capable uploads can use USE MULTIMODAL when the user asks to inspect or describe them, or USE IMAGE when the user explicitly asks to edit or generate from them.');if(other.length)notes.push('Fresh non-media uploads should use USE TEXT when the user asks to read, inspect, parse, move, save, or download their contents.')}if(queued.length)notes.push('Queued file references were explicitly selected from the Auto files panel and must be included with this prompt. Image-capable queued references may be used as vision input.');if(referenced.length)notes.push('Referenced existing session files are included only because the user mentioned this upload, filename, or prior attachment in the current prompt. Use USE TEXT when the user asks to read or inspect non-media contents.');return String(promptText||'')+'\n\nAttached session files:\n'+lines+'\n\n'+notes.join(' ')}
+function guardRouteForPromptAttachments(routeMode,promptText,attachments,message){const files=(attachments||[]).filter(Boolean);if(!files.length)return routeMode;if(routeMode==='multimodal'&&promptLooksToolUseRequest(promptText)){if(message)appendProgressLine(message,'Attached files plus tool intent detected. Routing as Tools.');return'tools'}const hasVision=files.some(attachmentSupportsVisionInput);if(hasVision)return routeMode;if((routeMode==='multimodal'||routeMode==='image')&&!promptLooksImageGenerationRequest(promptText)){const guarded='tools';if(message)appendProgressLine(message,'Attached file is not vision-capable. Routing as Tools.');return guarded}return routeMode}
+function promptWithAttachmentRouting(promptText,attachments){const listed=(attachments&&attachments.length?attachments:attachmentsForPrompt(promptText,false));if(!listed.length)return promptText;const fresh=listed.filter(file=>file&&file.freshUpload);const queued=listed.filter(file=>file&&file.queuedReference);const referenced=listed.filter(file=>!(file&&file.freshUpload)&&!(file&&file.queuedReference));const lines=listed.map((file,index)=>(index+1)+'. '+file.name+' ['+file.kind+', '+file.mimeType+(file.freshUpload?', fresh upload':file.queuedReference?', queued file reference':' referenced session file')+(file.forceVision?', vision input':'')+']').join('\n');const notes=[];if(fresh.length){const vision=fresh.filter(attachmentSupportsVisionInput);const other=fresh.filter(file=>!attachmentSupportsVisionInput(file));if(vision.length)notes.push('Fresh image-capable uploads should use mode multimodal when the user asks to inspect or describe them, or mode image when the user explicitly asks to edit or generate from them.');if(other.length)notes.push('Fresh non-media uploads should use mode tools when the user asks to read, inspect, parse, move, save, or download their contents.')}if(queued.length)notes.push('Queued file references were explicitly selected from the Auto files panel and must be included with this prompt. Image-capable queued references may be used as vision input.');if(referenced.length)notes.push('Referenced existing session files are included only because the user mentioned this upload, filename, or prior attachment in the current prompt. Use mode tools when the user asks to read or inspect non-media contents.');return String(promptText||'')+'\n\nAttached session files:\n'+lines+'\n\n'+notes.join(' ')}
 function jsonCandidatesFromText(text){const source=String(text||'').trim(),candidates=[];const objectStart=source.indexOf('{'),objectEnd=source.lastIndexOf('}');if(objectStart>=0&&objectEnd>objectStart)candidates.push(source.slice(objectStart,objectEnd+1));const arrayStart=source.indexOf('['),arrayEnd=source.lastIndexOf(']');if(arrayStart>=0&&arrayEnd>arrayStart)candidates.push(source.slice(arrayStart,arrayEnd+1));return candidates}
 async function readLooseJsonResponse(response){const text=await response.text();try{return JSON.parse(text)}catch(firstError){const eventObject=parseEvents(text,response.headers.get('content-type')||'').find(e=>e&&typeof e==='object'&&Object.prototype.hasOwnProperty.call(e,'ok'));if(eventObject)return eventObject;for(const candidate of jsonCandidatesFromText(text)){try{return JSON.parse(candidate)}catch{}}const sample=sanitizeAutoLogLine(text.slice(0,220));throw new Error((firstError&&firstError.message?firstError.message:'JSON parse failed')+(sample?': '+sample:''))}}
 function blobToDataUrl(blob){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result||''));reader.onerror=()=>reject(reader.error||new Error('Unable to read generated video.'));reader.readAsDataURL(blob)})}
@@ -13572,7 +14313,7 @@ function addCurrentProgressOutput(entry){if(!entry)return;const label=entry.name
 function addCurrentProgressSource(url,label,meta){url=String(url||'').trim();if(!url)return;const key=progressItemKey('source',url);currentProgressState.sources=(currentProgressState.sources||[]).filter(item=>item.key!==key);currentProgressState.sources.unshift({key,url,label:label||url,status:'done',meta:meta||'url',detail:url});currentProgressState.sources=currentProgressState.sources.slice(0,14);renderCurrentProgressPanel(true)}
 function currentProgressFromThought(message,text){const goal=currentProgressCleanGoalText(text);if(!goal||isAutoProgressLikeText(goal))return;const detail=truncateInsightText(text,260);upsertCurrentProgressGoal('trajectory',goal,'running',detail,'thinking','tail')}
 function currentProgressToolGoal(event,message){const args=parseToolArgs(event&& (event.argumentsPreview||event.arguments||event.args||''));const name=toolEventName(event);const query=args&&readableToolValue(args.query||args.q||args.search||'');const url=args&&readableToolValue(args.url||args.uri||args.href||'');const path=args&&readableToolValue(args.path||args.filePath||args.artifactPath||'');const reason=args&&readableToolValue(args.reason||args.message||'');if(query)return(/search/i.test(name)?'Search for ':'Use '+name+' to search for ')+query;if(url)return(/browser|open|read|click/i.test(name)?'Inspect ':'Use '+name+' on ')+url;if(path)return(/write|create|save/i.test(name)?'Update ':'Inspect ')+path;if(reason)return reason;return toolEventThought(event,message&&message.thoughtCache,args,toolEventSummary(event))}
-function currentProgressFromToolEvent(message,event,activeMode){if(!isAutoToolEventObject(event))return;const cls=toolEventStatusClass(toolEventStatus(event)),goal=currentProgressToolGoal(event,message),detail=autoStepContext(message,event),meta=toolEventName(event);upsertCurrentProgressGoal('tool-'+autoToolEventKey(event),goal,cls==='done'?'done':cls==='failed'?'failed':'running',detail,meta,'tail')}
+function currentProgressFromToolEvent(message,event,activeMode){if(!isAutoToolEventObject(event))return;if(isCoordinationToolEvent(event)){applyCoordinationToolEvent(message,event,activeMode);return}const cls=toolEventStatusClass(toolEventStatus(event)),goal=currentProgressToolGoal(event,message),detail=autoStepContext(message,event),meta=toolEventName(event);upsertCurrentProgressGoal('tool-'+autoToolEventKey(event),goal,cls==='done'?'done':cls==='failed'?'failed':'running',detail,meta,'tail')}
 function currentProgressFromInsightLine(message,line){const text=String(line||'').trim();if(!text)return;const tool=parseToolEventLine(text);if(tool){currentProgressFromToolEvent(message,tool,mode);return}if(/^(?:Thinking|Reasoning|thoughts?|analysis):/i.test(text)){currentProgressFromThought(message,text);return}if(/^Tool summary:/i.test(text)){upsertCurrentProgressGoal('synthesize-results','Use the gathered tool results to shape the answer','running',text.replace(/^Tool summary:\s*/i,''),'synthesis','tail');return}if(/^Tool failed:/i.test(text))upsertCurrentProgressGoal('recover-tool-failure','Recover from the failed tool result','failed',text,'tool','tail')}
 function currentProgressFromLine(message,line){const text=String(line||'');if(!text)return;if(/^(?:Thinking|Reasoning|thoughts?|analysis):/i.test(text))currentProgressFromThought(message,text);else setCurrentProgressNext(text,/error|failed|blocked/i.test(text)?'failed':'running');extractInsightUrls(text,4).forEach((url,index)=>addCurrentProgressSource(url,urlLabel(url,index),'url'))}
 function isAutoToolEventObject(e){if(!e||typeof e!=='object')return false;const type=String(e.type||e.event||'').toLowerCase();return type.includes('tool')||type.includes('function')||type.includes('agent')||!!(e.tool||e.toolName||e.function_call||e.functionCall||e.tool_calls||e.toolCalls)||(!!e.name&&(Object.prototype.hasOwnProperty.call(e,'status')||Object.prototype.hasOwnProperty.call(e,'success')||Object.prototype.hasOwnProperty.call(e,'arguments')||Object.prototype.hasOwnProperty.call(e,'argumentsPreview')||Object.prototype.hasOwnProperty.call(e,'durationMs')))}
@@ -13584,11 +14325,13 @@ function toggleAutoStepCard(card){if(!card)return;card.dataset.autoStepManualTog
 function initializeAutoStepCardToggle(card){if(!card||card.dataset.autoStepToggleReady==='1')return;card.dataset.autoStepToggleReady='1';const head=card.querySelector('.auto-step-head'),body=card.querySelector('.auto-step-body');if(body&&!body.id)body.id='auto_step_body_'+String(Date.now()).slice(-8)+'_'+Math.random().toString(36).slice(2,7);if(head){head.setAttribute('role','button');head.setAttribute('tabindex','0');if(body&&body.id)head.setAttribute('aria-controls',body.id);head.addEventListener('click',()=>toggleAutoStepCard(card));head.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAutoStepCard(card)}})}setAutoStepCardExpanded(card,true)}
 function syncAutoStepCardExpanded(card,status){if(!card||card.dataset.autoStepManualToggle==='1')return;setAutoStepCardExpanded(card,!(status==='done'||status==='failed'))}
 function updateAutoStepCard(card,event,message,lastThought){if(!card)return;const status=toolEventStatusClass(toolEventStatus(event));card.classList.toggle('complete',status==='done');card.classList.toggle('failed',status==='failed');const dot=card.querySelector('.progress-status-dot');if(dot)dot.className='progress-status-dot '+(status==='done'?'done':status==='failed'?'failed':'running');const title=card.querySelector('.auto-step-title');if(title)title.textContent=toolEventName(event);const next=card.querySelector('.auto-step-next');if(next)next.textContent=status==='done'?'complete':status==='failed'?'failed':'running';const context=card.querySelector('.auto-step-context');if(context)context.textContent='Next prompt context: '+autoStepContext(message,event);const body=card.querySelector('.auto-step-body');if(body){const existing=context;body.innerHTML=renderToolEventCardHtml(event,lastThought||message.thoughtCache||'');if(existing)body.prepend(existing)}syncAutoStepCardExpanded(card,status)}
-function showAutoToolStep(message,event,activeMode){if(!isAutoToolEventObject(event)||!message)return;message.autoStepMap=message.autoStepMap||{};message.autoStepIndex=message.autoStepIndex||0;const key=autoToolEventKey(event);let card=message.autoStepMap[key];if(!card){const stack=ensureAutoStepStack(message);if(!stack)return;if(message.currentAutoStepKey&&message.currentAutoStepKey!==key){const prior=message.autoStepMap[message.currentAutoStepKey];if(prior&&!prior.classList.contains('complete')&&!prior.classList.contains('failed')){prior.classList.add('complete');const dot=prior.querySelector('.progress-status-dot');if(dot)dot.className='progress-status-dot done';const state=prior.querySelector('.auto-step-next');if(state)state.textContent='complete';syncAutoStepCardExpanded(prior,'done')}}message.autoStepIndex++;card=document.createElement('section');card.className='auto-step-card expanded';card.innerHTML='<div class="auto-step-head"><span class="progress-status-dot running" aria-hidden="true"></span><div class="auto-step-title"></div><span class="auto-step-next">running</span></div><div class="auto-step-body"><div class="auto-step-context"></div></div>';card.dataset.stepKey=key;message.autoStepMap[key]=card;message.currentAutoStepKey=key;initializeAutoStepCardToggle(card);stack.appendChild(card)}updateAutoStepCard(card,event,message,message.thoughtCache);const status=toolEventStatusClass(toolEventStatus(event));if(status==='done'||status==='failed'){card.classList.add(status==='done'?'complete':'failed');syncAutoStepCardExpanded(card,status);message.currentAutoStepKey=''}currentProgressFromToolEvent(message,event,activeMode);const result=String(event.resultPreview||event.result||event.content||event.message||event.error||'');extractInsightUrls((event.argumentsPreview||'')+'\n'+result,8).forEach((url,index)=>addCurrentProgressSource(url,urlLabel(url,index),'tool'))}
+function showAutoToolStep(message,event,activeMode){if(!isAutoToolEventObject(event)||!message)return;if(isCoordinationToolEvent(event)){applyCoordinationToolEvent(message,event,activeMode);return}message.autoStepMap=message.autoStepMap||{};message.autoStepIndex=message.autoStepIndex||0;const key=autoToolEventKey(event);let card=message.autoStepMap[key];if(!card){const stack=ensureAutoStepStack(message);if(!stack)return;if(message.currentAutoStepKey&&message.currentAutoStepKey!==key){const prior=message.autoStepMap[message.currentAutoStepKey];if(prior&&!prior.classList.contains('complete')&&!prior.classList.contains('failed')){prior.classList.add('complete');const dot=prior.querySelector('.progress-status-dot');if(dot)dot.className='progress-status-dot done';const state=prior.querySelector('.auto-step-next');if(state)state.textContent='complete';syncAutoStepCardExpanded(prior,'done')}}message.autoStepIndex++;card=document.createElement('section');card.className='auto-step-card expanded';card.innerHTML='<div class="auto-step-head"><span class="progress-status-dot running" aria-hidden="true"></span><div class="auto-step-title"></div><span class="auto-step-next">running</span></div><div class="auto-step-body"><div class="auto-step-context"></div></div>';card.dataset.stepKey=key;message.autoStepMap[key]=card;message.currentAutoStepKey=key;initializeAutoStepCardToggle(card);stack.appendChild(card)}updateAutoStepCard(card,event,message,message.thoughtCache);const status=toolEventStatusClass(toolEventStatus(event));if(status==='done'||status==='failed'){card.classList.add(status==='done'?'complete':'failed');syncAutoStepCardExpanded(card,status);message.currentAutoStepKey=''}currentProgressFromToolEvent(message,event,activeMode);const result=String(event.resultPreview||event.result||event.content||event.message||event.error||'');extractInsightUrls((event.argumentsPreview||'')+'\n'+result,8).forEach((url,index)=>addCurrentProgressSource(url,urlLabel(url,index),'tool'))}
 function finishAutoToolSteps(message){if(!message||!message.autoStepMap)return;Object.keys(message.autoStepMap).forEach(key=>{const card=message.autoStepMap[key];if(card&&!card.classList.contains('complete')&&!card.classList.contains('failed')){card.classList.add('complete');const dot=card.querySelector('.progress-status-dot');if(dot)dot.className='progress-status-dot done';const state=card.querySelector('.auto-step-next');if(state)state.textContent='complete';syncAutoStepCardExpanded(card,'done')}});message.currentAutoStepKey=''}
 function completeCurrentProgressFromMessage(message,terminal){finishAutoToolSteps(message);const failed=String(terminal||'').toLowerCase()==='error';finishCurrentProgressGoals(failed?'failed':'done');if(failed){const errorText=currentProgressCleanGoalText(firstText(message&&message.body&&message.body.dataset&&message.body.dataset.rawText,message&&message.body&&message.body.textContent,latestProgressLine(message,''),terminal));if(errorText)upsertCurrentProgressGoal('error-'+currentProgressGoalKey('error',errorText),errorText,'failed',errorText,'error','tail')}currentProgressState.running=false;const userGoal=(currentProgressState.plan||[]).find(item=>item&&item.id==='user-goal');currentProgressState.next=failed?'Stopped before finishing '+(userGoal&&userGoal.label?userGoal.label:'the request'):'Done: '+(userGoal&&userGoal.label?userGoal.label:'request complete');renderCurrentProgressPanel(true)}
-function updateCurrentProgressFromEvent(e,message,activeMode){if(!e||typeof e!=='object')return;if(isAutoToolEventObject(e))showAutoToolStep(message,e,activeMode);const thought=liveThoughtContentForEvent(e);if(thought)currentProgressFromThought(message,thought);const content=String(e.content||e.message||e.text||e.resultPreview||e.result||'');if(/^(?:Thinking|Reasoning|thoughts?|analysis):/i.test(content))currentProgressFromThought(message,content);extractInsightUrls(content+'\n'+String(e.argumentsPreview||''),6).forEach((url,index)=>addCurrentProgressSource(url,urlLabel(url,index),isAutoToolEventObject(e)?'tool':'url'))}
+function updateCurrentProgressFromEvent(e,message,activeMode){if(!e||typeof e!=='object')return;if(isCoordinationToolEvent(e)){applyCoordinationToolEvent(message,e,activeMode);return}if(isAutoToolEventObject(e))showAutoToolStep(message,e,activeMode);const thought=liveThoughtContentForEvent(e);if(thought)currentProgressFromThought(message,thought);const content=String(e.content||e.message||e.text||e.resultPreview||e.result||'');if(/^(?:Thinking|Reasoning|thoughts?|analysis):/i.test(content))currentProgressFromThought(message,content);extractInsightUrls(content+'\n'+String(e.argumentsPreview||''),6).forEach((url,index)=>addCurrentProgressSource(url,urlLabel(url,index),isAutoToolEventObject(e)?'tool':'url'))}
 function normalizeAutoBrowserUrl(value){let raw=String(value||'').trim();if(!raw)return'';if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)&&!raw.startsWith('/')&&!raw.startsWith('?')&&!raw.startsWith('#'))raw=(/^(localhost(?::|\/|$)|127\.|0\.0\.0\.0|\[::1\])/i.test(raw)?'http://':'https://')+raw;const url=new URL(raw,window.location.href);if(url.protocol!=='http:'&&url.protocol!=='https:')throw new Error('Only http and https URLs can open in Auto browser.');return url.href}
+function isStripeHostedCheckoutUrl(value){try{const host=new URL(String(value||'').trim(),window.location.href).hostname.toLowerCase();return host==='checkout.stripe.com'||host.endsWith('.checkout.stripe.com')||host==='buy.stripe.com'||host.endsWith('.buy.stripe.com')}catch{return false}}
+function openStripeCheckoutAtTopLevel(value){const url=normalizeAutoBrowserUrl(value);if(!url)return false;try{if(window.open(url,'_blank','noopener,noreferrer'))return true}catch{}try{if(window.top&&window.top!==window.self){window.top.location.href=url;return true}}catch{}try{window.location.href=url;return true}catch{return false}}
 function autoBrowserProxyUrl(url,routeMode){return lockedApiUrl('/auto/api',{endpoint:'/api/browser-proxy',url:normalizeAutoBrowserUrl(url)},routeMode||mode)}
 function readAutoBrowserState(){try{return JSON.parse(safeStorageGet(AUTO_BROWSER_STATE_STORAGE_KEY)||'{}')||{}}catch{return{}}}
 function saveAutoBrowserState(){safeStorageSet(AUTO_BROWSER_STATE_STORAGE_KEY,JSON.stringify({open:!!autoBrowserOpen,url:/^https?:\/\//i.test(autoBrowserUrl||'')?autoBrowserUrl:'',width:autoBrowserWidth}))}
@@ -13597,7 +14340,7 @@ function applyAutoBrowserWidth(width){autoBrowserWidth=clampAutoBrowserWidth(wid
 function setAutoBrowserOpen(open){autoBrowserOpen=!!open;if(autoBrowserEls.panel)autoBrowserEls.panel.setAttribute('aria-hidden',autoBrowserOpen?'false':'true');document.body.classList.toggle('auto-browser-open',autoBrowserOpen);if(autoBrowserEls.toggle){autoBrowserEls.toggle.setAttribute('aria-expanded',autoBrowserOpen?'true':'false');autoBrowserEls.toggle.title=autoBrowserOpen?'Collapse Auto browser':'Open Auto browser'}if(autoBrowserEls.collapse)autoBrowserEls.collapse.setAttribute('aria-expanded',autoBrowserOpen?'true':'false');saveAutoBrowserState();renderCurrentProgressPanel()}
 function setAutoBrowserMessage(text,error){if(autoBrowserEls.empty){autoBrowserEls.empty.textContent=text||'Nothing here yet';autoBrowserEls.empty.classList.toggle('error',!!error)}}
 function updateAutoBrowserHasPage(hasPage){if(autoBrowserEls.panel)autoBrowserEls.panel.classList.toggle('has-page',!!hasPage)}
-function openAutoBrowserUrl(value,title){try{const url=normalizeAutoBrowserUrl(value);autoBrowserUrl=url;if(autoBrowserEls.address)autoBrowserEls.address.value=url;if(autoBrowserEls.frame){autoBrowserEls.frame.removeAttribute('srcdoc');autoBrowserEls.frame.src=autoBrowserProxyUrl(url,mode);autoBrowserEls.frame.title=title?'Auto browser - '+title:'Auto browser'}setAutoBrowserMessage('Loading '+url,false);updateAutoBrowserHasPage(true);setAutoBrowserOpen(true)}catch(e){setAutoBrowserMessage(e&&e.message?e.message:String(e),true);updateAutoBrowserHasPage(false);setAutoBrowserOpen(true)}}
+function openAutoBrowserUrl(value,title){try{const url=normalizeAutoBrowserUrl(value);if(isStripeHostedCheckoutUrl(url)){openStripeCheckoutAtTopLevel(url);setAutoBrowserMessage('Opened Stripe Checkout in the browser.',false);updateAutoBrowserHasPage(false);setAutoBrowserOpen(false);return}autoBrowserUrl=url;if(autoBrowserEls.address)autoBrowserEls.address.value=url;if(autoBrowserEls.frame){autoBrowserEls.frame.removeAttribute('srcdoc');autoBrowserEls.frame.src=autoBrowserProxyUrl(url,mode);autoBrowserEls.frame.title=title?'Auto browser - '+title:'Auto browser'}setAutoBrowserMessage('Loading '+url,false);updateAutoBrowserHasPage(true);setAutoBrowserOpen(true)}catch(e){setAutoBrowserMessage(e&&e.message?e.message:String(e),true);updateAutoBrowserHasPage(false);setAutoBrowserOpen(true)}}
 function openAutoBrowserInternalUrl(url,title){autoBrowserUrl=url;if(autoBrowserEls.address)autoBrowserEls.address.value=title||url;if(autoBrowserEls.frame){autoBrowserEls.frame.removeAttribute('srcdoc');autoBrowserEls.frame.src=url;autoBrowserEls.frame.title=title?'Auto browser - '+title:'Auto browser'}setAutoBrowserMessage('Loading '+(title||url),false);updateAutoBrowserHasPage(true);setAutoBrowserOpen(true);saveAutoBrowserState()}
 function openAutoBrowserInline(markup,title){autoBrowserUrl='about:srcdoc';if(autoBrowserEls.address)autoBrowserEls.address.value=title||'Local preview';if(autoBrowserEls.frame){autoBrowserEls.frame.removeAttribute('src');autoBrowserEls.frame.srcdoc=markup||' ';autoBrowserEls.frame.title=title?'Auto browser - '+title:'Auto browser'}setAutoBrowserMessage('Loading '+(title||'preview'),false);updateAutoBrowserHasPage(true);setAutoBrowserOpen(true);saveAutoBrowserState()}
 function autoBrowserPreviewDocument(text,title){return'<!doctype html><html><head><meta charset="utf-8"><title>'+escapeHtml(title||'Preview')+'</title><style>html,body{margin:0;min-height:100%;background:#f8fafc;color:#0f172a;font:14px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}body{padding:18px}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><pre>'+escapeHtml(text||'')+'</pre></body></html>'}
@@ -13627,7 +14370,7 @@ function endAutoPreviewDrag(event){if(!autoPreviewDragState)return;try{previewEl
 function beginAutoPreviewResize(event){if(!previewEls.window)return;event.preventDefault();event.stopPropagation();const rect=previewEls.window.getBoundingClientRect();autoPreviewResizeState={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,left:rect.left,top:rect.top,width:rect.width,height:rect.height};document.body.classList.add('auto-preview-resizing');try{previewEls.resize&&previewEls.resize.setPointerCapture(event.pointerId)}catch{}}
 function updateAutoPreviewResize(event){if(!autoPreviewResizeState)return;event.preventDefault();applyAutoPreviewRect({left:autoPreviewResizeState.left,top:autoPreviewResizeState.top,width:autoPreviewResizeState.width+(event.clientX-autoPreviewResizeState.startX),height:autoPreviewResizeState.height+(event.clientY-autoPreviewResizeState.startY)})}
 function endAutoPreviewResize(event){if(!autoPreviewResizeState)return;try{previewEls.resize&&previewEls.resize.releasePointerCapture(event.pointerId)}catch{}autoPreviewResizeState=null;document.body.classList.remove('auto-preview-resizing');saveAutoPreviewState()}
-function initializeAutoPreviewWindow(){const state=readAutoPreviewState();applyAutoPreviewRect({left:state.left,top:state.top,width:state.width||660,height:state.height||560});if(previewEls.close)previewEls.close.addEventListener('click',closeAutoPreview);if(previewEls.head){previewEls.head.addEventListener('pointerdown',beginAutoPreviewDrag);window.addEventListener('pointermove',updateAutoPreviewDrag);window.addEventListener('pointerup',endAutoPreviewDrag);window.addEventListener('pointercancel',endAutoPreviewDrag)}if(previewEls.resize){previewEls.resize.addEventListener('pointerdown',beginAutoPreviewResize);window.addEventListener('pointermove',updateAutoPreviewResize);window.addEventListener('pointerup',endAutoPreviewResize);window.addEventListener('pointercancel',endAutoPreviewResize)}}
+function initializeAutoPreviewWindow(){const state=readAutoPreviewState();applyAutoPreviewRect({left:state.left,top:state.top,width:state.width||660,height:state.height||560});if(previewEls.close)previewEls.close.addEventListener('click',closeAutoPreview);if(runDetailEls.close)runDetailEls.close.addEventListener('click',()=>{if(runDetailEls.window)runDetailEls.window.hidden=true});if(previewEls.download)previewEls.download.addEventListener('click',()=>scheduleSessionFilesRefresh('download',900));if(previewEls.head){previewEls.head.addEventListener('pointerdown',beginAutoPreviewDrag);window.addEventListener('pointermove',updateAutoPreviewDrag);window.addEventListener('pointerup',endAutoPreviewDrag);window.addEventListener('pointercancel',endAutoPreviewDrag)}if(previewEls.resize){previewEls.resize.addEventListener('pointerdown',beginAutoPreviewResize);window.addEventListener('pointermove',updateAutoPreviewResize);window.addEventListener('pointerup',endAutoPreviewResize);window.addEventListener('pointercancel',endAutoPreviewResize)}}
 function createMediaStatusCard(message,entry){const card=document.createElement('figure');card.className='media-card media-status-card';const stage=document.createElement('div');stage.className='media-stage loading';const row=document.createElement('figcaption');row.className='media-status-row';const toggle=document.createElement('button');toggle.type='button';toggle.className='media-status-toggle';toggle.textContent='>';toggle.setAttribute('aria-expanded','false');const status=document.createElement('div');status.className='media-status-text';const debug=document.createElement('pre');debug.className='media-debug-lines';debug.hidden=true;const target={card,stage,status,debug,fallback:'Preparing generated '+(entry.kind||mode)+'...'};function setExpanded(expanded){card.classList.toggle('expanded',expanded);debug.hidden=!expanded;toggle.textContent=expanded?'^':'>';toggle.setAttribute('aria-expanded',expanded?'true':'false')}function toggleExpanded(){setExpanded(!card.classList.contains('expanded'))}toggle.addEventListener('click',e=>{e.stopPropagation();toggleExpanded()});row.addEventListener('click',toggleExpanded);row.append(toggle,status);card.append(stage,row,debug);message.mediaDebugTargets=message.mediaDebugTargets||[];message.mediaDebugTargets.push(target);updateMediaDebugTargets(message);return target}
 function showMediaPlaceholder(message,kind){const stick=shouldStickMessages();message.body.textContent='';message.mediaDebugTargets=[];const grid=document.createElement('div');grid.className='media-grid';message.body.appendChild(grid);const target=createMediaStatusCard(message,{kind:kind||mode,name:'generated '+(kind||mode)});grid.appendChild(target.card);updateMediaDebugTargets(message);stickMessagesToBottom(stick)}
 function markMediaTargetsError(message){(message.mediaDebugTargets||[]).forEach(target=>{if(target.stage){target.stage.classList.remove('loading');target.stage.classList.add('error')}})}
@@ -13657,17 +14400,24 @@ function closeFilesDrawer(){if(!els.filesDrawer)return;els.filesDrawer.setAttrib
 function applySavedDrawerWidths(){const sessionWidth=Math.max(280,Math.min(Number(safeStorageGet(SESSION_WIDTH_STORAGE_KEY)||420),Math.max(320,window.innerWidth-18)));const filesWidth=Math.max(280,Math.min(Number(safeStorageGet(FILES_WIDTH_STORAGE_KEY)||360),Math.max(320,window.innerWidth-18)));document.documentElement.style.setProperty('--auto-session-width',sessionWidth+'px');document.documentElement.style.setProperty('--auto-files-width',filesWidth+'px')}
 function attachDrawerResize(handle,side,key,cssVar){if(!handle)return;handle.addEventListener('pointerdown',event=>{event.preventDefault();handle.setPointerCapture&&handle.setPointerCapture(event.pointerId);const startX=event.clientX;const start=Number(String(getComputedStyle(document.documentElement).getPropertyValue(cssVar)||'').replace('px',''))||(side==='left'?420:360);const max=Math.max(300,window.innerWidth-18);function move(e){const delta=side==='left'?e.clientX-startX:startX-e.clientX;const width=Math.max(280,Math.min(max,start+delta));document.documentElement.style.setProperty(cssVar,width+'px');safeStorageSet(key,String(Math.round(width)))}function up(){document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up)}document.addEventListener('pointermove',move);document.addEventListener('pointerup',up,{once:true})})}
 function clearWelcomeMessage(){if(!els.messages)return;els.messages.querySelectorAll('.welcome-readme').forEach(node=>node.remove())}
-function resetChatToWelcome(){transcript.length=0;els.messages.textContent='';const welcome=addMessage('assistant',AUTO_WELCOME_MD);welcome.wrap.classList.add('welcome-readme')}
+function ensureWelcomeMotionState(){const state=window.__autoWelcomeMotion||(window.__autoWelcomeMotion={x:0,y:0,ready:false});if(!state.ready){state.ready=true;try{window.addEventListener('deviceorientation',event=>{state.x=Math.max(-1,Math.min(1,Number(event.gamma||0)/42));state.y=Math.max(-1,Math.min(1,Number(event.beta||0)/54))},{passive:true})}catch{}try{window.addEventListener('devicemotion',event=>{const a=event.accelerationIncludingGravity||event.acceleration||{};state.x=Math.max(-1,Math.min(1,Number(a.x||0)/10));state.y=Math.max(-1,Math.min(1,Number(a.y||0)/10))},{passive:true})}catch{}}return state}
+function initWelcomeParticles(canvas){if(!canvas||canvas.dataset.ready==='1')return;canvas.dataset.ready='1';const card=canvas.closest('.welcome-orbit-card'),motion=ensureWelcomeMotionState(),pointer={x:.5,y:.45,active:false};if(card)card.addEventListener('pointermove',event=>{const rect=card.getBoundingClientRect();pointer.x=(event.clientX-rect.left)/Math.max(1,rect.width);pointer.y=(event.clientY-rect.top)/Math.max(1,rect.height);pointer.active=true},{passive:true});const ctx=canvas.getContext('2d'),particles=Array.from({length:54},(_,index)=>({x:Math.random(),y:Math.random(),z:.35+Math.random()*.85,phase:Math.random()*6.28,hue:index%5}));function resize(){const rect=canvas.getBoundingClientRect(),dpr=Math.min(2,window.devicePixelRatio||1),w=Math.max(1,Math.floor(rect.width*dpr)),h=Math.max(1,Math.floor(rect.height*dpr));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;ctx.setTransform(dpr,0,0,dpr,0,0)}}function frame(time){if(!canvas.isConnected)return;resize();const rect=canvas.getBoundingClientRect(),w=rect.width,h=rect.height;ctx.clearRect(0,0,w,h);const mx=(pointer.x-.5)*34+(motion.x||0)*28,my=(pointer.y-.5)*24+(motion.y||0)*20;const gradient=ctx.createLinearGradient(0,0,w,h);gradient.addColorStop(0,'rgba(46,230,170,.14)');gradient.addColorStop(.5,'rgba(96,201,255,.10)');gradient.addColorStop(1,'rgba(244,143,177,.12)');ctx.fillStyle=gradient;ctx.fillRect(0,0,w,h);particles.forEach((p,index)=>{p.phase+=.006*p.z;p.x+=(Math.sin(time*.00024+p.phase)*.00028)+(mx*.000006*p.z);p.y+=(Math.cos(time*.00020+p.phase)*.00022)+(my*.000006*p.z);if(p.x<-0.05)p.x=1.05;if(p.x>1.05)p.x=-0.05;if(p.y<-0.06)p.y=1.06;if(p.y>1.06)p.y=-0.06;const x=p.x*w+mx*p.z,y=p.y*h+my*p.z,r=(1.2+p.z*2.1),colors=['46,230,170','96,201,255','139,92,246','244,143,177','251,191,36'];ctx.beginPath();ctx.fillStyle='rgba('+colors[p.hue]+','+(0.34+p.z*.25).toFixed(3)+')';ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();if(index%3===0){ctx.beginPath();ctx.strokeStyle='rgba('+colors[p.hue]+',.12)';ctx.moveTo(x,y);ctx.lineTo(x+Math.sin(p.phase)*34*p.z,y+Math.cos(p.phase)*26*p.z);ctx.stroke()}});requestAnimationFrame(frame)}requestAnimationFrame(frame)}
+function createWelcomeMessage(){if(!els.messages)return null;const wrap=document.createElement('article');wrap.className='bubble assistant welcome-readme';const card=document.createElement('div');card.className='bubble-card welcome-orbit-card';const canvas=document.createElement('canvas');canvas.className='welcome-particles';canvas.setAttribute('aria-hidden','true');const content=document.createElement('div');content.className='welcome-content';const kicker=document.createElement('div');kicker.className='welcome-kicker';kicker.textContent='SocketJack AI';const title=document.createElement('h2');title.textContent='What are we building?';const copy=document.createElement('p');copy.textContent='Ask for code, research, media, files, browser work, or a plain answer. Auto chooses the model, route, tools, and media lane while you stay in one chat.';const chips=document.createElement('div');chips.className='welcome-chips';['Tools ready','Vision aware','Files in context','Premium routes'].forEach(text=>{const chip=document.createElement('span');chip.className='welcome-chip';chip.textContent=text;chips.appendChild(chip)});const prompts=document.createElement('div');prompts.className='welcome-prompts';['Refactor this','Research something','Generate media','Use tools'].forEach(text=>{const chip=document.createElement('span');chip.className='welcome-prompt';chip.textContent=text;prompts.appendChild(chip)});content.append(kicker,title,copy,chips,prompts);card.append(canvas,content);wrap.appendChild(card);els.messages.appendChild(wrap);initWelcomeParticles(canvas);return{wrap,card}}
+function resetChatToWelcome(){transcript.length=0;els.messages.textContent='';createWelcomeMessage()}
 function sessionStateKey(id){return'SocketJackAutoSessionState:'+cleanAutoSessionId(id)}
 function persistCurrentSessionState(){try{sessionStorage.setItem(sessionStateKey(sessionId),JSON.stringify({title:currentSessionTitle,mode,originMode,autoPoolEnabled,autoMinParamsB,autoMaxParamsB,disabledAutoModels:disabledModelsArray(),soloModelByMode,selectedServerId,selectedServer,suggestedModel,transcript:transcript.slice(-80),artifacts:currentArtifacts.map(entry=>{const copy=Object.assign({},entry);delete copy.inlineDataUrl;delete copy.freshUpload;return copy})}))}catch{}}
 function restoreStoredSessionState(id){try{const raw=sessionStorage.getItem(sessionStateKey(id));if(!raw)return false;const state=JSON.parse(raw);transcript.length=0;els.messages.textContent='';currentArtifacts=Array.isArray(state.artifacts)?state.artifacts:[];clearFreshUploadMarkers();clearQueuedReferenceMarkers();currentSessionTitle=String(state.title||'');mode=normalizeMode(state.mode||mode);originMode=normalizeOrigin(state.originMode||originMode);autoPoolEnabled=Object.prototype.hasOwnProperty.call(state,'autoPoolEnabled')?!!state.autoPoolEnabled:originLooksPooled(state.originMode);autoMinParamsB=Object.prototype.hasOwnProperty.call(state,'autoMinParamsB')?parseParamsB(state.autoMinParamsB):autoMinParamsB;autoMaxParamsB=Object.prototype.hasOwnProperty.call(state,'autoMaxParamsB')?parseParamsB(state.autoMaxParamsB):autoMaxParamsB;disabledAutoModels=new Set(parseDisabledModelList(JSON.stringify(state.disabledAutoModels||disabledModelsArray())));soloModelByMode=state.soloModelByMode&&typeof state.soloModelByMode==='object'?state.soloModelByMode:{};persistDisabledModels();selectedServerId=String(forcedAutoServerId||state.selectedServerId||'');selectedServer=forcedAutoServerId?null:(state.selectedServer||selectedServer);suggestedModel=String(state.suggestedModel||'');(Array.isArray(state.transcript)?state.transcript:[]).forEach(item=>{const role=item&&item.role==='user'?'user':'assistant';const content=String(item&&item.content||'');const artifacts=Array.isArray(item&&item.artifacts)?item.artifacts:[];const insights=Array.isArray(item&&item.insights)?item.insights:[];transcript.push(transcriptMessage(role,content,artifacts,insights));addMessage(role,content,{artifacts,insights})});currentArtifacts=mergeArtifactLists(currentArtifacts,transcriptFileArtifacts(state.transcript)).filter(entry=>entry&&entry.type==='file').slice(0,60);if(!transcript.length)resetChatToWelcome();renderSessionArtifacts();renderModes();setAuthStatus();writeAutoHistory();return true}catch{return false}}
-function loadOpenSessionTabs(){openSessionTabs=readOpenSessionTabsSnapshot().slice(0,18);ensureOpenSessionTab(false)}
+function sessionHasUserPrompt(){return transcript.some(item=>item&&item.role==='user'&&String(item.content||'').trim())}
+function currentSessionIsDraft(){return !sessionHasUserPrompt()&&!String(currentSessionTitle||'').trim()}
+function isDraftOpenSessionTab(tab){const title=String(tab&&tab.title||'').replace(/\s+/g,' ').trim().toLowerCase();return(!title||title==='new'||title==='new session'||title==='new auto session')&&sessionStateLooksBlank(tab&&tab.id)}
+function pruneOpenSessionTabs(){openSessionTabs=openSessionTabs.filter(tab=>tab&&cleanAutoSessionId(tab.id)&&!isDraftOpenSessionTab(tab)).filter((item,index,self)=>self.findIndex(other=>cleanAutoSessionId(other.id)===cleanAutoSessionId(item.id))===index).slice(0,18)}
+function loadOpenSessionTabs(){openSessionTabs=readOpenSessionTabsSnapshot().slice(0,18);pruneOpenSessionTabs();ensureOpenSessionTab(false)}
 function persistOpenSessionTabs(){try{safeStorageSet(OPEN_TABS_STORAGE_KEY,JSON.stringify(openSessionTabs.slice(0,18)))}catch{}}
 function shortSessionTabTitle(value){const title=String(value||'New session').replace(/\s+/g,' ').trim()||'New session';return title.length>12?title.slice(0,12):title}
-function ensureOpenSessionTab(render){const id=cleanAutoSessionId(sessionId);if(!id)return;let tab=openSessionTabs.find(item=>cleanAutoSessionId(item.id)===id);if(!tab){tab={id,title:firstText(currentSessionTitle,'New session'),updated:Date.now()};openSessionTabs.unshift(tab)}tab.title=firstText(currentSessionTitle,tab.title,'New session');tab.updated=Date.now();openSessionTabs=openSessionTabs.filter((item,index,self)=>self.findIndex(other=>cleanAutoSessionId(other.id)===cleanAutoSessionId(item.id))===index).slice(0,18);try{safeStorageSet(ACTIVE_TAB_STORAGE_KEY,id)}catch{}persistOpenSessionTabs();if(render!==false)renderOpenSessionTabs()}
+function ensureOpenSessionTab(render){const id=cleanAutoSessionId(sessionId);if(!id)return;pruneOpenSessionTabs();if(currentSessionIsDraft()){openSessionTabs=openSessionTabs.filter(tab=>cleanAutoSessionId(tab.id)!==id);try{safeStorageSet(ACTIVE_TAB_STORAGE_KEY,id)}catch{}persistOpenSessionTabs();if(render!==false)renderOpenSessionTabs();return}let tab=openSessionTabs.find(item=>cleanAutoSessionId(item.id)===id);if(!tab){tab={id,title:firstText(currentSessionTitle,'Auto session'),updated:Date.now()};openSessionTabs.unshift(tab)}tab.title=firstText(currentSessionTitle,tab.title,'Auto session');tab.updated=Date.now();openSessionTabs=openSessionTabs.filter((item,index,self)=>self.findIndex(other=>cleanAutoSessionId(other.id)===cleanAutoSessionId(item.id))===index).slice(0,18);try{safeStorageSet(ACTIVE_TAB_STORAGE_KEY,id)}catch{}persistOpenSessionTabs();if(render!==false)renderOpenSessionTabs()}
 function renderOpenSessionTabs(){if(!els.sessionTabs)return;ensureOpenSessionTab(false);els.sessionTabs.textContent='';const add=document.createElement('button');add.type='button';add.className='session-tab-new';add.title='Open a new Auto session';add.setAttribute('aria-label','Open a new Auto session');const plus=document.createElement('span');plus.className='session-tab-plus';plus.textContent='+';add.append(plus);add.onclick=()=>newAutoSessionTab();els.sessionTabs.appendChild(add);openSessionTabs.forEach(tab=>{const id=cleanAutoSessionId(tab.id);const b=document.createElement('div');b.tabIndex=0;b.className='session-tab'+(id===cleanAutoSessionId(sessionId)?' active':'')+(processingSessionIds.has(id)?' processing':'');b.setAttribute('role','tab');b.setAttribute('aria-selected',id===cleanAutoSessionId(sessionId)?'true':'false');b.title=firstText(tab.title,'Auto session');const close=document.createElement('button');close.type='button';close.className='session-tab-close';close.textContent='x';close.title='Close this open session tab';close.setAttribute('aria-label','Close '+firstText(tab.title,'Auto session'));close.onclick=e=>closeOpenSessionTab(id,e);const text=document.createElement('span');text.textContent=shortSessionTabTitle(tab.title);b.append(close,text);b.onclick=()=>switchAutoSessionTab(id);b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();switchAutoSessionTab(id)}};els.sessionTabs.appendChild(b)})}
 function closeOpenSessionTab(id,event){event&&event.stopPropagation();id=cleanAutoSessionId(id);if(!id)return;const active=id===cleanAutoSessionId(sessionId);const index=openSessionTabs.findIndex(tab=>cleanAutoSessionId(tab.id)===id);openSessionTabs=openSessionTabs.filter(tab=>cleanAutoSessionId(tab.id)!==id);processingSessionIds.delete(id);try{sessionStorage.removeItem(sessionStateKey(id))}catch{}persistOpenSessionTabs();if(active){const next=openSessionTabs[Math.min(Math.max(index,0),Math.max(openSessionTabs.length-1,0))]||openSessionTabs[0];if(next&&cleanAutoSessionId(next.id)){sessionId=cleanAutoSessionId(next.id);if(!restoreStoredSessionState(sessionId)){const saved=autoSessions.find(item=>cleanAutoSessionId(item.id)===sessionId);if(saved)restoreAutoSession(saved);else{currentSessionTitle='';currentArtifacts=[];selectedServer=null;selectedServerId=forcedAutoServerId||'';suggestedModel='';hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');resetChatToWelcome();renderSessionArtifacts();writeAutoHistory();refreshStatus()}}loadSessionFiles()}else newAutoSessionTab()}renderOpenSessionTabs()}
-function newAutoSessionTab(){persistCurrentSessionState();sessionId='auto_'+Math.random().toString(16).slice(2)+Date.now().toString(16);currentSessionTitle='';currentArtifacts=[];clearFreshUploadMarkers();clearQueuedReferenceMarkers();selectedServer=null;selectedServerId=forcedAutoServerId||'';suggestedModel='';disabledAutoModels=new Set();soloModelByMode={};soloDisabledSnapshotByMode={};persistDisabledModels();hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');resetChatToWelcome();renderSessionArtifacts();ensureOpenSessionTab();writeAutoHistory();loadSessionFiles();refreshStatus()}
+function newAutoSessionTab(){if(currentSessionIsDraft()){resetChatToWelcome();renderSessionArtifacts();renderOpenSessionTabs();return}persistCurrentSessionState();sessionId='auto_'+Math.random().toString(16).slice(2)+Date.now().toString(16);currentSessionTitle='';currentArtifacts=[];clearFreshUploadMarkers();clearQueuedReferenceMarkers();selectedServer=null;selectedServerId=forcedAutoServerId||'';suggestedModel='';disabledAutoModels=new Set();soloModelByMode={};soloDisabledSnapshotByMode={};persistDisabledModels();hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');resetChatToWelcome();renderSessionArtifacts();renderOpenSessionTabs();writeAutoHistory();loadSessionFiles();refreshStatus()}
 function switchAutoSessionTab(id){id=cleanAutoSessionId(id);if(!id||id===cleanAutoSessionId(sessionId))return;persistCurrentSessionState();sessionId=id;if(!restoreStoredSessionState(id)){const saved=autoSessions.find(item=>cleanAutoSessionId(item.id)===id);if(saved)restoreAutoSession(saved);else{currentSessionTitle='';currentArtifacts=[];selectedServer=null;selectedServerId=forcedAutoServerId||'';suggestedModel='';hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');resetChatToWelcome();renderSessionArtifacts();writeAutoHistory();refreshStatus()}}loadSessionFiles();renderOpenSessionTabs()}
 function markSessionProcessing(id,processing){id=cleanAutoSessionId(id||sessionId);if(!id)return;if(processing)processingSessionIds.add(id);else processingSessionIds.delete(id);renderOpenSessionTabs()}
 function renderSessionSuggestions(items){if(!els.sessionSuggestions)return;els.sessionSuggestions.textContent='';(items||[]).slice(0,80).forEach(value=>{const option=document.createElement('option');option.value=value;els.sessionSuggestions.appendChild(option)})}
@@ -13678,6 +14428,12 @@ function normalizeAutoSessionGroups(data){const groups=Array.isArray(data&&data.
 function applyAutoSessionsPayload(data){if(!data||typeof data!=='object')return;applyAuthSnapshot(data);if(data.usage)applyUsageSnapshot(data.usage);applyAutoModelCachePayload(data,mode);setSessionOwner(data);autoSessions=Array.isArray(data.sessions)?data.sessions:[];autoSessionGroups=normalizeAutoSessionGroups(data);renderSessionSuggestions(data.suggestions||[]);renderAutoSessions()}
 function createAutoSessionCard(session){const serverOnly=String(session&&session.source||'').toLowerCase()==='server';const card=document.createElement('article');card.className='session-card'+(serverOnly?' server-only':'')+(cleanAutoSessionId(session.id)===sessionId?' active':'');const title=document.createElement('button');title.type='button';title.className='session-title';title.textContent=firstText(session.title,session.previewText,'Auto session');title.onclick=()=>serverOnly?importServerOnlySession(session):restoreAutoSession(session);const preview=document.createElement('div');preview.className='session-preview';preview.textContent=firstText(session.previewText,serverOnly?'Stored on the LLM server. Click Import to load it into /Auto.':'No preview captured yet.');const meta=document.createElement('div');meta.className='session-meta';[['good',serverOnly?'server-only':tokenCostLabel(session.tokenCost)],[(String(session.billingTier||'Free').toLowerCase()==='premium')?'warn':'',firstText(session.billingTier,'Free')],['',modeLabel(session.lastMode||'auto')],['',Math.max(0,Number(session.messageCount||0))+' msg'],['',Math.max(0,Number(session.messageLength||0)).toLocaleString()+' chars']].forEach(item=>{const chip=document.createElement('span');chip.className='session-chip '+item[0];chip.textContent=item[1];meta.appendChild(chip)});const detail=document.createElement('div');detail.className='session-detail';[['Server',sessionServerTitle(session)],['Hardware',firstText(session.serverHardwareSummary,'Unknown hardware')],['Model',firstText(session.modelUsed,'Auto selected')]].forEach(row=>{const line=document.createElement('div');line.textContent=row[0]+': '+row[1];detail.appendChild(line)});const actions=document.createElement('div');actions.className='session-actions';const open=document.createElement('button');open.type='button';open.textContent=serverOnly?'Import':'Open';open.title=serverOnly?'Import this server-only chat into /Auto storage.':'Open this saved Auto session in the current Auto page.';open.onclick=()=>serverOnly?importServerOnlySession(session):restoreAutoSession(session);actions.appendChild(open);const serverUrl=sessionServerUrl(session);if(serverUrl){const link=document.createElement('a');link.href=serverUrl;link.target='_blank';link.rel='noopener noreferrer';link.textContent=sessionServerTitle(session)+' >';link.title='Open this session on '+sessionServerTitle(session)+'.';actions.appendChild(link)}if(!serverOnly){const rename=document.createElement('button');rename.type='button';rename.textContent='Rename';rename.title='Rename this Auto session.';rename.onclick=()=>renameAutoSession(session);actions.appendChild(rename);const archive=document.createElement('button');archive.type='button';archive.textContent='Archive';archive.title='Archive this Auto session so it leaves the active list.';archive.onclick=()=>sessionAction(session,'archive');actions.appendChild(archive);const del=document.createElement('button');del.type='button';del.textContent='Delete';del.title='Delete this Auto session.';del.onclick=()=>{if(confirm('Delete this Auto session?'))sessionAction(session,'delete')};actions.appendChild(del)}card.append(title,preview,meta,detail,actions);return card}
 function renderAutoSessions(){if(!els.sessionList)return;els.sessionList.textContent='';const groups=autoSessionGroups&&autoSessionGroups.length?autoSessionGroups:normalizeAutoSessionGroups({sessions:autoSessions});if(!groups.length){const empty=document.createElement('div');empty.className='session-empty';empty.textContent=(els.sessionSearch&&els.sessionSearch.value.trim())?'No sessions match that regex.':'No Auto sessions saved yet.';els.sessionList.appendChild(empty);return}const collapsed=readCollapsedAutoSessionGroups();let rendered=0;groups.forEach(group=>{const key=autoSessionGroupKey(group);const filter=String(autoSessionGroupFilters[key]||'').trim().toLowerCase();const sessions=(Array.isArray(group.sessions)?group.sessions:[]).filter(session=>!filter||String([session.title,session.previewText,session.modelUsed,session.serverTitle].join(' ')).toLowerCase().includes(filter));if(!sessions.length)return;const details=document.createElement('details');details.className='auto-session-server-group';details.open=!collapsed.has(key);details.ontoggle=()=>{const next=readCollapsedAutoSessionGroups();if(details.open)next.delete(key);else next.add(key);writeCollapsedAutoSessionGroups(next)};const summary=document.createElement('summary');summary.className='auto-session-server-summary';const name=document.createElement('span');name.className='auto-session-server-name';name.textContent=firstText(group.serverTitle,group.serverId,'Unknown server');const counts=document.createElement('span');counts.className='auto-session-server-count';counts.textContent=String(sessions.length)+' shown | '+Math.max(0,Number(group.masterCount||0))+' auto | '+Math.max(0,Number(group.serverOnlyCount||0))+' server';summary.append(name,counts);const search=document.createElement('input');search.type='search';search.className='auto-session-server-search';search.placeholder='Filter this server';search.value=autoSessionGroupFilters[key]||'';search.onclick=e=>e.stopPropagation();search.onkeydown=e=>e.stopPropagation();search.oninput=()=>{autoSessionGroupFilters[key]=search.value;renderAutoSessions()};summary.appendChild(search);details.appendChild(summary);const list=document.createElement('div');list.className='auto-session-server-list';sessions.forEach(session=>list.appendChild(createAutoSessionCard(session)));details.appendChild(list);els.sessionList.appendChild(details);rendered+=sessions.length});if(!rendered){const empty=document.createElement('div');empty.className='session-empty';empty.textContent='No sessions match the per-server filters.';els.sessionList.appendChild(empty)}}
+function autoSessionSelectable(session){return !!(session&&String(session.source||'').toLowerCase()!=='server'&&cleanAutoSessionId(session.id))}
+function selectableAutoSessionIds(sessions){return(sessions||[]).map(session=>autoSessionSelectable(session)?cleanAutoSessionId(session.id):'').filter(Boolean)}
+function setAutoSessionSelection(id,selected){id=cleanAutoSessionId(id);if(!id)return;if(selected)selectedAutoSessionIds.add(id);else selectedAutoSessionIds.delete(id);renderAutoSessions()}
+function setAutoSessionGroupSelection(ids,selected){(ids||[]).forEach(id=>{id=cleanAutoSessionId(id);if(!id)return;if(selected)selectedAutoSessionIds.add(id);else selectedAutoSessionIds.delete(id)});renderAutoSessions()}
+function createAutoSessionCard(session){const serverOnly=String(session&&session.source||'').toLowerCase()==='server',id=cleanAutoSessionId(session&&session.id);const card=document.createElement('article');card.className='session-card'+(serverOnly?' server-only':'')+(id===sessionId?' active':'')+(selectedAutoSessionIds.has(id)?' selected':'');if(autoSessionSelectable(session)){const select=document.createElement('label');select.className='session-select';select.title='Select this session';const input=document.createElement('input');input.type='checkbox';input.checked=selectedAutoSessionIds.has(id);input.setAttribute('aria-label','Select '+firstText(session.title,session.previewText,'Auto session'));input.onchange=event=>setAutoSessionSelection(id,event.target.checked);select.appendChild(input);card.appendChild(select)}const title=document.createElement('button');title.type='button';title.className='session-title';title.textContent=firstText(session.title,session.previewText,'Auto session');title.onclick=()=>serverOnly?importServerOnlySession(session):restoreAutoSession(session);const preview=document.createElement('div');preview.className='session-preview';preview.textContent=firstText(session.previewText,serverOnly?'Stored on the LLM server. Click Import to load it into /Auto.':'No preview captured yet.');const meta=document.createElement('div');meta.className='session-meta';[['good',serverOnly?'server-only':tokenCostLabel(session.tokenCost)],[(String(session.billingTier||'Free').toLowerCase()==='premium')?'warn':'',firstText(session.billingTier,'Free')],['',modeLabel(session.lastMode||'tools')],['',Math.max(0,Number(session.messageCount||0))+' msg'],['',Math.max(0,Number(session.messageLength||0)).toLocaleString()+' chars']].forEach(item=>{const chip=document.createElement('span');chip.className='session-chip '+item[0];chip.textContent=item[1];meta.appendChild(chip)});const detail=document.createElement('div');detail.className='session-detail';[['Server',sessionServerTitle(session)],['Hardware',firstText(session.serverHardwareSummary,'Unknown hardware')],['Model',firstText(session.modelUsed,'Auto selected')]].forEach(row=>{const line=document.createElement('div');line.textContent=row[0]+': '+row[1];detail.appendChild(line)});const actions=document.createElement('div');actions.className='session-actions';const open=document.createElement('button');open.type='button';open.textContent=serverOnly?'Import':'Open';open.title=serverOnly?'Import this server-only chat into /Auto storage.':'Open this saved Auto session in the current Auto page.';open.onclick=()=>serverOnly?importServerOnlySession(session):restoreAutoSession(session);actions.appendChild(open);const serverUrl=sessionServerUrl(session);if(serverUrl){const link=document.createElement('a');link.href=serverUrl;link.target='_blank';link.rel='noopener noreferrer';link.textContent=sessionServerTitle(session)+' >';link.title='Open this session on '+sessionServerTitle(session)+'.';actions.appendChild(link)}if(!serverOnly){const rename=document.createElement('button');rename.type='button';rename.textContent='Rename';rename.title='Rename this Auto session.';rename.onclick=()=>renameAutoSession(session);actions.appendChild(rename);const archive=document.createElement('button');archive.type='button';archive.textContent='Archive';archive.title='Archive this Auto session so it leaves the active list.';archive.onclick=()=>sessionAction(session,'archive');actions.appendChild(archive);const del=document.createElement('button');del.type='button';del.textContent='Delete';del.title='Delete this Auto session.';del.onclick=()=>{if(confirm('Delete this Auto session?'))sessionAction(session,'delete')};actions.appendChild(del)}card.append(title,preview,meta,detail,actions);return card}
+function renderAutoSessions(){if(!els.sessionList)return;els.sessionList.textContent='';const groups=autoSessionGroups&&autoSessionGroups.length?autoSessionGroups:normalizeAutoSessionGroups({sessions:autoSessions});const availableIds=new Set();groups.forEach(group=>(group.sessions||[]).forEach(session=>{const id=autoSessionSelectable(session)?cleanAutoSessionId(session.id):'';if(id)availableIds.add(id)}));selectedAutoSessionIds=new Set(Array.from(selectedAutoSessionIds).filter(id=>availableIds.has(id)));if(!groups.length){const empty=document.createElement('div');empty.className='session-empty';empty.textContent=(els.sessionSearch&&els.sessionSearch.value.trim())?'No sessions match that regex.':'No Auto sessions saved yet.';els.sessionList.appendChild(empty);return}const collapsed=readCollapsedAutoSessionGroups();let rendered=0;groups.forEach(group=>{const key=autoSessionGroupKey(group);const filter=String(autoSessionGroupFilters[key]||'').trim().toLowerCase();const sessions=(Array.isArray(group.sessions)?group.sessions:[]).filter(session=>!filter||String([session.title,session.previewText,session.modelUsed,session.serverTitle].join(' ')).toLowerCase().includes(filter));if(!sessions.length)return;const selectableIds=selectableAutoSessionIds(sessions);const selectedCount=selectableIds.filter(id=>selectedAutoSessionIds.has(id)).length;const details=document.createElement('details');details.className='auto-session-server-group';details.open=!collapsed.has(key);details.ontoggle=()=>{const next=readCollapsedAutoSessionGroups();if(details.open)next.delete(key);else next.add(key);writeCollapsedAutoSessionGroups(next)};const summary=document.createElement('summary');summary.className='auto-session-server-summary';const name=document.createElement('span');name.className='auto-session-server-name';name.textContent=firstText(group.serverTitle,group.serverId,'Unknown server');const counts=document.createElement('span');counts.className='auto-session-server-count';counts.textContent=String(sessions.length)+' shown | '+Math.max(0,Number(group.masterCount||0))+' auto | '+Math.max(0,Number(group.serverOnlyCount||0))+' server';summary.append(name,counts);const search=document.createElement('input');search.type='search';search.className='auto-session-server-search';search.placeholder='Filter this server';search.value=autoSessionGroupFilters[key]||'';search.onclick=e=>e.stopPropagation();search.onkeydown=e=>e.stopPropagation();search.oninput=()=>{autoSessionGroupFilters[key]=search.value;renderAutoSessions()};summary.appendChild(search);const tools=document.createElement('div');tools.className='auto-session-server-tools';[['Select all',()=>setAutoSessionGroupSelection(selectableIds,true)],['Deselect all',()=>setAutoSessionGroupSelection(selectableIds,false)]].forEach(pair=>{const b=document.createElement('button');b.type='button';b.textContent=pair[0];b.disabled=!selectableIds.length;b.onclick=event=>{event.preventDefault();event.stopPropagation();pair[1]()};tools.appendChild(b)});const del=document.createElement('button');del.type='button';del.className='delete-selected';del.textContent='Delete selected'+(selectedCount?' ('+selectedCount+')':'');del.disabled=!selectedCount;del.onclick=event=>{event.preventDefault();event.stopPropagation();deleteSelectedAutoSessions(selectableIds.filter(id=>selectedAutoSessionIds.has(id)))};tools.appendChild(del);summary.appendChild(tools);details.appendChild(summary);const list=document.createElement('div');list.className='auto-session-server-list';sessions.forEach(session=>list.appendChild(createAutoSessionCard(session)));details.appendChild(list);els.sessionList.appendChild(details);rendered+=sessions.length});if(!rendered){const empty=document.createElement('div');empty.className='session-empty';empty.textContent='No sessions match the per-server filters.';els.sessionList.appendChild(empty)}}
 async function loadAutoSessions(){if(!els.sessionList)return;try{const p=new URLSearchParams();const search=els.sessionSearch?els.sessionSearch.value.trim():'';if(search)p.set('search',search);const r=await fetch('/auto/sessions?'+p.toString(),{cache:'no-store',credentials:'include',headers:authHeaders()});const data=await r.json();if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));applyAutoSessionsPayload(data);sendAutoLiveHello()}catch(e){els.sessionList.innerHTML='<div class="session-empty"></div>';els.sessionList.firstChild.textContent='Sessions unavailable: '+(e.message||e)}}
 async function saveImportedServerOnlySessionOverHttp(record){const r=await fetch('/auto/sessions',{method:'POST',credentials:'include',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(record)});const data=await r.json();if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));return data}
 function importServerOnlySessionViaSocket(record){return new Promise((resolve,reject)=>{const ws=autoSessionLiveSocket;if(!ws||ws.readyState!==WebSocket.OPEN){reject(new Error('Auto live socket is not connected.'));return}const requestId='auto_import_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);const timer=window.setTimeout(()=>{delete autoLiveImportResolvers[requestId];reject(new Error('Auto live import timed out.'))},8000);autoLiveImportResolvers[requestId]={resolve:data=>{window.clearTimeout(timer);delete autoLiveImportResolvers[requestId];resolve(data)},reject:error=>{window.clearTimeout(timer);delete autoLiveImportResolvers[requestId];reject(error)}};ws.send(JSON.stringify({type:'session-import',id:requestId,accessToken:readToken(),serverId:firstText(forcedAutoServerId,selectedServerId,record.serverId),includeServerSessions:true,session:record}))})}
@@ -13687,6 +14443,8 @@ function sendAutoLiveHello(){try{const ws=autoSessionLiveSocket;if(!ws||ws.ready
 function scheduleAutoLiveReconnect(){window.clearTimeout(autoSessionLiveReconnectTimer);autoSessionLiveReconnectTimer=window.setTimeout(connectAutoLiveSocket,1800)}
 function connectAutoLiveSocket(){if(!('WebSocket'in window))return;if(autoSessionLiveSocket&&(autoSessionLiveSocket.readyState===WebSocket.OPEN||autoSessionLiveSocket.readyState===WebSocket.CONNECTING))return;try{const ws=new WebSocket(autoLiveSocketUrl('/auto/ws'));autoSessionLiveSocket=ws;ws.onopen=()=>{autoSessionLiveOpen=true;sendAutoLiveHello()};ws.onmessage=event=>{try{const data=JSON.parse(event.data);if(!data)return;const requestId=String(data.requestId||data.id||'');if(data.type==='session-imported'){const pending=requestId?autoLiveImportResolvers[requestId]:null;if(pending)pending.resolve(data);if(data.session){const saved=data.session,index=autoSessions.findIndex(item=>cleanAutoSessionId(item.id)===cleanAutoSessionId(saved.id));if(index>=0)autoSessions[index]=saved;else autoSessions.unshift(saved);renderAutoSessions()}return}if(data.type==='error'){const pending=requestId?autoLiveImportResolvers[requestId]:null;if(pending){pending.reject(new Error(data.error||'Auto live socket error'));return}}if(data.type==='snapshot'&&data.topic==='auto-sessions')applyAutoSessionsPayload(data)}catch{}};ws.onclose=()=>{autoSessionLiveOpen=false;Object.keys(autoLiveImportResolvers).forEach(key=>{try{autoLiveImportResolvers[key].reject(new Error('Auto live socket disconnected.'))}catch{}});autoLiveImportResolvers={};if(autoSessionLiveSocket===ws)scheduleAutoLiveReconnect()};ws.onerror=()=>{try{ws.close()}catch{}}}catch{scheduleAutoLiveReconnect()}}
 async function sessionAction(session,action,title){try{const r=await fetch('/auto/sessions/action',{method:'POST',credentials:'include',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({id:session.id,action,title})});const data=await r.json();if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));await loadAutoSessions()}catch(e){alert('Session action failed: '+(e.message||e))}}
+async function batchSessionAction(ids,action){ids=(ids||[]).map(cleanAutoSessionId).filter(Boolean);if(!ids.length)return;try{const r=await fetch('/auto/sessions/action',{method:'POST',credentials:'include',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({ids,action})});const data=await r.json();if(!r.ok||!data.ok)throw new Error(data.error||('HTTP '+r.status));ids.forEach(id=>selectedAutoSessionIds.delete(id));await loadAutoSessions()}catch(e){alert('Session action failed: '+(e.message||e))}}
+function deleteSelectedAutoSessions(ids){ids=(ids||[]).map(cleanAutoSessionId).filter(Boolean);if(!ids.length)return;if(confirm('Delete '+ids.length+' selected Auto session'+(ids.length===1?'':'s')+'?'))batchSessionAction(ids,'delete')}
 function renameAutoSession(session){const next=prompt('Session name',firstText(session.title,''));if(next==null)return;sessionAction(session,'rename',next)}
 function restoreAutoSession(session){sessionId=cleanAutoSessionId(session.id)||sessionId;currentSessionTitle=firstText(session.title,currentSessionTitle);const messages=parseSessionMessages(session);transcript.length=0;els.messages.textContent='';currentArtifacts=[];clearFreshUploadMarkers();clearQueuedReferenceMarkers();renderSessionArtifacts();if(messages.length){messages.forEach(item=>{const role=item&&item.role==='user'?'user':'assistant';const content=String(item&&item.content||'');const artifacts=Array.isArray(item&&item.artifacts)?item.artifacts:[];const insights=Array.isArray(item&&item.insights)?item.insights:[];transcript.push(transcriptMessage(role,content,artifacts,insights));addMessage(role,content,{artifacts,insights})})}else addMessage('assistant',firstText(session.previewText,'Session opened.'));currentArtifacts=mergeArtifactLists(currentArtifacts,transcriptFileArtifacts(messages)).filter(entry=>entry&&entry.type==='file').slice(0,60);renderSessionArtifacts();mode=normalizeMode(session.lastMode||mode);originMode=normalizeOrigin(session.originMode||originMode);autoPoolEnabled=Object.prototype.hasOwnProperty.call(session,'poolEnabled')?!!session.poolEnabled:originLooksPooled(session.originMode);autoMinParamsB=Object.prototype.hasOwnProperty.call(session,'minParamsB')?parseParamsB(session.minParamsB):autoMinParamsB;autoMaxParamsB=Object.prototype.hasOwnProperty.call(session,'maxParamsB')?parseParamsB(session.maxParamsB):autoMaxParamsB;selectedServerId=firstText(forcedAutoServerId,session.serverId,selectedServerId);selectedServer={id:selectedServerId,title:sessionServerTitle(session),displayTitle:sessionServerTitle(session),continueUrl:sessionServerUrl(session),hardwareSummary:session.serverHardwareSummary||''};setContinueServer(selectedServer);renderModes();setAuthStatus();writeAutoHistory();renderAutoSessions();ensureOpenSessionTab();persistCurrentSessionState();loadSessionFiles();closeSessionDrawer()}
 function buildAutoSessionRecord(details){details=details||{};const title=firstText(currentSessionTitle,sessionTitleFromPrompt(details.prompt));const serverTitle=firstText(details.serverTitle,selectedServer&&selectedServer.title,selectedServer&&selectedServer.id,details.serverId,selectedServerId);const continueUrl=appendAutoSessionUrl(firstText(details.serverContinueUrl,selectedServer&&selectedServer.continueUrl,selectedServer&&selectedServer.launchUrl),sessionId);return{id:sessionId,title,lastMode:details.routeMode||mode,originMode,poolEnabled:autoPoolEnabled,minParamsB:autoMinParamsB,maxParamsB:autoMaxParamsB,billingTier:details.premiumRequest?'Premium':'Free',tokenCost:Math.max(0,Math.floor(Number(details.tokenCost||0))),serverId:firstText(details.serverId,selectedServerId),serverTitle,serverHardwareSummary:firstText(details.serverHardwareSummary,selectedServer&&selectedServer.hardwareSummary),serverContinueUrl:continueUrl,modelUsed:cleanModelName(firstText(details.modelUsed,requestModel(),suggestedModel)),messageLength:sessionMessageLength(),messageCount:transcript.length,previewText:sessionMessagePreview(),messages:transcript.slice(-80)}}
@@ -13705,19 +14463,15 @@ applyAuthSnapshot(data);
 if(data&&data.usage)applyUsageSnapshot(data.usage);
 if(response.status===401){safeStorageRemove('SocketJackAccessToken');deleteCookie('SocketJackAuth');authState.known=true;authState.authenticated=false;setAuthStatus();storePendingAutoPrompt(promptText);if(await ensureAutoAuth(true,'Sign in so Auto can choose the route for this prompt.')){clearPendingAutoPrompt();return await chooseAutoMode(promptText,message,signal)}}
 if(!response.ok||!data||!data.ok)throw new Error(data&&data.error||('Auto mode routing failed: HTTP '+response.status));
-const next=normalizeMode(data.mode||data.command||'text');
-let routeMode=next==='auto'||next==='tools'?'text':next;
-if(routeMode==='text'&&(data.source==='fallback'||!String(data.rawDecision||data.command||'').trim()))routeMode='text';
-const imageCount=extractAutoMediaBatchCount(promptText,'image');
-if(imageCount>1||promptLooksImageGenerationRequest(promptText))routeMode='image';
+const decision=data&&data.decision&&typeof data.decision==='object'?data.decision:{};
+const next=normalizeMode(firstText(decision.mode,data.mode,data.command,'text'));
+let routeMode=next==='auto'?'text':next;
+if(routeMode==='text'&&data&&data.toolsAvailable===true){routeMode='tools';appendProgressLine(message,'Tools route is available. Routing as Tools.')}
 routeMode=guardRouteForPromptAttachments(routeMode,promptText,attachments,message);
-if(routeMode==='text'&&promptLooksToolUseRequest(promptText))appendProgressLine(message,'Live/tool request detected. Routing as Text.');
+if(routeMode==='text'&&promptLooksToolUseRequest(promptText)){routeMode='tools';appendProgressLine(message,'Live/tool request detected. Routing as Tools.')}
 const classifier=data.classifier||{};
-const inferredCount=isMediaMode(routeMode)?extractAutoMediaBatchCount(promptText,routeMode):0;
-let command=routeMode!==next&&next!=='auto'?commandForMode(routeMode):cleanAutoCommand(data.command,routeMode);
-const singleToolCycle=false;
-if(inferredCount>1&&!parseAutoAgentCommand(command))command=autoAgentCommandForMode(routeMode,inferredCount);
-autoRouteDecision=autoRouteDecisionFromData(Object.assign({},data,{command,parallelAgents:singleToolCycle?0:Math.max(Number(data.parallelAgents||data.parallel_agents||0),inferredCount),parallelMode:routeMode}),routeMode,promptText);
+let command=routeMode!==next&&next!=='auto'?commandForMode(routeMode):cleanAutoCommand(firstText(decision.command,data.command),routeMode);
+autoRouteDecision=autoRouteDecisionFromData(Object.assign({},data,{decision:Object.assign({},decision,{mode:routeMode}),command,parallelMode:routeMode}),routeMode,promptText);
 const classifierLabel=classifier.server?(' via '+classifier.server+(classifier.model?(' / '+cleanModelName(classifier.model)):'')):'';
 appendProgressLine(message,command+' -> '+modeLabel(routeMode)+(autoRouteDecision&&autoRouteDecision.count>1?' / '+autoRouteDecision.count+' '+autoRouteDecision.label:'')+classifierLabel+(data.source==='fallback'?' (fallback)':''));
 selectedServer=null;selectedServerId=forcedAutoServerId||selectedServerId||'';suggestedModel='';hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');
@@ -13728,17 +14482,17 @@ function autoFailureReason(raw,events,response,routeMode,usedModel){let eventFai
 function autoFailureRequiresBenchmark(routeMode,reason){const lower=String(reason||'').toLowerCase();if(!lower)return false;if(isMediaMode(routeMode))return true;return lower.includes('model_load_error')||lower.includes('load_failed')||lower.includes('model not found')||lower.includes('llmruntime could not load')||lower.includes('unsupported_model_type')||lower.includes('generation model')||lower.includes('exited with code')}
 async function flagAutoModelForBenchmark(serverId,modelId,routeMode,reason,message){serverId=String(serverId||'').trim();const rawModel=String(modelId||'').trim();const displayModel=cleanModelName(rawModel)||rawModel;if(!serverId||!rawModel)return false;try{const response=await fetch('/auto/flag',{method:'POST',credentials:'include',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({serverId,model:rawModel,mode:routeMode,reason})});const data=await readLooseJsonResponse(response);applyAuthSnapshot(data);if(!response.ok||!data||!data.ok)throw new Error(data&&data.error||('HTTP '+response.status));if(message)appendProgressLine(message,'Disabled '+displayModel+' on '+serverId+' until it publishes fresh healthy status or a fresh benchmark. Retrying Auto route...');return true}catch(e){if(message)appendProgressLine(message,'Could not disable failed model automatically: '+sanitizeAutoLogLine(e.message||e));return false}}
 function parseParallelPromptArray(value,routeMode){if(!Array.isArray(value))return[];return value.map((item,index)=>{if(item&&typeof item==='object'){const text=firstText(item.prompt,item.message,item.q,item.content,item.text);return text?{prompt:text,mode:normalizeMode(item.mode||item.type||item.modality||routeMode),model:firstText(item.model,item.modelId,item.model_id),index}:null}const text=String(item||'').trim();return text?{prompt:text,mode:routeMode,index}:null}).filter(Boolean)}
-function autoBatchCountWord(value){const text=String(value||'').trim().toLowerCase().replace(/\s+/g,' ');if(/^\d{1,2}$/.test(text))return Number(text);return{one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,'a couple':2,couple:2,pair:2,'a few':3,few:3,several:4,handful:5,'half a dozen':6,'half dozen':6,dozen:12}[text]||0}
-function autoMediaBatchNouns(routeMode){const mode=normalizeMode(routeMode);if(mode==='image')return'(?:images?|pictures?|photos?|renders?|illustrations?|variants?|variations?|versions?|options?|concepts?|alternatives?|samples?|drafts?|generations?|outputs?|thumbnails?|logos?|posters?|portraits?|characters?|designs?|icons?|avatars?|stickers?|banners?|covers?|mockups?|scenes?|wallpapers?|backgrounds?|graphics?|visuals?|assets?)';if(mode==='multimodal')return'(?:images?|pictures?|photos?|renders?|illustrations?)';if(mode==='video')return'(?:videos?|movies?|animations?|clips?|video\\s+outputs?|video\\s+generations?)';if(mode==='audio')return'(?:audio(?:\\s+clips?)?|sounds?|tracks?|audio\\s+outputs?|audio\\s+generations?)';return''}
+function autoBatchCountWord(value){const n=Number(String(value||'').trim());return Number.isFinite(n)?n:0}
+function autoMediaBatchNouns(routeMode){return''}
 function autoMediaOutputLabel(routeMode){const mode=normalizeMode(routeMode);if(mode==='video')return'video';if(mode==='audio')return'audio clip';return'image'}
-function autoMediaBatchCountPattern(){return'(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\\s+couple|couple|pair|a\\s+few|few|several|handful|half\\s+a\\s+dozen|half\\s+dozen|dozen)'}
+function autoMediaBatchCountPattern(){return''}
 function autoPromptRequestsSingleMediaCanvas(prompt,routeMode){const text=String(prompt||'');if(!text.trim())return false;if(/\b(?:all|everything)\s+(?:in|into|as|on)\s+(?:one|a|an|single)\b/i.test(text))return true;if(/\b(?:in|into|as|on|within|inside)\s+(?:one|a|an|single)\s+(?:image|picture|photo|render|illustration|poster|canvas|composition|scene|video|clip|track|audio|file)\b/i.test(text))return true;if(/\b(?:one|single)\s+(?:image|picture|photo|render|illustration|poster|canvas|video|clip|audio|track|file)\s+(?:with|containing|of|showing)\b/i.test(text))return true;const singleLayout=/\b(?:collage|contact\s+sheet|sprite\s+sheet|multi[-\s]?panel|composite|grid)\b/i.test(text);const negated=/\b(?:not|no|without)\s+(?:a\s+)?(?:collage|contact\s+sheet|sprite\s+sheet|multi[-\s]?panel|composite|grid)\b/i.test(text);return singleLayout&&!negated}
-function autoMediaBatchDefaultCount(prompt,routeMode){const text=String(prompt||'');if(/\bhalf\s+(?:a\s+)?dozen\b/i.test(text))return 6;if(/\bdozen\b/i.test(text))return 12;if(/\b(?:a\s+couple|couple|pair)\b/i.test(text))return 2;if(/\b(?:a\s+few|few)\b/i.test(text))return 3;if(/\bseveral\b/i.test(text))return 4;if(/\bhandful\b/i.test(text))return 5;if(/\b(?:batch|multiple|various|set|series|collection|pack|bundle|variants?|variations?|versions?|options?|concepts?|alternatives?|samples?|drafts?)\b/i.test(text))return 4;return 0}
-function promptLooksMediaBatchGenerationRequest(text,routeMode,nouns){text=String(text||'');nouns=nouns||autoMediaBatchNouns(routeMode);if(!text.trim()||!nouns)return false;const hasBatch=/\b(?:batch|multiple|several|various|a\s+few|few|set|series|collection|pack|bundle|variants?|variations?|versions?|options?|concepts?|alternatives?|samples?|drafts?)\b/i.test(text);const hasGeneration=/\b(?:generate|create|make|draw|render|design|paint|illustrate|produce|draft|mock\s*up|mockup)\b/i.test(text);const hasNoun=new RegExp('\\b'+nouns+'\\b','i').test(text);return hasBatch&&hasGeneration&&hasNoun}
-function extractAutoMediaBatchCount(prompt,routeMode){const original=String(prompt||'').trim();const nouns=autoMediaBatchNouns(routeMode);if(!original||!nouns||autoPromptRequestsSingleMediaCanvas(original,routeMode))return 0;const count=autoMediaBatchCountPattern();const modifiers='(?:\\s+(?:different|distinct|unique|separate|individual|alternate|alternative|varied|new|quick|sample|sampled|draft|drafts?|style|styled|concept|concepts?))*';const patterns=[new RegExp('\\b'+count+modifiers+'\\s+'+nouns+'\\b','i'),new RegExp('\\b(?:batch|set|series|collection|pack|bundle|round|run)\\s+(?:of\\s+)?'+count+'\\b.{0,180}\\b'+nouns+'\\b','i')];for(const re of patterns){const match=re.exec(original);if(match){const value=autoBatchCountWord(match[1]);if(value>1)return Math.max(2,Math.min(12,value))}}const broad=new RegExp('\\b'+count+'\\b(?=.{0,160}\\b'+nouns+'\\b)','i').exec(original);if(broad&&/\b(?:generate|create|make|draw|render|design|paint|illustrate|produce|draft|mock\s*up|mockup)\b/i.test(original)){const value=autoBatchCountWord(broad[1]);if(value>1)return Math.max(2,Math.min(12,value))}if(promptLooksMediaBatchGenerationRequest(original,routeMode,nouns)){const value=autoMediaBatchDefaultCount(original,routeMode);if(value>1)return Math.max(2,Math.min(12,value))}return 0}
+function autoMediaBatchDefaultCount(prompt,routeMode){return 0}
+function promptLooksMediaBatchGenerationRequest(text,routeMode,nouns){return false}
+function extractAutoMediaBatchCount(prompt,routeMode){return 0}
 function buildAutoMediaBatchPrompt(prompt,routeMode,index,total){const label=autoMediaOutputLabel(routeMode);return'Create exactly one '+label+' for this request. Do not create a collage, sprite sheet, contact sheet, or multi-output grid. This is variant '+(index+1)+' of '+total+', so make it visually or stylistically distinct while preserving the user request.\\n\\nUser request: '+String(prompt||'').trim()}
-function autoMediaBatchRequestsFor(prompt,routeMode){const total=extractAutoMediaBatchCount(prompt,routeMode);if(total<=1)return[];return Array.from({length:total},(_,index)=>({prompt:buildAutoMediaBatchPrompt(prompt,routeMode,index,total),mode:routeMode,index,autoGenerated:true,autoBatchCount:total}))}
-function autoRouteDecisionRequestsFor(prompt,routeMode){const decision=autoRouteDecision;if(!decision||decision.count<=1)return[];if(String(decision.prompt||'').trim()&&String(decision.prompt||'').trim()!==String(prompt||'').trim())return[];const branchMode=normalizeMode(decision.mode||routeMode);if(branchMode!==normalizeMode(routeMode))return[];const total=Math.max(2,Math.min(12,Number(decision.count)||0));if(total<=1)return[];if(isMediaMode(branchMode))return Array.from({length:total},(_,index)=>({prompt:buildAutoMediaBatchPrompt(prompt,branchMode,index,total),mode:branchMode,index,autoGenerated:true,autoAgentCommand:true,autoBatchCount:total,autoRouteCommand:decision.command,slaveLabel:(decision.suffix==='Image_Gen'?'JackONNX image generator slave ':decision.suffix.replace(/_/g,' ')+' slave ')+(index+1)}));const preface='You are a SocketJack slave agent in a parallel Auto run. Work independently and return concise findings for the master GPU to synthesize.';return Array.from({length:total},(_,index)=>({prompt:preface+'\\n\\nAgent '+(index+1)+' of '+total+': solve this request from an independent angle.\\n\\nUser request:\\n'+String(prompt||'').trim(),mode:branchMode,index,autoGenerated:true,autoAgentCommand:true,autoRouteCommand:decision.command,slaveLabel:'Slave agent '+(index+1)}))}
+function autoMediaBatchRequestsFor(prompt,routeMode){return[]}
+function autoRouteDecisionRequestsFor(prompt,routeMode){const decision=autoRouteDecision;if(!decision||decision.count<=1)return[];if(String(decision.prompt||'').trim()&&String(decision.prompt||'').trim()!==String(prompt||'').trim())return[];const branchMode=normalizeMode(decision.mode||routeMode);if(branchMode!==normalizeMode(routeMode))return[];const total=Math.max(2,Math.min(AUTO_PARALLEL_BATCH_LIMIT,Number(decision.count)||0));if(total<=1)return[];if(isMediaMode(branchMode))return Array.from({length:total},(_,index)=>({prompt:buildAutoMediaBatchPrompt(prompt,branchMode,index,total),mode:branchMode,index,autoGenerated:true,autoAgentCommand:true,autoBatchCount:total,autoRouteCommand:decision.command,slaveLabel:(decision.suffix==='Image_Gen'?'JackONNX image generator slave ':decision.suffix.replace(/_/g,' ')+' slave ')+(index+1)}));const preface='You are a SocketJack slave agent in a parallel Auto run. Work independently and return concise findings for the master GPU to synthesize.';return Array.from({length:total},(_,index)=>({prompt:preface+'\\n\\nAgent '+(index+1)+' of '+total+': solve this request from an independent angle.\\n\\nUser request:\\n'+String(prompt||'').trim(),mode:branchMode,index,autoGenerated:true,autoAgentCommand:true,autoRouteCommand:decision.command,slaveLabel:'Slave agent '+(index+1)}))}
 function autoMultiRouteStateChanging(prompt){return/\b(write|create|edit|modify|delete|remove|rename|move|upload|download|install|run|execute|click|open|submit|purchase|pay|checkout|commit|push|deploy|restart|stop|kill)\b/i.test(String(prompt||''))}
 function autoMultiRouteShouldSplit(prompt,routeMode){const text=String(prompt||'').trim();if(!text)return false;if(/^\/(?:single|solo)\b/i.test(text))return false;if(/^\/(?:multi|multiroute|multi-route|split)\b/i.test(text))return true;const mode=normalizeMode(routeMode||'auto');if(!['auto','text','tools'].includes(mode))return false;if(mode==='tools'&&promptLooksSingleToolAggregationRequest(text))return false;if(autoMultiRouteStateChanging(text))return false;const questionCount=(text.match(/\?/g)||[]).length,lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).length;const complex=/\b(analy[sz]e|compare|evaluate|review|debug|diagnose|investigate|research|plan|architect|design|explain|summari[sz]e|pros and cons|tradeoffs?|multi[- ]?step|break down|split|parallel|several|multiple)\b/i.test(text);return text.length>420||questionCount>=2||lines>=4||complex&&text.length>180}
 function autoMultiRoutePromptText(prompt){return String(prompt||'').trim().replace(/^\/(?:multi|multiroute|multi-route|split)\b[:\s]*/i,'')}
@@ -13747,7 +14501,7 @@ function autoMultiRouteRequestsFor(prompt,routeMode){if(!autoMultiRouteShouldSpl
 {prompt:preface+'\n\nBranch focus: check alternatives, risks, missing assumptions, edge cases, and evidence that could change the answer.\n\nUser request:\n'+source,mode:branchMode,index:1,autoGenerated:true,autoMultiRoute:true,slaveLabel:'Slave GPU 2'},
 {prompt:preface+'\n\nBranch focus: produce a practical answer structure with concrete next steps, verification ideas, and concise wording.\n\nUser request:\n'+source,mode:branchMode,index:2,autoGenerated:true,autoMultiRoute:true,slaveLabel:'Slave GPU 3'}
 ]}
-function parallelPromptRequestsFor(prompt,routeMode){const original=String(prompt||'').trim();if(!original)return[];try{const parsed=JSON.parse(original);const fromJson=parseParallelPromptArray(parsed,routeMode);if(fromJson.length>1)return fromJson.slice(0,12)}catch{}let text=original,enabled=false;if(/^\/parallel\b/i.test(text)){enabled=true;text=text.replace(/^\/parallel\b[:\s]*/i,'').trim()}else if(/^parallel\s*:/i.test(text)){enabled=true;text=text.replace(/^parallel\s*:/i,'').trim()}else if(/^batch\s*:/i.test(text)){enabled=true;text=text.replace(/^batch\s*:/i,'').trim()}if(!enabled){const routeDecisionBatch=autoRouteDecisionRequestsFor(original,routeMode);if(routeDecisionBatch.length>1)return routeDecisionBatch;const mediaBatch=autoMediaBatchRequestsFor(original,routeMode);if(mediaBatch.length>1)return mediaBatch;return autoMultiRouteRequestsFor(original,routeMode)}let parts=text.split(/\n\s*(?:---+|===+)\s*\n/g).map(item=>item.trim()).filter(Boolean);if(parts.length<2){const bulletLines=text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);if(bulletLines.length>1&&bulletLines.every(line=>/^(?:[-*]\s+|\d+[\.)]\s+)/.test(line)))parts=bulletLines.map(line=>line.replace(/^(?:[-*]\s+|\d+[\.)]\s+)/,''));}return parts.length>1?parts.slice(0,12).map((item,index)=>({prompt:item,mode:routeMode,index})):autoMediaBatchRequestsFor(original,routeMode)}
+function parallelPromptRequestsFor(prompt,routeMode){const original=String(prompt||'').trim();if(!original)return[];try{const parsed=JSON.parse(original);const fromJson=parseParallelPromptArray(parsed,routeMode);if(fromJson.length>1)return fromJson.slice(0,AUTO_PARALLEL_BATCH_LIMIT)}catch{}let text=original,enabled=false;if(/^\/parallel\b/i.test(text)){enabled=true;text=text.replace(/^\/parallel\b[:\s]*/i,'').trim()}else if(/^parallel\s*:/i.test(text)){enabled=true;text=text.replace(/^parallel\s*:/i,'').trim()}else if(/^batch\s*:/i.test(text)){enabled=true;text=text.replace(/^batch\s*:/i,'').trim()}if(!enabled){const routeDecisionBatch=autoRouteDecisionRequestsFor(original,routeMode);return routeDecisionBatch.length>1?routeDecisionBatch:[]}let parts=text.split(/\n\s*(?:---+|===+)\s*\n/g).map(item=>item.trim()).filter(Boolean);if(parts.length<2){const bulletLines=text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);if(bulletLines.length>1&&bulletLines.every(line=>/^(?:[-*]\s+|\d+[\.)]\s+)/.test(line)))parts=bulletLines.map(line=>line.replace(/^(?:[-*]\s+|\d+[\.)]\s+)/,''));}return parts.length>1?parts.slice(0,AUTO_PARALLEL_BATCH_LIMIT).map((item,index)=>({prompt:item,mode:routeMode,index})):[]}
 function autoResultHeaders(result){return(result&&(result.headers||result.Headers))||{}}
 function autoHeader(result,name){const headers=autoResultHeaders(result);const key=Object.keys(headers).find(k=>k.toLowerCase()===String(name||'').toLowerCase());return key?headers[key]:''}
 function buildAutoMultiRouteMasterPrompt(originalPrompt,panels){let text='You are the master GPU in a SocketJack multi-route Auto run. Synthesize one direct final answer for the user from the slave GPU branch results. If slaves generated media files, tell the user the outputs are ready and summarize the useful differences; do not claim to inspect pixels unless branch text says so. Prefer the best-supported details, resolve contradictions, do not mention internal branch mechanics unless needed, and keep the answer practical.\\n\\nOriginal user request:\\n'+String(originalPrompt||'').trim()+'\\n\\nSlave GPU branch results:';(panels||[]).forEach((panel,index)=>{text+='\\n\\n[Slave '+(index+1)+' '+String(panel&&panel.gpuLabel||'').trim()+']\\nPrompt: '+String(panel&&panel.prompt||'').trim()+'\\nResult: '+String(panel&&panel.answer||'').trim();const outputs=(Array.isArray(panel&&panel.mediaEntries)?panel.mediaEntries:[]).map(entry=>String(entry&& (entry.name||entry.path)||'').trim()).filter(Boolean);if(outputs.length)text+='\\nOutputs: '+outputs.join(', ')});return text}
@@ -13763,7 +14517,7 @@ const mediaAgentBatch=autoAgentCommandBatch&&isMediaMode(routeMode);
 const masterSynthesisBatch=autoMultiRouteBatch||(autoAgentCommandBatch&&!mediaAgentBatch);
 setCurrentProgressPlan('server','running','Scheduling '+batch.length+' parallel branch'+(batch.length===1?'':'es')+' for '+modeLabel(routeMode)+' mode.');
 upsertCurrentProgressGoal('parallel-branches','Run '+batch.length+' independent branch'+(batch.length===1?'':'es')+' and merge the useful results','running','SocketJack will run branch prompts independently, then synthesize or show the branch outputs.','parallel','tail');
-if(autoAgentCommandBatch){const command=firstText(batch[0]&&batch[0].autoRouteCommand,autoRouteDecision&&autoRouteDecision.command,'Start_'+batch.length+'_'+modeLabel(routeMode));appendProgressLine(assistant,command+' selected. Starting '+batch.length+' '+(autoRouteDecision&&autoRouteDecision.label||autoMediaOutputLabel(routeMode)+' generator slaves')+(mediaAgentBatch?'. Generated outputs will render directly.':', then one master GPU will synthesize the outputs.'))}
+if(autoAgentCommandBatch){const command=firstText(batch[0]&&batch[0].autoRouteCommand,autoRouteDecision&&autoRouteDecision.command,'run_batch:'+routeMode+':'+batch.length);appendProgressLine(assistant,command+' selected. Starting '+batch.length+' '+(autoRouteDecision&&autoRouteDecision.label||autoMediaOutputLabel(routeMode)+' generator slaves')+(mediaAgentBatch?'. Generated outputs will render directly.':', then one master GPU will synthesize the outputs.'))}
 else if(autoMultiRouteBatch)appendProgressLine(assistant,'Multi-route GPU scheduling selected. Sending '+batch.length+' slave GPU branches, then one master GPU will synthesize the answer.');
 else if(autoGeneratedBatch)appendProgressLine(assistant,'Detected a request for '+batch.length+' '+autoMediaOutputLabel(routeMode)+(batch.length===1?'':'s')+'. Running each as a separate parallel generation.');
 else appendProgressLine(assistant,'Running '+batch.length+' independent prompts in parallel in this Auto session...');
@@ -13854,7 +14608,10 @@ return{handled:true,tokenLossShown,premiumRequest};
 function hasActiveAutoRun(){return !!(activeAutoRun&&activeAutoRun.controller)}
 function hasPromptDraft(){return !!(els.prompt&&els.prompt.value.trim())}
 function createAutoStreamId(){return'auto_stream_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,12)}
-function updateAutoSendButton(){if(!els.send)return;if(hasActiveAutoRun()){const steer=hasPromptDraft();els.send.disabled=false;els.send.textContent=steer?'Steer':'Stop';els.send.classList.toggle('steer',steer);els.send.classList.toggle('stop',!steer);els.send.title=steer?'Steer the running Auto prompt at the next tool call or inference.':'Stop the running Auto prompt.'}else{els.send.disabled=false;els.send.textContent='Send';els.send.classList.remove('steer','stop');els.send.title='Send prompt'}}
+function sendCapabilityState(){const server=selectedServer||{},modelText=[requestModel(),suggestedModel,server.models,server.model,server.modelUsed,server.toolsAllowed,server.capabilitiesJson,server.modelCapabilitiesJson].map(x=>String(x||'')).join(' ');const toolServer=modelFlag(server,['supportsTools','tools','toolUse','toolCalling','functionCalling','vsTools'])||/\b(tool|tools|tool_use|function.?calling|internet_search|browser|filesystem|terminal|powershell|vs[_\s-]*tools?)\b/i.test(modelText);const visionServer=modelFlag(server,['supportsImages','supportsVision','vision','multimodal','supportsImageUpload'])||modelSupportsVisionInput(modelText);return{tools:!!toolServer,vision:!!visionServer}}
+function setSendButtonContent(label,loading){if(!els.send)return;const caps=sendCapabilityState();els.send.innerHTML='<span class="send-capability-row" aria-hidden="true"><span class="send-cap tool '+(caps.tools?'':'disabled')+'" title="'+(caps.tools?'Tools route available':'Tools not advertised by selected server')+'"></span><span class="send-cap vision '+(caps.vision?'':'disabled')+'" title="'+(caps.vision?'Vision input available':'Vision not advertised by selected model/server')+'"></span></span><span class="send-label"></span>';const labelNode=els.send.querySelector('.send-label');if(labelNode)labelNode.textContent=label||'Send'}
+function updateAutoSendButton(){if(!els.send)return;els.send.classList.toggle('submitting',autoPromptSubmitting);els.send.setAttribute('aria-busy',autoPromptSubmitting?'true':'false');if(els.prompt){els.prompt.disabled=false;els.prompt.classList.toggle('auto-submitting',autoPromptSubmitting)}if(autoPromptSubmitting){els.send.disabled=false;els.send.classList.remove('steer','stop');setSendButtonContent('Send',false);els.send.title='Prompt is being added to the chat log. Progress appears on the prompt itself.';return}if(hasActiveAutoRun()){const steer=hasPromptDraft();els.send.disabled=false;setSendButtonContent(steer?'Steer':'Send',false);els.send.classList.toggle('steer',steer);els.send.classList.toggle('stop',false);els.send.title=steer?'Steer the running Auto prompt at the next tool call or inference.':'A prompt is running. Use the stop button on that prompt to stop it.'}else{els.send.disabled=false;setSendButtonContent('Send',false);els.send.classList.remove('steer','stop');els.send.title='Send prompt'}}
+function setAutoPromptSubmitting(value){autoPromptSubmitting=!!value;if(els.prompt){els.prompt.disabled=false;els.prompt.classList.toggle('auto-submitting',autoPromptSubmitting)}updateAutoSendButton()}
 function applyPromptFromUrl(){const promptFromUrl=firstText(qs.get('prompt'),qs.get('message'),qs.get('q'));if(!promptFromUrl||!els.prompt)return;urlAutoRunPrompt=promptFromUrl;urlAutoRunSessionId=sessionId;clearPendingAutoPrompt();if(transcriptHasRecentUserPrompt(promptFromUrl)){els.prompt.value='';updateAutoSendButton();return}els.prompt.value=promptFromUrl;updateAutoSendButton();const runFlag=firstText(qs.get('autoRun'),qs.get('autorun'),qs.get('run'));const shouldRun=runFlag?isTruthy(runFlag):true;if(shouldRun){let tries=0;const start=()=>{tries++;if(urlAutoRunStarted||hasActiveAutoRun())return;if(transcriptHasRecentUserPrompt(promptFromUrl)){els.prompt.value='';updateAutoSendButton();return}if(els.prompt&&els.prompt.value.trim()){urlAutoRunStarted=true;clearPendingAutoPrompt();run();return}if(tries<8)window.setTimeout(start,300)};window.setTimeout(start,520)}}
 function createAutoSteerId(){return'steer_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10)}
 function copyAutoValue(value){try{return JSON.parse(JSON.stringify(value))}catch{return value&&typeof value==='object'?Object.assign({},value):value}}
@@ -13880,16 +14637,18 @@ async function steerActiveAutoRun(){const runState=activeAutoRun,text=els.prompt
 async function run(){
 if(hasActiveAutoRun()){
 if(hasPromptDraft())await steerActiveAutoRun();
-else await stopAutoRun();
 return;
 }
+if(autoPromptSubmitting)return;
 const prompt=els.prompt.value.trim();
 if(!prompt)return;
-if(shouldSuppressDuplicatePromptSubmit(prompt)){els.prompt.value='';updateAutoSendButton();return}
+els.prompt.value='';
+setAutoPromptSubmitting(true);
+if(shouldSuppressDuplicatePromptSubmit(prompt)){setAutoPromptSubmitting(false);return}
 autoRouteDecision=null;
 setAuthStatus();
 storePendingAutoPrompt(prompt);
-if(!await ensureAutoAuth(true,'Sign in to send this Auto prompt. It will resume automatically.')){updateAutoSendButton();return}
+if(!await ensureAutoAuth(true,'Sign in to send this Auto prompt. It will resume automatically.')){setAutoPromptSubmitting(false);return}
 clearPendingAutoPrompt();
 let routeMode=mode,premiumRequest=false,tokenLossShown=false;
 const beforeUsed=usageState?Number(usageState.tokensUsed||0):0;
@@ -13901,10 +14660,11 @@ const promptArtifacts=promptAttachmentEntries(prompt);
 const undoRunId=createAutoStreamId();
 const promptMessage=addMessage('user',prompt,{artifacts:promptArtifacts});
 if(promptMessage&&promptMessage.wrap)promptMessage.wrap.dataset.autoRunId=undoRunId;
+if(promptMessage){promptMessage.runDetail={prompt,runId:undoRunId,startedAt:Date.now(),endedAt:0,status:'running',routeMode:mode,server:'Selecting...',model:firstText(requestModel(),suggestedModel,'Auto model'),elapsed:'',cpu:'Not reported by server',gpu:'Not reported by server',storageBytes:new Blob([prompt]).size,processes:['Preparing prompt...'],outputs:[],sources:[]};ensurePromptRunMeta(promptMessage)}
 const promptTranscript=pushTranscriptMessage('user',prompt,promptArtifacts);
 promptTranscript.runId=undoRunId;
-els.prompt.value='';
 const assistant=addMessage('assistant','');
+if(promptMessage){promptMessage.linkedAssistant=assistant;assistant.promptMessage=promptMessage}
 assistant.undoRunId=undoRunId;
 assistant.undoPromptIndex=transcript.length-1;
 assistant.undoPromptContent=prompt;
@@ -13924,6 +14684,7 @@ routeMode=await chooseAutoMode(prompt,assistant,runState.controller.signal);
 runState.routeMode=routeMode;
 runSession.routeMode=routeMode;
 assistant.undoRouteMode=routeMode;
+if(promptMessage)updatePromptRunMeta(promptMessage,{routeMode,status:'running',model:firstText(requestModel(),suggestedModel,'Auto model')});
 setCurrentProgressPlan('route','done','Auto selected '+modeLabel(routeMode)+' mode.');
 if(isProtectedMode(routeMode)){
 storePendingAutoPrompt(prompt);
@@ -13940,6 +14701,7 @@ link.href=loginUrl();
 link.textContent='Login';
 assistant.progressTerminalState='login';
 assistant.progressResultText='Login is required before using SocketJack AI '+routeMode+'.';
+setAutoPromptSubmitting(false);
 return;
 }
 clearPendingAutoPrompt();
@@ -13948,6 +14710,7 @@ premiumRequest=currentPromptIsPremium();
 runSession.premiumRequest=premiumRequest;
 appendProgressLine(assistant,'Routing '+routeMode+' through /auto/api...');
 setCurrentProgressPlan('send','running','Sending request through /auto/api.');
+setAutoPromptSubmitting(false);
 if(selectedServer)appendProgressLine(assistant,'Selected server: '+(selectedServer.title||selectedServer.id||'Auto server'));
 if(isMediaMode(routeMode))showMediaPlaceholder(assistant,routeMode);
 setCurrentProgressPlan('server','running','Selecting an eligible server/model for '+modeLabel(routeMode)+' mode.');
@@ -13956,6 +14719,7 @@ if(parallelBatchResult.handled){
 tokenLossShown=parallelBatchResult.tokenLossShown||tokenLossShown;
 premiumRequest=parallelBatchResult.premiumRequest||premiumRequest;
 runSession.premiumRequest=premiumRequest;
+if(promptMessage)updatePromptRunMeta(promptMessage,{server:firstText(runSession.serverTitle,runSession.serverId,'parallel pool'),model:firstText(runSession.modelUsed,requestModel(),suggestedModel,'Auto model'),routeMode,status:'running'});
 return;
 }
 let autoAttempt=0,authRetryUsed=false;
@@ -13982,6 +14746,8 @@ const flagModelId=firstText(rawModelHeader,modelHeader,model);
 const premiumHeader=r.headers.get('X-SocketJack-Auto-Premium');
 const estimatedHeader=Number(r.headers.get('X-SocketJack-Auto-Estimated-Tokens')||0);
 if(serverHeader){if(forcedAutoServerId&&autoServerIdentityKey(serverHeader)!==autoServerIdentityKey(forcedAutoServerId))forcedAutoServerId='';runState.serverId=serverHeader;assistant.undoServerId=serverHeader;selectedServerId=serverHeader}
+assistant.modelUsed=modelHeader||model;
+if(promptMessage)updatePromptRunMeta(promptMessage,{server:firstText(r.headers.get('X-SocketJack-Auto-Server-Title'),serverHeader,'selected server'),model:firstText(modelHeader,model,'Auto model'),routeMode,status:'running',storageBytes:(promptMessage.runDetail&&promptMessage.runDetail.storageBytes||0)+estimatedHeader});
 setCurrentProgressPlan('server','done','Using '+firstText(r.headers.get('X-SocketJack-Auto-Server-Title'),serverHeader,'selected server')+(modelHeader?' / '+modelHeader:'')+'.');
 const raw=await readResponseTextWithProgress(r,assistant,routeMode);
 runSession.routeMode=routeMode;
@@ -13999,6 +14765,7 @@ const events=streamedEvents||parseEvents(raw,contentType);
 if(!streamedEvents)showProgressEvents(events,assistant,routeMode);
 tokenLossShown=consumeUsageEvents(events,premiumRequest)||tokenLossShown;
 setCurrentProgressPlan('synthesize','running','Evaluating streamed response, tool results, sources, and files for sufficiency.');
+noteAutoSynthesisFallback(assistant,raw);
 const failureReason=autoFailureReason(raw,events,r,routeMode,modelHeader);
 if(failureReason&&autoFailureRequiresBenchmark(routeMode,failureReason)&&r.status!==401&&autoAttempt<4&&serverHeader&&flagModelId){
 const disabled=await flagAutoModelForBenchmark(serverHeader,flagModelId,routeMode,failureReason,assistant);
@@ -14046,6 +14813,7 @@ setCurrentProgressPlan('final','running','Rendering generated '+routeMode+' in c
 await renderMedia(assistant,entries);
 addArtifactsToMessage(assistant,artifacts);
 addSessionArtifacts(artifacts);
+if(promptMessage)updatePromptRunMeta(promptMessage,{outputs:artifacts.filter(entry=>entry&&entry.type==='file'),sources:promptRunSources(promptMessage),status:'running'});
 assistant.progressTerminalState='completed';
 assistant.progressResultText='Generated '+routeMode+'.';
 pushAssistantTranscript(assistant,'Generated '+routeMode+'.',artifacts,assistant.insightLines||[]);
@@ -14074,6 +14842,7 @@ setCurrentProgressPlan('final','running','Rendering final answer and saving sess
 setMessageBody(assistant,text);
 addArtifactsToMessage(assistant,artifacts);
 addSessionArtifacts(artifacts);
+if(promptMessage)updatePromptRunMeta(promptMessage,{outputs:artifacts.filter(entry=>entry&&entry.type==='file'),sources:promptRunSources(promptMessage),status:'running'});
 stickMessagesToBottom(finalStick);
 assistant.progressTerminalState='completed';
 assistant.progressResultText=text;
@@ -14107,6 +14876,7 @@ markSessionProcessing(sessionId,false);
 finishPromptProgress(assistant,latestProgressLine(assistant,'Done.'));
 document.body.classList.remove('prompt-loading');
 if(activeAutoRun===runState)activeAutoRun=null;
+setAutoPromptSubmitting(false);
 updateAutoSendButton();
 const previousTokens=beforeUsed;
 if(premiumRequest){
@@ -14241,10 +15011,12 @@ if(els.sessionClose)els.sessionClose.addEventListener('click',closeSessionDrawer
 if(els.sessionBackdrop)els.sessionBackdrop.addEventListener('click',closeSessionDrawer);
 if(els.filesToggle)els.filesToggle.addEventListener('click',()=>{document.body.classList.contains('files-open')?closeFilesDrawer():openFilesDrawer()});
 if(els.filesClose)els.filesClose.addEventListener('click',closeFilesDrawer);
+if(els.filesRefresh)els.filesRefresh.addEventListener('click',()=>loadSessionFiles({force:true,reason:'manual'}));
+if(els.sessionArtifactList)els.sessionArtifactList.addEventListener('scroll',saveSessionFileScroll,{passive:true});
 attachDrawerResize(els.sessionResize,'left',SESSION_WIDTH_STORAGE_KEY,'--auto-session-width');
 attachDrawerResize(els.filesResize,'right',FILES_WIDTH_STORAGE_KEY,'--auto-files-width');
 if(els.sessionSearch)els.sessionSearch.addEventListener('input',()=>{window.clearTimeout(sessionSearchTimer);sessionSearchTimer=window.setTimeout(loadAutoSessions,180)});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(previewEls.window&&!previewEls.window.hidden)closeAutoPreview();if(els.autoLoginModal&&!els.autoLoginModal.hidden)closeAutoLogin(false);if(document.body.classList.contains('sessions-open'))closeSessionDrawer();if(document.body.classList.contains('files-open'))closeFilesDrawer()}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){setAdvancedPanelOpen(false);if(previewEls.window&&!previewEls.window.hidden)closeAutoPreview();if(els.autoLoginModal&&!els.autoLoginModal.hidden)closeAutoLogin(false);if(document.body.classList.contains('sessions-open'))closeSessionDrawer();if(document.body.classList.contains('files-open'))closeFilesDrawer()}});
 els.send.onclick=run;
 els.prompt.addEventListener('input',updateAutoSendButton);
 els.prompt.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();run()}});
@@ -14257,13 +15029,14 @@ attachComposerControlResize();
 updateAutoSendButton();
 applyPromptFromUrl();
 renderPendingUploadQueue();
-if(els.advancedToggle&&els.modelCombo)els.advancedToggle.addEventListener('click',()=>{els.modelCombo.classList.toggle('advanced-open');renderAdvancedSummary();if(els.modelCombo.classList.contains('advanced-open'))setTimeout(()=>els.model&&els.model.focus(),30)});
+if(els.advancedToggle&&els.modelCombo)els.advancedToggle.addEventListener('click',()=>setAdvancedPanelOpen(!els.modelCombo.classList.contains('advanced-open'),true));
+if(els.modelCombo){els.modelCombo.addEventListener('focusout',()=>setTimeout(()=>{if(els.modelCombo&&!els.modelCombo.matches(':focus-within'))setAdvancedPanelOpen(false)},0));document.addEventListener('pointerdown',e=>{if(els.modelCombo&&els.modelCombo.classList.contains('advanced-open')&&!els.modelCombo.contains(e.target))setAdvancedPanelOpen(false)},{capture:true})}
 els.model.addEventListener('input',()=>{modelSuggestionBrowseAll=false;renderModelSuggestions(true);updateFileUploadVisibility()});
 els.model.addEventListener('focus',()=>{modelSuggestionBrowseAll=true;loadHuggingFaceModelCatalog();renderModelSuggestions(true)});
 els.model.addEventListener('click',()=>{modelSuggestionBrowseAll=true;renderModelSuggestions(true)});
 els.model.addEventListener('blur',()=>setTimeout(hideModelSuggestions,120));
 els.model.addEventListener('change',()=>{modelSuggestionBrowseAll=false;writeAutoHistory();renderModelSuggestions(false);updateFileUploadVisibility();refreshStatus()});
-els.model.addEventListener('keydown',e=>{const open=!els.modelSuggestions.hidden;if(e.key==='ArrowDown'){e.preventDefault();moveModelSuggestion(1)}else if(e.key==='ArrowUp'){e.preventDefault();moveModelSuggestion(-1)}else if(e.key==='Enter'&&open&&modelSuggestionIndex>=0){e.preventDefault();chooseModelSuggestion(collectModelSuggestions()[modelSuggestionIndex])}else if(e.key==='Escape'){hideModelSuggestions()}});
+els.model.addEventListener('keydown',e=>{const open=!els.modelSuggestions.hidden;if(e.key==='ArrowDown'){e.preventDefault();moveModelSuggestion(1)}else if(e.key==='ArrowUp'){e.preventDefault();moveModelSuggestion(-1)}else if(e.key==='Enter'&&open&&modelSuggestionIndex>=0){e.preventDefault();const item=collectModelSuggestions()[modelSuggestionIndex];if(item&&item.source==='server')soloModelSuggestion(item);else chooseModelSuggestion(item)}else if(e.key==='Escape'){hideModelSuggestions();setAdvancedPanelOpen(false)}});
 function updateParamFilters(refresh,source){autoMinParamsB=els.minParamSlider?sliderToParamsB(els.minParamSlider.value):autoMinParamsB;autoMaxParamsB=els.paramSlider?sliderToParamsB(els.paramSlider.value):autoMaxParamsB;if(autoMinParamsB>0&&autoMaxParamsB>0&&autoMaxParamsB<autoMinParamsB+.1)autoMaxParamsB=Math.min(1000,Math.round((autoMinParamsB+.1)*10)/10);safeStorageSet(MIN_PARAM_STORAGE_KEY,autoMinParamsB>0?String(autoMinParamsB):'');safeStorageSet(PARAM_STORAGE_KEY,autoMaxParamsB>0?String(autoMaxParamsB):'');renderParamSlider();renderModelSuggestions(false);if(refresh){selectedServer=null;selectedServerId=forcedAutoServerId||'';suggestedModel='';hideContinueServer(forcedAutoServerId?'Sable only':'Selecting...');writeAutoHistory();refreshStatus()}}
 if(els.minParamSlider){els.minParamSlider.addEventListener('input',()=>updateParamFilters(false,'min'));els.minParamSlider.addEventListener('change',()=>updateParamFilters(true,'min'))}
 if(els.paramSlider){els.paramSlider.addEventListener('input',()=>updateParamFilters(false,'max'));els.paramSlider.addEventListener('change',()=>updateParamFilters(true,'max'))}
@@ -14276,7 +15049,7 @@ refreshStatus();
 </script>
 </body>
 </html>
-""";
+""".Replace("__AUTO_PARALLEL_BATCH_LIMIT__", AutoParallelBatchLimit.ToString(CultureInfo.InvariantCulture));
     }
 
     private void MapSecureAuthorityRoutes(MutableTcpServer websiteServer) {
@@ -16403,20 +17176,16 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
     }
 
     private string HandleSession(NetworkConnection connection, HttpRequest request) {
+        if (!HasSessionAuthHint(request))
+            return Json(request, BuildAnonymousAuthPayload());
+
         AccountRecord? record = AuthenticateRequest(request, out _);
         string token = "";
         bool refreshedByKnownIp = false;
         if (record == null) {
             refreshedByKnownIp = TryAutoAuthenticateKnownIp(connection, request, out record, out token);
-            if (record == null) {
-                return Json(request, new {
-                    ok = true,
-                    authenticated = false,
-                    isAdministrator = false,
-                    canRegisterOpen = !HasAnyAccountAdministrator(),
-                    usage = BuildAnonymousUsage()
-                });
-            }
+            if (record == null)
+                return Json(request, BuildAnonymousAuthPayload());
         }
 
         string sessionClientIp = ExtractClientIp(connection, request);
@@ -16427,6 +17196,39 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
         else
             UpsertAccount(record);
         return Json(request, BuildAuthPayload(record, token, authenticated: true, created: false, pending: false, refreshedByKnownIp: refreshedByKnownIp));
+    }
+
+    private bool HasSessionAuthHint(HttpRequest request) {
+        return !string.IsNullOrWhiteSpace(ExtractTokenFromRequest(request)) ||
+               !string.IsNullOrWhiteSpace(ExtractRememberedUserName(request));
+    }
+
+    private object BuildAnonymousAuthPayload() {
+        return new {
+            ok = true,
+            authenticated = false,
+            isAdministrator = false,
+            canRegisterOpen = !HasAnyAccountAdministratorFast(),
+            usage = BuildAnonymousUsage()
+        };
+    }
+
+    private bool HasAnyAccountAdministratorFast() {
+        bool lockTaken = false;
+        try {
+            if (!Monitor.TryEnter(_sync, TimeSpan.FromMilliseconds(25)))
+                return true;
+            lockTaken = true;
+            foreach (object[] row in _usersTable.Rows) {
+                AccountRecord record = AccountFromRow(row);
+                if (record.Enabled && record.IsAdministrator)
+                    return true;
+            }
+            return false;
+        } finally {
+            if (lockTaken)
+                Monitor.Exit(_sync);
+        }
     }
 
     private string HandleInheritedOAuthSession(NetworkConnection connection, HttpRequest request) {
@@ -17257,23 +18059,38 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
         }
     }
 
-    private void UpsertAccount(AccountRecord record) {
+    private void UpsertAccount(AccountRecord record, bool persistSynchronously = true) {
         ApplyBuiltInAdministratorRule(record);
+        bool queueSave = false;
+        bool updated = false;
         lock (_sync) {
             for (int i = 0; i < _usersTable.Rows.Count; i++) {
                 AccountRecord existing = AccountFromRow(_usersTable.Rows[i]);
                 if (!string.Equals(existing.UserName, record.UserName, StringComparison.OrdinalIgnoreCase))
                     continue;
                 _usersTable.Rows[i] = AccountToRow(record);
-                _dataServer.Save();
-                NotifyAutoLiveDataChanged();
-                return;
+                updated = true;
+                if (persistSynchronously) {
+                    _dataServer.Save();
+                    NotifyAutoLiveDataChanged();
+                } else {
+                    queueSave = true;
+                }
+                break;
             }
 
-            _usersTable.Rows.Add(AccountToRow(record));
-            _dataServer.Save();
-            NotifyAutoLiveDataChanged();
+            if (!updated) {
+                _usersTable.Rows.Add(AccountToRow(record));
+                if (persistSynchronously) {
+                    _dataServer.Save();
+                    NotifyAutoLiveDataChanged();
+                } else {
+                    queueSave = true;
+                }
+            }
         }
+        if (queueSave)
+            QueueDataServerSaveAndLiveDataChanged();
     }
 
     private AccountRecord? GetAccount(string username) {
@@ -17369,7 +18186,7 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
         record.TokenHash = HashToken(token);
         record.TokenExpiresUtc = expires.ToString("O", CultureInfo.InvariantCulture);
         record.UpdatedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-        UpsertAccount(record);
+        UpsertAccount(record, persistSynchronously: false);
         SetAuthCookie(request, token, expires);
         return token;
     }
@@ -17648,14 +18465,44 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
         return new { tokenLimit = 0, tokensUsed = 0, tokensRemaining = 0, unlimited = false, ownerKey = "" };
     }
 
+    private void QueueDataServerSaveAndLiveDataChanged() {
+        GC.KeepAlive(AuthFastPathRevision);
+        Interlocked.Exchange(ref _asyncDataSaveRequested, 1);
+        if (Interlocked.CompareExchange(ref _asyncDataSaveRunning, 1, 0) != 0)
+            return;
+
+        _ = Task.Run(() => {
+            try {
+                do {
+                    Interlocked.Exchange(ref _asyncDataSaveRequested, 0);
+                    lock (_sync) {
+                        _dataServer.Save();
+                    }
+                    NotifyAutoLiveDataChanged();
+                } while (Interlocked.CompareExchange(ref _asyncDataSaveRequested, 0, 1) == 1);
+            } catch {
+            } finally {
+                Interlocked.Exchange(ref _asyncDataSaveRunning, 0);
+                if (Interlocked.CompareExchange(ref _asyncDataSaveRequested, 0, 1) == 1)
+                    QueueDataServerSaveAndLiveDataChanged();
+            }
+        });
+    }
+
     private void MergeAutoSessionsForAccount(AccountRecord? account, string clientIp) {
         if (account == null || string.IsNullOrWhiteSpace(account.UserName) || string.IsNullOrWhiteSpace(clientIp))
             return;
 
         bool changed = false;
         string now = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-        lock (_sync) {
-            for (int i = 0; i < _autoSessionsTable.Rows.Count; i++) {
+        bool lockTaken = false;
+        try {
+            if (!Monitor.TryEnter(_sync, TimeSpan.FromMilliseconds(250)))
+                return;
+            lockTaken = true;
+            int scanned = 0;
+            int changedCount = 0;
+            for (int i = _autoSessionsTable.Rows.Count - 1; i >= 0 && scanned < 10000 && changedCount < 500; i--, scanned++) {
                 AutoSessionRecord session = AutoSessionFromRow(_autoSessionsTable.Rows[i]);
                 if (session.Deleted)
                     continue;
@@ -17668,12 +18515,16 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
                 session.UpdatedUtc = now;
                 _autoSessionsTable.Rows[i] = AutoSessionToRow(session);
                 changed = true;
+                changedCount++;
             }
-            if (changed)
-                _dataServer.Save();
+        } catch {
+            changed = false;
+        } finally {
+            if (lockTaken)
+                Monitor.Exit(_sync);
         }
         if (changed)
-            NotifyAutoLiveDataChanged();
+            QueueDataServerSaveAndLiveDataChanged();
     }
 
     private List<AutoSessionRecord> ListAutoSessionsForViewer(AccountRecord? account, string clientIp, bool includeArchived, string search) {
@@ -17941,6 +18792,165 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
             .ToArray();
     }
 
+    private object[] ListAutoUpstreamSessionFileEntries(NetworkConnection connection, HttpRequest request, string sessionId, AccountRecord? account, CancellationToken cancellationToken) {
+        string requestedServerId = FirstNonEmpty(
+            GetQuery(request, "serverId"),
+            GetQuery(request, "server_id"),
+            GetQuery(request, "server"),
+            ResolveAutoSessionServerId(sessionId));
+        if (string.IsNullOrWhiteSpace(requestedServerId))
+            return Array.Empty<object>();
+
+        string mode = NormalizeAutoMode(FirstNonEmpty(GetQuery(request, "mode"), "tools"));
+        if (string.IsNullOrWhiteSpace(mode) || mode.Equals("text", StringComparison.OrdinalIgnoreCase))
+            mode = "tools";
+        string originMode = NormalizeAutoOriginMode(ExtractAutoOriginMode(request));
+        bool premiumModelsEnabled = ExtractAutoPremiumModelsEnabled(request) || AccountHasAutoPremiumTokens(account);
+
+        try {
+            if (!TryResolveAutoApiTarget(
+                "",
+                mode,
+                requestedServerId,
+                originMode,
+                false,
+                0,
+                0,
+                premiumModelsEnabled,
+                account,
+                out RegisteredServer? selectedServer,
+                out MasterShellRelay? relay,
+                out Uri? baseUri,
+                out _,
+                out _,
+                out _,
+                userDisabledModels: ExtractAutoDisabledModels(request)) ||
+                selectedServer == null ||
+                baseUri == null) {
+                return Array.Empty<object>();
+            }
+
+            string query = BuildSimpleQueryString(
+                ("kind", "session"),
+                ("path", "\\"),
+                ("sessionId", sessionId),
+                ("sort", "modified"));
+            AutoApiForwardResult result;
+            if (relay != null && _shellProxyWebSocketTunnels.HasConnectedTunnel(relay.Id)) {
+                result = FetchAutoApiTunnelResult(relay, request, "/api/chat-solution-explorer", query, Array.Empty<byte>(), cancellationToken);
+            } else {
+                if (!TryBuildAutoApiTargetUri(baseUri, "/api/chat-solution-explorer", query, out Uri? targetUri, out _) || targetUri == null)
+                    return Array.Empty<object>();
+                result = FetchAutoApiHttpResult(connection, request, targetUri, Array.Empty<byte>(), selectedServer, mode, cancellationToken);
+            }
+
+            if (result.StatusCode < 200 || result.StatusCode >= 300 || result.BodyBytes == null || result.BodyBytes.Length == 0)
+                return Array.Empty<object>();
+
+            string body = Encoding.UTF8.GetString(result.BodyBytes);
+            return BuildAutoUpstreamSessionFileEntriesFromExplorerJson(request, body, sessionId, selectedServer, mode);
+        } catch {
+            return Array.Empty<object>();
+        }
+    }
+
+    private object[] BuildAutoUpstreamSessionFileEntriesFromExplorerJson(HttpRequest request, string body, string sessionId, RegisteredServer selectedServer, string mode) {
+        if (string.IsNullOrWhiteSpace(body))
+            return Array.Empty<object>();
+
+        try {
+            using JsonDocument document = JsonDocument.Parse(body);
+            JsonElement root = document.RootElement;
+            if (!root.TryGetProperty("children", out JsonElement children) || children.ValueKind != JsonValueKind.Array)
+                return Array.Empty<object>();
+
+            var entries = new List<object>();
+            foreach (JsonElement child in children.EnumerateArray()) {
+                object? entry = BuildAutoUpstreamSessionFileEntry(request, child, sessionId, selectedServer, mode);
+                if (entry != null)
+                    entries.Add(entry);
+            }
+            return entries.ToArray();
+        } catch {
+            return Array.Empty<object>();
+        }
+    }
+
+    private object? BuildAutoUpstreamSessionFileEntry(HttpRequest request, JsonElement child, string sessionId, RegisteredServer selectedServer, string mode) {
+        string type = GetJsonString(child, "type");
+        if (type.Equals("directory", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        string path = FirstNonEmpty(GetJsonString(child, "path"), GetJsonString(child, "filePath"), GetJsonString(child, "sessionFilePath"));
+        if (string.IsNullOrWhiteSpace(path) || path.Equals("\\", StringComparison.Ordinal) || path.Equals("/", StringComparison.Ordinal))
+            return null;
+
+        string relativePath = path.Replace('\\', '/').TrimStart('/');
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return null;
+
+        string name = FirstNonEmpty(GetJsonString(child, "name"), Path.GetFileName(relativePath), "generated file");
+        string extension = FirstNonEmpty(GetJsonString(child, "extension"), Path.GetExtension(name));
+        string mimeType = AutoSessionMimeType(extension);
+        string serverId = FirstNonEmpty(selectedServer.Id, selectedServer.TitleText);
+        string serverTitle = FirstNonEmpty(selectedServer.TitleText, selectedServer.DisplayName, serverId);
+        long sizeBytes = Math.Max(0, GetJsonLong(child, "sizeBytes", GetJsonLong(child, "size", 0)));
+        string modifiedUtc = FirstNonEmpty(GetJsonString(child, "modifiedUtc"), GetJsonString(child, "uploadedUtc"));
+
+        return new {
+            type = "file",
+            source = "auto-upstream-session",
+            upstream = true,
+            sessionId,
+            path,
+            name,
+            displayName = name,
+            relativePath,
+            kind = AutoSessionFileKind(name),
+            mimeType,
+            sizeBytes,
+            uploadedUtc = modifiedUtc,
+            lastWriteUtc = modifiedUtc,
+            routeMode = mode,
+            serverId,
+            serverTitle,
+            serverDisplayTitle = serverTitle,
+            url = ""
+        };
+    }
+
+    private static object[] MergeAutoSessionFileEntries(params object[][] groups) {
+        return groups
+            .Where(group => group != null)
+            .SelectMany(group => group)
+            .Where(entry => entry != null)
+            .ToArray();
+    }
+
+    private string ResolveAutoSessionServerId(string sessionId) {
+        sessionId = SanitizeAutoSessionId(sessionId);
+        if (string.IsNullOrWhiteSpace(sessionId))
+            return "";
+
+        lock (_sync) {
+            int index = FindAutoSessionRowIndexLocked(sessionId);
+            if (index < 0)
+                return "";
+            AutoSessionRecord session = AutoSessionFromRow(_autoSessionsTable.Rows[index]);
+            return FirstNonEmpty(session.ServerId);
+        }
+    }
+
+    private static string BuildSimpleQueryString(params (string Name, string Value)[] values) {
+        var pairs = new List<string>();
+        foreach ((string name, string value) in values) {
+            if (string.IsNullOrWhiteSpace(name) || value == null)
+                continue;
+            pairs.Add(WebUtility.UrlEncode(name) + "=" + WebUtility.UrlEncode(value));
+        }
+        return string.Join("&", pairs);
+    }
+
     private static bool AutoSessionMatchesSearch(AutoSessionRecord session, string search, Regex? regex) {
         if (string.IsNullOrWhiteSpace(search))
             return true;
@@ -18025,6 +19035,57 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
             NotifyAutoLiveDataChanged();
             return session.Deleted ? null : session;
         }
+    }
+
+    private (List<AutoSessionRecord> Sessions, int Deleted) ApplyAutoSessionBatchAction(IEnumerable<string> ids, string action, AccountRecord? account, string clientIp) {
+        string[] cleanIds = ids.Select(SanitizeAutoSessionId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (cleanIds.Length == 0)
+            throw new InvalidOperationException("At least one Auto session id is required.");
+
+        List<AutoSessionRecord> sessions = new();
+        int deleted = 0;
+        bool changed = false;
+        string updatedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+
+        lock (_sync) {
+            foreach (string id in cleanIds) {
+                int index = FindAutoSessionRowIndexLocked(id);
+                if (index < 0)
+                    throw new InvalidOperationException("Auto session was not found: " + id);
+
+                AutoSessionRecord session = AutoSessionFromRow(_autoSessionsTable.Rows[index]);
+                if (!AutoSessionVisibleToViewer(session, account, clientIp))
+                    throw new InvalidOperationException("Auto session is not available to this viewer: " + id);
+
+                if (action.Equals("delete", StringComparison.OrdinalIgnoreCase)) {
+                    session.Deleted = true;
+                    deleted++;
+                } else if (action.Equals("archive", StringComparison.OrdinalIgnoreCase)) {
+                    session.Archived = true;
+                } else if (action.Equals("unarchive", StringComparison.OrdinalIgnoreCase)) {
+                    session.Archived = false;
+                } else {
+                    throw new InvalidOperationException("Unknown Auto session action.");
+                }
+
+                session.UpdatedUtc = updatedUtc;
+                NormalizeAutoSession(session);
+                _autoSessionsTable.Rows[index] = AutoSessionToRow(session);
+                if (!session.Deleted)
+                    sessions.Add(session);
+                changed = true;
+            }
+
+            if (changed)
+                _dataServer.Save();
+        }
+
+        if (changed)
+            NotifyAutoLiveDataChanged();
+        return (sessions, deleted);
     }
 
     private int FindAutoSessionRowIndexLocked(string id) {
@@ -18505,11 +19566,18 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
                 Path = TruncateText(path, 240)
             };
 
-            lock (_sync) {
+            bool lockTaken = false;
+            try {
+                if (!Monitor.TryEnter(_sync, TimeSpan.FromMilliseconds(250)))
+                    return;
+                lockTaken = true;
                 _masterLogsTable.Rows.Add(MasterLogToRow(entry));
                 TrimTableRows(_masterLogsTable, MaxMasterLogRows);
-                _dataServer.Save();
+            } finally {
+                if (lockTaken)
+                    Monitor.Exit(_sync);
             }
+            QueueDataServerSaveAndLiveDataChanged();
         } catch {
         }
     }
@@ -18858,6 +19926,27 @@ a{color:#76d6ff;text-decoration:none}a:hover{text-decoration:underline}.dir{colo
             return RegisteredServer.JsonValueToText(property.Value);
         }
         return "";
+    }
+
+    private static string[] GetJsonStringArray(JsonElement element, params string[] names) {
+        if (element.ValueKind != JsonValueKind.Object)
+            return Array.Empty<string>();
+        foreach (JsonProperty property in element.EnumerateObject()) {
+            if (!names.Any(name => string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            if (property.Value.ValueKind == JsonValueKind.Array) {
+                List<string> values = new();
+                foreach (JsonElement item in property.Value.EnumerateArray()) {
+                    string text = item.ValueKind == JsonValueKind.String ? item.GetString() ?? "" : RegisteredServer.JsonValueToText(item);
+                    if (!string.IsNullOrWhiteSpace(text))
+                        values.Add(text.Trim());
+                }
+                return values.ToArray();
+            }
+            string raw = RegisteredServer.JsonValueToText(property.Value);
+            return raw.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+        return Array.Empty<string>();
     }
 
     private static long GetJsonLong(JsonElement element, string name, long fallback) {
@@ -20009,7 +21098,8 @@ window.addEventListener('DOMContentLoaded', () => {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JackCast.Live - XDF ECU Console</title>
-<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="256x256">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/MatrixTheme.css">
 <style>
 *{box-sizing:border-box}
@@ -20476,7 +21566,9 @@ tr:hover{background:rgba(57,255,20,.055)}
             Path.Combine(AppContext.BaseDirectory, "html", fileName),
             Path.Combine(AppContext.BaseDirectory, fileName),
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "html", fileName),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "SocketJack", fileName),
             Path.Combine(Directory.GetCurrentDirectory(), "html", fileName),
+            Path.Combine(Directory.GetCurrentDirectory(), "SocketJack", fileName),
             Path.Combine(Directory.GetCurrentDirectory(), fileName)
         }) {
             if (File.Exists(candidate))
@@ -20503,7 +21595,7 @@ tr:hover{background:rgba(57,255,20,.055)}
 <div class="app">
   <header class="top">
     <div class="brand"><div class="mark">SJ</div><div><div class="crumbs">SocketJack ? <span>Troubleshooting</span></div><strong>Issues + Help</strong></div></div>
-    <div class="actions"><a class="pill" id="docLink" href="__DOCUMENTATION_URL__">Documentation</a><a class="pill" href="/Documentation">Docs</a><a class="pill" href="/Admin">Admin</a></div>
+    <div class="actions"><a class="pill" id="docLink" href="__DOCUMENTATION_URL__">Documentation</a><a class="pill" href="/Documentation">Docs</a><a class="pill" href="/Dev">Dev</a></div>
   </header>
   <main class="layout">
     <aside class="side">
@@ -20579,7 +21671,7 @@ $('chatForm').addEventListener('submit',ask);$('checkAi').addEventListener('clic
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SocketJack Admin</title>
+<title>SocketJack Dev</title>
 <style>
 :root{color-scheme:dark;--line:#263449;--text:#e5edf7;--muted:#94a3b8;--accent:#40c9a2;--bad:#fb7185;--warn:#fbbf24}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;min-height:100vh;background:linear-gradient(135deg,#071018,#0f172a 58%,#05201d);color:var(--text);font-family:"Segoe UI","Cascadia Code",sans-serif}.app{padding:18px;display:grid;gap:14px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;background:rgba(17,24,39,.82);padding:14px 16px}.admin-brand{display:inline-flex;align-items:center;gap:12px;color:var(--text);text-decoration:none}.admin-brand-mark{width:40px;height:40px;display:grid;place-items:center;border-radius:9px;background:linear-gradient(135deg,#52e4ff,#68f5b4 43%,#ff7ab6);color:#031019;font-weight:1000;box-shadow:0 0 34px rgba(84,225,192,.34),inset 0 1px 0 rgba(255,255,255,.74)}.title{font-size:1.2rem;font-weight:800}.sub{color:var(--muted);font-size:.82rem;margin-top:2px}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}a,button{min-height:34px;border:1px solid rgba(64,201,162,.42);border-radius:7px;background:rgba(64,201,162,.16);color:#eafff8;font-weight:800;text-decoration:none;padding:7px 10px;cursor:pointer}button.secondary{border-color:rgba(125,211,252,.28);background:rgba(15,23,42,.62);color:#dbeafe}.pill{border:1px solid rgba(125,211,252,.28);border-radius:999px;padding:7px 10px;color:#dbeafe;background:rgba(15,23,42,.62);font:800 .72rem "Cascadia Code",monospace}.pill.good{border-color:rgba(64,201,162,.44);color:#baf7e6;background:rgba(20,83,45,.24)}.pill.bad{border-color:rgba(251,113,133,.44);color:#fecdd3;background:rgba(127,29,29,.22)}.admin-auth{border:1px solid var(--line);border-radius:8px;background:rgba(17,24,39,.82);padding:14px;display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:10px;align-items:end}.admin-auth label{display:grid;gap:5px;color:var(--muted);font-size:.72rem}.admin-auth input{min-height:34px;border:1px solid rgba(125,211,252,.26);border-radius:7px;background:rgba(2,6,23,.46);color:var(--text);padding:7px 9px}.sql-panel{border:1px solid var(--line);border-radius:8px;background:rgba(17,24,39,.82);padding:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.sql-panel h2{font-size:.95rem;margin:0}.sql-meta{color:var(--muted);font:.76rem "Cascadia Code",monospace;margin-top:4px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.panel{min-width:0;border:1px solid var(--line);border-radius:8px;background:rgba(17,24,39,.82);overflow:hidden}.panel h2{font-size:.95rem;margin:0;padding:12px 14px;border-bottom:1px solid var(--line)}.table-wrap{overflow:auto;max-height:calc(100vh - 250px)}table{width:100%;border-collapse:collapse;font-size:.78rem}th,td{padding:8px 10px;border-bottom:1px solid rgba(148,163,184,.14);vertical-align:top;text-align:left}th{position:sticky;top:0;background:#111827;color:#bfdbfe;z-index:1}td.detail{min-width:280px;color:var(--muted);font-family:"Cascadia Code",monospace;white-space:pre-wrap}.severity-critical,.level-error{color:var(--bad);font-weight:900}.severity-warning,.level-warning{color:var(--warn);font-weight:900}.empty,.error{padding:18px;color:var(--muted)}.error{color:#fecdd3}@media(max-width:980px){.grid{grid-template-columns:1fr}.admin-auth{grid-template-columns:1fr}.table-wrap{max-height:none}}
@@ -20588,8 +21680,8 @@ $('chatForm').addEventListener('submit',ask);$('checkAi').addEventListener('clic
 <body>
 <div class="app">
   <div class="top">
-    <a class="admin-brand" href="/Download" aria-label="SocketJack downloads"><span class="admin-brand-mark" aria-hidden="true">SJ</span><div><div class="title">SocketJack Admin</div><div class="sub">Runtime reports, JACK-only issues, service logs, and SQL Admin controls</div></div></a>
-    <div class="actions"><span class="pill" id="userPill">Checking</span><button id="refreshBtn" type="button">Refresh</button><button class="secondary" id="logoutBtn" type="button" hidden>Logout</button><a href="/">Master List</a></div>
+    <a class="admin-brand" href="/Download" aria-label="SocketJack downloads"><span class="admin-brand-mark" aria-hidden="true">SJ</span><div><div class="title">SocketJack Dev</div><div class="sub">Runtime reports, JACK-only issues, service logs, and SQL/AdminSuite controls</div></div></a>
+    <div class="actions"><span class="pill" id="userPill">Checking</span><button id="refreshBtn" type="button">Refresh</button><button class="secondary" id="logoutBtn" type="button" hidden>Logout</button><a href="/Admin">UI Builder</a><a href="/">Master List</a></div>
   </div>
   <form id="adminLogin" class="admin-auth" hidden>
     <label>Username<input id="loginUser" autocomplete="username" value="JACK"></label>
@@ -20656,7 +21748,8 @@ load();setInterval(load,15000);
 <title>SocketJack Master</title>
 <meta name="description" content="SocketJack Master is the live JackLLM Workstation directory for local AI hosts, model ratings, GPU/CPU/RAM capacity, secure proxy launch paths, tokens, and payment-ready compute.">
 <link rel="canonical" href="https://socketjack.com/MasterList">
-<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="256x256">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta property="og:title" content="SocketJack Master - Live JackLLM Workstation Directory">
 <meta property="og:description" content="Browse live local AI hosts, compare models and hardware, then launch through SocketJack's secure proxy and Auto routing surfaces.">
 <meta property="og:type" content="website">
@@ -20793,6 +21886,7 @@ body.authed .topbar,body.authed .panel,body.authed .server,body.authed .server-l
 body.loading .bg-swirl{opacity:.30;filter:blur(28px) saturate(1.18)!important;animation:drift 140s ease-in-out infinite alternate}
 @media(max-width:720px),(orientation:portrait){#starfield{opacity:.70}.bg-swirl{filter:blur(14px) saturate(1.16)!important;opacity:.22}.glass-parallax{opacity:.24}.topbar,.panel,.server,.nav-pages,.nav-card,.landing-page,.auth-card,.cookie-consent,.server-list,.model-tile,.model-bench,.summary-chip,.fact,.server-details,.toolbar,body.authed .topbar,body.authed .panel,body.authed .server,body.authed .server-list,body.authed .toolbar{backdrop-filter:none}}
 @media(prefers-reduced-motion:reduce){#starfield,.glass-parallax{display:none}.bg-swirl{filter:blur(12px) saturate(1.02)!important;opacity:.12}.bg-swirl,.bg-swirl::before,.bg-swirl::after{animation:none!important}}
+.model-row{--score:.1;position:relative;padding:7px 0 6px;overflow:hidden}.model-row::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:linear-gradient(90deg,var(--score-color,#7dd3fc),transparent);transform:scaleX(var(--score));transform-origin:left center;opacity:.9}.model-row .model-name,.model-row .rating,.model-row .model-meta{position:relative;z-index:1}.model-row.estimated .rating{box-shadow:0 0 14px rgba(125,211,252,.18)}.model-tile.estimated::after{background:linear-gradient(90deg,#7dd3fc,#2df4b4);box-shadow:0 0 18px rgba(45,244,180,.54)}
 </style>
 <style>
 .post-login-loader{position:fixed;inset:0;z-index:30;display:grid;place-items:center;overflow:hidden;background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.13),transparent 17rem),radial-gradient(circle at 22% 18%,rgba(56,213,255,.24),transparent 28rem),radial-gradient(circle at 78% 24%,rgba(45,244,180,.18),transparent 26rem),radial-gradient(circle at 48% 74%,rgba(251,113,133,.14),transparent 30rem),linear-gradient(135deg,rgba(3,7,18,.94),rgba(7,14,27,.86));backdrop-filter:blur(12px) saturate(1.16);opacity:0;visibility:hidden;pointer-events:none;transition:opacity 160ms ease,visibility 0s linear 160ms;transform:translateZ(0)}body.boot-loading .post-login-loader,body.post-login-loading .post-login-loader{opacity:1;visibility:visible;pointer-events:auto;transition:opacity 160ms ease}.loader-shell{position:relative;width:min(410px,84vw);height:min(410px,84vw);display:grid;place-items:center;isolation:isolate;overflow:visible}.loader-shell::before{content:"";position:absolute;inset:-56px;border-radius:50%;background:conic-gradient(from 0deg,rgba(56,213,255,.18),rgba(45,244,180,.12),rgba(167,139,250,.16),rgba(251,113,133,.14),rgba(255,209,102,.10),rgba(56,213,255,.18));filter:blur(18px);opacity:.95;animation:loaderSpin 3.2s linear infinite!important}.loader-space{position:absolute;inset:-18px;border-radius:50%;background:conic-gradient(from 0deg,transparent 0 8deg,#38d5ff 9deg 52deg,transparent 53deg 76deg,#2df4b4 77deg 128deg,transparent 129deg 162deg,#a78bfa 163deg 212deg,transparent 213deg 246deg,#fb7185 247deg 292deg,transparent 293deg 326deg,#ffd166 327deg 352deg,transparent 353deg 360deg);box-shadow:0 0 58px rgba(56,213,255,.38),0 0 110px rgba(45,244,180,.22),0 0 150px rgba(167,139,250,.18);animation:loaderSpin 1.08s linear infinite!important;will-change:transform,filter}.loader-space::before{content:"";position:absolute;inset:34px;border-radius:50%;background:radial-gradient(circle at 50% 50%,rgba(3,7,18,.90),rgba(3,7,18,.66) 58%,transparent 60%);box-shadow:inset 0 0 48px rgba(255,255,255,.10),0 0 0 1px rgba(255,255,255,.08)}.loader-space::after{content:"";position:absolute;inset:-24px;border-radius:50%;background:repeating-conic-gradient(from 8deg,rgba(255,255,255,.24) 0 2deg,transparent 2deg 10deg);opacity:.38;animation:loaderSpin 2.1s linear infinite reverse!important;filter:drop-shadow(0 0 10px rgba(56,213,255,.55))}.loader-orbit{position:absolute;inset:8%;border-radius:50%;border:2px dashed rgba(226,244,255,.30);border-top-color:#38d5ff;border-right-color:#2df4b4;border-bottom-color:#a78bfa;border-left-color:#fb7185;box-shadow:0 0 22px rgba(56,213,255,.24),inset 0 0 18px rgba(45,244,180,.10);animation:loaderSpin .82s linear infinite!important;will-change:transform}.loader-orbit::before,.loader-orbit::after{content:"";position:absolute;width:15px;height:15px;border-radius:50%;background:#38d5ff;box-shadow:0 0 20px #38d5ff,0 0 48px rgba(56,213,255,.62)}.loader-orbit::before{left:50%;top:-8px}.loader-orbit::after{right:4%;bottom:10%;background:#2df4b4;box-shadow:0 0 20px #2df4b4,0 0 48px rgba(45,244,180,.58)}.loader-orbit.two{inset:22%;animation-duration:1.18s!important;animation-direction:reverse!important;border-style:solid;border-color:rgba(167,139,250,.30);border-top-color:#a78bfa;border-bottom-color:#ffd166}.loader-orbit.two::before{background:#a78bfa;box-shadow:0 0 20px #a78bfa,0 0 48px rgba(167,139,250,.58)}.loader-orbit.two::after{background:#fb7185;box-shadow:0 0 20px #fb7185,0 0 48px rgba(251,113,133,.48)}.loader-poly{position:absolute;width:48px;height:48px;left:50%;top:50%;clip-path:polygon(50% 0,96% 28%,84% 84%,28% 96%,0 50%);background:conic-gradient(from 90deg,#38d5ff,#2df4b4,#a78bfa,#fb7185,#ffd166,#38d5ff);box-shadow:0 0 26px rgba(56,213,255,.66),0 0 70px rgba(45,244,180,.32);transform-origin:0 0;animation:polyPulse .82s ease-in-out infinite!important;will-change:opacity,filter}.loader-poly:nth-child(1){transform:rotate(0deg) translateX(146px) rotate(24deg)}.loader-poly:nth-child(2){transform:rotate(72deg) translateX(146px) rotate(24deg);animation-delay:-.16s!important}.loader-poly:nth-child(3){transform:rotate(144deg) translateX(146px) rotate(24deg);animation-delay:-.32s!important}.loader-poly:nth-child(4){transform:rotate(216deg) translateX(146px) rotate(24deg);animation-delay:-.48s!important}.loader-poly:nth-child(5){transform:rotate(288deg) translateX(146px) rotate(24deg);animation-delay:-.64s!important}.loader-core{position:relative;z-index:2;width:142px;height:142px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,rgba(255,255,255,.22),rgba(8,18,32,.58));border:1px solid rgba(226,244,255,.42);box-shadow:0 0 52px rgba(56,213,255,.38),0 0 86px rgba(167,139,250,.18),inset 0 1px 0 rgba(255,255,255,.30);backdrop-filter:blur(10px) saturate(1.2);animation:loaderCorePulse 1.05s ease-in-out infinite!important}.loader-core::before{content:"";position:absolute;inset:21px;border-radius:34%;background:conic-gradient(from 0deg,#38d5ff,#2df4b4,#a78bfa,#fb7185,#ffd166,#38d5ff);clip-path:polygon(50% 0,88% 18%,100% 58%,72% 100%,28% 100%,0 58%,12% 18%);animation:loaderSpin .74s linear infinite!important;filter:drop-shadow(0 0 18px rgba(56,213,255,.86));will-change:transform}.loader-core::after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#f8fbff;box-shadow:0 0 18px #fff,0 0 38px rgba(56,213,255,.84);animation:loaderDotPulse .58s ease-in-out infinite!important}.loader-copy{position:absolute;left:50%;top:calc(50% + 126px);transform:translateX(-50%);width:min(390px,84vw);text-align:center;color:#f8fbff;text-shadow:0 0 24px rgba(56,213,255,.44)}.loader-copy strong{display:block;font-size:1rem;font-weight:900}.loader-copy span{display:block;margin-top:7px;color:rgba(226,244,255,.80);font:.78rem "Cascadia Code",monospace}@keyframes loaderSpin{to{transform:rotate(1turn)}}@keyframes loaderCorePulse{0%,100%{transform:scale(.98)}50%{transform:scale(1.04)}}@keyframes loaderDotPulse{0%,100%{opacity:.58;transform:scale(.68)}50%{opacity:1;transform:scale(1.15)}}@keyframes polyPulse{0%,100%{opacity:.58;filter:saturate(.9) brightness(.95)}50%{opacity:1;filter:saturate(1.45) brightness(1.28)}}@media(max-width:560px){.loader-shell{width:min(330px,84vw);height:min(330px,84vw)}.loader-poly:nth-child(n){translate:-12px -12px}.loader-copy{top:calc(50% + 104px)}}
@@ -20883,7 +21977,7 @@ body.loading .bg-swirl{opacity:.30;filter:blur(28px) saturate(1.18)!important;an
       <div><h1>SocketJack Master</h1><div class="sub">Master List - LLM Model Service</div></div>
     </a>
     <div class="top-right">
-      <div class="top-auth" id="topAuth" hidden><span class="pill user-pill" id="topUser"></span><a class="button secondary" id="adminLink" href="/Admin" hidden>Admin</a><button class="secondary" id="logoutBtn" type="button">Logout</button></div>
+      <div class="top-auth" id="topAuth" hidden><span class="pill user-pill" id="topUser"></span><a class="button secondary" id="adminLink" href="/Dev" hidden>Dev</a><button class="secondary" id="logoutBtn" type="button">Logout</button></div>
     </div>
   </header>
   <section class="workspace" id="workspace">
@@ -20989,6 +22083,10 @@ function normalizeBenchmarkRecord(value){if(!value||typeof value!=='object')retu
 function parseBenchmarks(s){const inv=modelInventorySources(s);const sources=[s.modelBenchmarksJson,s.modelBenchmarks,s.benchmarks,s.ModelBenchmarksJson,inv.modelBenchmarksJson,inv.modelBenchmarks,inv.benchmarks];const rows=[];sources.forEach(source=>arrayFromJsonLike(source).forEach(item=>rows.push(item)));[s.models,inv.models,s.modelInventory&&s.modelInventory.models].forEach(source=>arrayFromJsonLike(source).forEach(item=>{if(benchmarkHasNumber(item)||benchmarkHasNumber(item&&item.benchmark))rows.push(item)}));const map=new Map();rows.map(normalizeBenchmarkRecord).filter(Boolean).forEach(item=>{const key=normalizeModelId(benchmarkName(item));if(key&&!map.has(key))map.set(key,item)});return[...map.values()]}
 function parseCapabilities(s){const inv=modelInventorySources(s);const sources=[s.modelCapabilitiesJson,s.modelCapabilities,s.capabilities,s.ModelCapabilitiesJson,inv.modelCapabilitiesJson,inv.modelCapabilities,inv.capabilities,s.models,inv.models,s.modelInventory&&s.modelInventory.models];const map=new Map();sources.forEach(source=>arrayFromJsonLike(source).forEach(item=>{if(!item||typeof item!=='object')return;const name=modelObjectName(item);const key=normalizeModelId(name);if(key&&!map.has(key))map.set(key,item)}));return[...map.values()]}
 function benchmarkRating(b){return Math.max(0,Math.min(100,Number(b.rating||b.Rating||b.benchmarkRating||b.BenchmarkRating||b.score||b.Score)||0))}
+function clampModelScore(value){return Math.max(1,Math.min(100,Math.round(Number(value)||0)))}
+function benchmarkRatingFromRecord(record){if(!record)return 0;let rating=benchmarkRating(record);let tps=Number(record.tokensPerSecond||record.TokensPerSecond)||0;const output=Number(record.outputTokens||record.OutputTokens)||0,duration=Number(record.benchmarkDurationMs||record.BenchmarkDurationMs||record.durationMs||record.DurationMs)||0;if(tps<=0&&output>0&&duration>0)tps=output/(duration/1000);if(rating<=0&&tps>0)rating=(tps/120)*100;return Math.max(0,Math.min(100,Math.round(rating)||0))}
+function modelCapabilityRank(name,cap,bench){const merged=Object.assign({},cap||{},bench||{}),text=normalizeModelId(name);let score=30;if(readFlagFrom(merged,['isLoaded','loaded','ready','active']))score+=18;if(readFlagFrom(merged,['enabled','isEnabled','web_chat_model_enabled','runtimeLoadEnabled','dynamicLoadEnabled']))score+=8;if(readFlagFrom(merged,['disabled']))score-=24;if(capabilityHasTools(cap)||benchmarkHasTools(bench)||modelNameHasTools(name))score+=12;if(capabilityHasVision(cap)||benchmarkHasVision(bench)||hasVisual(name))score+=8;if(capabilityHasGeneration(cap,'image')||benchmarkHasGeneration(bench,'image')||modelNameHasGeneration(name,'image'))score+=10;if(capabilityHasGeneration(cap,'audio')||benchmarkHasGeneration(bench,'audio')||modelNameHasGeneration(name,'audio'))score+=8;if(capabilityHasGeneration(cap,'video')||benchmarkHasGeneration(bench,'video')||modelNameHasGeneration(name,'video'))score+=10;if(/claude/i.test(text))score+=18;if(/reason/i.test(text))score+=14;if(/qwen/i.test(text))score+=10;if(/opus/i.test(text))score+=8;if(/distill/i.test(text))score+=5;if(/instruct|chat/i.test(text))score+=5;const size=text.match(/(?:^|[\s._/-])(\d+(?:\.\d+)?)b(?:[\s._/-]|$)/i);if(size){const b=Number(size[1])||0;if(b>=70)score+=16;else if(b>=30)score+=13;else if(b>=14)score+=10;else if(b>=7)score+=7;else if(b>=3)score+=4;else score+=2}if(/tokenizer|scheduler|vae|unet|config/i.test(text))score-=25;return clampModelScore(score)}
+function modelScoreInfo(model){const merged=Object.assign({},model&&model.cap||{},model&&model.bench||{});const rating=benchmarkRatingFromRecord(merged);if(rating>0)return{value:rating,real:true,label:rating+'/100',summary:rating+'/100 | '+benchmarkSpeed(merged),color:ratingColor(rating)};const rank=modelCapabilityRank(model&&model.name,model&&model.cap,model&&model.bench);return{value:rank,real:false,label:'rank '+rank,summary:'rank '+rank+'/100',color:'#7dd3fc'}}
 function ratingColor(r){r=Math.max(0,Math.min(100,Number(r)||0));return 'rgb('+Math.round(240-(150*r/100))+','+Math.round(68+(150*r/100))+','+Math.round(68-(28*r/100))+')'}
 function benchmarkName(b){return text(modelObjectName(b))}
 function capabilityName(c){return text(modelObjectName(c))}
@@ -21074,9 +22172,9 @@ function renderSummary(card,s){const box=card.querySelector('.server-summary');c
 function renderCompact(card,s,group,online){const caps=card.querySelector('.compact-line');const count=modelCount(s);const images=hasImages(s);const tools=hasTools(s)||hasVsTools(s);const media=hasAnyMediaGeneration(s);const latency=latencyNumber(s.proxyLatencyMs,s.internetLatencyMs,s.InternetLatencyMs,s.latencyMs);caps.textContent='';[['runtime',modelRuntimeProvider(s),(s.modelRuntimeConnected||s.lmStudioConnected||s.llmRuntimeConnected)?'good':'bad'],['models',count>0?count.toLocaleString():'pending',count>0?'blue':'warn'],['tools',tools?'yes':'no',tools?'tools':'bad'],['vision',images?'yes':'no',images?'visual':'bad'],['media_gen',mediaGenerationText(s),media?'visual':'bad'],['latency',latency?latency+'ms':'measuring',latency?'good':'warn'],['uptime',serverUptimeText(s),online?'good':'bad']].forEach(x=>{const cap=document.createElement('span');cap.className='cap '+x[2];cap.textContent=x[0]+' '+x[1];caps.appendChild(cap)});const top=document.createElement('span');top.className='cap '+(online?'good':'bad');top.textContent=topModelText(s);caps.appendChild(top);card.querySelector('.compact-resources').textContent=compactResourceText(s);card.querySelector('.details-title').textContent='Details for '+text(group.hostDisplay||s.connectHost||s.ipAddress||s.title)}
 const BENCHMARK_CATEGORIES=[{id:'text',label:'Text',symbol:'text',color:'#7dd3fc'},{id:'vision',label:'Vision',symbol:'eye',color:'#fb923c'},{id:'tools',label:'Tools',symbol:'tools',color:'#60a5fa'},{id:'image',label:'Image',symbol:'image',color:'#f9a8d4'},{id:'video',label:'Video',symbol:'video',color:'#a78bfa'},{id:'audio',label:'Audio',symbol:'audio',color:'#2df4b4'}];
 function modelHasBenchmarkCategory(model,id,serverVsTools){const image=capabilityHasGeneration(model.cap,'image')||benchmarkHasGeneration(model.bench,'image')||modelNameHasGeneration(model.name,'image'),audio=capabilityHasGeneration(model.cap,'audio')||benchmarkHasGeneration(model.bench,'audio')||modelNameHasGeneration(model.name,'audio'),video=capabilityHasGeneration(model.cap,'video')||benchmarkHasGeneration(model.bench,'video')||modelNameHasGeneration(model.name,'video');if(id==='image')return image;if(id==='audio')return audio;if(id==='video')return video;if(id==='vision')return capabilityHasVision(model.cap)||benchmarkHasVision(model.bench)||hasVisual(model.name);if(id==='tools')return serverVsTools||capabilityHasTools(model.cap)||benchmarkHasTools(model.bench)||modelNameHasTools(model.name);return !image&&!audio&&!video}
-function renderBenchmarkCategories(card,models,serverVsTools){const box=card.querySelector('.benchmark-categories');if(!box)return;box.textContent='';const scored=BENCHMARK_CATEGORIES.map(spec=>{let best=0;models.forEach(model=>{const rating=benchmarkRating(model.bench||{});if(rating>0&&modelHasBenchmarkCategory(model,spec.id,serverVsTools))best=Math.max(best,rating)});return Object.assign({},spec,{score:best})}).filter(item=>item.score>0);box.hidden=scored.length===0;if(!scored.length)return;scored.forEach(item=>{const chip=document.createElement('span');chip.className='benchmark-category';chip.style.setProperty('--cat',item.color);chip.title=item.label+' best benchmark score '+item.score+'/100';chip.innerHTML='<span class="benchmark-symbol '+item.symbol+'" aria-hidden="true"></span><b></b>';chip.querySelector('b').textContent=item.score+'/100';box.appendChild(chip)})}
-function renderModelShowcase(card,s,benches,caps){const box=card.querySelector('.model-showcase');const byName=modelBenchmarkMap(benches);const byCap=modelCapabilityMap(caps);const serverVsTools=hasVsTools(s);const models=splitModels(s).map(name=>{const key=normalizeModelId(name);return{name,bench:byName.get(key),cap:byCap.get(key)}}).sort((a,b)=>((capabilityHasVision(b.cap)||benchmarkHasVision(b.bench)||hasVisual(b.name))?1:0)-((capabilityHasVision(a.cap)||benchmarkHasVision(a.bench)||hasVisual(a.name))?1:0)||benchmarkRating(b.bench||{})-benchmarkRating(a.bench||{})).slice(0,6);box.textContent='';box.hidden=models.length===0;models.forEach(model=>{const rating=benchmarkRating(model.bench||{});const score=Math.max(.12,rating/100);const merged=Object.assign({},model.cap||{},model.bench||{});const detail=modelMetaText(merged);const tile=document.createElement('div');tile.className='model-tile';tile.style.setProperty('--score',score.toFixed(2));tile.innerHTML='<strong></strong><div class="model-badges"></div><div class="model-score"></div>';tile.querySelector('strong').textContent=model.name;tile.title=[model.name,detail].filter(Boolean).join(' | ');const badges=tile.querySelector('.model-badges');const addBadge=(kind,label,icon)=>{const badge=document.createElement('span');badge.className='model-badge '+kind;badge.innerHTML='<span class="model-symbol '+(icon||'')+'"></span><span></span>';badge.lastElementChild.textContent=label;badges.appendChild(badge)};if(capabilityHasVision(model.cap)||benchmarkHasVision(model.bench)||hasVisual(model.name))addBadge('visual','Vision','eye');if(serverVsTools||capabilityHasTools(model.cap)||benchmarkHasTools(model.bench)||modelNameHasTools(model.name))addBadge('tools','VS_tools','tools-icon');if(capabilityHasGeneration(model.cap,'image')||benchmarkHasGeneration(model.bench,'image')||modelNameHasGeneration(model.name,'image'))addBadge('visual','Image gen','eye');if(capabilityHasGeneration(model.cap,'audio')||benchmarkHasGeneration(model.bench,'audio')||modelNameHasGeneration(model.name,'audio'))addBadge('base','Audio gen','');if(capabilityHasGeneration(model.cap,'video')||benchmarkHasGeneration(model.bench,'video')||modelNameHasGeneration(model.name,'video'))addBadge('tools','Video gen','tools-icon');if(!badges.children.length)addBadge('base','LM','');tile.querySelector('.model-score').textContent=rating>0?rating+'/100 | '+benchmarkSpeed(model.bench)+(detail?' | '+detail:''):(detail||'Capability detected');box.appendChild(tile)})}
-function renderBenchmarks(card,s){const details=card.querySelector('.model-bench');const list=card.querySelector('.model-list');const best=card.querySelector('.best-rating');const benches=parseBenchmarks(s).sort((a,b)=>benchmarkRating(b)-benchmarkRating(a));const caps=parseCapabilities(s);const byName=modelBenchmarkMap(benches);const byCap=modelCapabilityMap(caps);const serverVsTools=hasVsTools(s);renderModelShowcase(card,s,benches,caps);list.textContent='';const models=splitModels(s).map(name=>{const key=normalizeModelId(name);return{name,bench:byName.get(key),cap:byCap.get(key)}});renderBenchmarkCategories(card,models,serverVsTools);if(!models.length){details.hidden=true;return}details.hidden=false;const bestRating=benches.length?benchmarkRating(benches[0]):0;best.textContent=benches.length?'Best '+bestRating+'/100':'Capabilities';best.style.color=benches.length?ratingColor(bestRating):'#8bdcff';models.sort((a,b)=>benchmarkRating(b.bench||{})-benchmarkRating(a.bench||{})||a.name.localeCompare(b.name)).forEach(model=>{const rating=benchmarkRating(model.bench||{});const row=document.createElement('div');row.className='model-row';row.innerHTML='<div class="model-name"></div><div class="rating"></div><div class="model-meta"></div>';row.querySelector('.model-name').textContent=model.name;const badge=row.querySelector('.rating');badge.textContent=rating>0?rating+'/100':'cap';badge.style.background=rating>0?ratingColor(rating):'#334155';const meta=[];if(capabilityHasVision(model.cap)||benchmarkHasVision(model.bench)||hasVisual(model.name))meta.push('Vision');if(serverVsTools||capabilityHasTools(model.cap)||benchmarkHasTools(model.bench)||modelNameHasTools(model.name))meta.push('VS_tools');if(capabilityHasGeneration(model.cap,'image')||benchmarkHasGeneration(model.bench,'image')||modelNameHasGeneration(model.name,'image'))meta.push('Image gen');if(capabilityHasGeneration(model.cap,'audio')||benchmarkHasGeneration(model.bench,'audio')||modelNameHasGeneration(model.name,'audio'))meta.push('Audio gen');if(capabilityHasGeneration(model.cap,'video')||benchmarkHasGeneration(model.bench,'video')||modelNameHasGeneration(model.name,'video'))meta.push('Video gen');const merged=Object.assign({},model.cap||{},model.bench||{});const modelMeta=modelMetaText(merged);if(modelMeta)meta.push(modelMeta);meta.push(benchmarkSpeed(model.bench||{}));row.querySelector('.model-meta').textContent=meta.filter(Boolean).join(' | ');list.appendChild(row)})}
+function renderBenchmarkCategories(card,models,serverVsTools){const box=card.querySelector('.benchmark-categories');if(!box)return;box.textContent='';const scored=BENCHMARK_CATEGORIES.map(spec=>{let best=0,real=false;models.forEach(model=>{const score=modelScoreInfo(model);if(score.value>0&&modelHasBenchmarkCategory(model,spec.id,serverVsTools)&&score.value>best){best=score.value;real=score.real}});return Object.assign({},spec,{score:best,real})}).filter(item=>item.score>0);box.hidden=scored.length===0;if(!scored.length)return;scored.forEach(item=>{const chip=document.createElement('span');chip.className='benchmark-category';chip.style.setProperty('--cat',item.color);chip.title=item.label+' best '+(item.real?'benchmark score':'rank')+' '+item.score+'/100';chip.innerHTML='<span class="benchmark-symbol '+item.symbol+'" aria-hidden="true"></span><b></b>';chip.querySelector('b').textContent=(item.real?item.score+'/100':'rank '+item.score);box.appendChild(chip)})}
+function renderModelShowcase(card,s,benches,caps){const box=card.querySelector('.model-showcase');const byName=modelBenchmarkMap(benches);const byCap=modelCapabilityMap(caps);const serverVsTools=hasVsTools(s);const models=splitModels(s).map(name=>{const key=normalizeModelId(name);return{name,bench:byName.get(key),cap:byCap.get(key)}}).sort((a,b)=>modelScoreInfo(b).value-modelScoreInfo(a).value||((capabilityHasVision(b.cap)||benchmarkHasVision(b.bench)||hasVisual(b.name))?1:0)-((capabilityHasVision(a.cap)||benchmarkHasVision(a.bench)||hasVisual(a.name))?1:0)||a.name.localeCompare(b.name)).slice(0,6);box.textContent='';box.hidden=models.length===0;models.forEach(model=>{const scoreInfo=modelScoreInfo(model);const score=Math.max(.12,scoreInfo.value/100);const merged=Object.assign({},model.cap||{},model.bench||{});const detail=modelMetaText(merged);const tile=document.createElement('div');tile.className='model-tile '+(scoreInfo.real?'benchmarked':'estimated');tile.style.setProperty('--score',score.toFixed(2));tile.innerHTML='<strong></strong><div class="model-badges"></div><div class="model-score"></div>';tile.querySelector('strong').textContent=model.name;tile.title=[model.name,scoreInfo.summary,detail].filter(Boolean).join(' | ');const badges=tile.querySelector('.model-badges');const addBadge=(kind,label,icon)=>{const badge=document.createElement('span');badge.className='model-badge '+kind;badge.innerHTML='<span class="model-symbol '+(icon||'')+'"></span><span></span>';badge.lastElementChild.textContent=label;badges.appendChild(badge)};if(capabilityHasVision(model.cap)||benchmarkHasVision(model.bench)||hasVisual(model.name))addBadge('visual','Vision','eye');if(serverVsTools||capabilityHasTools(model.cap)||benchmarkHasTools(model.bench)||modelNameHasTools(model.name))addBadge('tools','VS_tools','tools-icon');if(capabilityHasGeneration(model.cap,'image')||benchmarkHasGeneration(model.bench,'image')||modelNameHasGeneration(model.name,'image'))addBadge('visual','Image gen','eye');if(capabilityHasGeneration(model.cap,'audio')||benchmarkHasGeneration(model.bench,'audio')||modelNameHasGeneration(model.name,'audio'))addBadge('base','Audio gen','');if(capabilityHasGeneration(model.cap,'video')||benchmarkHasGeneration(model.bench,'video')||modelNameHasGeneration(model.name,'video'))addBadge('tools','Video gen','tools-icon');if(!badges.children.length)addBadge('base','LM','');tile.querySelector('.model-score').textContent=scoreInfo.summary+(detail?' | '+detail:'');box.appendChild(tile)})}
+function renderBenchmarks(card,s){const details=card.querySelector('.model-bench');const list=card.querySelector('.model-list');const best=card.querySelector('.best-rating');const benches=parseBenchmarks(s).sort((a,b)=>benchmarkRatingFromRecord(b)-benchmarkRatingFromRecord(a));const caps=parseCapabilities(s);const byName=modelBenchmarkMap(benches);const byCap=modelCapabilityMap(caps);const serverVsTools=hasVsTools(s);renderModelShowcase(card,s,benches,caps);list.textContent='';const models=splitModels(s).map(name=>{const key=normalizeModelId(name);return{name,bench:byName.get(key),cap:byCap.get(key)}});renderBenchmarkCategories(card,models,serverVsTools);if(!models.length){details.hidden=true;return}details.hidden=false;const scoredModels=models.map(model=>Object.assign(model,{scoreInfo:modelScoreInfo(model)}));const bestScore=scoredModels.reduce((max,model)=>Math.max(max,model.scoreInfo.value),0);const hasRealBenchmark=scoredModels.some(model=>model.scoreInfo.real);best.textContent=hasRealBenchmark?'Best '+bestScore+'/100':'Best rank '+bestScore+'/100';best.style.color=hasRealBenchmark?ratingColor(bestScore):'#8bdcff';scoredModels.sort((a,b)=>b.scoreInfo.value-a.scoreInfo.value||a.name.localeCompare(b.name)).forEach(model=>{const row=document.createElement('div');row.className='model-row '+(model.scoreInfo.real?'benchmarked':'estimated');row.style.setProperty('--score',Math.max(.08,model.scoreInfo.value/100).toFixed(2));row.style.setProperty('--score-color',model.scoreInfo.color);row.innerHTML='<div class="model-name"></div><div class="rating"></div><div class="model-meta"></div>';row.querySelector('.model-name').textContent=model.name;const badge=row.querySelector('.rating');badge.textContent=model.scoreInfo.label;badge.style.background=model.scoreInfo.real?model.scoreInfo.color:'linear-gradient(90deg,rgba(14,116,144,.85),rgba(51,65,85,.88))';badge.style.color=model.scoreInfo.real?'#051016':'#eaf6ff';const meta=[];if(capabilityHasVision(model.cap)||benchmarkHasVision(model.bench)||hasVisual(model.name))meta.push('Vision');if(serverVsTools||capabilityHasTools(model.cap)||benchmarkHasTools(model.bench)||modelNameHasTools(model.name))meta.push('VS_tools');if(capabilityHasGeneration(model.cap,'image')||benchmarkHasGeneration(model.bench,'image')||modelNameHasGeneration(model.name,'image'))meta.push('Image gen');if(capabilityHasGeneration(model.cap,'audio')||benchmarkHasGeneration(model.bench,'audio')||modelNameHasGeneration(model.name,'audio'))meta.push('Audio gen');if(capabilityHasGeneration(model.cap,'video')||benchmarkHasGeneration(model.bench,'video')||modelNameHasGeneration(model.name,'video'))meta.push('Video gen');const merged=Object.assign({},model.cap||{},model.bench||{});const modelMeta=modelMetaText(merged);if(modelMeta)meta.push(modelMeta);meta.push(model.scoreInfo.real?benchmarkSpeed(merged):'Capability rank');row.querySelector('.model-meta').textContent=meta.filter(Boolean).join(' | ');list.appendChild(row)})}
 function currentUserName(){return String(currentSession&&currentSession.username||'').trim().toLowerCase()}
 function canEditServerBackground(s){if(!(currentSession&&currentSession.authenticated))return false;return String(s.ownerUserName||s.ownerUsername||'').trim().toLowerCase()===currentUserName()}
 function clampBackgroundOffset(value){value=Number(value)||0;return Math.max(-100,Math.min(100,value))}
@@ -21105,10 +22203,11 @@ function sendMasterLiveHello(){try{if(!shouldUseMasterLiveSocket()){closeMasterL
 function scheduleMasterLiveReconnect(){window.clearTimeout(masterLiveReconnectTimer);if(shouldUseMasterLiveSocket())masterLiveReconnectTimer=window.setTimeout(connectMasterListLiveSocket,2200)}
 function connectMasterListLiveSocket(){if(!('WebSocket'in window)||!shouldUseMasterLiveSocket())return;if(masterLiveSocket&&(masterLiveSocket.readyState===WebSocket.OPEN||masterLiveSocket.readyState===WebSocket.CONNECTING))return;try{const ws=new WebSocket(masterLiveSocketUrl('/masterlist/ws'));masterLiveSocket=ws;ws.onopen=()=>{masterLiveOpen=true;sendMasterLiveHello()};ws.onmessage=event=>{try{const data=JSON.parse(event.data);if(data&&data.type==='snapshot'&&data.topic==='servers')applyMasterListLivePayload(data)}catch{}};ws.onclose=()=>{masterLiveOpen=false;if(masterLiveSocket===ws){masterLiveSocket=null;scheduleMasterLiveReconnect()}};ws.onerror=()=>{try{ws.close()}catch{}}}catch{scheduleMasterLiveReconnect()}}
 function syncMasterListLiveSocket(){if(shouldUseMasterLiveSocket())connectMasterListLiveSocket();else closeMasterListLiveSocket()}
-const loginRoute=/^\/login\/?$/i.test(window.location.pathname);
+const authRoute=/^\/(?:login|register|signin|sign-in|signup|sign-up)\/?$/i.test(window.location.pathname);
+const registerRoute=/^\/(?:register|signup|sign-up)\/?$/i.test(window.location.pathname);
 const masterListRoute=/^\/(?:MasterList|master-list)\/?$/i.test(window.location.pathname);
-function openLogin(){els.authModal.hidden=false;requestAnimationFrame(()=>els.user.focus())}
-function closeLogin(){if(!document.body.classList.contains('authed')&&(loginRoute||masterListRoute)){window.location.replace('/');return}els.authModal.hidden=true}
+function openLogin(){els.accountTitle.textContent=registerRoute?'Create account':'Sign in';els.authModal.hidden=false;requestAnimationFrame(()=>els.user.focus())}
+function closeLogin(){if(!document.body.classList.contains('authed')&&(authRoute||masterListRoute)){window.location.replace('/');return}els.authModal.hidden=true}
 function readCookie(name){return document.cookie.split(';').map(x=>x.trim()).reduce((found,part)=>{if(found)return found;const eq=part.indexOf('=');if(eq<0)return'';return part.slice(0,eq)===name?decodeURIComponent(part.slice(eq+1)):''},'')}
 function writeCookie(name,value,days){document.cookie=name+'='+encodeURIComponent(value)+'; Path=/; Max-Age='+(days*86400)+'; SameSite=Lax'}
 function deleteCookie(name){document.cookie=name+'=; Path=/; Max-Age=0; SameSite=Lax'}
@@ -21127,28 +22226,30 @@ function isAllowedLoginReturnUrl(url){const host=String(url.hostname||'').toLowe
 function loginReturnUrl(){const params=new URLSearchParams(window.location.search);const raw=params.get('returnUrl')||params.get('return_url')||params.get('next')||'';if(!raw)return'';try{const url=new URL(raw,window.location.origin);return isAllowedLoginReturnUrl(url)?url.href:''}catch{return''}}
 function appendAuthTokenToReturnUrl(raw,token){if(!raw||!token)return raw||'';try{const url=new URL(raw,window.location.origin);url.searchParams.set('socketjack_auth',token);return url.href}catch{return raw}}
 function redirectAfterAuth(data){const url=loginReturnUrl();if(!url)return false;const token=(data&&(data.accessToken||data.access_token||data.token))||readStoredToken();window.location.href=appendAuthTokenToReturnUrl(url,token);return true}
-function redirectIfLoginReturnAuthed(data){return !!(data&&data.authenticated&&loginRoute&&redirectAfterAuth(data))}
+function redirectIfLoginReturnAuthed(data){return !!(data&&data.authenticated&&authRoute&&redirectAfterAuth(data))}
 function initCookieConsent(){if(!els.cookieConsent||!els.acceptCookies)return;if(readCookie('SocketJackCookieConsent')==='accepted'){els.cookieConsent.hidden=true;return}els.cookieConsent.hidden=false;els.acceptCookies.addEventListener('click',()=>{writeCookie('SocketJackCookieConsent','accepted',3650);els.cookieConsent.hidden=true})}
 function dockReleaseSticker(authed){if(authed&&topRight&&els.topAuth){els.releaseSticker.classList.add('top-docked');topRight.insertBefore(els.releaseSticker,els.topAuth);return}els.releaseSticker.classList.remove('top-docked');if(landing&&landing.parentNode&&els.releaseSticker.nextSibling!==landing)landing.parentNode.insertBefore(els.releaseSticker,landing)}
 function setReleaseLabel(text){(els.releaseLabel||els.releaseSticker).textContent=text}
 function updateReleaseScroll(){if(!els.releaseSticker||!els.releaseLabel)return;els.releaseSticker.classList.remove('scrolling');els.releaseLabel.style.setProperty('--release-scroll','0px');if(!document.body.classList.contains('authed')||!els.releaseSticker.matches(':hover'))return;const overflow=els.releaseLabel.scrollWidth-(els.releaseSticker.clientWidth-22);if(overflow>1){els.releaseLabel.style.setProperty('--release-scroll',(-overflow-12)+'px');els.releaseSticker.classList.add('scrolling')}}
 function setReleaseHover(active){if(!document.body.classList.contains('authed'))return;setReleaseLabel('Download JackLLM Workstation');requestAnimationFrame(updateReleaseScroll)}
 function applySession(s){currentSession=s||null;const authed=!!(s&&s.authenticated);document.body.classList.toggle('authed',authed);els.workspace.classList.toggle('authed',authed);els.authModal.hidden=true;els.topAuth.hidden=!authed;els.topUser.textContent=authed?s.username:'';if(els.adminLink)els.adminLink.hidden=!(authed&&s.isAdministrator);dockReleaseSticker(authed);els.releaseSticker.classList.toggle('download',authed);els.releaseSticker.classList.remove('scrolling');if(authed){setReleaseLabel('Download JackLLM Workstation');els.releaseSticker.title='Download JackLLM Workstation for hosting local AI models and publishing your machine to SocketJack.'}else{setReleaseLabel('JackLLM Workstation');els.releaseSticker.title='Download JackLLM Workstation.';els.accountTitle.textContent='Sign in';els.accountInfo.innerHTML='<div>SocketJack master accounts are shared by participating JackLLM hosts.</div>'}syncServerCards(true);render(false);syncMasterListLiveSocket()}
+function applyOptimisticSession(){const token=readStoredToken();if(!token)return false;applySession({authenticated:true,username:readCookie('SocketJackLoginName')||'Account',isAdministrator:false,optimistic:true});return true}
 function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
 let loaderMotionFrame=0;
+let postLoginShowFrame=0;
 function loaderMotionActive(){return document.body.classList.contains('boot-loading')||document.body.classList.contains('post-login-loading')}
 function setLoaderTransform(selector,value){const el=document.querySelector(selector);if(el)el.style.transform=value}
 function tickLoaderMotion(now){if(!loaderMotionActive()){loaderMotionFrame=0;return}const turn=(now*.36)%360,pulse=1+Math.sin(now/130)*.035;setLoaderTransform('.loader-space','rotate('+turn+'deg)');setLoaderTransform('.loader-orbit','rotate('+(turn*1.7)+'deg)');setLoaderTransform('.loader-orbit.two','rotate('+(-turn*1.25)+'deg)');setLoaderTransform('.loader-core','scale('+pulse.toFixed(3)+')');loaderMotionFrame=requestAnimationFrame(tickLoaderMotion)}
 function startLoaderMotion(){if(!loaderMotionFrame)loaderMotionFrame=requestAnimationFrame(tickLoaderMotion)}
 function stopLoaderMotion(){if(loaderMotionFrame){cancelAnimationFrame(loaderMotionFrame);loaderMotionFrame=0}['.loader-space','.loader-orbit','.loader-orbit.two','.loader-core'].forEach(selector=>setLoaderTransform(selector,''))}
-function showPostLoginLoader(message){if(els.postLoaderStatus)els.postLoaderStatus.textContent=message||'Loading master list';if(!els.postLoader)return;els.postLoader.hidden=false;requestAnimationFrame(()=>{document.body.classList.add('post-login-loading');startLoaderMotion()})}
-function hidePostLoginLoader(){document.body.classList.remove('post-login-loading','boot-loading');stopLoaderMotion();window.setTimeout(()=>{if(!document.body.classList.contains('post-login-loading')&&!document.body.classList.contains('boot-loading')&&els.postLoader)els.postLoader.hidden=true},180)}
+function showPostLoginLoader(message){if(els.postLoaderStatus)els.postLoaderStatus.textContent=message||'Loading master list';if(!els.postLoader)return;els.postLoader.hidden=false;if(postLoginShowFrame)cancelAnimationFrame(postLoginShowFrame);postLoginShowFrame=requestAnimationFrame(()=>{postLoginShowFrame=0;if(!els.postLoader||els.postLoader.hidden)return;document.body.classList.add('post-login-loading');startLoaderMotion()})}
+function hidePostLoginLoader(){if(postLoginShowFrame){cancelAnimationFrame(postLoginShowFrame);postLoginShowFrame=0}document.body.classList.remove('post-login-loading','boot-loading');stopLoaderMotion();window.setTimeout(()=>{if(!document.body.classList.contains('post-login-loading')&&!document.body.classList.contains('boot-loading')&&els.postLoader)els.postLoader.hidden=true},180)}
 function refreshServersInBackground(){loadServersIfAuthed().then(ok=>{if(ok){syncMasterListLiveSocket();sendMasterLiveHello()}}).catch(()=>{})}
 async function enterMasterListAfterAuth(data,message){showPostLoginLoader(message||'Opening master list');applySession(data);if(els.pass)els.pass.value='';window.scrollTo({top:0,behavior:reduceMotion?'auto':'smooth'});hidePostLoginLoader();requestAnimationFrame(updateReleaseScroll);syncMasterListLiveSocket();refreshServersInBackground()}
 startLoaderMotion();
 async function session(){const data=await readJson(await authFetch('/api/web-auth/session',{cache:'no-store'}));if(data.authenticated&&data.accessToken)saveAuthToken(data,true);if(!data.authenticated)clearAuthToken();applySession(data);return data}
-async function login(e){e.preventDefault();els.error.textContent='';showPostLoginLoader('Signing in');const remember=rememberRequested();try{const data=await readJson(await fetch(api('/api/web-auth/login'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:els.user.value,password:els.pass.value,remember})}));saveAuthToken(data,remember);saveRememberedUser(data.username||els.user.value);if(redirectAfterAuth(data)){applySession(data);if(els.pass)els.pass.value='';return}await enterMasterListAfterAuth(data,'Opening master list')}catch(err){hidePostLoginLoader();clearAuthToken();document.body.classList.remove('authed');els.workspace.classList.remove('authed');els.authModal.hidden=false;els.error.textContent=err.message}}
-async function register(){els.error.textContent='';showPostLoginLoader('Creating account');const remember=rememberRequested();try{const data=await readJson(await fetch(api('/api/web-auth/register'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:els.user.value,password:els.pass.value,remember})}));saveAuthToken(data,remember);saveRememberedUser(data.username||els.user.value);if(redirectAfterAuth(data)){applySession(data);if(els.pass)els.pass.value='';return}await enterMasterListAfterAuth(data,'Opening master list');els.error.textContent='Registered'}catch(err){hidePostLoginLoader();clearAuthToken();els.authModal.hidden=false;els.error.textContent=err.message}}
+async function login(e){e.preventDefault();els.error.textContent='';showPostLoginLoader('Signing in');const remember=rememberRequested();try{const data=await readJson(await fetch(api('/api/web-auth/login'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:els.user.value,password:els.pass.value,remember})}));saveAuthToken(data,remember);saveRememberedUser(data.username||els.user.value);if(redirectAfterAuth(data)){applySession(data);if(els.pass)els.pass.value='';hidePostLoginLoader();return}await enterMasterListAfterAuth(data,'Opening master list')}catch(err){hidePostLoginLoader();clearAuthToken();document.body.classList.remove('authed');els.workspace.classList.remove('authed');els.authModal.hidden=false;els.error.textContent=err.message}}
+async function register(){els.error.textContent='';showPostLoginLoader('Creating account');const remember=rememberRequested();try{const data=await readJson(await fetch(api('/api/web-auth/register'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:els.user.value,password:els.pass.value,remember})}));saveAuthToken(data,remember);saveRememberedUser(data.username||els.user.value);if(redirectAfterAuth(data)){applySession(data);if(els.pass)els.pass.value='';hidePostLoginLoader();return}await enterMasterListAfterAuth(data,'Opening master list');els.error.textContent='Registered'}catch(err){hidePostLoginLoader();clearAuthToken();els.authModal.hidden=false;els.error.textContent=err.message}}
 async function logout(){await authFetch('/api/web-auth/logout',{method:'POST'}).catch(()=>{});clearAuthToken();applySession(null)}
 document.querySelectorAll('.nav-card').forEach(btn=>btn.addEventListener('click',()=>selectLandingPage(btn.dataset.page)));
 const parallax={angle:0,last:0};
@@ -21167,10 +22268,10 @@ if(els.backgroundCancelTop)els.backgroundCancelTop.addEventListener('click',clos
 if(els.backgroundOk)els.backgroundOk.addEventListener('click',saveServerBackground);
 if(els.backgroundScale)els.backgroundScale.addEventListener('input',()=>{if(backgroundEditorState){backgroundEditorState.scale=clampBackgroundScale(els.backgroundScale.value);setBackgroundPreviewVars()}});
 if(els.backgroundPreview){els.backgroundPreview.addEventListener('pointerdown',event=>{if(!backgroundEditorState)return;els.backgroundPreview.setPointerCapture(event.pointerId);els.backgroundPreview.classList.add('dragging');backgroundEditorState.dragging=true;backgroundEditorState.lastX=event.clientX;backgroundEditorState.lastY=event.clientY});els.backgroundPreview.addEventListener('pointermove',event=>{if(!(backgroundEditorState&&backgroundEditorState.dragging))return;const rect=els.backgroundPreview.getBoundingClientRect();const dx=event.clientX-backgroundEditorState.lastX,dy=event.clientY-backgroundEditorState.lastY;backgroundEditorState.lastX=event.clientX;backgroundEditorState.lastY=event.clientY;backgroundEditorState.offsetX=clampBackgroundOffset(backgroundEditorState.offsetX+(dx/Math.max(1,rect.width))*100);backgroundEditorState.offsetY=clampBackgroundOffset(backgroundEditorState.offsetY+(dy/Math.max(1,rect.height))*100);setBackgroundPreviewVars()});const endDrag=event=>{if(!backgroundEditorState)return;backgroundEditorState.dragging=false;els.backgroundPreview.classList.remove('dragging');try{els.backgroundPreview.releasePointerCapture(event.pointerId)}catch{}};els.backgroundPreview.addEventListener('pointerup',endDrag);els.backgroundPreview.addEventListener('pointercancel',endDrag);els.backgroundPreview.addEventListener('wheel',event=>{if(!backgroundEditorState)return;event.preventDefault();backgroundEditorState.scale=clampBackgroundScale(backgroundEditorState.scale+(event.deltaY<0 ? .06 : -.06));setBackgroundPreviewVars()},{passive:false})}
-function maybeOpenAuthGate(data){if(!(data&&data.authenticated)&&(loginRoute||masterListRoute))openLogin()}
+function maybeOpenAuthGate(data){if(!(data&&data.authenticated)&&(authRoute||masterListRoute))openLogin()}
 async function loadServersIfAuthed(){if(!document.body.classList.contains('authed'))return false;try{await loadServers();return true}catch(e){setUpdatedStatus(e.message||String(e),false);return false}}
 async function bootstrapMasterList(){hidePostLoginLoader();try{const data=await session();if(redirectIfLoginReturnAuthed(data))return;if(data&&data.authenticated){syncMasterListLiveSocket();refreshServersInBackground();return}maybeOpenAuthGate(data)}catch{applySession(null);maybeOpenAuthGate(null)}}
-selectLandingPage('service');initCookieConsent();applyRememberedUser();document.addEventListener('visibilitychange',syncMasterListLiveSocket);bootstrapMasterList();setInterval(()=>{if(document.visibilityState==='hidden')return;session().then(()=>{if(!masterLiveOpen)loadServersIfAuthed();else sendMasterLiveHello()}).catch(()=>{})},300000);setInterval(()=>{if(document.visibilityState!=='hidden'&&!masterLiveOpen)loadServersIfAuthed()},5000);
+selectLandingPage('service');initCookieConsent();applyRememberedUser();applyOptimisticSession();document.addEventListener('visibilitychange',syncMasterListLiveSocket);bootstrapMasterList();setInterval(()=>{if(document.visibilityState==='hidden')return;session().then(()=>{if(!masterLiveOpen)loadServersIfAuthed();else sendMasterLiveHello()}).catch(()=>{})},300000);setInterval(()=>{if(document.visibilityState!=='hidden'&&!masterLiveOpen)loadServersIfAuthed()},5000);
 (function(){
 const canvas=document.getElementById('starfield');
 if(!canvas)return;
@@ -22348,6 +23449,11 @@ queueDraw(0);
         }
 
         try {
+            _autoModelCacheTimer?.Dispose();
+        } catch {
+        }
+
+        try {
             _locationHttpClient.Dispose();
         } catch {
         }
@@ -22492,6 +23598,13 @@ internal sealed class RegisteredServerModelInfo {
     public bool SupportsImageGeneration { get; set; }
     public bool SupportsAudioGeneration { get; set; }
     public bool SupportsVideoGeneration { get; set; }
+    public bool RequiresPayment { get; set; }
+    public string StripePriceId { get; set; } = "";
+    public string StripeAccount { get; set; } = "";
+    public long StripeUnitAmountCents { get; set; }
+    public string StripeCurrency { get; set; } = "usd";
+    public string PaymentStatus { get; set; } = "";
+    public bool CheckoutConfigured { get; set; }
     public bool Benchmarked { get; set; }
     public double TokensPerSecond { get; set; }
     public double TokensPerHour { get; set; }
@@ -23284,6 +24397,8 @@ internal sealed class RegisteredServer {
             if (string.IsNullOrWhiteSpace(item.Status))
                 item.Status = item.Enabled ? "enabled" : item.DynamicLoadEnabled ? "dynamic-load-available" : item.Loaded ? "loaded" : "available";
         }
+        foreach (RegisteredServerModelInfo model in models.Values)
+            ApplyServerPaymentDefaultsToModel(model);
 
         return models.Values
             .OrderByDescending(model => model.Loaded)
@@ -23368,6 +24483,8 @@ internal sealed class RegisteredServer {
             model.BenchmarkedUtc = FirstNonEmpty(model.BenchmarkedUtc, benchmarkedUtc);
             model.BenchmarkStatus = FirstNonEmpty(model.BenchmarkStatus, benchmarkStatus);
             model.Status = FirstNonEmpty(GetString(element, "status"), model.Status);
+            ReadModelPaymentInfo(element, out bool requiresPayment, out string stripePriceId, out string stripeAccount, out long unitAmountCents, out string stripeCurrency, out string paymentStatus);
+            ApplyModelPaymentInfo(model, requiresPayment, stripePriceId, stripeAccount, unitAmountCents, stripeCurrency, paymentStatus);
             if (string.IsNullOrWhiteSpace(model.Status))
                 model.Status = model.Loaded && model.Enabled ? "loaded-enabled" : model.Loaded && model.DynamicLoadEnabled ? "loaded-dynamic" : model.Loaded ? "loaded-disabled" : model.Enabled ? "enabled" : model.ServerDynamicLoadingEnabled ? "dynamic-load-available" : model.Disabled ? "disabled" : "available";
             return;
@@ -23384,6 +24501,91 @@ internal sealed class RegisteredServer {
             models[id] = model;
         }
         return model;
+    }
+
+    private void ApplyServerPaymentDefaultsToModel(RegisteredServerModelInfo model) {
+        if (model == null)
+            return;
+        bool hasServerCheckoutConfiguration = !string.IsNullOrWhiteSpace(StripePriceId) || StripeUnitAmountCents > 0;
+        bool serverRequiresPayment = RequiresPayment || hasServerCheckoutConfiguration;
+        if (!serverRequiresPayment) {
+            NormalizeModelPaymentInfo(model);
+            return;
+        }
+        bool hasModelCheckoutConfiguration = model.RequiresPayment || !string.IsNullOrWhiteSpace(model.StripePriceId) || model.StripeUnitAmountCents > 0;
+        if (!hasServerCheckoutConfiguration && !hasModelCheckoutConfiguration) {
+            NormalizeModelPaymentInfo(model);
+            return;
+        }
+
+        model.RequiresPayment = true;
+        if (hasServerCheckoutConfiguration)
+            model.StripePriceId = FirstNonEmpty(model.StripePriceId, StripePriceId);
+        if (hasServerCheckoutConfiguration)
+            model.StripeAccount = FirstNonEmpty(model.StripeAccount, StripeAccount);
+        if (hasServerCheckoutConfiguration && model.StripeUnitAmountCents <= 0)
+            model.StripeUnitAmountCents = Math.Max(0, StripeUnitAmountCents);
+        model.StripeCurrency = FirstNonEmpty(model.StripeCurrency, StripeCurrency, "usd").ToLowerInvariant();
+        model.PaymentStatus = FirstNonEmpty(model.PaymentStatus, "payment-required");
+        NormalizeModelPaymentInfo(model);
+    }
+
+    private static void ApplyModelPaymentInfo(RegisteredServerModelInfo model, bool requiresPayment, string stripePriceId, string stripeAccount, long unitAmountCents, string stripeCurrency, string paymentStatus) {
+        if (model == null)
+            return;
+        model.RequiresPayment = model.RequiresPayment || requiresPayment;
+        model.StripePriceId = FirstNonEmpty(model.StripePriceId, stripePriceId);
+        model.StripeAccount = FirstNonEmpty(model.StripeAccount, stripeAccount);
+        if (model.StripeUnitAmountCents <= 0)
+            model.StripeUnitAmountCents = Math.Max(0, unitAmountCents);
+        model.StripeCurrency = FirstNonEmpty(model.StripeCurrency, stripeCurrency, "usd").ToLowerInvariant();
+        model.PaymentStatus = FirstNonEmpty(model.PaymentStatus, paymentStatus);
+        NormalizeModelPaymentInfo(model);
+    }
+
+    private static void NormalizeModelPaymentInfo(RegisteredServerModelInfo model) {
+        if (model == null)
+            return;
+        model.StripeUnitAmountCents = Math.Max(0, model.StripeUnitAmountCents);
+        model.StripeCurrency = FirstNonEmpty(model.StripeCurrency, "usd").ToLowerInvariant();
+        model.CheckoutConfigured = model.CheckoutConfigured || !string.IsNullOrWhiteSpace(model.StripePriceId) || model.StripeUnitAmountCents > 0;
+        model.RequiresPayment = model.RequiresPayment || model.CheckoutConfigured;
+        model.PaymentStatus = FirstNonEmpty(model.PaymentStatus, model.RequiresPayment ? "payment-required" : "");
+    }
+
+    private static void ReadModelPaymentInfo(JsonElement element, out bool requiresPayment, out string stripePriceId, out string stripeAccount, out long unitAmountCents, out string stripeCurrency, out string paymentStatus) {
+        JsonElement payment = element;
+        if (TryGetObject(element, "payment", out JsonElement paymentElement))
+            payment = paymentElement;
+
+        requiresPayment =
+            GetBool(payment, "requiresPayment", GetBool(payment, "paymentRequired", false)) ||
+            GetBool(element, "requiresPayment", GetBool(element, "paymentRequired", false));
+        stripePriceId = FirstNonEmpty(
+            GetString(payment, "stripePriceId"),
+            GetString(payment, "priceId"),
+            GetString(element, "stripePriceId"),
+            GetString(element, "priceId"));
+        stripeAccount = FirstNonEmpty(
+            GetString(payment, "stripeAccount"),
+            GetString(payment, "connectedAccount"),
+            GetString(payment, "account"),
+            GetString(element, "stripeAccount"),
+            GetString(element, "connectedAccount"),
+            GetString(element, "account"));
+        unitAmountCents = Math.Max(0, Math.Max(
+            GetLong(payment, "stripeUnitAmountCents", GetLong(payment, "unitAmountCents", GetLong(payment, "amountCents", 0))),
+            GetLong(element, "stripeUnitAmountCents", GetLong(element, "unitAmountCents", GetLong(element, "amountCents", 0)))));
+        stripeCurrency = FirstNonEmpty(
+            GetString(payment, "stripeCurrency"),
+            GetString(payment, "currency"),
+            GetString(element, "stripeCurrency"),
+            GetString(element, "currency"),
+            "usd");
+        paymentStatus = FirstNonEmpty(
+            GetString(payment, "paymentStatus"),
+            GetString(payment, "status"),
+            GetString(element, "paymentStatus"));
     }
 
     private static int CountModelHints(params string[] values) {

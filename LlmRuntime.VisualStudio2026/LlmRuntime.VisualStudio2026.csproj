@@ -7,9 +7,9 @@
     <NeutralLanguage>en-US</NeutralLanguage>
     <RootNamespace>LlmRuntime.VisualStudio2026</RootNamespace>
     <AssemblyName>LlmRuntime.VisualStudio2026</AssemblyName>
-    <Version>0.2.30</Version>
-    <AssemblyVersion>0.2.30.0</AssemblyVersion>
-    <FileVersion>0.2.30.0</FileVersion>
+    <Version>0.2.36</Version>
+    <AssemblyVersion>0.2.36.0</AssemblyVersion>
+    <FileVersion>0.2.36.0</FileVersion>
     <CopilotMcpBridgeProject>$(MSBuildProjectDirectory)\..\SocketJack.CopilotMcpBridge\SocketJack.CopilotMcpBridge.csproj</CopilotMcpBridgeProject>
     <CopilotMcpBridgePublishDir>$(MSBuildProjectDirectory)\bin\$(Configuration)\Bridge\</CopilotMcpBridgePublishDir>
   </PropertyGroup>
@@ -32,6 +32,13 @@
     <Page Remove="SocketJackSignInControl.xaml" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Assets\SocketJackIcon128.png" />
+    <Content Include="Assets\SocketJackPreview200.png" />
+    <Content Include="Assets\LICENSE.txt" />
+    <Content Include="Marketplace\release-notes.txt" />
+  </ItemGroup>
+
   <Target Name="PublishCopilotMcpBridge" BeforeTargets="GetVsixSourceItems" Condition="Exists('$(CopilotMcpBridgeProject)')">
     <MSBuild Projects="$(CopilotMcpBridgeProject)"
              Targets="Publish"
@@ -45,5 +52,13 @@
         <VSIXSubPath>Bridge\%(RecursiveDir)</VSIXSubPath>
       </VSIXSourceItem>
     </ItemGroup>
+  </Target>
+
+  <Target Name="RestrictVsixManifestToAmd64" BeforeTargets="GetVsixSourceItems" Condition="Exists('$(IntermediateOutputPath)extension.vsixmanifest')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Build\RestrictVsixManifestToAmd64.ps1&quot; -ManifestPath &quot;$(IntermediateOutputPath)extension.vsixmanifest&quot;" />
+  </Target>
+
+  <Target Name="NormalizePackagedVsixManifestPaths" AfterTargets="CreateVsixContainer" Condition="Exists('$(TargetVsixContainer)')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Build\NormalizePackagedVsixManifestPaths.ps1&quot; -VsixPath &quot;$(TargetVsixContainer)&quot;" />
   </Target>
 </Project>

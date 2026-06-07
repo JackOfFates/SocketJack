@@ -115,16 +115,16 @@ public sealed class LlmChatRequest
         if (element.TryGetProperty("content", out var contentElement))
             content = ReadContent(contentElement);
 
-        if (string.IsNullOrWhiteSpace(content))
+        if (role.Equals("tool", StringComparison.OrdinalIgnoreCase))
+        {
+            content = ReadToolResultContent(element, content);
+        }
+        else if (string.IsNullOrWhiteSpace(content))
         {
             if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase) &&
                 TryReadAssistantToolCalls(element, out string toolCallSummary))
             {
                 content = toolCallSummary;
-            }
-            else if (role.Equals("tool", StringComparison.OrdinalIgnoreCase))
-            {
-                content = ReadToolResultContent(element, content);
             }
         }
 
@@ -196,9 +196,26 @@ public sealed class LlmChatRequest
     private static string ReadJsonArgumentText(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.String)
-            return element.GetString() ?? "";
+            return CompactJsonArgumentText(element.GetString() ?? "");
 
-        return element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? "" : element.GetRawText();
+        return element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? "" : CompactJsonArgumentText(element.GetRawText());
+    }
+
+    private static string CompactJsonArgumentText(string value)
+    {
+        string text = (value ?? "").Trim();
+        if (text.Length == 0)
+            return "";
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(text);
+            return JsonSerializer.Serialize(document.RootElement);
+        }
+        catch (JsonException)
+        {
+            return text.Replace("\r", "", StringComparison.Ordinal).Replace("\n", "", StringComparison.Ordinal);
+        }
     }
 
     private static string ReadContent(JsonElement element)

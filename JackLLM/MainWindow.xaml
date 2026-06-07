@@ -1581,7 +1581,7 @@
                                                            FontWeight="SemiBold"
                                                            TextWrapping="Wrap"/>
                                                 <TextBlock Grid.Column="1"
-                                                           Text="{Binding Severity}"
+                                                           Text="{Binding SeverityDisplay}"
                                                            Foreground="{Binding SeverityBrush}"
                                                            FontFamily="Consolas"
                                                            FontWeight="Bold"

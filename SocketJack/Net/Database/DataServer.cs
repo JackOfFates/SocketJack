@@ -63,6 +63,17 @@ namespace SocketJack.Net.Database {
         public string DefaultDatabase { get; set; } = "db";
 
         /// <summary>
+        /// Database that stores the SQL Admin IP whitelist table. When blank,
+        /// <see cref="DefaultDatabase"/> is used.
+        /// </summary>
+        public string SqlAdminIpWhitelistDatabaseName { get; set; } = "";
+
+        /// <summary>
+        /// Table used to persist SQL/Admin IP whitelist entries.
+        /// </summary>
+        public const string SqlAdminIpWhitelistTableName = "SqlAdminIpWhitelist";
+
+        /// <summary>
         /// Server name to report to clients
         /// </summary>
         public string ServerName { get; set; } = Environment.MachineName;
@@ -160,7 +171,9 @@ namespace SocketJack.Net.Database {
 
         /// <summary>
         /// Remote IP addresses allowed to authenticate to SQL when
-        /// <see cref="EnforceSqlLoginIpAllowList"/> is enabled.
+        /// <see cref="EnforceSqlLoginIpAllowList"/> is enabled. Values are also
+        /// mirrored into <see cref="SqlAdminIpWhitelistTableName"/> when added
+        /// through <see cref="AllowSqlLoginIpAddress"/>.
         /// </summary>
         public ConcurrentDictionary<string, byte> AllowedSqlLoginIpAddresses { get; set; } = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
@@ -182,10 +195,20 @@ namespace SocketJack.Net.Database {
         public string DataPath { get; set; } = "dataserver.json";
 
         /// <summary>
-        /// When <see langword="true"/>, every data mutation (table/row add/remove) is
-        /// automatically flushed to <see cref="DataPath"/>.
+        /// When <see langword="true"/>, every dirty data mutation (table/row add/remove)
+        /// schedules a verified flush to <see cref="DataPath"/>.
         /// </summary>
         public bool AutoSave { get; set; } = true;
+
+        /// <summary>
+        /// Indicates whether a mutation has been scheduled but not yet persisted.
+        /// </summary>
+        public bool HasUnsavedChanges => Volatile.Read(ref _dirtyVersion) != Volatile.Read(ref _savedVersion);
+
+        /// <summary>
+        /// SHA-256 hash of the last successfully persisted logical database snapshot.
+        /// </summary>
+        public string LastPersistedHash => _lastPersistedHash ?? "";
 
         /// <summary>
         /// Enables the database key/value cache optimizer. When enabled, simple
@@ -216,6 +239,9 @@ namespace SocketJack.Net.Database {
         private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
         private Timer _debounceTimer;
         private readonly DatabaseCacheOptimizer _cacheOptimizer = new DatabaseCacheOptimizer();
+        private int _dirtyVersion;
+        private int _savedVersion;
+        private string _lastPersistedHash = "";
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions {
             WriteIndented = true,
@@ -511,15 +537,33 @@ namespace SocketJack.Net.Database {
             return authenticated;
         }
 
+        private static readonly string[] SqlAdminIpWhitelistColumns = {
+            "Id",
+            "IpAddress",
+            "Label",
+            "Source",
+            "Enabled",
+            "CreatedUtc",
+            "UpdatedUtc"
+        };
+
         public void AllowSqlLoginIpAddress(params string[] clientIps) {
             if (clientIps == null)
                 return;
 
+            Table whitelist = null;
+            bool tableChanged = false;
             foreach (string clientIp in clientIps) {
                 string normalized = NormalizeSqlLoginIpAddress(clientIp);
-                if (!string.IsNullOrWhiteSpace(normalized))
+                if (!string.IsNullOrWhiteSpace(normalized)) {
                     AllowedSqlLoginIpAddresses[normalized] = 1;
+                    whitelist = whitelist ?? EnsureSqlAdminIpWhitelistTable();
+                    tableChanged |= UpsertSqlAdminIpWhitelistRow(whitelist, normalized, "Configured SQL/Admin IP", "configuration", true);
+                }
             }
+
+            if (tableChanged)
+                ScheduleSave();
         }
 
         public bool IsSqlLoginIpAllowed(string clientIp) {
@@ -535,7 +579,159 @@ namespace SocketJack.Net.Database {
                 IPAddress.IsLoopback(address))
                 return true;
 
+            return IsSqlLoginIpExplicitlyAllowed(normalized);
+        }
+
+        public bool IsSqlLoginIpExplicitlyAllowed(string clientIp) {
+            string normalized = NormalizeSqlLoginIpAddress(clientIp);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            bool? tableDecision = TryGetSqlAdminIpWhitelistDecision(normalized);
+            if (tableDecision.HasValue)
+                return tableDecision.Value;
+
             return AllowedSqlLoginIpAddresses.ContainsKey(normalized);
+        }
+
+        public Table EnsureSqlAdminIpWhitelistTable() {
+            string databaseName = GetSqlAdminIpWhitelistDatabaseName();
+            var database = Databases.GetOrAdd(databaseName, name => new Database(name));
+            var table = database.Tables.GetOrAdd(SqlAdminIpWhitelistTableName, name => new Table(name));
+            if (EnsureSqlAdminIpWhitelistColumns(table))
+                ScheduleSave();
+            return table;
+        }
+
+        private string GetSqlAdminIpWhitelistDatabaseName() {
+            if (!string.IsNullOrWhiteSpace(SqlAdminIpWhitelistDatabaseName))
+                return SqlAdminIpWhitelistDatabaseName.Trim();
+            if (!string.IsNullOrWhiteSpace(DefaultDatabase))
+                return DefaultDatabase.Trim();
+            return "SocketJack";
+        }
+
+        private static bool EnsureSqlAdminIpWhitelistColumns(Table table) {
+            if (table == null)
+                return false;
+
+            bool changed = false;
+            foreach (string columnName in SqlAdminIpWhitelistColumns) {
+                if (!table.Columns.Any(column => string.Equals(column.Name, columnName, StringComparison.OrdinalIgnoreCase))) {
+                    table.Columns.Add(new Column(columnName, typeof(string), -1));
+                    changed = true;
+                }
+            }
+
+            int columnCount = table.Columns.Count;
+            for (int i = 0; i < table.Rows.Count; i++) {
+                object[] row = table.Rows[i];
+                if (row != null && row.Length >= columnCount)
+                    continue;
+                Array.Resize(ref row, columnCount);
+                table.Rows[i] = row;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static bool UpsertSqlAdminIpWhitelistRow(Table table, string normalizedIp, string label, string source, bool enabled) {
+            if (table == null || string.IsNullOrWhiteSpace(normalizedIp))
+                return false;
+
+            lock (table) {
+                EnsureSqlAdminIpWhitelistColumns(table);
+                int ipIndex = FindTableColumnIndex(table, "IpAddress");
+                int idIndex = FindTableColumnIndex(table, "Id");
+                int labelIndex = FindTableColumnIndex(table, "Label");
+                int sourceIndex = FindTableColumnIndex(table, "Source");
+                int enabledIndex = FindTableColumnIndex(table, "Enabled");
+                int createdIndex = FindTableColumnIndex(table, "CreatedUtc");
+                int updatedIndex = FindTableColumnIndex(table, "UpdatedUtc");
+                int rowIndex = FindSqlAdminIpWhitelistRow(table, normalizedIp, ipIndex);
+                string now = DateTime.UtcNow.ToString("O");
+
+                if (rowIndex < 0) {
+                    var row = new object[table.Columns.Count];
+                    row[idIndex] = "sqlip_" + Guid.NewGuid().ToString("N");
+                    row[ipIndex] = normalizedIp;
+                    row[labelIndex] = label ?? "";
+                    row[sourceIndex] = source ?? "";
+                    row[enabledIndex] = enabled ? "true" : "false";
+                    row[createdIndex] = now;
+                    row[updatedIndex] = now;
+                    table.Rows.Add(row);
+                    return true;
+                }
+
+                object[] existing = table.Rows[rowIndex];
+                if (existing.Length < table.Columns.Count)
+                    Array.Resize(ref existing, table.Columns.Count);
+                bool changed = false;
+                changed |= SetTableValue(existing, ipIndex, normalizedIp);
+                if (string.IsNullOrWhiteSpace(GetTableValue(existing, labelIndex)))
+                    changed |= SetTableValue(existing, labelIndex, label ?? "");
+                if (string.IsNullOrWhiteSpace(GetTableValue(existing, sourceIndex)))
+                    changed |= SetTableValue(existing, sourceIndex, source ?? "");
+                changed |= SetTableValue(existing, enabledIndex, enabled ? "true" : "false");
+                if (string.IsNullOrWhiteSpace(GetTableValue(existing, createdIndex)))
+                    changed |= SetTableValue(existing, createdIndex, now);
+                if (changed)
+                    SetTableValue(existing, updatedIndex, now);
+                table.Rows[rowIndex] = existing;
+                return changed;
+            }
+        }
+
+        private bool? TryGetSqlAdminIpWhitelistDecision(string normalizedIp) {
+            string databaseName = GetSqlAdminIpWhitelistDatabaseName();
+            if (!Databases.TryGetValue(databaseName, out var database) || database == null)
+                return null;
+            if (!database.Tables.TryGetValue(SqlAdminIpWhitelistTableName, out var table) || table == null)
+                return null;
+
+            int ipIndex = FindTableColumnIndex(table, "IpAddress");
+            if (ipIndex < 0)
+                return null;
+            int enabledIndex = FindTableColumnIndex(table, "Enabled");
+            int rowIndex = FindSqlAdminIpWhitelistRow(table, normalizedIp, ipIndex);
+            if (rowIndex < 0)
+                return null;
+
+            string enabled = GetTableValue(table.Rows[rowIndex], enabledIndex);
+            return string.IsNullOrWhiteSpace(enabled) || !string.Equals(enabled, "false", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int FindSqlAdminIpWhitelistRow(Table table, string normalizedIp, int ipIndex) {
+            if (table == null || ipIndex < 0)
+                return -1;
+            for (int i = 0; i < table.Rows.Count; i++) {
+                string rowIp = NormalizeSqlLoginIpAddress(GetTableValue(table.Rows[i], ipIndex));
+                if (string.Equals(rowIp, normalizedIp, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return -1;
+        }
+
+        private static int FindTableColumnIndex(Table table, string columnName) {
+            if (table == null || string.IsNullOrWhiteSpace(columnName))
+                return -1;
+            return table.Columns.FindIndex(column => string.Equals(column.Name, columnName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string GetTableValue(object[] row, int index) {
+            return row != null && index >= 0 && index < row.Length ? row[index]?.ToString() ?? "" : "";
+        }
+
+        private static bool SetTableValue(object[] row, int index, string value) {
+            if (row == null || index < 0 || index >= row.Length)
+                return false;
+            value = value ?? "";
+            if (string.Equals(row[index]?.ToString() ?? "", value, StringComparison.Ordinal))
+                return false;
+            row[index] = value;
+            return true;
         }
 
         public static string NormalizeSqlLoginIpAddress(string clientIp) {
@@ -600,23 +796,58 @@ namespace SocketJack.Net.Database {
         /// Asynchronously saves the current server state (users, databases, tables, rows) to <see cref="DataPath"/>.
         /// </summary>
         public async Task SaveAsync(CancellationToken cancellationToken) {
+            await SaveAsync(cancellationToken, onlyIfDirty: false).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Saves the current server state only when a mutation has marked it dirty.
+        /// </summary>
+        public void SaveIfDirty() {
+            SaveIfDirtyAsync().GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Asynchronously saves the current server state only when a mutation has marked it dirty.
+        /// </summary>
+        public async Task SaveIfDirtyAsync() {
+            await SaveIfDirtyAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Asynchronously saves the current server state only when a mutation has marked it dirty.
+        /// </summary>
+        public async Task SaveIfDirtyAsync(CancellationToken cancellationToken) {
+            await SaveAsync(cancellationToken, onlyIfDirty: true).ConfigureAwait(false);
+        }
+
+        private async Task SaveAsync(CancellationToken cancellationToken, bool onlyIfDirty) {
             if (string.IsNullOrWhiteSpace(DataPath)) return;
             bool lockTaken = false;
+            int saveVersion = Volatile.Read(ref _dirtyVersion);
+            if (onlyIfDirty && saveVersion == Volatile.Read(ref _savedVersion))
+                return;
+
             try {
                 await _persistenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
                 lockTaken = true;
 
+                saveVersion = Volatile.Read(ref _dirtyVersion);
+                if (onlyIfDirty && saveVersion == Volatile.Read(ref _savedVersion))
+                    return;
+
                 var snapshot = BuildSnapshot();
+                string snapshotHash = ComputePayloadHash(snapshot);
 
                 if (IsSplitStoragePath())
-                    await SaveSplitStorageAsync(snapshot, cancellationToken).ConfigureAwait(false);
+                    await SaveSplitStorageAsync(snapshot, snapshotHash, cancellationToken).ConfigureAwait(false);
                 else
                     await WritePersistedJsonAsync(DataPath, snapshot, cancellationToken).ConfigureAwait(false);
 
                 if (EnableCacheOptimizing)
                     _cacheOptimizer.SaveMetadata(GetResolvedCacheMetadataPath(), CacheOptimizationMaxKeys);
 
-                LogFormat("[{0}] Data saved to {1}", new[] { Name, DataPath });
+                MarkPersisted(saveVersion, snapshotHash);
+                LogFormat("[{0}] Data saved to {1} (sha256 {2})", new[] { Name, DataPath, ShortHash(snapshotHash) });
             } catch (Exception ex) {
                 LogFormat("[{0}] Save failed: {1}", new[] { Name, ex.Message });
             } finally {
@@ -671,6 +902,7 @@ namespace SocketJack.Net.Database {
                     await MigrateFromLegacyToSplitAsync(cancellationToken).ConfigureAwait(false);
 
                 ReloadOptimizedCache();
+                MarkPersisted(Volatile.Read(ref _dirtyVersion), ComputePayloadHash(BuildSnapshot()));
                 LogFormat("[{0}] Data loaded from {1}", new[] { Name, DataPath });
             } catch (Exception ex) {
                 LogFormat("[{0}] Load failed: {1}", new[] { Name, ex.Message });
@@ -732,7 +964,11 @@ namespace SocketJack.Net.Database {
                             if (!File.Exists(tableFile))
                                 continue;
 
-                            TableSnapshot tableSnapshot = await ReadPersistedJsonAsync<TableSnapshot>(tableFile, cancellationToken).ConfigureAwait(false);
+                            string expectedHash = null;
+                            if (dbKvp.Value.TableHashes != null)
+                                dbKvp.Value.TableHashes.TryGetValue(tableKvp.Key, out expectedHash);
+
+                            TableSnapshot tableSnapshot = await ReadPersistedJsonAsync<TableSnapshot>(tableFile, cancellationToken, expectedHash).ConfigureAwait(false);
                             if (tableSnapshot == null) continue;
                             dbSnapshot.Tables[tableKvp.Key] = tableSnapshot;
                         }
@@ -751,7 +987,8 @@ namespace SocketJack.Net.Database {
             if (string.IsNullOrWhiteSpace(legacyPath) || !File.Exists(legacyPath))
                 return;
 
-            await SaveSplitStorageAsync(BuildSnapshot(), cancellationToken).ConfigureAwait(false);
+            var snapshot = BuildSnapshot();
+            await SaveSplitStorageAsync(snapshot, ComputePayloadHash(snapshot), cancellationToken).ConfigureAwait(false);
             try {
                 File.Delete(legacyPath);
             } catch {
@@ -809,16 +1046,16 @@ namespace SocketJack.Net.Database {
             return snapshot;
         }
 
-        private async Task<T> ReadPersistedJsonAsync<T>(string path, CancellationToken cancellationToken) where T : class {
-            string text = await ReadPersistedTextAsync(path, cancellationToken).ConfigureAwait(false);
+        private async Task<T> ReadPersistedJsonAsync<T>(string path, CancellationToken cancellationToken, string expectedPersistedHash = null) where T : class {
+            string text = await ReadPersistedTextAsync(path, cancellationToken, expectedPersistedHash).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(text))
                 return null;
 
             return JsonSerializer.Deserialize<T>(text, _jsonOptions);
         }
 
-        private async Task<string> ReadPersistedTextAsync(string path, CancellationToken cancellationToken) {
-            string text = await File.ReadAllTextAsync(path, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        private async Task<string> ReadPersistedTextAsync(string path, CancellationToken cancellationToken, string expectedPersistedHash = null) {
+            string text = await ReadVerifiedTextAsync(path, cancellationToken, expectedPersistedHash).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(text))
                 return "";
 
@@ -831,28 +1068,186 @@ namespace SocketJack.Net.Database {
             return decryptedText;
         }
 
-        private async Task WritePersistedJsonAsync<T>(string path, T payload, CancellationToken cancellationToken) {
+        private async Task<string> WritePersistedJsonAsync<T>(string path, T payload, CancellationToken cancellationToken) {
             string text = JsonSerializer.Serialize(payload, _jsonOptions);
             if (EnablePayloadEncryption)
                 text = EncryptPayload(text);
 
-            await WriteTextAtomicAsync(path, text, cancellationToken).ConfigureAwait(false);
+            return await WriteTextAtomicAsync(path, text, cancellationToken).ConfigureAwait(false);
         }
 
-        private async Task WriteTextAtomicAsync(string path, string text, CancellationToken cancellationToken) {
+        private async Task<string> WriteTextAtomicAsync(string path, string text, CancellationToken cancellationToken) {
             string normalizedPath = Path.GetFullPath(path);
             string directory = Path.GetDirectoryName(normalizedPath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
             string tempPath = normalizedPath + ".tmp";
-            await File.WriteAllTextAsync(tempPath, text, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
-            if (File.Exists(normalizedPath))
-                File.Delete(normalizedPath);
-            File.Move(tempPath, normalizedPath);
+            string backupPath = normalizedPath + ".bak";
+            string hashPath = GetHashSidecarPath(normalizedPath);
+            string backupHashPath = GetHashSidecarPath(backupPath);
+            string expectedHash = ComputeTextHash(text);
+
+            try {
+                await WriteTextDurableAsync(tempPath, text, cancellationToken).ConfigureAwait(false);
+                string tempHash = await ReadTextHashAsync(tempPath, cancellationToken).ConfigureAwait(false);
+                if (!HashesEqual(tempHash, expectedHash))
+                    throw new IOException("Temp persistence hash mismatch for " + normalizedPath + ".");
+
+                if (File.Exists(normalizedPath)) {
+                    if (File.Exists(backupPath))
+                        File.Delete(backupPath);
+                    if (File.Exists(hashPath))
+                        File.Copy(hashPath, backupHashPath, true);
+                    else if (File.Exists(backupHashPath))
+                        File.Delete(backupHashPath);
+
+                    try {
+                        File.Replace(tempPath, normalizedPath, backupPath, true);
+                    } catch (PlatformNotSupportedException) {
+                        await ReplaceFileWithBackupFallbackAsync(tempPath, normalizedPath, backupPath, cancellationToken).ConfigureAwait(false);
+                    }
+                } else {
+                    File.Move(tempPath, normalizedPath);
+                }
+
+                string actualHash = await ReadTextHashAsync(normalizedPath, cancellationToken).ConfigureAwait(false);
+                if (!HashesEqual(actualHash, expectedHash))
+                    throw new IOException("Persistence hash verification failed for " + normalizedPath + ".");
+
+                await WriteTextDurableAsync(hashPath, actualHash + Environment.NewLine, cancellationToken).ConfigureAwait(false);
+                return actualHash;
+            } finally {
+                try {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                } catch {
+                    // A stale temp file is harmless; the verified target remains authoritative.
+                }
+            }
         }
 
-        private async Task SaveSplitStorageAsync(DataServerSnapshot snapshot, CancellationToken cancellationToken) {
+        private async Task<string> ReadVerifiedTextAsync(string path, CancellationToken cancellationToken, string expectedPersistedHash = null) {
+            string normalizedPath = Path.GetFullPath(path);
+            if (!File.Exists(normalizedPath))
+                return "";
+
+            string text = await File.ReadAllTextAsync(normalizedPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            string actualHash = ComputeTextHash(text);
+            string expectedHash = NormalizeHash(expectedPersistedHash);
+            if (string.IsNullOrWhiteSpace(expectedHash))
+                expectedHash = await ReadHashSidecarAsync(normalizedPath, cancellationToken).ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(expectedHash) || HashesEqual(actualHash, expectedHash))
+                return text;
+
+            LogFormat("[{0}] Hash mismatch while loading {1}: expected {2}, got {3}", new[] {
+                Name,
+                normalizedPath,
+                ShortHash(expectedHash),
+                ShortHash(actualHash)
+            });
+
+            string backupText = await TryReadVerifiedBackupTextAsync(normalizedPath, cancellationToken).ConfigureAwait(false);
+            if (backupText != null)
+                return backupText;
+
+            throw new IOException("Persisted data hash mismatch for " + normalizedPath + ".");
+        }
+
+        private async Task<string> TryReadVerifiedBackupTextAsync(string normalizedPath, CancellationToken cancellationToken) {
+            string backupPath = normalizedPath + ".bak";
+            if (!File.Exists(backupPath))
+                return null;
+
+            string backupText = await File.ReadAllTextAsync(backupPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            string backupActualHash = ComputeTextHash(backupText);
+            string backupExpectedHash = await ReadHashSidecarAsync(backupPath, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(backupExpectedHash) && !HashesEqual(backupActualHash, backupExpectedHash)) {
+                LogFormat("[{0}] Backup hash mismatch while loading {1}: expected {2}, got {3}", new[] {
+                    Name,
+                    backupPath,
+                    ShortHash(backupExpectedHash),
+                    ShortHash(backupActualHash)
+                });
+                return null;
+            }
+
+            LogFormat("[{0}] Recovered persisted data from verified backup {1}", new[] { Name, backupPath });
+            return backupText;
+        }
+
+        private static async Task ReplaceFileWithBackupFallbackAsync(string tempPath, string normalizedPath, string backupPath, CancellationToken cancellationToken) {
+            if (File.Exists(normalizedPath))
+                File.Copy(normalizedPath, backupPath, true);
+
+            string text = await File.ReadAllTextAsync(tempPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            await WriteTextDurableAsync(normalizedPath, text, cancellationToken).ConfigureAwait(false);
+            File.Delete(tempPath);
+        }
+
+        private static async Task WriteTextDurableAsync(string path, string text, CancellationToken cancellationToken) {
+            byte[] bytes = Encoding.UTF8.GetBytes(text ?? "");
+            using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, FileOptions.WriteThrough)) {
+                await stream.WriteAsync(bytes, 0, bytes.Length, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(true);
+            }
+        }
+
+        private static async Task<string> ReadTextHashAsync(string path, CancellationToken cancellationToken) {
+            string text = await File.ReadAllTextAsync(path, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            return ComputeTextHash(text);
+        }
+
+        private static async Task<string> ReadHashSidecarAsync(string path, CancellationToken cancellationToken) {
+            string hashPath = GetHashSidecarPath(path);
+            if (!File.Exists(hashPath))
+                return "";
+
+            string hash = await File.ReadAllTextAsync(hashPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            return NormalizeHash(hash);
+        }
+
+        private static string GetHashSidecarPath(string path) {
+            return path + ".sha256";
+        }
+
+        private static string ComputePayloadHash<T>(T payload) {
+            return ComputeTextHash(JsonSerializer.Serialize(payload, _jsonOptions));
+        }
+
+        private static string ComputeTextHash(string text) {
+            using (var sha = SHA256.Create()) {
+                byte[] bytes = Encoding.UTF8.GetBytes(text ?? "");
+                byte[] hash = sha.ComputeHash(bytes);
+                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        private static string NormalizeHash(string hash) {
+            return (hash ?? "").Trim().Replace("-", "").ToLowerInvariant();
+        }
+
+        private static bool HashesEqual(string left, string right) {
+            return string.Equals(NormalizeHash(left), NormalizeHash(right), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ShortHash(string hash) {
+            string normalized = NormalizeHash(hash);
+            return normalized.Length <= 16 ? normalized : normalized.Substring(0, 16);
+        }
+
+        private void MarkDirty() {
+            Interlocked.Increment(ref _dirtyVersion);
+        }
+
+        private void MarkPersisted(int version, string snapshotHash) {
+            Volatile.Write(ref _savedVersion, version);
+            _lastPersistedHash = snapshotHash ?? "";
+        }
+
+        private async Task SaveSplitStorageAsync(DataServerSnapshot snapshot, string snapshotHash, CancellationToken cancellationToken) {
             if (snapshot == null) return;
 
             string rootPath = GetSplitStorageRootPath();
@@ -865,6 +1260,8 @@ namespace SocketJack.Net.Database {
 
             var manifest = new DataServerManifest {
                 Version = 2,
+                SavedUtc = DateTime.UtcNow.ToString("o"),
+                SnapshotHash = snapshotHash,
                 Users = snapshot.Users != null
                     ? new Dictionary<string, string>(snapshot.Users, StringComparer.OrdinalIgnoreCase)
                     : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -887,7 +1284,8 @@ namespace SocketJack.Net.Database {
                     string tablePath = Path.Combine(tablesPath, fileName);
 
                     dbManifest.Tables[tableKvp.Key] = fileName;
-                    await WritePersistedJsonAsync(tablePath, tableKvp.Value, cancellationToken).ConfigureAwait(false);
+                    string tableHash = await WritePersistedJsonAsync(tablePath, tableKvp.Value, cancellationToken).ConfigureAwait(false);
+                    dbManifest.TableHashes[tableKvp.Key] = tableHash;
                 }
 
                 manifest.Databases[dbKvp.Key] = dbManifest;
@@ -1118,12 +1516,14 @@ namespace SocketJack.Net.Database {
         /// <see cref="AutoSaveDebounceMs"/> collapse into a single write.
         /// </summary>
         public void ScheduleSave() {
+            MarkDirty();
+
             if (EnableCacheOptimizing)
                 _cacheOptimizer.InvalidateAll();
 
             if (!AutoSave || string.IsNullOrWhiteSpace(DataPath)) return;
             _debounceTimer?.Dispose();
-            _debounceTimer = new Timer(_ => _ = SaveAsync(), null, AutoSaveDebounceMs, Timeout.Infinite);
+            _debounceTimer = new Timer(_ => _ = SaveIfDirtyAsync(), null, Math.Max(0, AutoSaveDebounceMs), Timeout.Infinite);
         }
 
         /// <summary>
@@ -1185,12 +1585,14 @@ namespace SocketJack.Net.Database {
 
         protected override void Dispose(bool disposing) {
             if (disposing) {
+                _debounceTimer?.Dispose();
+                if (AutoSave)
+                    SaveIfDirty();
+
                 _rng?.Dispose();
                 _persistenceLock.Dispose();
             }
 
-            _debounceTimer?.Dispose();
-            if (AutoSave) Save();
             base.Dispose(disposing);
         }
 

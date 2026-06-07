@@ -29,13 +29,20 @@ namespace SocketJack.Net.Payments {
         public static StripePaymentServiceOptions FromEnvironment() {
             return new StripePaymentServiceOptions {
                 SecretKey = FirstNonEmpty(
-                    Environment.GetEnvironmentVariable(RestrictedKeyEnvironmentVariable),
-                    Environment.GetEnvironmentVariable(SecretKeyEnvironmentVariable)),
-                PublishableKey = Environment.GetEnvironmentVariable(PublishableKeyEnvironmentVariable) ?? "",
-                WebhookSigningSecret = Environment.GetEnvironmentVariable(WebhookSecretEnvironmentVariable) ?? "",
-                SuccessUrl = Environment.GetEnvironmentVariable(SuccessUrlEnvironmentVariable) ?? "",
-                CancelUrl = Environment.GetEnvironmentVariable(CancelUrlEnvironmentVariable) ?? ""
+                    ReadEnvironment(RestrictedKeyEnvironmentVariable),
+                    ReadEnvironment(SecretKeyEnvironmentVariable)),
+                PublishableKey = ReadEnvironment(PublishableKeyEnvironmentVariable),
+                WebhookSigningSecret = ReadEnvironment(WebhookSecretEnvironmentVariable),
+                SuccessUrl = ReadEnvironment(SuccessUrlEnvironmentVariable),
+                CancelUrl = ReadEnvironment(CancelUrlEnvironmentVariable)
             };
+        }
+
+        private static string ReadEnvironment(string name) {
+            return FirstNonEmpty(
+                Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Process),
+                Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User),
+                Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine));
         }
 
         private static string FirstNonEmpty(params string[] values) {

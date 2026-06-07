@@ -166,18 +166,9 @@ public sealed class PromptIntellisense
     {
         _commands.AddRange([
             // ?? Search & Info ??
-            new() { DisplayText = "/s <query>", InsertText = "/s ", Category = "Search",
-                Description = "Search the web — returns raw JSON",
-                Writeup = "Performs a web search and prints raw JSON results. Use this when you want the underlying result data instead of the rendered search cards." },
-            new() { DisplayText = "/i <query>", InsertText = "/i ", Category = "Search",
-                Description = "Quick info lookup — AI-powered answer from the web",
-                Writeup = "Searches the web and uses the LLM (if loaded) to synthesize a concise answer. Ideal for factual questions, definitions, and quick lookups. Falls back to raw search results if no model is loaded." },
             new() { DisplayText = "/v <query>", InsertText = "/v ", Category = "Search",
                 Description = "Search videos across the web",
                 Writeup = "Searches for videos and displays results with thumbnails and playback links. Useful for tutorials, demos, and media content discovery." },
-            new() { DisplayText = "/yt <query>", InsertText = "/yt ", Category = "Search",
-                Description = "Search YouTube for videos",
-                Writeup = "Searches YouTube specifically and renders results with thumbnails, duration, and channel info. Great for finding tutorials, music, and entertainment." },
 
             // ?? Recording & Playback ??
             new() { DisplayText = "/record <name>", InsertText = "/record ", Category = "Recording",
@@ -206,38 +197,20 @@ public sealed class PromptIntellisense
             new() { DisplayText = "/clear", InsertText = "/clear", Category = "Utility",
                 Description = "Clear the console log and start a fresh conversation",
                 Writeup = "Clears all console output and resets the conversation ID. Does not affect loaded models, recordings, or training data. Aliases: /cls" },
-            new() { DisplayText = "/help", InsertText = "/help", Category = "Utility",
-                Description = "Show the complete command reference with all categories",
-                Writeup = "Displays a formatted help panel listing every available command organized by category (Search, Recording, AI, Multimodal, File System, etc.) with syntax and descriptions. Aliases: /?" },
             new() { DisplayText = "/sessions", InsertText = "/sessions", Category = "Utility",
                 Description = "List past observation sessions with timestamps and stats",
                 Writeup = "Shows all recorded observation sessions including start time, duration, number of screen captures, and associated application names." },
             new() { DisplayText = "/logs", InsertText = "/logs", Category = "Utility",
                 Description = "Show prompt log history for the current session",
                 Writeup = "Displays a scrollable history of all prompts entered in this session, along with timestamps. Useful for reviewing past interactions." },
-            new() { DisplayText = "/commands", InsertText = "/commands", Category = "Utility",
-                Description = "List all AI agent actions and capabilities",
-                Writeup = "Shows every action the AI agent can perform including mouse control, keyboard input, screen reading, classification, database operations, search, and inference. Aliases: /features" },
 
             // ?? File System ??
-            new() { DisplayText = "/fs search <path> [pattern]", InsertText = "/fs search ", Category = "File System",
-                Description = "Search for files under a directory path with optional glob pattern",
-                Writeup = "Recursively searches the specified directory for files matching the pattern (e.g., *.txt, *.log). Results include file paths, sizes, and modification dates." },
-            new() { DisplayText = "/fs read <file>", InsertText = "/fs read ", Category = "File System",
-                Description = "Read and display the contents of a file",
-                Writeup = "Reads a file from disk and displays its contents in the console. Supports text files, JSON, XML, and other text-based formats. Large files are truncated with a size warning." },
-            new() { DisplayText = "/fs write <file> <content>", InsertText = "/fs write ", Category = "File System",
-                Description = "Write content to a file (creates or overwrites)",
-                Writeup = "Writes the specified text content to a file. Creates the file if it doesn't exist, overwrites if it does. Use with caution — there is no undo." },
             new() { DisplayText = "/fs watch <path>", InsertText = "/fs watch ", Category = "File System",
                 Description = "Watch a directory or file for changes in real-time",
                 Writeup = "Sets up a file system watcher that reports created, modified, deleted, and renamed files in real-time. Useful for monitoring log files, build output, or data directories." },
             new() { DisplayText = "/fs unwatch [path]", InsertText = "/fs unwatch ", Category = "File System",
                 Description = "Stop watching a path (omit path to stop all watches)",
                 Writeup = "Removes a file system watcher. If no path is specified, all active watches are stopped." },
-            new() { DisplayText = "/fs list", InsertText = "/fs list", Category = "File System",
-                Description = "List all active file system watches",
-                Writeup = "Shows every directory/file currently being monitored along with the number of events received from each." },
 
             // ?? AI / LLM ??
             new() { DisplayText = "/ai load <path>", InsertText = "/ai load ", Category = "AI",

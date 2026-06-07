@@ -15,6 +15,16 @@ using SocketJack.Serialization;
 namespace SocketJack.Net.Database {
 
     /// <summary>
+    /// Carries authenticated SQL Admin session values used by the Admin suite.
+    /// </summary>
+    internal sealed class SqlAdminSessionContext {
+        public string Username { get; set; }
+        public string SessionId { get; set; }
+        public string CurrentDatabase { get; set; }
+        public string CsrfToken { get; set; }
+        public string OwnerKey { get; set; }
+    }
+    /// <summary>
     /// An HTTP-based SQL administration panel (similar to SQL Server Management Studio)
     /// that can be enabled on a <see cref="MutableTcpServer"/>. When enabled, it registers
     /// HTTP routes under <c>/sql</c> that provide:
@@ -332,6 +342,27 @@ namespace SocketJack.Net.Database {
             return null;
         }
 
+        internal bool TryGetSessionContext(HttpRequest req, out SqlAdminSessionContext context) {
+            context = null;
+            var session = GetSession(req);
+            if (session == null)
+                return false;
+            context = new SqlAdminSessionContext {
+                Username = session.Username,
+                SessionId = session.SessionId,
+                CurrentDatabase = session.CurrentDatabase,
+                CsrfToken = session.CsrfToken,
+                OwnerKey = session.OwnerKey
+            };
+            return true;
+        }
+
+        internal bool IsLocalSqlAdminRequest(HttpRequest req) {
+            if (IsLocalhostRequest(req))
+                return true;
+            var ds = GetDataServer();
+            return ds != null && ds.IsSqlLoginIpExplicitlyAllowed(ExtractSqlAdminClientIp(req));
+        }
         private static string GetCookie(HttpRequest req, string name) {
             if (req?.Headers == null) return null;
             if (!req.Headers.TryGetValue("Cookie", out var cookieHeader)) return null;
@@ -375,7 +406,7 @@ namespace SocketJack.Net.Database {
                 return false;
 
             if (ds.IsSqlAdminAccount(session.Username))
-                return IsLocalhostRequest(req);
+                return IsLocalSqlAdminRequest(req);
 
             return CanSqlUserAccessDatabase(ds, session.Username, databaseName, db);
         }
@@ -430,30 +461,12 @@ namespace SocketJack.Net.Database {
         #region DataServer Access
 
         private DataServer GetDataServer() {
-            // Use reflection-free access through the MutableTcpServer's helper
-            // by searching registered handlers for the TdsProtocolHandler.
             return FindDataServer();
         }
 
         private DataServer FindDataServer() {
-            // Access the _handlers list through the public Http property's server
-            // The MutableTcpServer has a FindDataServer method, but it's private.
-            // We replicate the logic here.
-            try {
-                var field = typeof(MutableTcpServer).GetField("_handlers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (field != null) {
-                    var handlers = field.GetValue(_server) as List<IProtocolHandler>;
-                    if (handlers != null) {
-                        for (int i = 0; i < handlers.Count; i++) {
-                            if (handlers[i] is TdsProtocolHandler tds)
-                                return tds.Server;
-                        }
-                    }
-                }
-            } catch { }
-            return null;
+            try { return _server?.FindDataServer(); } catch { return null; }
         }
-
         private bool Authenticate(string username, string password) {
             var ds = GetDataServer();
             if (ds == null) return false;
@@ -539,7 +552,7 @@ namespace SocketJack.Net.Database {
 
             req.Context.StatusCode = "403 Forbidden";
             WriteSqlAudit(req, session, "auth.csrf", session.CurrentDatabase ?? "", scope ?? "", "blocked", 0, "Missing or invalid SQL Admin CSRF token.", "");
-            errorJson = "{\"error\":\"SQL Admin mutation requires a valid CSRF token.\",\"csrfRequired\":true}";
+            errorJson = "{\"error\":\"SQL Admin mutation requires a valid CSRF token.\",\"csrfRequired\":true,\"csrfToken\":\"" + EscapeJson(session.CsrfToken ?? "") + "\"}";
             return false;
         }
 
@@ -580,10 +593,10 @@ namespace SocketJack.Net.Database {
                 return "{\"error\":\"SQL Admin login from this IP address is not allowed.\"}";
             }
             if (ds != null && ds.IsSqlAdminAccount(username)) {
-                if (!IsLocalhostRequest(req)) {
+                if (!IsLocalSqlAdminRequest(req)) {
                     req.Context.StatusCode = "403 Forbidden";
-                    WriteSqlAudit(req, null, "login.blocked", "", "sa", "blocked", 0, "The sa account can only log in from localhost.", "");
-                    return "{\"error\":\"The sa account can only log in from localhost or 127.0.0.1.\"}";
+                    WriteSqlAudit(req, null, "login.blocked", "", "sa", "blocked", 0, "The sa account can only log in from localhost or a SQL Admin whitelisted IP address.", ExtractSqlAdminClientIp(req));
+                    return "{\"error\":\"The sa account can only log in from localhost, 127.0.0.1, or a SQL Admin whitelisted IP address.\"}";
                 }
                 if (ds.RequiresSaPasswordSetup) {
                     req.Context.StatusCode = "428 Precondition Required";

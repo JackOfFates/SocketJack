@@ -11,6 +11,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -30,6 +31,9 @@ namespace SocketJack.Net;
 
 public partial class LmVsProxy : IDisposable
 {
+	private const string GoalCheckpointToolName = "goal_checkpoint";
+	private const string ContinueWithToolsToolName = "continue_with_tools";
+
 private sealed class WebChatModelManagerLoadSettings
 	{
 		public string Key { get; set; } = "";
@@ -39,6 +43,8 @@ private sealed class WebChatModelManagerLoadSettings
 		public string ParallelismMode { get; set; } = "single";
 
 		public string ParallelismPlacement { get; set; } = "local";
+
+		public bool ParallelTensor { get; set; }
 
 		public int ContextLength { get; set; } = 8192;
 
@@ -144,6 +150,18 @@ private sealed class WebChatModelManagerLoadSettings
 		public string BenchmarkedUtc { get; set; } = "";
 
 		public string Status { get; set; } = "";
+
+		public bool RequiresPayment { get; set; }
+
+		public string StripePriceId { get; set; } = "";
+
+		public string StripeAccount { get; set; } = "";
+
+		public long StripeUnitAmountCents { get; set; }
+
+		public string StripeCurrency { get; set; } = "usd";
+
+		public string PaymentStatus { get; set; } = "";
 	}
 
 	private sealed class ChatZipUploadEntry
@@ -189,7 +207,20 @@ private sealed class WebChatModelManagerLoadSettings
 
 		public string SessionId { get; set; } = "";
 
+		public int ProgressPercent { get; set; } = -1;
+
 		public List<ChatUiFileChangeStreamEntry> Files { get; set; } = new List<ChatUiFileChangeStreamEntry>();
+	}
+
+	private sealed class ProxyCoordinationToolResult
+	{
+		public string Result { get; set; } = "";
+
+		public string SystemInstruction { get; set; } = "";
+
+		public bool ForceFinalAnswer { get; set; }
+
+		public int ProgressPercent { get; set; } = -1;
 	}
 
 	private sealed class ChatUiFileChangeStreamEntry
@@ -279,6 +310,8 @@ private sealed class WebChatModelManagerLoadSettings
 
 		public List<ChatBrowserSkillLink> Links { get; set; } = new List<ChatBrowserSkillLink>();
 
+		public List<ChatBrowserSkillControl> Controls { get; set; } = new List<ChatBrowserSkillControl>();
+
 		public DateTimeOffset FetchedUtc { get; set; } = DateTimeOffset.UtcNow;
 	}
 
@@ -289,6 +322,21 @@ private sealed class WebChatModelManagerLoadSettings
 		public string Text { get; set; } = "";
 
 		public string Href { get; set; } = "";
+	}
+
+	private sealed class ChatBrowserSkillControl
+	{
+		public int Index { get; set; }
+
+		public string Tag { get; set; } = "";
+
+		public string Type { get; set; } = "";
+
+		public string Label { get; set; } = "";
+
+		public string Name { get; set; } = "";
+
+		public string Id { get; set; } = "";
 	}
 
 	private sealed class ChatBrowserClientSession : IDisposable
@@ -367,6 +415,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private const int ChatBrowserProxyMaxBytes = 52428800;
 
+	private const string BrowserLikeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+	private const string BrowserLikeAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8";
+
 	private static readonly string[] ChatBrowserProxyBlockedTopLevelDomains = new string[4] { "adult", "porn", "sex", "xxx" };
 
 	private static readonly string[] ChatBrowserProxyBlockedDomainSuffixes = new string[14]
@@ -419,9 +471,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private const int ObservabilityRecentEventLimit = 250;
 
+	private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+	private static readonly TimeSpan PersonaPlexServerRestartBackoff = TimeSpan.FromSeconds(20);
+
 	private static readonly TimeSpan ChatModelListTimeout = TimeSpan.FromSeconds(8.0);
 
 	private static readonly TimeSpan ModelRuntimeListTimeout = TimeSpan.FromSeconds(15.0);
+
+	private static readonly TimeSpan ModelRuntimeCompatibilityCacheDuration = TimeSpan.FromMinutes(10.0);
 
 	private static readonly TimeSpan ModelRuntimeLoadTimeout = TimeSpan.FromMinutes(20.0);
 
@@ -642,6 +700,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private readonly object _modelRuntimeStatusCacheLock = new object();
 
+	private readonly object _modelRuntimeCompatibilityCacheLock = new object();
+
 	private readonly object _chatServerLock = new object();
 
 	private readonly object _chatSessionLock = new object();
@@ -798,6 +858,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private readonly object _gitServiceAvailabilityLock = new object();
 
+	private readonly object _personaPlexInstallLock = new object();
+
 	private readonly Dictionary<string, ObservabilityRouteAccumulator> _observabilityRoutes = new Dictionary<string, ObservabilityRouteAccumulator>(StringComparer.OrdinalIgnoreCase);
 
 	private readonly Queue<ObservabilityRecentEventSnapshot> _observabilityEvents = new Queue<ObservabilityRecentEventSnapshot>();
@@ -821,6 +883,24 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private readonly ConcurrentDictionary<string, ChatBrowserSkillPageState> _chatBrowserSkillPages = new ConcurrentDictionary<string, ChatBrowserSkillPageState>(StringComparer.OrdinalIgnoreCase);
 
 	private readonly List<JsonElement> _masterServerEntries = new List<JsonElement>();
+
+	private PersonaPlexInstallState _personaPlexInstallState = new PersonaPlexInstallState();
+
+	private Process _personaPlexServerProcess;
+
+	private DateTimeOffset _personaPlexLastServerStartAttemptUtc = DateTimeOffset.MinValue;
+
+	private DateTimeOffset _personaPlexLastServerExitUtc = DateTimeOffset.MinValue;
+
+	private string _personaPlexLastServerExitMessage = "";
+
+	private string _personaPlexLastServerErrorSummary = "";
+
+	private string _personaPlexValidatedTokenFingerprint = "";
+
+	private string _personaPlexRejectedTokenFingerprint = "";
+
+	private DateTimeOffset _personaPlexLastTokenValidationUtc = DateTimeOffset.MinValue;
 
 	private List<JsonElement> _llmRuntimeToolSchemas = new List<JsonElement>();
 
@@ -910,6 +990,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private DateTimeOffset _cachedModelRuntimeStatusUtc = DateTimeOffset.MinValue;
 
+	private string _cachedModelRuntimeCompatibilityKey = "";
+
+	private string _cachedModelRuntimeCompatibilityBody = "";
+
+	private DateTimeOffset _cachedModelRuntimeCompatibilityUtc = DateTimeOffset.MinValue;
+
 	private static readonly TimeSpan MasterListPingRuntimeProbeCacheDuration = TimeSpan.FromSeconds(5.0);
 
 	public bool IsListening => _isRunning;
@@ -927,6 +1013,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	public bool WebChatModelLoadApiEnabled { get; set; }
 
 	public string ChatServerUrl => $"http://localhost:{_chatServerPort}/";
+
+	public string PersonaPlexInstallToken { get; } = Guid.NewGuid().ToString("N");
 
 	public string ChatSessionRoot => _chatSessionRoot;
 
@@ -1009,6 +1097,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		set
 		{
 			ChatCostSettings settings = GetChatCostSettings();
+			if (settings.allowOpenRegistration == value)
+			{
+				return;
+			}
 			settings.allowOpenRegistration = value;
 			SaveChatCostSettings(settings);
 		}
@@ -1111,8 +1203,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	public void ConfigureChatStorageCosts(string storageType, double costFactor)
 	{
 		ChatCostSettings settings = GetChatCostSettings();
-		settings.storageType = NormalizeStorageType(storageType);
-		settings.storageCostFactor = ClampStorageCostFactor(costFactor);
+		string normalizedStorageType = NormalizeStorageType(storageType);
+		double normalizedCostFactor = ClampStorageCostFactor(costFactor);
+		if (string.Equals(settings.storageType, normalizedStorageType, StringComparison.OrdinalIgnoreCase) &&
+			Math.Abs(settings.storageCostFactor - normalizedCostFactor) < 0.000001)
+		{
+			return;
+		}
+		settings.storageType = normalizedStorageType;
+		settings.storageCostFactor = normalizedCostFactor;
 		SaveChatCostSettings(settings);
 	}
 
@@ -1166,14 +1265,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	public TokenRateRequestPolicySnapshot ConfigureTokenRateRequestPolicy(bool enabled, long minTokenRate, long maxTokenRate, long advertisedTokenRate)
 	{
 		ChatCostSettings settings = GetChatCostSettings();
-		settings.tokenRateRequestsEnabled = enabled;
-		settings.tokenRateRequestMin = Math.Max(0L, minTokenRate);
-		settings.tokenRateRequestMax = Math.Max(0L, maxTokenRate);
-		if (settings.tokenRateRequestMax < settings.tokenRateRequestMin)
+		long normalizedMinTokenRate = Math.Max(0L, minTokenRate);
+		long normalizedMaxTokenRate = Math.Max(normalizedMinTokenRate, Math.Max(0L, maxTokenRate));
+		long normalizedAdvertisedTokenRate = Math.Max(0L, advertisedTokenRate);
+		if (settings.tokenRateRequestsEnabled == enabled &&
+			settings.tokenRateRequestMin == normalizedMinTokenRate &&
+			settings.tokenRateRequestMax == normalizedMaxTokenRate &&
+			settings.advertisedTokenRate == normalizedAdvertisedTokenRate)
 		{
-			settings.tokenRateRequestMax = settings.tokenRateRequestMin;
+			return TokenRateRequestPolicySnapshotFromSettings(settings, GetEffectiveAdvertisedTokenRate());
 		}
-		settings.advertisedTokenRate = Math.Max(0L, advertisedTokenRate);
+		settings.tokenRateRequestsEnabled = enabled;
+		settings.tokenRateRequestMin = normalizedMinTokenRate;
+		settings.tokenRateRequestMax = normalizedMaxTokenRate;
+		settings.advertisedTokenRate = normalizedAdvertisedTokenRate;
 		SaveChatCostSettings(settings);
 		return TokenRateRequestPolicySnapshotFromSettings(settings, GetEffectiveAdvertisedTokenRate());
 	}
@@ -1181,7 +1286,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	public TokenRateRequestPolicySnapshot SetAdvertisedTokenRate(long advertisedTokenRate)
 	{
 		ChatCostSettings settings = GetChatCostSettings();
-		settings.advertisedTokenRate = Math.Max(0L, advertisedTokenRate);
+		long normalizedAdvertisedTokenRate = Math.Max(0L, advertisedTokenRate);
+		if (settings.advertisedTokenRate == normalizedAdvertisedTokenRate)
+		{
+			return TokenRateRequestPolicySnapshotFromSettings(settings, GetEffectiveAdvertisedTokenRate());
+		}
+		settings.advertisedTokenRate = normalizedAdvertisedTokenRate;
 		SaveChatCostSettings(settings);
 		return TokenRateRequestPolicySnapshotFromSettings(settings, GetEffectiveAdvertisedTokenRate());
 	}
@@ -1189,7 +1299,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	public int ConfigureChatThroughputTokensPerSecond(int tokensPerSecond)
 	{
 		ChatCostSettings settings = GetChatCostSettings();
-		settings.throughputTokensPerSecond = NormalizeChatThroughputTokensPerSecond(tokensPerSecond);
+		int normalizedTokensPerSecond = NormalizeChatThroughputTokensPerSecond(tokensPerSecond);
+		if (settings.throughputTokensPerSecond == normalizedTokensPerSecond)
+		{
+			return settings.throughputTokensPerSecond;
+		}
+		settings.throughputTokensPerSecond = normalizedTokensPerSecond;
 		SaveChatCostSettings(settings);
 		return settings.throughputTokensPerSecond;
 	}
@@ -3483,6 +3598,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	}
 
 	public LmVsProxy(string lmStudioHost, int lmStudioPort, int proxyPort, int chatServerPort = 0)
+		: this(lmStudioHost, lmStudioPort, proxyPort, chatServerPort, null)
+	{
+	}
+
+	public LmVsProxy(string lmStudioHost, int lmStudioPort, int proxyPort, int chatServerPort, string dataRoot)
 	{
 		if (string.IsNullOrWhiteSpace(lmStudioHost))
 		{
@@ -3528,9 +3648,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		});
 		_browserSkillHttpClient.Timeout = _promptTimeout;
 		_upstreamAdapter = new UpstreamAdapter(ChatModel);
-		_chatSessionRoot = GetDefaultChatSessionRoot();
+		string sessionBaseDirectory = GetSessionBaseDirectory(dataRoot);
+		_chatSessionRoot = GetDefaultChatSessionRoot(sessionBaseDirectory);
 		_chatSessionFilesRoot = Path.Combine(_chatSessionRoot, "SessionFiles");
-		_remoteSessionCloneRoot = GetDefaultRemoteSessionCloneRoot();
+		_remoteSessionCloneRoot = GetDefaultRemoteSessionCloneRoot(sessionBaseDirectory);
 		_sockJackDml = new SockJackDmlService(_chatSessionRoot);
 		_sockJackDmlWorkflows = new SockJackDmlWorkflowService(_chatSessionRoot);
 		StartRemoteSessionFileCloneWatcher();
@@ -3551,12 +3672,22 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private static string GetDefaultChatSessionRoot()
 	{
-		return Path.GetFullPath(Path.Combine(GetExecutableDirectoryForSessions(), "SocketJack", "JackLLMChat"));
+		return GetDefaultChatSessionRoot(GetExecutableDirectoryForSessions());
+	}
+
+	private static string GetDefaultChatSessionRoot(string sessionBaseDirectory)
+	{
+		return Path.GetFullPath(Path.Combine(sessionBaseDirectory, "SocketJack", "JackLLMChat"));
 	}
 
 	private static string GetDefaultRemoteSessionCloneRoot()
 	{
-		return Path.GetFullPath(Path.Combine(GetExecutableDirectoryForSessions(), "Sessions"));
+		return GetDefaultRemoteSessionCloneRoot(GetExecutableDirectoryForSessions());
+	}
+
+	private static string GetDefaultRemoteSessionCloneRoot(string sessionBaseDirectory)
+	{
+		return Path.GetFullPath(Path.Combine(sessionBaseDirectory, "Sessions"));
 	}
 
 	private SandboxSession GetOrCreateChatSessionSandbox(string sessionId, string ownerKey)
@@ -4220,6 +4351,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 	}
 
+	private static string GetSessionBaseDirectory(string dataRoot)
+	{
+		if (!string.IsNullOrWhiteSpace(dataRoot))
+		{
+			return PrepareSessionBaseDirectory(dataRoot);
+		}
+		return GetExecutableDirectoryForSessions();
+	}
+
 	private static string GetExecutableDirectoryForSessions()
 	{
 		string dataRoot = Environment.GetEnvironmentVariable("JACKLLM_DATA_ROOT") ?? "";
@@ -4227,9 +4367,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			try
 			{
-				string fullDataRoot = Path.GetFullPath(Environment.ExpandEnvironmentVariables(dataRoot.Trim()));
-				Directory.CreateDirectory(fullDataRoot);
-				return fullDataRoot;
+				return PrepareSessionBaseDirectory(dataRoot);
 			}
 			catch
 			{
@@ -4242,6 +4380,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			baseDirectory = Directory.GetCurrentDirectory();
 		}
 		return baseDirectory;
+	}
+
+	private static string PrepareSessionBaseDirectory(string dataRoot)
+	{
+		string fullDataRoot = Path.GetFullPath(Environment.ExpandEnvironmentVariables(dataRoot.Trim()));
+		Directory.CreateDirectory(fullDataRoot);
+		return fullDataRoot;
 	}
 
 	private async Task EnsureLmStudioForPromptAsync()
@@ -4828,6 +4973,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		MutableTcpServer server = new MutableTcpServer(_chatServerPort, "LmVsProxy Chat UI");
 		DisableDefaultSocketJackSecurity(server);
 		server.RegisterProtocol(new WebChatApiWebSocketProtocolHandler());
+		server.RegisterProtocol(new PersonaPlexWebSocketBridgeProtocolHandler(BuildPersonaPlexBridgeEndpoint, LogMessage));
 		server.LogOutput += RelaySocketJackLogOutput;
 		server.OnError += RelaySocketJackError;
 		ChatPermissionState chatPermissions = GetChatPermissions();
@@ -5018,6 +5164,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("POST", "/api/llm-client/input", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLlmClientInputRequest(connection, request));
 		server.Map("POST", "/api/prompt-intellisense", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePromptIntellisenseRequest(connection, request));
 		server.Map("GET", "/api/chat-session-owner", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionOwnerRequest(connection, request));
+		server.Map("GET", "/api/personaplex/config", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexConfigGetRequest(connection, request));
+		server.Map("POST", "/api/personaplex/config", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexConfigSaveRequest(connection, request));
+		server.Map("GET", "/api/personaplex/status", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexStatusRequest(connection, request));
+		server.Map("POST", "/api/personaplex/start", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexStartRequest(connection, request));
+		server.Map("POST", "/api/personaplex/stop", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexStopRequest(connection, request));
+		server.Map("GET", "/api/personaplex/install", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexInstallStatusRequest(connection, request));
+		server.Map("POST", "/api/personaplex/install", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexInstallRequest(connection, request));
+		server.Map("POST", "/api/personaplex/token", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandlePersonaPlexTokenRequest(connection, request));
+		server.Map("OPTIONS", "/api/personaplex/config", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("OPTIONS", "/api/personaplex/status", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("OPTIONS", "/api/personaplex/start", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("OPTIONS", "/api/personaplex/stop", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("OPTIONS", "/api/personaplex/install", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("OPTIONS", "/api/personaplex/token", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("GET", "/api/developer-project-workflow", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/developer-project-workflow", "project-workflow", () => HandleDeveloperProjectWorkflowGetRequest(connection, request), () => GetChatSessionOwnerKey(connection, request)));
 		server.Map("POST", "/api/developer-project-workflow", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("POST", "/api/developer-project-workflow", "project-workflow", () => HandleDeveloperProjectWorkflowMutationRequest(connection, request), () => GetChatSessionOwnerKey(connection, request)));
 		server.Map("OPTIONS", "/api/developer-project-workflow", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
@@ -5360,11 +5520,83 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return false;
 	}
 
+	private static bool IsModelRuntimeCompatibilityStatusRequest(string method, string pathAndQuery)
+	{
+		if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+		string path = (pathAndQuery ?? "").Split('?', 2)[0].Trim().TrimEnd('/').ToLowerInvariant();
+		return string.Equals(path, "/api/v1/runtime/compatibility", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static bool IsModelRuntimeCompatibilityMutationRequest(string method, string pathAndQuery)
+	{
+		if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+		string path = (pathAndQuery ?? "").Split('?', 2)[0].Trim().TrimEnd('/').ToLowerInvariant();
+		return path.StartsWith("/api/v1/runtime/compatibility", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static string BuildModelRuntimeCompatibilityCacheKey(string runtimeBaseUrl, string pathAndQuery)
+	{
+		return (runtimeBaseUrl ?? "").TrimEnd('/') + "|" + (pathAndQuery ?? "").Trim();
+	}
+
+	private bool TryGetCachedModelRuntimeCompatibility(string cacheKey, out string body)
+	{
+		body = "";
+		if (string.IsNullOrWhiteSpace(cacheKey))
+		{
+			return false;
+		}
+		lock (_modelRuntimeCompatibilityCacheLock)
+		{
+			if (string.Equals(_cachedModelRuntimeCompatibilityKey, cacheKey, StringComparison.OrdinalIgnoreCase) &&
+				!string.IsNullOrWhiteSpace(_cachedModelRuntimeCompatibilityBody) &&
+				DateTimeOffset.UtcNow - _cachedModelRuntimeCompatibilityUtc < ModelRuntimeCompatibilityCacheDuration)
+			{
+				body = _cachedModelRuntimeCompatibilityBody;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void CacheModelRuntimeCompatibility(string cacheKey, string body)
+	{
+		if (string.IsNullOrWhiteSpace(cacheKey) || string.IsNullOrWhiteSpace(body))
+		{
+			return;
+		}
+		lock (_modelRuntimeCompatibilityCacheLock)
+		{
+			_cachedModelRuntimeCompatibilityKey = cacheKey;
+			_cachedModelRuntimeCompatibilityBody = body;
+			_cachedModelRuntimeCompatibilityUtc = DateTimeOffset.UtcNow;
+		}
+	}
+
+	private void InvalidateModelRuntimeCompatibilityCache()
+	{
+		lock (_modelRuntimeCompatibilityCacheLock)
+		{
+			_cachedModelRuntimeCompatibilityKey = "";
+			_cachedModelRuntimeCompatibilityBody = "";
+			_cachedModelRuntimeCompatibilityUtc = DateTimeOffset.MinValue;
+		}
+	}
+
 	private string ForwardLocalModelRuntimeRequest(string method, string pathAndQuery, string body, CancellationToken cancellationToken)
 	{
+		string normalizedMethod = string.IsNullOrWhiteSpace(method) ? "GET" : method.Trim().ToUpperInvariant();
 		bool logRuntimeMutation = IsHighSignalModelRuntimePath(pathAndQuery);
 		bool suppressPollingNoise = IsModelRuntimePollingPath(pathAndQuery);
-		string routeLabel = (string.IsNullOrWhiteSpace(method) ? "GET" : method.Trim().ToUpperInvariant()) + " " + TruncateForLog(pathAndQuery ?? "", 160);
+		bool compatibilityStatusRequest = IsModelRuntimeCompatibilityStatusRequest(normalizedMethod, pathAndQuery);
+		bool compatibilityMutationRequest = IsModelRuntimeCompatibilityMutationRequest(normalizedMethod, pathAndQuery);
+		string routeLabel = normalizedMethod + " " + TruncateForLog(pathAndQuery ?? "", 160);
 		try
 		{
 			if (IsModelLoadPath(pathAndQuery) && !CanForwardWebChatModelLoad(body, out var blockedModel, out var blockedReason))
@@ -5385,10 +5617,29 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					web_chat_model_load_api_enabled = WebChatModelLoadApiEnabled
 				});
 			}
+			if (compatibilityMutationRequest)
+			{
+				InvalidateModelRuntimeCompatibilityCache();
+			}
+			string runtimeBaseUrl = BuildLocalModelRuntimeBaseUrl();
+			string compatibilityCacheKey = compatibilityStatusRequest ? BuildModelRuntimeCompatibilityCacheKey(runtimeBaseUrl, pathAndQuery) : "";
+			if (compatibilityStatusRequest && TryGetCachedModelRuntimeCompatibility(compatibilityCacheKey, out var cachedCompatibilityBody))
+			{
+				return cachedCompatibilityBody;
+			}
 			EnsureLmStudioForPromptAsync().GetAwaiter().GetResult();
 			ILmVsProxyModelRuntime runtime = GetEffectiveLocalModelRuntime();
 			string runtimeDisplayName = GetModelRuntimeDisplayName(runtime);
-			string url = CombineOpenAiUpstreamUrl(BuildLocalModelRuntimeBaseUrl(), pathAndQuery);
+			runtimeBaseUrl = BuildLocalModelRuntimeBaseUrl();
+			if (compatibilityStatusRequest)
+			{
+				compatibilityCacheKey = BuildModelRuntimeCompatibilityCacheKey(runtimeBaseUrl, pathAndQuery);
+				if (TryGetCachedModelRuntimeCompatibility(compatibilityCacheKey, out cachedCompatibilityBody))
+				{
+					return cachedCompatibilityBody;
+				}
+			}
+			string url = CombineOpenAiUpstreamUrl(runtimeBaseUrl, pathAndQuery);
 			string enrichedBody = ((IsModelLoadPath(pathAndQuery) && !IsLmStudioRuntimeDisplayName(runtimeDisplayName)) ? BuildWebChatModelLoadRequestBody(body) : body);
 			string requestBody = PrepareModelRuntimeForwardBody(pathAndQuery, enrichedBody, runtimeDisplayName);
 			string requestedLoadModel = (IsModelLoadPath(pathAndQuery) ? (ExtractModelIdentifierFromBody(requestBody) ?? "") : "");
@@ -5429,11 +5680,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					}
 				});
 			}
+			responseBody = PrepareModelRuntimeForwardResponseBody(pathAndQuery, responseBody);
+			if (compatibilityStatusRequest && response.IsSuccessStatusCode && !ResponseBodyContainsJsonError(responseBody))
+			{
+				CacheModelRuntimeCompatibility(compatibilityCacheKey, responseBody);
+			}
 			if (logRuntimeMutation)
 			{
 				LogMessage("[Model Runtime] " + runtimeDisplayName + " " + routeLabel + " completed with HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + ".");
 			}
-			responseBody = PrepareModelRuntimeForwardResponseBody(pathAndQuery, responseBody);
 			if (IsModelLoadPath(pathAndQuery) && response.IsSuccessStatusCode && !ResponseBodyContainsJsonError(responseBody) && !string.IsNullOrWhiteSpace(requestedLoadModel))
 			{
 				NoteWebChatRuntimeModelUsed(requestedLoadModel);
@@ -5753,7 +6008,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				writer.WriteNumber("eval_batch_size", settings.EvalBatchSize);
 			}
 			string parallelismMode = settings.ParallelismMode;
-			if ((settings.TargetDeviceIds?.Length ?? 0) > 1 && string.Equals(parallelismMode, "single", StringComparison.OrdinalIgnoreCase))
+			bool parallelTensor = settings.ParallelTensor || string.Equals(parallelismMode, "tensor_parallel", StringComparison.OrdinalIgnoreCase);
+			if (parallelTensor && (settings.TargetDeviceIds?.Length ?? 0) > 1)
+			{
+				parallelismMode = "tensor_parallel";
+			}
+			else if ((settings.TargetDeviceIds?.Length ?? 0) > 1 && string.Equals(parallelismMode, "single", StringComparison.OrdinalIgnoreCase))
 			{
 				parallelismMode = "data_parallel";
 			}
@@ -5763,6 +6023,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			writer.WriteBoolean("allow_backend_fallback", settings.AllowBackendFallback);
 			writer.WriteString("parallelism_mode", parallelismMode);
 			writer.WriteString("parallelism_placement", settings.ParallelismPlacement);
+			writer.WriteBoolean("parallel_tensor", parallelTensor && (settings.TargetDeviceIds?.Length ?? 0) > 1);
+			writer.WriteNumber("tensor_parallel_size", parallelTensor ? Math.Max(1, settings.TargetDeviceIds?.Length ?? 0) : 1);
 			if (settings.TargetDeviceIds != null && settings.TargetDeviceIds.Length > 0)
 			{
 				writer.WritePropertyName("target_device_ids");
@@ -6157,9 +6419,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		WebChatModelManagerLoadSettings settings = null;
 		bool modelEnabled = !string.IsNullOrWhiteSpace(modelId) && TryGetModelManagerLoadSettings(modelId, out settings) && settings.Enabled;
 		int idleUnloadMinutes = settings?.IdleUnloadMinutes ?? DefaultWebChatRuntimeModelIdleUnloadMinutes;
-		bool dynamicLoadEnabled = WebChatModelLoadApiEnabled || modelEnabled;
 		bool loaded = RuntimeModelHasLoadedInstances(model);
-		string policyReason = (dynamicLoadEnabled ? "" : "Enable this model in Workstation's Models tab, or enable the global web chat model-load API in Diagnostics.");
+		bool dynamicLoadEnabled = WebChatModelLoadApiEnabled || modelEnabled;
+		bool usable = loaded || dynamicLoadEnabled;
+		string policyReason = (usable ? "" : "Enable this model in Workstation's Models tab, or enable the global web chat model-load API in Diagnostics.");
 		bool wroteCapabilities = false;
 		bool hasLoadDisabledReason = false;
 		writer.WriteStartObject();
@@ -6172,7 +6435,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			if (string.Equals(property.Name, "load_disabled_reason", StringComparison.OrdinalIgnoreCase))
 			{
 				hasLoadDisabledReason = !string.IsNullOrWhiteSpace(ReadJsonString(property.Value));
-				if (dynamicLoadEnabled || hasLoadDisabledReason)
+				if (!loaded && (dynamicLoadEnabled || hasLoadDisabledReason))
 				{
 					property.WriteTo(writer);
 				}
@@ -6201,13 +6464,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		writer.WriteNumber("web_chat_idle_unload_minutes", idleUnloadMinutes);
 		writer.WriteBoolean("isAvailable", value: true);
 		writer.WriteBoolean("isLoaded", loaded);
-		writer.WriteBoolean("enabled", modelEnabled);
-		writer.WriteBoolean("isEnabled", modelEnabled);
-		writer.WriteBoolean("disabled", !modelEnabled && !WebChatModelLoadApiEnabled && !loaded);
+		writer.WriteBoolean("enabled", usable);
+		writer.WriteBoolean("isEnabled", usable);
+		writer.WriteBoolean("disabled", !usable);
 		writer.WriteBoolean("dynamicLoadEnabled", dynamicLoadEnabled);
 		writer.WriteBoolean("serverDynamicLoadingEnabled", WebChatModelLoadApiEnabled);
-		writer.WriteString("status", (loaded && modelEnabled) ? "loaded-enabled" : ((loaded && dynamicLoadEnabled) ? "loaded-dynamic" : (loaded ? "loaded-disabled" : (modelEnabled ? "enabled" : (WebChatModelLoadApiEnabled ? "dynamic-load-available" : "disabled")))));
-		if (!dynamicLoadEnabled)
+		writer.WriteString("status", BuildRuntimeModelPolicyStatus(loaded, modelEnabled, dynamicLoadEnabled, usable));
+		if (!usable)
 		{
 			writer.WriteString("web_chat_load_disabled_reason", policyReason);
 			if (!hasLoadDisabledReason)
@@ -6216,6 +6479,31 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 		}
 		writer.WriteEndObject();
+	}
+
+	private static string BuildRuntimeModelPolicyStatus(bool loaded, bool modelEnabled, bool dynamicLoadEnabled, bool usable)
+	{
+		if (loaded && modelEnabled)
+		{
+			return "loaded-enabled";
+		}
+		if (loaded && dynamicLoadEnabled)
+		{
+			return "loaded-dynamic";
+		}
+		if (loaded)
+		{
+			return "loaded";
+		}
+		if (modelEnabled)
+		{
+			return "enabled";
+		}
+		if (dynamicLoadEnabled)
+		{
+			return "dynamic-load-available";
+		}
+		return usable ? "available" : "disabled";
 	}
 
 	private static void WriteRuntimeModelCapabilitiesWithPolicy(Utf8JsonWriter writer, JsonElement capabilities, bool dynamicLoadEnabled)
@@ -6281,6 +6569,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		webChatModelManagerLoadSettings.Backend = ReadModelManagerString(root, "backend") ?? "auto";
 		webChatModelManagerLoadSettings.ParallelismMode = NormalizeWebChatParallelismMode(ReadModelManagerString(root, "parallelism_mode", "parallelismMode") ?? "single");
 		webChatModelManagerLoadSettings.ParallelismPlacement = NormalizeWebChatParallelismPlacement(ReadModelManagerString(root, "parallelism_placement", "parallelismPlacement") ?? "local");
+		webChatModelManagerLoadSettings.ParallelTensor = ReadModelManagerBool(root, false, "parallel_tensor", "parallelTensor") || string.Equals(webChatModelManagerLoadSettings.ParallelismMode, "tensor_parallel", StringComparison.OrdinalIgnoreCase);
+		if (webChatModelManagerLoadSettings.ParallelTensor)
+		{
+			webChatModelManagerLoadSettings.ParallelismMode = "tensor_parallel";
+		}
 		webChatModelManagerLoadSettings.ContextLength = Math.Max(1, ReadModelManagerInt(root, 8192, "context_length", "contextLength"));
 		webChatModelManagerLoadSettings.EvalBatchSize = Math.Max(1, ReadModelManagerInt(root, 512, "eval_batch_size", "evalBatchSize"));
 		webChatModelManagerLoadSettings.GpuLayerCount = ReadModelManagerInt(root, -1, "gpu_layer_count", "gpuLayerCount");
@@ -6308,7 +6601,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private static string NormalizeWebChatParallelismMode(string value)
 	{
 		string normalized = (value ?? "").Trim().Replace("-", "_").ToLowerInvariant();
-		if (normalized == "data_parallel" || normalized == "model_offload" || normalized == "pipeline_parallel")
+		if (normalized == "data_parallel" || normalized == "model_offload" || normalized == "pipeline_parallel" || normalized == "tensor_parallel")
 		{
 			return normalized;
 		}
@@ -6663,6 +6956,46 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		catch (Exception ex)
 		{
 			LogMessage("[Chat UI] Idle unload failed for LlmRuntime model " + model + ": " + ex.Message);
+		}
+	}
+
+	private async Task UnloadLoadedWebChatRuntimeModelsForPersonaPlexAsync()
+	{
+		if (!IsEffectiveLocalRuntimeLlmRuntime())
+		{
+			return;
+		}
+		List<string> loadedModels = new List<string>();
+		try
+		{
+			foreach (ChatUiModelInfo model in BuildServerBrowserModelCapabilities(GetServerBrowserProfile()))
+			{
+				if (model == null || string.IsNullOrWhiteSpace(model.id) || !model.isLoaded)
+				{
+					continue;
+				}
+				if (!loadedModels.Any(existing => string.Equals(existing, model.id, StringComparison.OrdinalIgnoreCase)))
+				{
+					loadedModels.Add(model.id);
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Could not inspect loaded runtime models before Voice Mode start: " + ex.Message);
+			return;
+		}
+		foreach (string model in loadedModels)
+		{
+			try
+			{
+				LogMessage("[PersonaPlex] Unloading LlmRuntime model before Voice Mode start: " + model);
+				await UnloadWebChatRuntimeModelAsync(model).ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				LogMessage("[PersonaPlex] Could not unload LlmRuntime model before Voice Mode start: " + model + ": " + ex.Message);
+			}
 		}
 	}
 
@@ -7132,6 +7465,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		string modelBenchmarksJson = GetCurrentModelBenchmarksJson();
 		int benchmarkedModelCount = ApplyChatUiModelBenchmarks(models, modelBenchmarksJson);
+		ApplyServerBrowserPaymentDefaults(models, GetServerBrowserProfile());
 		return new ChatUiModelInventorySnapshot
 		{
 			ok = true,
@@ -7198,6 +7532,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				model.benchmarkedUtc = benchmark.BenchmarkedUtc ?? "";
 				model.benchmarkStatus = FirstNonEmpty(benchmark.Status, (benchmark.TokensPerSecond > 0.0) ? ("Done: " + benchmark.TokensPerSecond.ToString("0.0", CultureInfo.InvariantCulture) + " tok/s, score " + benchmark.Rating.ToString(CultureInfo.InvariantCulture) + "/100") : "");
 				model.benchmarked = benchmark.TokensPerSecond > 0.0 || benchmark.Rating > 0 || !string.IsNullOrWhiteSpace(model.benchmarkedUtc);
+				ApplyChatUiModelPaymentInfo(model, benchmark.RequiresPayment, benchmark.StripePriceId, benchmark.StripeAccount, benchmark.StripeUnitAmountCents, benchmark.StripeCurrency, benchmark.PaymentStatus);
 			}
 		}
 		return benchmarks.Count;
@@ -7241,6 +7576,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					chatUiModelBenchmarkSummary.Rating = ReadBenchmarkInt(item, 0, "rating", "Rating", "benchmarkRating", "score", "Score");
 					chatUiModelBenchmarkSummary.BenchmarkedUtc = ReadBenchmarkString(item, "benchmarkedUtc", "BenchmarkedUtc", "updatedUtc", "createdUtc");
 					chatUiModelBenchmarkSummary.Status = ReadBenchmarkString(item, "status", "Status", "benchmarkStatus");
+					ReadModelPaymentInfo(item, out bool requiresPayment, out string stripePriceId, out string stripeAccount, out long unitAmountCents, out string stripeCurrency, out string paymentStatus);
+					chatUiModelBenchmarkSummary.RequiresPayment = requiresPayment;
+					chatUiModelBenchmarkSummary.StripePriceId = stripePriceId;
+					chatUiModelBenchmarkSummary.StripeAccount = stripeAccount;
+					chatUiModelBenchmarkSummary.StripeUnitAmountCents = unitAmountCents;
+					chatUiModelBenchmarkSummary.StripeCurrency = stripeCurrency;
+					chatUiModelBenchmarkSummary.PaymentStatus = paymentStatus;
 					ChatUiModelBenchmarkSummary benchmark = chatUiModelBenchmarkSummary;
 					if (benchmark.Rating <= 0 && benchmark.TokensPerSecond > 0.0)
 					{
@@ -7491,13 +7833,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			if (model != null && !string.IsNullOrWhiteSpace(model.id))
 			{
 				WebChatModelManagerLoadSettings settings = null;
-				bool modelEnabled = (TryGetModelManagerLoadSettings(model.id, out settings) && settings != null && settings.Enabled) || model.enabled;
+				bool settingsEnabled = TryGetModelManagerLoadSettings(model.id, out settings) && settings != null && settings.Enabled;
+				bool modelEnabled = settingsEnabled || model.web_chat_model_enabled || ChatUiModelStatusImpliesModelEnabled(model) || (model.enabled && !ChatUiModelPolicyLooksApplied(model));
 				bool dynamicLoadEnabled = WebChatModelLoadApiEnabled || modelEnabled;
-				string disabledReason = (dynamicLoadEnabled ? "" : "Enable this model in Workstation's Models tab, or enable the global web chat model-load API in Diagnostics.");
+				bool usable = model.isLoaded || dynamicLoadEnabled;
+				string disabledReason = (usable ? "" : "Enable this model in Workstation's Models tab, or enable the global web chat model-load API in Diagnostics.");
 				model.isAvailable = model.isAvailable || model.isLoaded || modelEnabled || WebChatModelLoadApiEnabled;
-				model.enabled = modelEnabled;
-				model.isEnabled = modelEnabled;
-				model.disabled = !modelEnabled && !WebChatModelLoadApiEnabled && !model.isLoaded;
+				model.enabled = usable;
+				model.isEnabled = usable;
+				model.disabled = !usable;
 				model.dynamicLoadEnabled = dynamicLoadEnabled;
 				model.serverDynamicLoadingEnabled = WebChatModelLoadApiEnabled;
 				model.web_chat_dynamic_load_enabled = dynamicLoadEnabled;
@@ -7511,13 +7855,40 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 	}
 
+	private static bool ChatUiModelPolicyLooksApplied(ChatUiModelInfo model)
+	{
+		if (model == null)
+		{
+			return false;
+		}
+		string status = model.status ?? "";
+		return model.web_chat_model_enabled ||
+			model.web_chat_dynamic_load_enabled ||
+			model.web_chat_model_load_api_enabled ||
+			model.serverDynamicLoadingEnabled ||
+			!string.IsNullOrWhiteSpace(model.web_chat_load_disabled_reason) ||
+			!string.IsNullOrWhiteSpace(model.loadDisabledReason) ||
+			string.Equals(status, "loaded", StringComparison.OrdinalIgnoreCase) ||
+			string.Equals(status, "loaded-dynamic", StringComparison.OrdinalIgnoreCase) ||
+			string.Equals(status, "dynamic-load-available", StringComparison.OrdinalIgnoreCase) ||
+			string.Equals(status, "available", StringComparison.OrdinalIgnoreCase) ||
+			string.Equals(status, "disabled", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static bool ChatUiModelStatusImpliesModelEnabled(ChatUiModelInfo model)
+	{
+		string status = model?.status ?? "";
+		return string.Equals(status, "enabled", StringComparison.OrdinalIgnoreCase) ||
+			string.Equals(status, "loaded-enabled", StringComparison.OrdinalIgnoreCase);
+	}
+
 	private static string BuildChatUiModelPolicyStatus(ChatUiModelInfo model)
 	{
 		if (model == null)
 		{
 			return "unknown";
 		}
-		if (model.isLoaded && model.enabled)
+		if (model.isLoaded && model.web_chat_model_enabled)
 		{
 			return "loaded-enabled";
 		}
@@ -7527,15 +7898,19 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (model.isLoaded)
 		{
-			return "loaded-disabled";
+			return "loaded";
 		}
-		if (model.enabled)
+		if (model.web_chat_model_enabled)
 		{
 			return "enabled";
 		}
-		if (model.serverDynamicLoadingEnabled)
+		if (model.dynamicLoadEnabled || model.serverDynamicLoadingEnabled)
 		{
 			return "dynamic-load-available";
+		}
+		if (model.enabled)
+		{
+			return "available";
 		}
 		return "disabled";
 	}
@@ -11547,23 +11922,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		try
 		{
 			LmVsProxyServerProfile profile = GetServerBrowserProfile();
-			if (!profile.RequiresPayment)
-			{
-				return JsonSerializer.Serialize(new
-				{
-					ok = true,
-					paymentRequired = false,
-					message = "This LmVsProxy host does not require Stripe checkout."
-				});
-			}
-			if (string.IsNullOrWhiteSpace(profile.StripePriceId) && profile.StripeUnitAmountCents <= 0)
-			{
-				return BuildJsonError(request, 503, "Service Unavailable", "This server requires payment, but no Stripe price or unit amount is configured.");
-			}
 			string customerEmail = "";
 			string clientReferenceId = "";
 			string successUrl = "";
 			string cancelUrl = "";
+			string modelId = "";
 			if (!string.IsNullOrWhiteSpace(request?.Body))
 			{
 				using JsonDocument document = JsonDocument.Parse(request.Body);
@@ -11574,7 +11937,30 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					clientReferenceId = ExtractStringProperty(root, "clientReferenceId") ?? "";
 					successUrl = ExtractStringProperty(root, "successUrl") ?? "";
 					cancelUrl = ExtractStringProperty(root, "cancelUrl") ?? "";
+					modelId = FirstNonEmpty(ExtractStringProperty(root, "modelId"), ExtractStringProperty(root, "model"), ExtractStringProperty(root, "selectedModel"));
 				}
+			}
+			List<ChatUiModelInfo> checkoutModels = BuildServerBrowserModelCapabilities(profile);
+			ChatUiModelInfo checkoutModel = FindServerBrowserCheckoutModel(checkoutModels, modelId);
+			bool modelRequiresPayment = checkoutModel != null &&
+				(checkoutModel.requiresPayment || !string.IsNullOrWhiteSpace(checkoutModel.stripePriceId) || checkoutModel.stripeUnitAmountCents > 0);
+			bool paymentRequired = profile.RequiresPayment || modelRequiresPayment;
+			if (!paymentRequired)
+			{
+				return JsonSerializer.Serialize(new
+				{
+					ok = true,
+					paymentRequired = false,
+					message = "This LmVsProxy host does not require Stripe checkout."
+				});
+			}
+			string checkoutStripePriceId = FirstNonEmpty(checkoutModel?.stripePriceId, profile.StripePriceId);
+			string checkoutStripeAccount = FirstNonEmpty(checkoutModel?.stripeAccount, profile.StripeAccount);
+			long checkoutUnitAmountCents = checkoutModel != null && checkoutModel.stripeUnitAmountCents > 0 ? checkoutModel.stripeUnitAmountCents : profile.StripeUnitAmountCents;
+			string checkoutCurrency = FirstNonEmpty(checkoutModel?.stripeCurrency, profile.StripeCurrency, "usd");
+			if (string.IsNullOrWhiteSpace(checkoutStripePriceId) && checkoutUnitAmountCents <= 0)
+			{
+				return BuildJsonError(request, 503, "Service Unavailable", "This server requires payment, but no Stripe price or unit amount is configured for the selected model.");
 			}
 			string connectHost = ResolveServerBrowserConnectHost(profile, request);
 			string publicUrl = BuildServerBrowserPublicUrl(connectHost, _chatServerPort);
@@ -11596,20 +11982,21 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				CancelUrl = cancelUrl,
 				CustomerEmail = (customerEmail ?? ""),
 				ClientReferenceId = clientReferenceId,
-				ConnectedAccountId = (profile.StripeAccount ?? ""),
+				ConnectedAccountId = (checkoutStripeAccount ?? ""),
 				IdempotencyKey = "lmvsproxy-shell-" + Guid.NewGuid().ToString("N")
 			};
 			checkoutRequest.Metadata["lmvsproxy_server"] = profile.ServerName ?? "";
 			checkoutRequest.Metadata["lmvsproxy_host"] = connectHost ?? "";
 			checkoutRequest.Metadata["lmvsproxy_client"] = clientReferenceId ?? "";
 			checkoutRequest.Metadata["lmvsproxy_cost_factor"] = profile.CostFactor.ToString("0.###", CultureInfo.InvariantCulture);
+			checkoutRequest.Metadata["lmvsproxy_model"] = checkoutModel?.id ?? modelId ?? "";
 			checkoutRequest.LineItems.Add(new JackLLMPaymentCheckoutLineItem
 			{
-				PriceId = (profile.StripePriceId ?? ""),
-				ProductName = (string.IsNullOrWhiteSpace(profile.ServerName) ? "LmVsProxy shell access" : (profile.ServerName + " LmVsProxy shell access")),
+				PriceId = (checkoutStripePriceId ?? ""),
+				ProductName = BuildServerBrowserCheckoutProductName(profile, checkoutModel),
 				Description = "Remote JackLLM/API relay access",
-				Currency = (string.IsNullOrWhiteSpace(profile.StripeCurrency) ? "usd" : profile.StripeCurrency),
-				UnitAmount = ((profile.StripeUnitAmountCents > 0) ? new long?(profile.StripeUnitAmountCents) : ((long?)null)),
+				Currency = (string.IsNullOrWhiteSpace(checkoutCurrency) ? "usd" : checkoutCurrency),
+				UnitAmount = ((checkoutUnitAmountCents > 0) ? new long?(checkoutUnitAmountCents) : ((long?)null)),
 				Quantity = 1L
 			});
 			JackLLMPaymentCheckoutSessionResult result = RequirePaymentProcessor("server browser checkout").CreateCheckoutSessionAsync(checkoutRequest, cancellationToken).GetAwaiter().GetResult();
@@ -11986,6 +12373,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			MergeChatModelInfos(models, runtimeModels.Where(IsAdvertisableWebChatModelInfo));
 		}
 		DecorateChatUiModelsWithPolicy(models);
+		ApplyServerBrowserPaymentDefaults(models, profile);
 		return models.Where(IsAdvertisableWebChatModelInfo).ToList();
 	}
 
@@ -12352,7 +12740,14 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					loadDisabledReason = info.loadDisabledReason,
 					supportsImageGeneration = info.supportsImageGeneration,
 					supportsAudioGeneration = info.supportsAudioGeneration,
-					supportsVideoGeneration = info.supportsVideoGeneration
+					supportsVideoGeneration = info.supportsVideoGeneration,
+					requiresPayment = info.requiresPayment,
+					stripePriceId = info.stripePriceId ?? "",
+					stripeAccount = info.stripeAccount ?? "",
+					stripeUnitAmountCents = Math.Max(0L, info.stripeUnitAmountCents),
+					stripeCurrency = FirstNonEmpty(info.stripeCurrency, "usd").ToLowerInvariant(),
+					paymentStatus = info.paymentStatus ?? "",
+					checkoutConfigured = info.checkoutConfigured || !string.IsNullOrWhiteSpace(info.stripePriceId) || info.stripeUnitAmountCents > 0
 				});
 			}
 			else
@@ -12375,8 +12770,106 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				existing.supportsImageGeneration = existing.supportsImageGeneration || info.supportsImageGeneration;
 				existing.supportsAudioGeneration = existing.supportsAudioGeneration || info.supportsAudioGeneration;
 				existing.supportsVideoGeneration = existing.supportsVideoGeneration || info.supportsVideoGeneration;
+				ApplyChatUiModelPaymentInfo(existing, info.requiresPayment, info.stripePriceId, info.stripeAccount, info.stripeUnitAmountCents, info.stripeCurrency, info.paymentStatus);
 			}
 		}
+	}
+
+	private static void ApplyChatUiModelPaymentInfo(ChatUiModelInfo model, bool requiresPayment, string stripePriceId, string stripeAccount, long unitAmountCents, string stripeCurrency, string paymentStatus)
+	{
+		if (model == null)
+		{
+			return;
+		}
+
+		model.requiresPayment = model.requiresPayment || requiresPayment;
+		model.stripePriceId = FirstNonEmpty(model.stripePriceId, stripePriceId);
+		model.stripeAccount = FirstNonEmpty(model.stripeAccount, stripeAccount);
+		model.stripeUnitAmountCents = Math.Max(model.stripeUnitAmountCents, Math.Max(0L, unitAmountCents));
+		model.stripeCurrency = FirstNonEmpty(model.stripeCurrency, stripeCurrency, "usd").ToLowerInvariant();
+		model.paymentStatus = FirstNonEmpty(model.paymentStatus, paymentStatus);
+		model.checkoutConfigured = model.checkoutConfigured || !string.IsNullOrWhiteSpace(model.stripePriceId) || model.stripeUnitAmountCents > 0;
+	}
+
+	private static void ApplyServerBrowserPaymentDefaults(List<ChatUiModelInfo> models, LmVsProxyServerProfile profile)
+	{
+		if (models == null || profile == null)
+		{
+			return;
+		}
+		bool hasServerCheckoutConfiguration = !string.IsNullOrWhiteSpace(profile.StripePriceId) || profile.StripeUnitAmountCents > 0;
+		bool requiresPayment = profile.RequiresPayment || hasServerCheckoutConfiguration;
+		if (!requiresPayment)
+		{
+			return;
+		}
+		foreach (ChatUiModelInfo model in models)
+		{
+			if (model == null)
+			{
+				continue;
+			}
+			bool hasModelCheckoutConfiguration = model.requiresPayment || !string.IsNullOrWhiteSpace(model.stripePriceId) || model.stripeUnitAmountCents > 0;
+			if (!hasServerCheckoutConfiguration && !hasModelCheckoutConfiguration)
+			{
+				continue;
+			}
+			model.requiresPayment = true;
+			if (hasServerCheckoutConfiguration && string.IsNullOrWhiteSpace(model.stripePriceId))
+			{
+				model.stripePriceId = profile.StripePriceId ?? "";
+			}
+			if (hasServerCheckoutConfiguration && string.IsNullOrWhiteSpace(model.stripeAccount))
+			{
+				model.stripeAccount = profile.StripeAccount ?? "";
+			}
+			if (hasServerCheckoutConfiguration && model.stripeUnitAmountCents <= 0)
+			{
+				model.stripeUnitAmountCents = Math.Max(0L, profile.StripeUnitAmountCents);
+			}
+			model.stripeCurrency = FirstNonEmpty(model.stripeCurrency, profile.StripeCurrency, "usd").ToLowerInvariant();
+			model.paymentStatus = FirstNonEmpty(model.paymentStatus, "payment-required");
+			model.checkoutConfigured = model.checkoutConfigured || !string.IsNullOrWhiteSpace(model.stripePriceId) || model.stripeUnitAmountCents > 0;
+		}
+	}
+
+	private static ChatUiModelInfo FindServerBrowserCheckoutModel(IEnumerable<ChatUiModelInfo> models, string modelId)
+	{
+		if (models == null)
+		{
+			return null;
+		}
+		List<ChatUiModelInfo> candidates = models.Where((ChatUiModelInfo model) => model != null && !string.IsNullOrWhiteSpace(model.id)).ToList();
+		if (!string.IsNullOrWhiteSpace(modelId))
+		{
+			foreach (ChatUiModelInfo model in candidates)
+			{
+				if (string.Equals(model.id, modelId.Trim(), StringComparison.OrdinalIgnoreCase))
+				{
+					return model;
+				}
+			}
+			HashSet<string> requestedCandidates = BuildModelIdentifierCandidateSet(new[] { modelId });
+			foreach (ChatUiModelInfo model in candidates)
+			{
+				if (ModelIdentifierMatchesAny(requestedCandidates, model.id))
+				{
+					return model;
+				}
+			}
+		}
+		return candidates.FirstOrDefault((ChatUiModelInfo model) => model.requiresPayment || !string.IsNullOrWhiteSpace(model.stripePriceId) || model.stripeUnitAmountCents > 0);
+	}
+
+	private static string BuildServerBrowserCheckoutProductName(LmVsProxyServerProfile profile, ChatUiModelInfo model)
+	{
+		string serverName = FirstNonEmpty(profile?.ServerName, "LmVsProxy");
+		string modelId = model?.id ?? "";
+		if (!string.IsNullOrWhiteSpace(modelId))
+		{
+			return serverName + " model access: " + modelId;
+		}
+		return serverName + " LmVsProxy shell access";
 	}
 
 	private IEnumerable<string> ExtractAdvertisedModelIds(string availableModels)
@@ -13662,7 +14155,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private ServerHardwareGpuMetric BuildServerHardwareGpuMetric(DateTimeOffset now)
 	{
-		if (_lastServerHardwareGpuMetric != null && _lastServerHardwareGpuSampleUtc != DateTimeOffset.MinValue && now - _lastServerHardwareGpuSampleUtc < TimeSpan.FromSeconds(4.0))
+		if (_lastServerHardwareGpuMetric != null && _lastServerHardwareGpuSampleUtc != DateTimeOffset.MinValue && now - _lastServerHardwareGpuSampleUtc < TimeSpan.FromSeconds(10.0))
 		{
 			return _lastServerHardwareGpuMetric;
 		}
@@ -16109,6 +16602,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					return;
 				}
 				string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: true, permissions, principal.UserName, ownerKey);
+				bool suppressStreamReasoning = ShouldSuppressChatUiReasoningForRequest(lmRequestJson);
 				await EnsureLmStudioForPromptAsync();
 				string url = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/v1/chat/completions";
 				StringBuilder completedContent = new StringBuilder();
@@ -16171,10 +16665,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 							}
 							if (!string.IsNullOrEmpty(delta.Content) || !string.IsNullOrEmpty(delta.Reasoning))
 							{
+								string reasoningDelta = suppressStreamReasoning ? "" : (delta.Reasoning ?? "");
 								completedContent.Append(delta.Content ?? "");
-								completedReasoning.Append(delta.Reasoning ?? "");
+								completedReasoning.Append(reasoningDelta);
 								pendingContentDelta.Append(delta.Content ?? "");
-								pendingReasoningDelta.Append(delta.Reasoning ?? "");
+								pendingReasoningDelta.Append(reasoningDelta);
 								if (!TryFlushChatUiDeltaBatch(output, ownerKey, pendingContentDelta, pendingReasoningDelta, usageMeter, ref lastDeltaFlushUtc, force: false, cancellationToken))
 								{
 									return;
@@ -16643,7 +17138,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			permissions = GetChatPermissions();
 		}
-		List<string> services = new List<string> { "Prompt Intellisense is available in the Web UI composer for completions, slash-command discovery, file/path suggestions, and parameter hints.", "Slash commands are UI commands the user can type in the composer, such as /help, /commands, /s <query>, /i <query>, /yt <query>, and /fs read <file>. You can suggest them to the user, but do not claim you executed a slash command unless it appears in the conversation or a tool result.", "Saved sessions and the session files area are available; uploaded, downloaded, and generated files should stay tied to the current session." };
+		List<string> services = new List<string> { "Prompt Intellisense is available in the Web UI composer for completions, file/path suggestions, and parameter hints.", "Saved sessions and the session files area are available; uploaded, downloaded, and generated files should stay tied to the current session." };
 		if (permissions != null && permissions.imageUploads)
 		{
 			services.Add("Image attachments are allowed for this session when the selected model supports images.");
@@ -16662,7 +17157,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (permissions != null && permissions.agentAccess)
 		{
-			services.Add("Agent mode can expose browser_open, browser_read_page, browser_click_link, and browser_find_text when browser tools are enabled for the selected model. The Web Chat UI mirrors browser navigation live and can provide screenshot plus HTML observations between tool rounds.");
+			services.Add("Agent mode can expose browser_open, browser_read_page, browser_click_link, browser_click, browser_type, browser_select, browser_press, and browser_find_text when browser tools are enabled for the selected model. The Web Chat UI mirrors browser navigation and DOM actions live and can provide screenshot plus HTML observations between tool rounds.");
 		}
 		if (permissions != null && permissions.agentAccess)
 		{
@@ -16851,7 +17346,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (string.Equals(service.id, "browser", StringComparison.OrdinalIgnoreCase))
 		{
-			return "[LmVsProxy service selection] The Web UI Service dropdown selected Browser Skill. Use the browser tools as a Codex-style live browser: open pages, inspect fetched HTML/text, follow links by index or text, and use the Web Chat's live browser observation snapshots. The user can see screenshots and the right-side browser panel while you work. Continue until the stated criteria is met; then put BROWSER_SKILL_DONE on its own line. Put BROWSER_SKILL_OBSERVE on its own line when another live screenshot/HTML observation is needed, or BROWSER_SKILL_USER when login, CAPTCHA, payment, consent, or another human step blocks progress.";
+			return "[LmVsProxy service selection] The Web UI Service dropdown selected Browser Skill. Use the browser tools as a Codex-style live browser: open pages, inspect fetched HTML/text, follow links by index or text, click/type/select/press controls, and use the Web Chat's live browser observation snapshots. The user can see screenshots and the right-side browser panel while you work. Continue until the stated criteria is met; then put BROWSER_SKILL_DONE on its own line. Put BROWSER_SKILL_OBSERVE on its own line when another live screenshot/HTML observation is needed, or BROWSER_SKILL_USER when login, CAPTCHA, payment, consent, or another human step blocks progress.";
 		}
 		if (string.Equals(service.id, "companion", StringComparison.OrdinalIgnoreCase))
 		{
@@ -17107,6 +17602,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
 		streamId = NormalizeChatUiStreamId(streamId);
 		sessionId = (string.IsNullOrWhiteSpace(sessionId) ? "" : EnsureChatUiSessionId(sessionId));
+		ActiveChatStreamCancellation activeToForceStop = null;
 		lock (_activeChatStreamCancellationLock)
 		{
 			string key = BuildActiveChatStreamCancellationKey(ownerKey, streamId);
@@ -17116,8 +17612,90 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				return true;
 			}
 			active.Cancellation.Cancel();
-			return true;
+			activeToForceStop = active;
 		}
+		if (activeToForceStop != null)
+		{
+			_ = Task.Run(() => ForceCancelActiveChatGenerationAsync(activeToForceStop));
+		}
+		return true;
+	}
+
+	private async Task ForceCancelActiveChatGenerationAsync(ActiveChatStreamCancellation active)
+	{
+		if (active == null)
+		{
+			return;
+		}
+		try
+		{
+			string jobId = (active.MediaJobId ?? "").Trim();
+			string toolCallId = (active.MediaToolCallId ?? "").Trim();
+			if (string.IsNullOrWhiteSpace(jobId) && !string.IsNullOrWhiteSpace(toolCallId))
+			{
+				DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5.0);
+				while (string.IsNullOrWhiteSpace(jobId) && DateTimeOffset.UtcNow < deadline)
+				{
+					try
+					{
+						using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2.0));
+						ChatUiMediaGenerationProgressSnapshot snapshot = await FetchChatUiMediaGenerationProgressAsync(toolCallId, timeout.Token).ConfigureAwait(continueOnCapturedContext: false);
+						jobId = (snapshot?.JobId ?? "").Trim();
+					}
+					catch (OperationCanceledException)
+					{
+					}
+					if (string.IsNullOrWhiteSpace(jobId))
+					{
+						await Task.Delay(TimeSpan.FromMilliseconds(300.0)).ConfigureAwait(continueOnCapturedContext: false);
+					}
+				}
+			}
+			if (string.IsNullOrWhiteSpace(jobId))
+			{
+				return;
+			}
+			using CancellationTokenSource cancelTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(6.0));
+			await CancelChatUiMediaGenerationJobAsync(jobId, cancelTimeout.Token).ConfigureAwait(continueOnCapturedContext: false);
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Chat UI] Media generation force-stop failed: " + ex.Message);
+		}
+	}
+
+	private async Task CancelChatUiMediaGenerationJobAsync(string jobId, CancellationToken cancellationToken)
+	{
+		jobId = (jobId ?? "").Trim();
+		if (string.IsNullOrWhiteSpace(jobId))
+		{
+			return;
+		}
+		string url = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/api/v1/tools/calls";
+		string payload = JsonSerializer.Serialize(new
+		{
+			approved = true,
+			tool_calls = new[]
+			{
+				new
+				{
+					id = "call_media_cancel_" + Guid.NewGuid().ToString("N").Substring(0, 12),
+					name = "jackonnx_jobs_cancel",
+					arguments = new { jobId }
+				}
+			}
+		});
+		using StringContent content = new StringContent(payload, Encoding.UTF8, "application/json");
+		using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url);
+		request.Content = content;
+		using HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+		string body = response.Content == null ? "" : await response.Content.ReadAsStringAsync().ConfigureAwait(continueOnCapturedContext: false);
+		if (response.IsSuccessStatusCode)
+		{
+			LogMessage("[Chat UI] Requested JackONNX media job cancellation for " + jobId + ".");
+			return;
+		}
+		LogMessage("[Chat UI] JackONNX media job cancellation returned " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " " + response.ReasonPhrase + ": " + TruncateForLog(body, 800));
 	}
 
 	private bool AddActiveChatStreamSteering(string ownerKey, string streamId, string sessionId, string steering)
@@ -17534,6 +18112,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 								mapped.supportsImageGeneration |= imageGeneration;
 								mapped.supportsAudioGeneration |= audioGeneration;
 								mapped.supportsVideoGeneration |= videoGeneration;
+								ReadModelPaymentInfo(property.Value, out bool mappedRequiresPayment, out string mappedStripePriceId, out string mappedStripeAccount, out long mappedUnitAmountCents, out string mappedStripeCurrency, out string mappedPaymentStatus);
+								ApplyChatUiModelPaymentInfo(mapped, mappedRequiresPayment, mappedStripePriceId, mappedStripeAccount, mappedUnitAmountCents, mappedStripeCurrency, mappedPaymentStatus);
 								MergeChatModelInfo(models, mapped);
 							}
 						}
@@ -17567,6 +18147,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			info.supportsImageGeneration = info.supportsImageGeneration || imageGeneration2;
 			info.supportsAudioGeneration = info.supportsAudioGeneration || audioGeneration2;
 			info.supportsVideoGeneration = info.supportsVideoGeneration || videoGeneration2;
+			ReadModelPaymentInfo(element, out bool requiresPayment, out string stripePriceId, out string stripeAccount, out long unitAmountCents, out string stripeCurrency, out string paymentStatus);
+			ApplyChatUiModelPaymentInfo(info, requiresPayment, stripePriceId, stripeAccount, unitAmountCents, stripeCurrency, paymentStatus);
 		}
 		else if (element.ValueKind == JsonValueKind.String)
 		{
@@ -17590,6 +18172,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			existing.supportsImageGeneration = existing.supportsImageGeneration || info.supportsImageGeneration;
 			existing.supportsAudioGeneration = existing.supportsAudioGeneration || info.supportsAudioGeneration;
 			existing.supportsVideoGeneration = existing.supportsVideoGeneration || info.supportsVideoGeneration;
+			ApplyChatUiModelPaymentInfo(existing, info.requiresPayment, info.stripePriceId, info.stripeAccount, info.stripeUnitAmountCents, info.stripeCurrency, info.paymentStatus);
 		}
 	}
 
@@ -18083,6 +18666,2056 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				error = ex.Message
 			});
 		}
+	}
+
+	private string HandlePersonaPlexConfigGetRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			PersonaPlexSettings settings = GetPersonaPlexSettings();
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				config = settings,
+				defaults = CreateDefaultPersonaPlexSettings(),
+				webSocketPath = "/api/personaplex/ws",
+				upstreamPath = "/api/chat"
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Config load failed: " + ex.Message);
+			return JsonSerializer.Serialize(new
+			{
+				ok = false,
+				error = ex.Message
+			});
+		}
+	}
+
+	private string HandlePersonaPlexConfigSaveRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			string body = request?.Body ?? "{}";
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+			JsonElement root = document.RootElement;
+			PersonaPlexSettings settings = GetPersonaPlexSettings();
+			if (root.TryGetProperty("config", out var configRoot) && configRoot.ValueKind == JsonValueKind.Object)
+			{
+				settings = PersonaPlexSettingsFromJson(configRoot, settings);
+			}
+			else
+			{
+				settings = PersonaPlexSettingsFromJson(root, settings);
+			}
+			SavePersonaPlexSettings(settings);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				config = GetPersonaPlexSettings()
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Config save failed: " + ex.Message);
+			return JsonSerializer.Serialize(new
+			{
+				ok = false,
+				error = ex.Message
+			});
+		}
+	}
+
+	private string HandlePersonaPlexStatusRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			PersonaPlexSettings settings = BuildPersonaPlexSettingsForRequest(request);
+			PersonaPlexBridgeEndpoint endpoint = BuildPersonaPlexBridgeEndpoint(settings);
+			if (!endpoint.Enabled)
+			{
+				return JsonSerializer.Serialize(new
+				{
+					ok = true,
+					ready = false,
+					status = "disabled",
+					target = endpoint.UpstreamUri?.ToString() ?? "",
+					error = "PersonaPlex is disabled.",
+					canInstall = CanManagePersonaPlexInstall(connection, request),
+					install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false),
+					installRequired = false
+				});
+			}
+			(bool ready, string status, string detail, long elapsedMs, string handshakeKind) = ProbePersonaPlexStatusAsync(endpoint.UpstreamUri, TimeSpan.FromMilliseconds(endpoint.ConnectTimeoutMs)).GetAwaiter().GetResult();
+			PersonaPlexInstallState install = BuildPersonaPlexInstallSnapshot(settings, ready);
+			RefreshPersonaPlexTokenValidationIfDue(install);
+			install = BuildPersonaPlexInstallSnapshot(settings, ready);
+			if (!ready &&
+				IsDefaultLocalPersonaPlexServer(settings.serverUrl) &&
+				install.localInstalled &&
+				install.hfTokenAvailable &&
+				!install.hfTokenRejected &&
+				!install.serverRunning)
+			{
+				status = "stopped";
+				detail = "Voice model is installed. Press Start Voice to load it.";
+			}
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				ready = ready,
+				status = status,
+				target = endpoint.UpstreamUri.ToString(),
+				handshake = handshakeKind,
+				elapsedMs = elapsedMs,
+				error = ready ? "" : detail,
+				canInstall = CanManagePersonaPlexInstall(connection, request),
+				install = install,
+				installRequired = ShouldOfferPersonaPlexInstall(settings, ready, install)
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Status probe failed: " + ex.Message);
+			return JsonSerializer.Serialize(new
+			{
+				ok = false,
+				ready = false,
+				status = "error",
+				error = ex.Message
+			});
+		}
+	}
+
+	private string HandlePersonaPlexStartRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			if (!IsLocalAdmin(connection, request))
+			{
+				return BuildLocalAdminOnlyJsonError(request, "Starting the local Voice Mode model is only available from this workstation.");
+			}
+			PersonaPlexSettings settings = BuildPersonaPlexSettingsForRequest(request);
+			PersonaPlexBridgeEndpoint endpoint = BuildPersonaPlexBridgeEndpoint(settings);
+			if (!endpoint.Enabled)
+			{
+				return BuildJsonError(request, 409, "Conflict", "Voice Mode is disabled.");
+			}
+			if (!IsDefaultLocalPersonaPlexServer(settings.serverUrl))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "JackLLM can only start the managed local Voice Mode model.");
+			}
+			PersonaPlexInstallState install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false);
+			if (!install.localInstalled)
+			{
+				return BuildJsonError(request, 409, "Conflict", "Install Voice Mode from JackLLM Workstation before starting it.");
+			}
+			if (!install.hfTokenAvailable)
+			{
+				return BuildJsonError(request, 409, "Conflict", "Add the NVIDIA PersonaPlex Hugging Face token in JackLLM Workstation before starting Voice Mode.");
+			}
+			string hfToken = ResolvePersonaPlexHfToken("");
+			try
+			{
+				VerifyPersonaPlexHuggingFaceAccess(GetPersonaPlexVenvPythonPath(), GetPersonaPlexRepositoryPath(), hfToken, CancellationToken.None);
+			}
+			catch (Exception ex)
+			{
+				MarkPersonaPlexTokenRejected(ex.Message);
+				StopPersonaPlexServerProcess();
+				return BuildJsonError(request, 409, "Conflict", ex.Message);
+			}
+
+			(bool ready, string status, string detail, long elapsedMs, string handshakeKind) = ProbePersonaPlexStatusAsync(endpoint.UpstreamUri, TimeSpan.FromMilliseconds(endpoint.ConnectTimeoutMs)).GetAwaiter().GetResult();
+			if (!ready && !install.serverRunning)
+			{
+				if (!CanAutoStartPersonaPlexServerProcess())
+				{
+					return BuildJsonError(request, 409, "Conflict", FirstNonEmpty(GetPersonaPlexRecentServerExitMessage(), "Voice model is still starting or recently exited."));
+				}
+				bool cpuOffload = ReadPersonaPlexStartCpuOffload(request);
+				UnloadLoadedWebChatRuntimeModelsForPersonaPlexAsync().GetAwaiter().GetResult();
+				StartPersonaPlexServerProcess(hfToken, cpuOffload);
+				status = "loading";
+				detail = cpuOffload ? "Voice model is starting with CPU offload." : "Voice model is starting.";
+				install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false);
+			}
+
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				ready,
+				status = ready ? "ready" : status,
+				target = endpoint.UpstreamUri.ToString(),
+				handshake = handshakeKind,
+				elapsedMs,
+				error = ready ? "" : detail,
+				install,
+				installRequired = ShouldOfferPersonaPlexInstall(settings, ready, install)
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Start failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandlePersonaPlexStopRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			if (!IsLocalAdmin(connection, request))
+			{
+				return BuildLocalAdminOnlyJsonError(request, "Stopping the local Voice Mode model is only available from this workstation.");
+			}
+			StopPersonaPlexServerProcess();
+			PersonaPlexSettings settings = BuildPersonaPlexSettingsForRequest(request);
+			PersonaPlexInstallState install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				ready = false,
+				status = "stopped",
+				error = "",
+				install,
+				installRequired = ShouldOfferPersonaPlexInstall(settings, serverReady: false, install)
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Stop failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private bool ReadPersonaPlexStartCpuOffload(HttpRequest request)
+	{
+		try
+		{
+			if (string.IsNullOrWhiteSpace(request?.Body))
+			{
+				return false;
+			}
+			using JsonDocument document = JsonDocument.Parse(request.Body);
+			if (document.RootElement.ValueKind != JsonValueKind.Object ||
+				!document.RootElement.TryGetProperty("cpuOffload", out JsonElement element))
+			{
+				return false;
+			}
+			return ReadJsonBool(element, fallback: false);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private string HandlePersonaPlexInstallStatusRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			AddWebAuthCorsHeaders(request);
+			PersonaPlexSettings settings = BuildPersonaPlexSettingsForRequest(request);
+			PersonaPlexInstallState install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				canInstall = CanManagePersonaPlexInstall(connection, request),
+				install,
+				installRequired = ShouldOfferPersonaPlexInstall(settings, serverReady: false, install)
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Install status failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandlePersonaPlexInstallRequest(NetworkConnection connection, HttpRequest request)
+	{
+		AddWebAuthCorsHeaders(request);
+		try
+		{
+			if (!CanManagePersonaPlexInstall(connection, request))
+			{
+				return BuildDatabaseAdminOnlyJsonError(request, "Installing PersonaPlex is only available from the local JackLLM Workstation app.");
+			}
+			string body = request?.Body ?? "{}";
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+			JsonElement root = document.RootElement;
+			string action = ExtractStringProperty(root, "action") ?? "install";
+			if (string.Equals(action, "status", StringComparison.OrdinalIgnoreCase))
+			{
+				return HandlePersonaPlexInstallStatusRequest(connection, request);
+			}
+			bool force = root.TryGetProperty("force", out var forceElement) && ReadJsonBool(forceElement, fallback: false);
+			bool startAfterInstall = root.TryGetProperty("startAfterInstall", out var startAfterInstallElement) && ReadJsonBool(startAfterInstallElement, fallback: false);
+			bool cpuOffload = root.TryGetProperty("cpuOffload", out var cpuOffloadElement) && ReadJsonBool(cpuOffloadElement, fallback: false);
+			string hfToken = FirstNonEmpty(
+				ExtractStringProperty(root, "hfToken"),
+				ExtractStringProperty(root, "huggingFaceToken"),
+				ExtractStringProperty(root, "token"));
+			PersonaPlexInstallState install = QueuePersonaPlexInstall(force, startAfterInstall, cpuOffload, hfToken);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				queued = install.status.Equals("queued", StringComparison.OrdinalIgnoreCase) || install.status.Equals("running", StringComparison.OrdinalIgnoreCase),
+				install
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Install request failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandlePersonaPlexTokenRequest(NetworkConnection connection, HttpRequest request)
+	{
+		AddWebAuthCorsHeaders(request);
+		try
+		{
+			if (!CanManagePersonaPlexInstall(connection, request))
+			{
+				return BuildDatabaseAdminOnlyJsonError(request, "Saving the PersonaPlex model access token is only available from the local JackLLM Workstation app.");
+			}
+			string body = request?.Body ?? "{}";
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+			JsonElement root = document.RootElement;
+			string action = ExtractStringProperty(root, "action") ?? "save";
+			string token = "";
+			bool savedToken = false;
+			if (string.Equals(action, "clear", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(action, "delete", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(action, "remove", StringComparison.OrdinalIgnoreCase))
+			{
+				ClearPersonaPlexHfToken();
+			}
+			else
+			{
+				token = FirstNonEmpty(
+					ExtractStringProperty(root, "hfToken"),
+					ExtractStringProperty(root, "huggingFaceToken"),
+					ExtractStringProperty(root, "token"));
+				SavePersonaPlexHfToken(token);
+				savedToken = true;
+			}
+
+			if (savedToken && IsPersonaPlexLocalInstalled())
+			{
+				try
+				{
+					VerifyPersonaPlexHuggingFaceAccess(GetPersonaPlexVenvPythonPath(), GetPersonaPlexRepositoryPath(), ResolvePersonaPlexHfToken(token), CancellationToken.None);
+					UpdatePersonaPlexInstallState("installed", "PersonaPlex is installed and the Hugging Face model token was verified.", 100, state =>
+					{
+						state.localInstalled = true;
+						state.hfTokenAvailable = true;
+						state.needsHuggingFaceToken = false;
+						state.hfTokenValidated = true;
+						state.hfTokenRejected = false;
+						state.hfTokenError = "";
+					});
+				}
+				catch (Exception ex)
+				{
+					MarkPersonaPlexTokenRejected(ex.Message);
+					return BuildJsonError(request, 400, "Bad Request", ex.Message);
+				}
+			}
+
+			bool startAfterSave = root.TryGetProperty("startAfterSave", out var startAfterSaveElement) &&
+				ReadJsonBool(startAfterSaveElement, fallback: false);
+			if (startAfterSave && IsPersonaPlexLocalInstalled() && HasPersonaPlexHfToken(""))
+			{
+				StartPersonaPlexServerProcess("", cpuOffload: false);
+			}
+
+			PersonaPlexSettings settings = BuildPersonaPlexSettingsForRequest(request);
+			PersonaPlexInstallState install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				tokenAvailable = install.hfTokenAvailable,
+				install,
+				installRequired = ShouldOfferPersonaPlexInstall(settings, serverReady: false, install)
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[PersonaPlex] Token update failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private bool CanManagePersonaPlexInstall(NetworkConnection connection, HttpRequest request)
+	{
+		return IsPersonaPlexWorkstationInstallRequest(connection, request);
+	}
+
+	private bool IsPersonaPlexWorkstationInstallRequest(NetworkConnection connection, HttpRequest request)
+	{
+		if (!IsLocalAdmin(connection, request))
+		{
+			return false;
+		}
+		string token = FirstNonEmpty(
+			GetRequestHeader(request, "X-JackLLM-Workstation-Install"),
+			GetRequestHeader(request, "X-JackLLM-PersonaPlex-Install"));
+		return !string.IsNullOrWhiteSpace(PersonaPlexInstallToken) &&
+			ConstantTimeStringEquals(token, PersonaPlexInstallToken);
+	}
+
+	private static bool ConstantTimeStringEquals(string left, string right)
+	{
+		if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right))
+		{
+			return false;
+		}
+		byte[] leftBytes = Encoding.UTF8.GetBytes(left);
+		byte[] rightBytes = Encoding.UTF8.GetBytes(right);
+		int diff = leftBytes.Length ^ rightBytes.Length;
+		int max = Math.Max(leftBytes.Length, rightBytes.Length);
+		for (int i = 0; i < max; i++)
+		{
+			byte l = (byte)((i < leftBytes.Length) ? leftBytes[i] : 0);
+			byte r = (byte)((i < rightBytes.Length) ? rightBytes[i] : 0);
+			diff |= l ^ r;
+		}
+		return diff == 0;
+	}
+
+	private PersonaPlexInstallState QueuePersonaPlexInstall(bool force, bool startAfterInstall, bool cpuOffload, string hfToken)
+	{
+		PersonaPlexInstallState state;
+		lock (_personaPlexInstallLock)
+		{
+			state = RefreshPersonaPlexInstallStateLocked(serverReady: false);
+			if (IsPersonaPlexInstallActive(state.status))
+			{
+				state.message = "PersonaPlex install is already queued.";
+				state.updatedUtc = DateTimeOffset.UtcNow.ToString("O");
+				return ClonePersonaPlexInstallState(state);
+			}
+			state = new PersonaPlexInstallState
+			{
+				id = Guid.NewGuid().ToString("N"),
+				status = "queued",
+				message = "PersonaPlex download queued for this workstation.",
+				progress = 1,
+				installRoot = GetPersonaPlexInstallRoot(),
+				repositoryPath = GetPersonaPlexRepositoryPath(),
+				pythonExecutable = GetPersonaPlexVenvPythonPath(),
+				logPath = GetPersonaPlexInstallLogPath(),
+				startedUtc = DateTimeOffset.UtcNow.ToString("O"),
+				updatedUtc = DateTimeOffset.UtcNow.ToString("O"),
+				hfTokenAvailable = HasPersonaPlexHfToken(hfToken)
+			};
+			state.localInstalled = IsPersonaPlexLocalInstalled();
+			state.serverRunning = IsPersonaPlexServerProcessRunning();
+			state.needsHuggingFaceToken = !state.hfTokenAvailable;
+			_personaPlexInstallState = state;
+		}
+		var options = new PersonaPlexInstallOptions
+		{
+			Force = force,
+			StartAfterInstall = startAfterInstall,
+			CpuOffload = cpuOffload,
+			HuggingFaceToken = hfToken ?? ""
+		};
+		Task.Run(() => RunPersonaPlexInstallQueueAsync(options));
+		return ClonePersonaPlexInstallState(state);
+	}
+
+	private async Task RunPersonaPlexInstallQueueAsync(PersonaPlexInstallOptions options)
+	{
+		options = options ?? new PersonaPlexInstallOptions();
+		using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromHours(6));
+		try
+		{
+			StopPersonaPlexServerProcess();
+			UpdatePersonaPlexInstallState("running", "Downloading NVIDIA PersonaPlex.", 8);
+			string root = GetPersonaPlexInstallRoot();
+			string repo = GetPersonaPlexRepositoryPath();
+			Directory.CreateDirectory(root);
+			if (!IsPersonaPlexLocalInstalled() || options.Force)
+			{
+				await DownloadPersonaPlexRepositoryAsync(root, repo, options.Force, cts.Token).ConfigureAwait(false);
+				UpdatePersonaPlexInstallState("running", "Preparing PersonaPlex Python environment.", 40);
+				string python = ResolvePersonaPlexBootstrapPython();
+				if (string.IsNullOrWhiteSpace(python))
+				{
+					throw new InvalidOperationException("Python was not found. Install Python 3.12 or set JACKLLM_PERSONAPLEX_PYTHON to the Python executable.");
+				}
+				string venv = GetPersonaPlexVenvPath();
+				if (options.Force && Directory.Exists(venv))
+				{
+					EnsurePersonaPlexManagedPath(root, venv);
+					Directory.Delete(venv, recursive: true);
+				}
+				if (!File.Exists(GetPersonaPlexVenvPythonPath()))
+				{
+					RunPersonaPlexCommand(python, new[] { "-m", "venv", venv }, root, TimeSpan.FromMinutes(10), cts.Token);
+				}
+				string venvPython = GetPersonaPlexVenvPythonPath();
+				UpdatePersonaPlexInstallState("running", "Installing PersonaPlex Python package.", 62, state => state.pythonExecutable = venvPython);
+				RunPersonaPlexCommand(venvPython, new[] { "-m", "pip", "install", "--upgrade", "pip" }, repo, TimeSpan.FromMinutes(20), cts.Token);
+				RunPersonaPlexCommand(venvPython, new[] { "-m", "pip", "install", Path.Combine(repo, "moshi") }, repo, TimeSpan.FromHours(2), cts.Token);
+				if (PersonaPlexNeedsCudaTorchRepair(options.CpuOffload))
+				{
+					UpdatePersonaPlexInstallState("running", "Configuring PersonaPlex for NVIDIA CUDA.", 78);
+					InstallPersonaPlexCudaTorch(venvPython, repo, cts.Token);
+				}
+				WritePersonaPlexInstallMarker();
+			}
+			else if (PersonaPlexNeedsCudaTorchRepair(options.CpuOffload))
+			{
+				UpdatePersonaPlexInstallState("running", "Repairing PersonaPlex NVIDIA CUDA support.", 78);
+				InstallPersonaPlexCudaTorch(GetPersonaPlexVenvPythonPath(), repo, cts.Token);
+				WritePersonaPlexInstallMarker();
+			}
+			UpdatePersonaPlexInstallState("running", "PersonaPlex installed. Checking Hugging Face token.", 88, state =>
+			{
+				state.localInstalled = true;
+				state.hfTokenAvailable = HasPersonaPlexHfToken(options.HuggingFaceToken);
+				state.needsHuggingFaceToken = !state.hfTokenAvailable;
+			});
+			string effectiveToken = ResolvePersonaPlexHfToken(options.HuggingFaceToken);
+			bool tokenAvailable = !string.IsNullOrWhiteSpace(effectiveToken);
+			if (tokenAvailable)
+			{
+				UpdatePersonaPlexInstallState("running", "Verifying NVIDIA PersonaPlex Hugging Face model access.", 92);
+				VerifyPersonaPlexHuggingFaceAccess(GetPersonaPlexVenvPythonPath(), repo, effectiveToken, cts.Token);
+			}
+			if (options.StartAfterInstall && tokenAvailable)
+			{
+				StartPersonaPlexServerProcess(effectiveToken, options.CpuOffload);
+				UpdatePersonaPlexInstallState("installed", "PersonaPlex is installed and starting on ws://localhost:8998.", 100, state =>
+				{
+					state.localInstalled = true;
+					state.serverRunning = true;
+					state.needsHuggingFaceToken = false;
+					state.hfTokenValidated = true;
+					state.hfTokenRejected = false;
+					state.hfTokenError = "";
+				});
+			}
+			else
+			{
+				UpdatePersonaPlexInstallState("installed", tokenAvailable
+					? "PersonaPlex is installed and the Hugging Face model token was verified. Press Start Voice to load it."
+					: "PersonaPlex is installed. Set HF_TOKEN after accepting the NVIDIA PersonaPlex model license, then start the server.", 100, state =>
+				{
+					state.localInstalled = true;
+					state.serverRunning = IsPersonaPlexServerProcessRunning();
+					state.hfTokenAvailable = tokenAvailable;
+					state.needsHuggingFaceToken = !tokenAvailable;
+					state.hfTokenValidated = tokenAvailable;
+					state.hfTokenRejected = false;
+					state.hfTokenError = "";
+				});
+			}
+		}
+		catch (Exception ex)
+		{
+			StopPersonaPlexServerProcess();
+			UpdatePersonaPlexInstallState("failed", ex.Message, 100, state =>
+			{
+				state.localInstalled = IsPersonaPlexLocalInstalled();
+				state.serverRunning = IsPersonaPlexServerProcessRunning();
+				if (IsPersonaPlexHuggingFaceAccessError(ex.Message))
+				{
+					state.hfTokenRejected = true;
+					state.hfTokenValidated = false;
+					state.needsHuggingFaceToken = true;
+					state.hfTokenError = ex.Message;
+				}
+			});
+			LogMessage("[PersonaPlex] Install failed: " + ex.Message);
+		}
+	}
+
+	private async Task DownloadPersonaPlexRepositoryAsync(string root, string repo, bool force, CancellationToken cancellationToken)
+	{
+		if (Directory.Exists(repo) && !force)
+		{
+			UpdatePersonaPlexInstallState("running", "Using existing PersonaPlex source checkout.", 26);
+			return;
+		}
+		string zipPath = Path.Combine(root, "personaplex-main.zip");
+		string extractRoot = Path.Combine(root, "download");
+		EnsurePersonaPlexManagedPath(root, zipPath);
+		EnsurePersonaPlexManagedPath(root, extractRoot);
+		if (Directory.Exists(extractRoot))
+		{
+			Directory.Delete(extractRoot, recursive: true);
+		}
+		Directory.CreateDirectory(extractRoot);
+		using (System.Net.Http.HttpClient client = new System.Net.Http.HttpClient())
+		using (HttpResponseMessage response = await client.GetAsync("https://github.com/NVIDIA/personaplex/archive/refs/heads/main.zip", cancellationToken).ConfigureAwait(false))
+		{
+			response.EnsureSuccessStatusCode();
+			using Stream input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+			using FileStream output = File.Create(zipPath);
+			await input.CopyToAsync(output, 81920, cancellationToken).ConfigureAwait(false);
+		}
+		UpdatePersonaPlexInstallState("running", "Extracting PersonaPlex source.", 30);
+		ZipFile.ExtractToDirectory(zipPath, extractRoot);
+		string source = Directory.GetDirectories(extractRoot)
+			.FirstOrDefault(path => Path.GetFileName(path).StartsWith("personaplex-", StringComparison.OrdinalIgnoreCase));
+		if (string.IsNullOrWhiteSpace(source))
+		{
+			throw new InvalidOperationException("PersonaPlex archive did not contain the expected source folder.");
+		}
+		if (Directory.Exists(repo))
+		{
+			EnsurePersonaPlexManagedPath(root, repo);
+			Directory.Delete(repo, recursive: true);
+		}
+		CopyDirectoryRecursive(source, repo);
+		try
+		{
+			File.Delete(zipPath);
+			Directory.Delete(extractRoot, recursive: true);
+		}
+		catch
+		{
+		}
+	}
+
+	private bool PersonaPlexNeedsCudaTorchRepair(bool cpuOffload)
+	{
+		if (cpuOffload || !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+		{
+			return false;
+		}
+		if (string.IsNullOrWhiteSpace(DetectPersonaPlexCudaVisibleDevices()))
+		{
+			return false;
+		}
+		string python = GetPersonaPlexVenvPythonPath();
+		if (!File.Exists(python))
+		{
+			return false;
+		}
+		try
+		{
+			using Process process = new Process();
+			process.StartInfo = new ProcessStartInfo
+			{
+				FileName = python,
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			process.StartInfo.ArgumentList.Add("-c");
+			process.StartInfo.ArgumentList.Add("import torch, sys; sys.exit(0 if torch.cuda.is_available() else 2)");
+			if (!process.Start())
+			{
+				return true;
+			}
+			if (!process.WaitForExit(20000))
+			{
+				TryKillProcess(process);
+				return true;
+			}
+			return process.ExitCode != 0;
+		}
+		catch
+		{
+			return true;
+		}
+	}
+
+	private void InstallPersonaPlexCudaTorch(string venvPython, string repo, CancellationToken cancellationToken)
+	{
+		string torchIndexUrl = FirstNonEmpty(
+			Environment.GetEnvironmentVariable("JACKLLM_PERSONAPLEX_TORCH_INDEX_URL"),
+			"https://download.pytorch.org/whl/cu121");
+		string torchPackagesRaw = FirstNonEmpty(
+			Environment.GetEnvironmentVariable("JACKLLM_PERSONAPLEX_TORCH_PACKAGES"),
+			"torch==2.4.1;torchvision==0.19.1;torchaudio==2.4.1");
+		string[] torchPackages = torchPackagesRaw
+			.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries)
+			.Select(package => package.Trim())
+			.Where(package => !string.IsNullOrWhiteSpace(package))
+			.ToArray();
+		if (torchPackages.Length == 0)
+		{
+			return;
+		}
+
+		List<string> torchArgs = new List<string> { "-m", "pip", "install", "--upgrade", "--force-reinstall" };
+		torchArgs.AddRange(torchPackages);
+		if (!string.IsNullOrWhiteSpace(torchIndexUrl))
+		{
+			torchArgs.Add("--index-url");
+			torchArgs.Add(torchIndexUrl);
+		}
+		RunPersonaPlexCommand(venvPython, torchArgs, repo, TimeSpan.FromHours(2), cancellationToken);
+		RunPersonaPlexCommand(venvPython, new[] { "-m", "pip", "install", "--upgrade", "--force-reinstall", "numpy>=1.26,<2.2" }, repo, TimeSpan.FromMinutes(20), cancellationToken);
+		RunPersonaPlexCommand(venvPython, new[] { "-m", "pip", "check" }, repo, TimeSpan.FromMinutes(5), cancellationToken);
+	}
+
+	private void StartPersonaPlexServerProcess(string hfToken, bool cpuOffload)
+	{
+		lock (_personaPlexInstallLock)
+		{
+			if (IsPersonaPlexServerProcessRunning())
+			{
+				return;
+			}
+			string python = GetPersonaPlexVenvPythonPath();
+			if (!File.Exists(python))
+			{
+				throw new FileNotFoundException("PersonaPlex Python environment was not found.", python);
+			}
+			var startInfo = new ProcessStartInfo
+			{
+				FileName = python,
+				WorkingDirectory = GetPersonaPlexRepositoryPath(),
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			startInfo.ArgumentList.Add("-m");
+			startInfo.ArgumentList.Add("moshi.server");
+			startInfo.ArgumentList.Add("--host");
+			startInfo.ArgumentList.Add("0.0.0.0");
+			startInfo.ArgumentList.Add("--port");
+			startInfo.ArgumentList.Add("8998");
+			if (cpuOffload)
+			{
+				startInfo.ArgumentList.Add("--cpu-offload");
+			}
+			string token = FirstNonEmpty(
+				NormalizePersonaPlexHfToken(hfToken),
+				NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HF_TOKEN")),
+				NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HUGGING_FACE_HUB_TOKEN")),
+				NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HUGGINGFACE_HUB_TOKEN")),
+				ReadPersonaPlexHfToken(),
+				ReadPersonaPlexModelConfigHfToken());
+			if (!string.IsNullOrWhiteSpace(token))
+			{
+				startInfo.EnvironmentVariables["HF_TOKEN"] = token;
+				startInfo.EnvironmentVariables["HUGGING_FACE_HUB_TOKEN"] = token;
+				startInfo.EnvironmentVariables["HUGGINGFACE_HUB_TOKEN"] = token;
+			}
+			startInfo.EnvironmentVariables["NO_TORCH_COMPILE"] = "1";
+			startInfo.EnvironmentVariables["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1";
+			string cudaVisibleDevices = DetectPersonaPlexCudaVisibleDevices();
+			if (!string.IsNullOrWhiteSpace(cudaVisibleDevices))
+			{
+				startInfo.EnvironmentVariables["CUDA_VISIBLE_DEVICES"] = cudaVisibleDevices;
+				startInfo.EnvironmentVariables["NVIDIA_VISIBLE_DEVICES"] = "all";
+				WritePersonaPlexInstallLog("Configured PersonaPlex CUDA devices: " + cudaVisibleDevices);
+			}
+			Directory.CreateDirectory(GetPersonaPlexInstallRoot());
+			_personaPlexLastServerStartAttemptUtc = DateTimeOffset.UtcNow;
+			_personaPlexLastServerExitMessage = "";
+			_personaPlexLastServerErrorSummary = "";
+			Process serverProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+			_personaPlexServerProcess = serverProcess;
+			serverProcess.OutputDataReceived += (_, eventArgs) =>
+			{
+				if (!string.IsNullOrWhiteSpace(eventArgs.Data))
+				{
+					WritePersonaPlexInstallLog("[server] " + eventArgs.Data);
+				}
+			};
+			serverProcess.ErrorDataReceived += (_, eventArgs) =>
+			{
+				if (!string.IsNullOrWhiteSpace(eventArgs.Data))
+				{
+					WritePersonaPlexInstallLog("[server] " + eventArgs.Data);
+					string summary = SummarizePersonaPlexServerError(eventArgs.Data);
+					if (!string.IsNullOrWhiteSpace(summary))
+					{
+						lock (_personaPlexInstallLock)
+						{
+							_personaPlexLastServerErrorSummary = summary;
+						}
+						if (IsPersonaPlexHuggingFaceAccessError(summary))
+						{
+							Task.Run(() => MarkPersonaPlexTokenRejected(summary));
+						}
+					}
+				}
+			};
+			serverProcess.Exited += (_, _) =>
+			{
+				HandlePersonaPlexServerProcessExited(serverProcess);
+			};
+			if (!serverProcess.Start())
+			{
+				throw new InvalidOperationException("PersonaPlex server process did not start.");
+			}
+			serverProcess.BeginOutputReadLine();
+			serverProcess.BeginErrorReadLine();
+		}
+	}
+
+	private void StopPersonaPlexServerProcess()
+	{
+		Process process = null;
+		lock (_personaPlexInstallLock)
+		{
+			process = _personaPlexServerProcess;
+			_personaPlexServerProcess = null;
+			_personaPlexLastServerExitUtc = DateTimeOffset.UtcNow;
+			_personaPlexLastServerExitMessage = "Voice model process stopped.";
+			_personaPlexLastServerErrorSummary = "";
+			if (_personaPlexInstallState != null)
+			{
+				_personaPlexInstallState.serverRunning = false;
+				_personaPlexInstallState.updatedUtc = DateTimeOffset.UtcNow.ToString("O");
+			}
+		}
+		if (process == null)
+		{
+			TryKillPersonaPlexProcessesByPort();
+			return;
+		}
+		try
+		{
+			if (!process.HasExited)
+			{
+				TryKillPersonaPlexProcessTree(process);
+				if (!process.HasExited)
+				{
+					process.Kill();
+				}
+				process.WaitForExit(5000);
+			}
+		}
+		catch (Exception ex)
+		{
+			WritePersonaPlexInstallLog("[server] Voice model stop failed: " + ex.Message);
+		}
+		finally
+		{
+			try { process.Dispose(); } catch { }
+			TryKillPersonaPlexProcessesByPort();
+		}
+	}
+
+	private static void TryKillPersonaPlexProcessTree(Process process)
+	{
+		if (process == null)
+		{
+			return;
+		}
+		try
+		{
+			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				return;
+			}
+			ProcessStartInfo startInfo = new ProcessStartInfo
+			{
+				FileName = "taskkill",
+				Arguments = "/PID " + process.Id.ToString(CultureInfo.InvariantCulture) + " /T /F",
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			using (Process killer = Process.Start(startInfo))
+			{
+				killer?.WaitForExit(5000);
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	private static void TryKillPersonaPlexProcessesByPort()
+	{
+		try
+		{
+			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				return;
+			}
+			var startInfo = new ProcessStartInfo
+			{
+				FileName = "netstat",
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			startInfo.ArgumentList.Add("-ano");
+			startInfo.ArgumentList.Add("-p");
+			startInfo.ArgumentList.Add("tcp");
+			using Process netstat = new Process { StartInfo = startInfo };
+			if (!netstat.Start())
+			{
+				return;
+			}
+			string output = netstat.StandardOutput.ReadToEnd();
+			if (!netstat.WaitForExit(5000))
+			{
+				TryKillProcess(netstat);
+				return;
+			}
+			foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+			{
+				if (line.IndexOf(":8998", StringComparison.OrdinalIgnoreCase) < 0)
+				{
+					continue;
+				}
+				string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+				if (parts.Length < 5 || !int.TryParse(parts[parts.Length - 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int pid))
+				{
+					continue;
+				}
+				if (pid <= 0 || pid == Process.GetCurrentProcess().Id)
+				{
+					continue;
+				}
+				try
+				{
+					using Process candidate = Process.GetProcessById(pid);
+					if ((candidate.ProcessName ?? "").IndexOf("python", StringComparison.OrdinalIgnoreCase) < 0)
+					{
+						continue;
+					}
+					TryKillPersonaPlexProcessTree(candidate);
+					if (!candidate.HasExited)
+					{
+						candidate.Kill();
+					}
+				}
+				catch
+				{
+				}
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	private void HandlePersonaPlexServerProcessExited(Process process)
+	{
+		string message = "Voice model process exited.";
+		try
+		{
+			message = "Voice model process exited with code " + process.ExitCode.ToString(CultureInfo.InvariantCulture) + ".";
+		}
+		catch
+		{
+		}
+		lock (_personaPlexInstallLock)
+		{
+			message = FirstNonEmpty(_personaPlexLastServerErrorSummary, message);
+			_personaPlexLastServerExitUtc = DateTimeOffset.UtcNow;
+			_personaPlexLastServerExitMessage = message;
+			_personaPlexLastServerErrorSummary = "";
+			if (ReferenceEquals(_personaPlexServerProcess, process))
+			{
+				_personaPlexServerProcess = null;
+			}
+			if (_personaPlexInstallState != null)
+			{
+				_personaPlexInstallState.serverRunning = false;
+				_personaPlexInstallState.updatedUtc = DateTimeOffset.UtcNow.ToString("O");
+				if (IsPersonaPlexHuggingFaceAccessError(message))
+				{
+					_personaPlexInstallState.status = "failed";
+					_personaPlexInstallState.message = message;
+					_personaPlexInstallState.progress = 100;
+					_personaPlexInstallState.needsHuggingFaceToken = true;
+					_personaPlexInstallState.hfTokenValidated = false;
+					_personaPlexInstallState.hfTokenRejected = true;
+					_personaPlexInstallState.hfTokenError = message;
+				}
+			}
+		}
+		WritePersonaPlexInstallLog("[server] " + message);
+	}
+
+	private static string SummarizePersonaPlexServerError(string line)
+	{
+		line = line ?? "";
+		if (IsPersonaPlexHuggingFaceAccessError(line))
+		{
+			return "NVIDIA model access was rejected by Hugging Face. Add a valid token in JackLLM Workstation after accepting the model license.";
+		}
+		if (line.IndexOf("Torch not compiled with CUDA enabled", StringComparison.OrdinalIgnoreCase) >= 0)
+		{
+			return "PersonaPlex CUDA support is missing. Re-run the Voice Mode install from JackLLM Workstation.";
+		}
+		return "";
+	}
+
+	private PersonaPlexInstallState BuildPersonaPlexInstallSnapshot(PersonaPlexSettings settings, bool serverReady)
+	{
+		lock (_personaPlexInstallLock)
+		{
+			return ClonePersonaPlexInstallState(RefreshPersonaPlexInstallStateLocked(serverReady));
+		}
+	}
+
+	private PersonaPlexInstallState RefreshPersonaPlexInstallStateLocked(bool serverReady)
+	{
+		PersonaPlexInstallState state = _personaPlexInstallState ?? new PersonaPlexInstallState();
+		var inspection = InspectPersonaPlexLocalInstall();
+		state.installRoot = GetPersonaPlexInstallRoot();
+		state.repositoryPath = GetPersonaPlexRepositoryPath();
+		state.pythonExecutable = GetPersonaPlexVenvPythonPath();
+		state.logPath = GetPersonaPlexInstallLogPath();
+		state.localInstalled = inspection.Installed;
+		state.installFootprintFound = inspection.FootprintFound;
+		state.installIncomplete = inspection.Incomplete;
+		state.missingComponents = inspection.MissingComponents;
+		state.serverRunning = serverReady || IsPersonaPlexServerProcessRunning();
+		state.hfTokenAvailable = HasPersonaPlexHfToken("");
+		if (!state.hfTokenAvailable)
+		{
+			state.hfTokenValidated = false;
+			state.hfTokenRejected = false;
+			state.hfTokenError = "";
+		}
+		if (!state.localInstalled &&
+			state.installIncomplete &&
+			(string.IsNullOrWhiteSpace(state.status) ||
+				state.status.Equals("idle", StringComparison.OrdinalIgnoreCase) ||
+				state.status.Equals("installed", StringComparison.OrdinalIgnoreCase)))
+		{
+			state.status = "missing";
+			state.progress = 0;
+			state.message = "PersonaPlex install is incomplete: missing " + string.Join(", ", state.missingComponents) + ".";
+		}
+		else if (string.IsNullOrWhiteSpace(state.status) || state.status.Equals("idle", StringComparison.OrdinalIgnoreCase))
+		{
+			state.status = state.localInstalled ? "installed" : "idle";
+			state.progress = state.localInstalled ? 100 : 0;
+			state.message = state.localInstalled ? "PersonaPlex is installed on this workstation." : "PersonaPlex is not installed on this workstation.";
+		}
+		state.needsHuggingFaceToken = (!state.hfTokenAvailable || state.hfTokenRejected) && !state.serverRunning;
+		state.updatedUtc = string.IsNullOrWhiteSpace(state.updatedUtc) ? DateTimeOffset.UtcNow.ToString("O") : state.updatedUtc;
+		_personaPlexInstallState = state;
+		return state;
+	}
+
+	private bool ShouldOfferPersonaPlexInstall(PersonaPlexSettings settings, bool serverReady, PersonaPlexInstallState install)
+	{
+		if (serverReady)
+		{
+			return false;
+		}
+		if (!IsDefaultLocalPersonaPlexServer(settings?.serverUrl))
+		{
+			return false;
+		}
+		install = install ?? BuildPersonaPlexInstallSnapshot(settings, serverReady);
+		return !install.localInstalled || IsPersonaPlexInstallActive(install.status);
+	}
+
+	private bool IsDefaultLocalPersonaPlexServer(string serverUrl)
+	{
+		try
+		{
+			string normalized = NormalizePersonaPlexServerUrl(serverUrl);
+			if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri))
+			{
+				return false;
+			}
+			string host = (uri.Host ?? "").Trim().ToLowerInvariant();
+			return (host == "localhost" || host == "127.0.0.1" || host == "::1") && (uri.Port <= 0 || uri.Port == 8998);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static bool IsPersonaPlexInstallActive(string status)
+	{
+		return string.Equals(status, "queued", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "running", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private bool IsPersonaPlexLocalInstalled()
+	{
+		return InspectPersonaPlexLocalInstall().Installed;
+	}
+
+	private (bool Installed, bool FootprintFound, bool Incomplete, List<string> MissingComponents) InspectPersonaPlexLocalInstall()
+	{
+		string root = GetPersonaPlexInstallRoot();
+		string repo = GetPersonaPlexRepositoryPath();
+		string marker = GetPersonaPlexInstallMarkerPath();
+		string python = GetPersonaPlexVenvPythonPath();
+		string moshi = Path.Combine(repo, "moshi");
+		bool markerExists = File.Exists(marker);
+		bool pythonExists = File.Exists(python);
+		bool moshiExists = Directory.Exists(moshi);
+		bool installed = markerExists && pythonExists && moshiExists;
+		bool footprintFound =
+			Directory.Exists(root) ||
+			markerExists ||
+			pythonExists ||
+			Directory.Exists(repo) ||
+			File.Exists(GetPersonaPlexHfTokenPath()) ||
+			!string.IsNullOrWhiteSpace(ReadPersonaPlexModelConfigHfToken());
+		var missing = new List<string>();
+		if (!markerExists)
+		{
+			missing.Add("install marker");
+		}
+		if (!pythonExists)
+		{
+			missing.Add("Python environment");
+		}
+		if (!moshiExists)
+		{
+			missing.Add("PersonaPlex source package");
+		}
+		return (installed, footprintFound, footprintFound && !installed, missing);
+	}
+
+	private bool IsPersonaPlexServerProcessRunning()
+	{
+		try
+		{
+			return _personaPlexServerProcess != null && !_personaPlexServerProcess.HasExited;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private bool CanAutoStartPersonaPlexServerProcess()
+	{
+		lock (_personaPlexInstallLock)
+		{
+			DateTimeOffset now = DateTimeOffset.UtcNow;
+			if (_personaPlexLastServerStartAttemptUtc > DateTimeOffset.MinValue &&
+				now - _personaPlexLastServerStartAttemptUtc < TimeSpan.FromSeconds(5))
+			{
+				return false;
+			}
+			if (_personaPlexLastServerExitUtc > DateTimeOffset.MinValue &&
+				now - _personaPlexLastServerExitUtc < PersonaPlexServerRestartBackoff)
+			{
+				return false;
+			}
+			return true;
+		}
+	}
+
+	private string GetPersonaPlexRecentServerExitMessage()
+	{
+		lock (_personaPlexInstallLock)
+		{
+			if (_personaPlexLastServerExitUtc <= DateTimeOffset.MinValue ||
+				DateTimeOffset.UtcNow - _personaPlexLastServerExitUtc > PersonaPlexServerRestartBackoff)
+			{
+				return "";
+			}
+			return _personaPlexLastServerExitMessage ?? "";
+		}
+	}
+
+	private bool HasPersonaPlexHfToken(string token)
+	{
+		return !string.IsNullOrWhiteSpace(NormalizePersonaPlexHfToken(token)) ||
+			!string.IsNullOrWhiteSpace(NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HF_TOKEN"))) ||
+			!string.IsNullOrWhiteSpace(NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HUGGING_FACE_HUB_TOKEN"))) ||
+			!string.IsNullOrWhiteSpace(NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HUGGINGFACE_HUB_TOKEN"))) ||
+			!string.IsNullOrWhiteSpace(ReadPersonaPlexHfToken()) ||
+			!string.IsNullOrWhiteSpace(ReadPersonaPlexModelConfigHfToken());
+	}
+
+	private string ResolvePersonaPlexHfToken(string token)
+	{
+		return FirstNonEmpty(
+			NormalizePersonaPlexHfToken(token),
+			NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HF_TOKEN")),
+			NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HUGGING_FACE_HUB_TOKEN")),
+			NormalizePersonaPlexHfToken(Environment.GetEnvironmentVariable("HUGGINGFACE_HUB_TOKEN")),
+			ReadPersonaPlexHfToken(),
+			ReadPersonaPlexModelConfigHfToken());
+	}
+
+	private void VerifyPersonaPlexHuggingFaceAccess(string python, string workingDirectory, string token, CancellationToken cancellationToken, TimeSpan? timeout = null)
+	{
+		token = NormalizePersonaPlexHfToken(token);
+		if (string.IsNullOrWhiteSpace(token))
+		{
+			throw new InvalidOperationException("A Hugging Face token is required for NVIDIA PersonaPlex model access.");
+		}
+		if (string.IsNullOrWhiteSpace(python) || !File.Exists(python))
+		{
+			throw new FileNotFoundException("PersonaPlex Python environment was not found.", python ?? "");
+		}
+
+		const string code = @"
+import os
+import sys
+
+model_id = 'nvidia/personaplex-7b-v1'
+token = (os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN') or os.environ.get('HUGGINGFACE_HUB_TOKEN') or '').strip()
+if not token:
+    print('Missing Hugging Face token.', file=sys.stderr)
+    sys.exit(10)
+try:
+    from huggingface_hub import HfApi
+except Exception as exc:
+    print('huggingface_hub is not installed: ' + str(exc), file=sys.stderr)
+    sys.exit(11)
+try:
+    api = HfApi()
+    info = api.model_info(model_id, token=token)
+    api.list_repo_files(model_id, token=token)
+    print('verified ' + getattr(info, 'id', model_id))
+except Exception as exc:
+    print(type(exc).__name__ + ': ' + str(exc), file=sys.stderr)
+    sys.exit(12)
+";
+		var startInfo = new ProcessStartInfo
+		{
+			FileName = python,
+			WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? GetPersonaPlexInstallRoot() : workingDirectory,
+			UseShellExecute = false,
+			CreateNoWindow = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		};
+		startInfo.ArgumentList.Add("-c");
+		startInfo.ArgumentList.Add(code);
+		startInfo.EnvironmentVariables["HF_TOKEN"] = token;
+		startInfo.EnvironmentVariables["HUGGING_FACE_HUB_TOKEN"] = token;
+		startInfo.EnvironmentVariables["HUGGINGFACE_HUB_TOKEN"] = token;
+
+		using Process process = new Process { StartInfo = startInfo };
+		WritePersonaPlexInstallLog("$ " + python + " -c <verify PersonaPlex Hugging Face model access>");
+		if (!process.Start())
+		{
+			throw new InvalidOperationException("Could not start PersonaPlex Hugging Face access check.");
+		}
+		Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+		Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+		Stopwatch sw = Stopwatch.StartNew();
+		TimeSpan effectiveTimeout = timeout.GetValueOrDefault(TimeSpan.FromSeconds(90));
+		while (!process.WaitForExit(500))
+		{
+			if (cancellationToken.IsCancellationRequested)
+			{
+				TryKillProcess(process);
+				cancellationToken.ThrowIfCancellationRequested();
+			}
+			if (sw.Elapsed > effectiveTimeout)
+			{
+				TryKillProcess(process);
+				throw new TimeoutException("PersonaPlex Hugging Face model access check timed out.");
+			}
+		}
+		string stdout = stdoutTask.GetAwaiter().GetResult();
+		string stderr = stderrTask.GetAwaiter().GetResult();
+		string detail = SanitizePersonaPlexHfErrorDetail(FirstNonEmpty(TailText(stderr, 1000), TailText(stdout, 1000)), token);
+		if (!string.IsNullOrWhiteSpace(stdout))
+		{
+			WritePersonaPlexInstallLog(TailText(SanitizePersonaPlexHfErrorDetail(stdout, token), 800));
+		}
+		if (!string.IsNullOrWhiteSpace(stderr))
+		{
+			WritePersonaPlexInstallLog(TailText(SanitizePersonaPlexHfErrorDetail(stderr, token), 800));
+		}
+		if (process.ExitCode == 0)
+		{
+			return;
+		}
+
+		if (IsPersonaPlexHuggingFaceAccessError(detail))
+		{
+			throw new InvalidOperationException("NVIDIA model access was rejected by Hugging Face. Add a valid token in JackLLM Workstation after accepting the nvidia/personaplex-7b-v1 model license. " + detail);
+		}
+		throw new InvalidOperationException("Could not verify NVIDIA PersonaPlex Hugging Face model access. " + detail);
+	}
+
+	private void RefreshPersonaPlexTokenValidationIfDue(PersonaPlexInstallState install)
+	{
+		if (install == null || !install.localInstalled || install.serverRunning || !install.hfTokenAvailable)
+		{
+			return;
+		}
+		string token = ResolvePersonaPlexHfToken("");
+		string fingerprint = FingerprintPersonaPlexToken(token);
+		if (string.IsNullOrWhiteSpace(fingerprint))
+		{
+			return;
+		}
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		lock (_personaPlexInstallLock)
+		{
+			if (string.Equals(_personaPlexValidatedTokenFingerprint, fingerprint, StringComparison.Ordinal) &&
+				now - _personaPlexLastTokenValidationUtc < TimeSpan.FromHours(6))
+			{
+				if (_personaPlexInstallState != null)
+				{
+					_personaPlexInstallState.hfTokenValidated = true;
+					_personaPlexInstallState.hfTokenRejected = false;
+					_personaPlexInstallState.hfTokenError = "";
+				}
+				return;
+			}
+			if (string.Equals(_personaPlexRejectedTokenFingerprint, fingerprint, StringComparison.Ordinal) &&
+				now - _personaPlexLastTokenValidationUtc < TimeSpan.FromMinutes(5))
+			{
+				if (_personaPlexInstallState != null)
+				{
+					_personaPlexInstallState.hfTokenValidated = false;
+					_personaPlexInstallState.hfTokenRejected = true;
+					_personaPlexInstallState.needsHuggingFaceToken = true;
+				}
+				return;
+			}
+			if (now - _personaPlexLastTokenValidationUtc < TimeSpan.FromSeconds(45))
+			{
+				return;
+			}
+			_personaPlexLastTokenValidationUtc = now;
+		}
+
+		try
+		{
+			VerifyPersonaPlexHuggingFaceAccess(GetPersonaPlexVenvPythonPath(), GetPersonaPlexRepositoryPath(), token, CancellationToken.None, TimeSpan.FromSeconds(6));
+			lock (_personaPlexInstallLock)
+			{
+				_personaPlexValidatedTokenFingerprint = fingerprint;
+				_personaPlexRejectedTokenFingerprint = "";
+			}
+			UpdatePersonaPlexInstallState("installed", "PersonaPlex is installed and the Hugging Face model token was verified. Press Start Voice to load it.", 100, state =>
+			{
+				state.localInstalled = true;
+				state.hfTokenAvailable = true;
+				state.needsHuggingFaceToken = false;
+				state.hfTokenValidated = true;
+				state.hfTokenRejected = false;
+				state.hfTokenError = "";
+			});
+		}
+		catch (Exception ex)
+		{
+			if (!IsPersonaPlexHuggingFaceAccessError(ex.Message))
+			{
+				LogMessage("[PersonaPlex] Token validation probe skipped: " + ex.Message);
+				return;
+			}
+			lock (_personaPlexInstallLock)
+			{
+				_personaPlexValidatedTokenFingerprint = "";
+				_personaPlexRejectedTokenFingerprint = fingerprint;
+			}
+			MarkPersonaPlexTokenRejected(ex.Message);
+		}
+	}
+
+	private void MarkPersonaPlexTokenRejected(string message)
+	{
+		StopPersonaPlexServerProcess();
+		UpdatePersonaPlexInstallState("failed", message, 100, state =>
+		{
+			state.localInstalled = IsPersonaPlexLocalInstalled();
+			state.serverRunning = IsPersonaPlexServerProcessRunning();
+			state.hfTokenAvailable = HasPersonaPlexHfToken("");
+			state.needsHuggingFaceToken = true;
+			state.hfTokenValidated = false;
+			state.hfTokenRejected = true;
+			state.hfTokenError = message ?? "";
+		});
+	}
+
+	private static string FingerprintPersonaPlexToken(string token)
+	{
+		token = NormalizePersonaPlexHfToken(token);
+		if (string.IsNullOrWhiteSpace(token))
+		{
+			return "";
+		}
+		try
+		{
+			using SHA256 sha256 = SHA256.Create();
+			byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(token));
+			return Convert.ToBase64String(hash);
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
+	private static bool IsPersonaPlexHuggingFaceAccessError(string text)
+	{
+		text = text ?? "";
+		return text.IndexOf("Invalid user token", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("401 Client Error", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("403 Client Error", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("GatedRepoError", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("RepositoryNotFoundError", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("Unauthorized", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("Forbidden", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("Access to model nvidia/personaplex-7b-v1 is restricted", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("must be authenticated", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			text.IndexOf("token is invalid", StringComparison.OrdinalIgnoreCase) >= 0;
+	}
+
+	private static string SanitizePersonaPlexHfErrorDetail(string text, string token)
+	{
+		text = text ?? "";
+		token = NormalizePersonaPlexHfToken(token);
+		if (!string.IsNullOrWhiteSpace(token))
+		{
+			text = text.Replace(token, "[redacted]", StringComparison.Ordinal);
+		}
+		return text.Trim();
+	}
+
+	private string GetPersonaPlexHfTokenPath()
+	{
+		return Path.Combine(GetPersonaPlexInstallRoot(), "huggingface.token");
+	}
+
+	private string ReadPersonaPlexHfToken()
+	{
+		try
+		{
+			string path = GetPersonaPlexHfTokenPath();
+			return File.Exists(path) ? NormalizePersonaPlexHfToken(File.ReadAllText(path)) : "";
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
+	private string ReadPersonaPlexModelConfigHfToken()
+	{
+		foreach (string root in GetCompleteModelRoots())
+		{
+			string path;
+			try
+			{
+				path = Path.Combine(root, ".model-config.json");
+			}
+			catch
+			{
+				continue;
+			}
+			if (!File.Exists(path))
+			{
+				continue;
+			}
+			try
+			{
+				using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+				JsonElement configs = document.RootElement;
+				if (configs.ValueKind != JsonValueKind.Object)
+				{
+					continue;
+				}
+				foreach (JsonProperty entry in configs.EnumerateObject())
+				{
+					if (!IsPersonaPlexModelConfigKey(entry.Name) || entry.Value.ValueKind != JsonValueKind.Object)
+					{
+						continue;
+					}
+					string token = NormalizePersonaPlexHfToken(FirstNonEmpty(
+						ExtractStringProperty(entry.Value, "huggingFaceToken"),
+						ExtractStringProperty(entry.Value, "huggingface_token"),
+						ExtractStringProperty(entry.Value, "hfToken"),
+						ExtractStringProperty(entry.Value, "token")));
+					if (!string.IsNullOrWhiteSpace(token))
+					{
+						return token;
+					}
+				}
+			}
+			catch
+			{
+			}
+		}
+		return "";
+	}
+
+	private static bool IsPersonaPlexModelConfigKey(string key)
+	{
+		key = (key ?? "").Trim();
+		return key.IndexOf("personaplex", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			key.IndexOf("nvidia/personaplex-7b-v1", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			key.IndexOf("nvidia-personaplex-7b-v1", StringComparison.OrdinalIgnoreCase) >= 0;
+	}
+
+	private static string NormalizePersonaPlexHfToken(string token)
+	{
+		token = (token ?? "").Trim();
+		token = token.Trim('\uFEFF').Trim();
+		return token;
+	}
+
+	private void SavePersonaPlexHfToken(string token)
+	{
+		token = NormalizePersonaPlexHfToken(token);
+		if (string.IsNullOrWhiteSpace(token))
+		{
+			throw new InvalidOperationException("A Hugging Face token is required for NVIDIA PersonaPlex model access.");
+		}
+		if (token.IndexOfAny(new[] { '\r', '\n', '\0' }) >= 0 || token.Length > 4096)
+		{
+			throw new InvalidOperationException("The Hugging Face token format is not valid.");
+		}
+
+		Directory.CreateDirectory(GetPersonaPlexInstallRoot());
+		string path = GetPersonaPlexHfTokenPath();
+		File.WriteAllText(path, token, Utf8NoBom);
+		TryRestrictPersonaPlexTokenFile(path);
+		WritePersonaPlexInstallLog("PersonaPlex model access token saved by JackLLM Workstation.");
+	}
+
+	private void ClearPersonaPlexHfToken()
+	{
+		try
+		{
+			string path = GetPersonaPlexHfTokenPath();
+			if (File.Exists(path))
+			{
+				File.Delete(path);
+				WritePersonaPlexInstallLog("PersonaPlex model access token cleared by JackLLM Workstation.");
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	private void TryRestrictPersonaPlexTokenFile(string path)
+	{
+		try
+		{
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.Hidden);
+				return;
+			}
+			using Process process = new Process();
+			process.StartInfo = new ProcessStartInfo
+			{
+				FileName = "/bin/chmod",
+				UseShellExecute = false,
+				CreateNoWindow = true
+			};
+			process.StartInfo.ArgumentList.Add("600");
+			process.StartInfo.ArgumentList.Add(path);
+			if (process.Start())
+			{
+				process.WaitForExit(5000);
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	private string DetectPersonaPlexCudaVisibleDevices()
+	{
+		try
+		{
+			using Process process = new Process();
+			process.StartInfo = new ProcessStartInfo
+			{
+				FileName = "nvidia-smi",
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			process.StartInfo.ArgumentList.Add("--query-gpu=index");
+			process.StartInfo.ArgumentList.Add("--format=csv,noheader");
+			if (!process.Start())
+			{
+				return "";
+			}
+			string output = process.StandardOutput.ReadToEnd();
+			if (!process.WaitForExit(5000))
+			{
+				TryKillProcess(process);
+				return "";
+			}
+			if (process.ExitCode != 0)
+			{
+				return "";
+			}
+			string[] indexes = output.Split(new[] { '\r', '\n', ',', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+				.Select(value => value.Trim())
+				.Where(value => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+				.Distinct(StringComparer.Ordinal)
+				.ToArray();
+			return indexes.Length == 0 ? "" : string.Join(",", indexes);
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
+	private string ResolvePersonaPlexBootstrapPython()
+	{
+		foreach (string candidate in new[]
+		{
+			Environment.GetEnvironmentVariable("JACKLLM_PERSONAPLEX_PYTHON"),
+			Environment.GetEnvironmentVariable("PERSONAPLEX_PYTHON"),
+			Environment.GetEnvironmentVariable("PYTHON"),
+			RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python" : "python3",
+			"python",
+			Path.Combine(AppContext.BaseDirectory, "Python", RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python.exe" : "bin/python3")
+		})
+		{
+			if (string.IsNullOrWhiteSpace(candidate))
+			{
+				continue;
+			}
+			string value = Environment.ExpandEnvironmentVariables(candidate.Trim());
+			if ((File.Exists(value) || !Path.IsPathRooted(value)) && PersonaPlexPythonSupportsVenv(value))
+			{
+				return value;
+			}
+		}
+		return "";
+	}
+
+	private bool PersonaPlexPythonSupportsVenv(string python)
+	{
+		try
+		{
+			using Process process = new Process();
+			process.StartInfo = new ProcessStartInfo
+			{
+				FileName = python,
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			process.StartInfo.ArgumentList.Add("-c");
+			process.StartInfo.ArgumentList.Add("import venv");
+			if (!process.Start())
+			{
+				return false;
+			}
+			if (!process.WaitForExit(10000))
+			{
+				TryKillProcess(process);
+				return false;
+			}
+			return process.ExitCode == 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private string GetPersonaPlexInstallRoot()
+	{
+		return Path.GetFullPath(Path.Combine(_chatSessionRoot, "PersonaPlex"));
+	}
+
+	private string GetPersonaPlexRepositoryPath()
+	{
+		return Path.Combine(GetPersonaPlexInstallRoot(), "personaplex");
+	}
+
+	private string GetPersonaPlexVenvPath()
+	{
+		return Path.Combine(GetPersonaPlexInstallRoot(), ".venv");
+	}
+
+	private string GetPersonaPlexVenvPythonPath()
+	{
+		string venv = GetPersonaPlexVenvPath();
+		return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+			? Path.Combine(venv, "Scripts", "python.exe")
+			: Path.Combine(venv, "bin", "python3");
+	}
+
+	private string GetPersonaPlexInstallMarkerPath()
+	{
+		return Path.Combine(GetPersonaPlexInstallRoot(), "installed.json");
+	}
+
+	private string GetPersonaPlexInstallLogPath()
+	{
+		return Path.Combine(GetPersonaPlexInstallRoot(), "install.log");
+	}
+
+	private void WritePersonaPlexInstallMarker()
+	{
+		Directory.CreateDirectory(GetPersonaPlexInstallRoot());
+		File.WriteAllText(GetPersonaPlexInstallMarkerPath(), JsonSerializer.Serialize(new
+		{
+			installedUtc = DateTimeOffset.UtcNow.ToString("O"),
+			repository = "https://github.com/NVIDIA/personaplex",
+			python = GetPersonaPlexVenvPythonPath()
+		}));
+	}
+
+	private void UpdatePersonaPlexInstallState(string status, string message, int progress, Action<PersonaPlexInstallState> mutate = null)
+	{
+		lock (_personaPlexInstallLock)
+		{
+			PersonaPlexInstallState state = _personaPlexInstallState ?? new PersonaPlexInstallState();
+			state.status = string.IsNullOrWhiteSpace(status) ? state.status : status;
+			state.message = string.IsNullOrWhiteSpace(message) ? state.message : message;
+			state.progress = Math.Max(0, Math.Min(100, progress));
+			state.installRoot = GetPersonaPlexInstallRoot();
+			state.repositoryPath = GetPersonaPlexRepositoryPath();
+			state.pythonExecutable = GetPersonaPlexVenvPythonPath();
+			state.logPath = GetPersonaPlexInstallLogPath();
+			state.updatedUtc = DateTimeOffset.UtcNow.ToString("O");
+			if (string.IsNullOrWhiteSpace(state.startedUtc))
+			{
+				state.startedUtc = state.updatedUtc;
+			}
+			if (!IsPersonaPlexInstallActive(state.status) && string.IsNullOrWhiteSpace(state.completedUtc))
+			{
+				state.completedUtc = state.updatedUtc;
+			}
+			mutate?.Invoke(state);
+			_personaPlexInstallState = state;
+			WritePersonaPlexInstallLog(state.status + " " + state.progress.ToString(CultureInfo.InvariantCulture) + "% " + state.message);
+		}
+	}
+
+	private void WritePersonaPlexInstallLog(string message)
+	{
+		try
+		{
+			Directory.CreateDirectory(GetPersonaPlexInstallRoot());
+			File.AppendAllText(GetPersonaPlexInstallLogPath(), DateTimeOffset.Now.ToString("O") + " " + (message ?? "") + Environment.NewLine);
+		}
+		catch
+		{
+		}
+	}
+
+	private void RunPersonaPlexCommand(string fileName, IEnumerable<string> arguments, string workingDirectory, TimeSpan timeout, CancellationToken cancellationToken)
+	{
+		var startInfo = new ProcessStartInfo
+		{
+			FileName = fileName,
+			WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? GetPersonaPlexInstallRoot() : workingDirectory,
+			UseShellExecute = false,
+			CreateNoWindow = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true
+		};
+		foreach (string argument in arguments ?? Array.Empty<string>())
+		{
+			startInfo.ArgumentList.Add(argument ?? "");
+		}
+		using Process process = new Process { StartInfo = startInfo };
+		WritePersonaPlexInstallLog("$ " + fileName + " " + string.Join(" ", (arguments ?? Array.Empty<string>()).Select(QuoteLogArgument)));
+		if (!process.Start())
+		{
+			throw new InvalidOperationException("Could not start " + fileName + ".");
+		}
+		Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+		Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+		Stopwatch sw = Stopwatch.StartNew();
+		while (!process.WaitForExit(500))
+		{
+			if (cancellationToken.IsCancellationRequested)
+			{
+				TryKillProcess(process);
+				cancellationToken.ThrowIfCancellationRequested();
+			}
+			if (sw.Elapsed > timeout)
+			{
+				TryKillProcess(process);
+				throw new TimeoutException(fileName + " timed out after " + timeout + ".");
+			}
+		}
+		string stdout = stdoutTask.GetAwaiter().GetResult();
+		string stderr = stderrTask.GetAwaiter().GetResult();
+		if (!string.IsNullOrWhiteSpace(stdout))
+		{
+			WritePersonaPlexInstallLog(stdout.Trim());
+		}
+		if (!string.IsNullOrWhiteSpace(stderr))
+		{
+			WritePersonaPlexInstallLog(stderr.Trim());
+		}
+		if (process.ExitCode != 0)
+		{
+			throw new InvalidOperationException(fileName + " exited with code " + process.ExitCode.ToString(CultureInfo.InvariantCulture) + ". " + FirstNonEmpty(TailText(stderr, 800), TailText(stdout, 800)));
+		}
+	}
+
+	private static void TryKillProcess(Process process)
+	{
+		try
+		{
+			if (process != null && !process.HasExited)
+			{
+				process.Kill();
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	private static string QuoteLogArgument(string argument)
+	{
+		argument = argument ?? "";
+		return argument.IndexOfAny(new[] { ' ', '\t', '"', '\'' }) >= 0 ? "\"" + argument.Replace("\"", "\\\"") + "\"" : argument;
+	}
+
+	private static string TailText(string value, int maxLength)
+	{
+		value = value ?? "";
+		if (maxLength <= 0 || value.Length <= maxLength)
+		{
+			return value;
+		}
+		return value.Substring(value.Length - maxLength);
+	}
+
+	private void CopyDirectoryRecursive(string sourceDirectory, string targetDirectory)
+	{
+		Directory.CreateDirectory(targetDirectory);
+		foreach (string directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
+		{
+			Directory.CreateDirectory(directory.Replace(sourceDirectory, targetDirectory));
+		}
+		foreach (string file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+		{
+			string target = file.Replace(sourceDirectory, targetDirectory);
+			Directory.CreateDirectory(Path.GetDirectoryName(target) ?? targetDirectory);
+			File.Copy(file, target, overwrite: true);
+		}
+	}
+
+	private void EnsurePersonaPlexManagedPath(string root, string path)
+	{
+		string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+		string fullPath = Path.GetFullPath(path);
+		if (!fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+		{
+			throw new InvalidOperationException("Refusing to modify a path outside the PersonaPlex install root.");
+		}
+	}
+
+	private PersonaPlexInstallState ClonePersonaPlexInstallState(PersonaPlexInstallState state)
+	{
+		state = state ?? new PersonaPlexInstallState();
+		return new PersonaPlexInstallState
+		{
+			id = state.id ?? "",
+			status = state.status ?? "idle",
+			message = state.message ?? "",
+			progress = state.progress,
+			localInstalled = state.localInstalled,
+			serverRunning = state.serverRunning,
+			hfTokenAvailable = state.hfTokenAvailable,
+			needsHuggingFaceToken = state.needsHuggingFaceToken,
+			hfTokenValidated = state.hfTokenValidated,
+			hfTokenRejected = state.hfTokenRejected,
+			hfTokenError = state.hfTokenError ?? "",
+			installFootprintFound = state.installFootprintFound,
+			installIncomplete = state.installIncomplete,
+			missingComponents = new List<string>(state.missingComponents ?? new List<string>()),
+			installRoot = state.installRoot ?? "",
+			repositoryPath = state.repositoryPath ?? "",
+			pythonExecutable = state.pythonExecutable ?? "",
+			logPath = state.logPath ?? "",
+			startedUtc = state.startedUtc ?? "",
+			updatedUtc = state.updatedUtc ?? "",
+			completedUtc = state.completedUtc ?? ""
+		};
+	}
+
+	private sealed class PersonaPlexInstallOptions
+	{
+		public bool Force { get; set; }
+		public bool StartAfterInstall { get; set; }
+		public bool CpuOffload { get; set; }
+		public string HuggingFaceToken { get; set; } = "";
+	}
+
+	private PersonaPlexBridgeEndpoint BuildPersonaPlexBridgeEndpoint(HttpRequest request)
+	{
+		return BuildPersonaPlexBridgeEndpoint(BuildPersonaPlexSettingsForRequest(request));
+	}
+
+	private PersonaPlexBridgeEndpoint BuildPersonaPlexBridgeEndpoint(PersonaPlexSettings settings)
+	{
+		settings = SanitizePersonaPlexSettings(settings ?? CreateDefaultPersonaPlexSettings());
+		return new PersonaPlexBridgeEndpoint
+		{
+			Enabled = settings.enabled,
+			UpstreamUri = BuildPersonaPlexUpstreamUri(settings),
+			ConnectTimeoutMs = 5000
+		};
+	}
+
+	private PersonaPlexSettings BuildPersonaPlexSettingsForRequest(HttpRequest request)
+	{
+		PersonaPlexSettings settings = ClonePersonaPlexSettings(GetPersonaPlexSettings());
+		string serverUrl = FirstNonEmpty(GetQueryParameter(request, "serverUrl"), GetQueryParameter(request, "url"), GetQueryParameter(request, "target"));
+		string voicePrompt = FirstNonEmpty(GetQueryParameter(request, "voicePrompt"), GetQueryParameter(request, "voice_prompt"));
+		string personaPrompt = FirstNonEmpty(GetQueryParameter(request, "personaPrompt"), GetQueryParameter(request, "textPrompt"), GetQueryParameter(request, "text_prompt"));
+		if (!string.IsNullOrWhiteSpace(serverUrl))
+		{
+			settings.serverUrl = serverUrl;
+		}
+		if (!string.IsNullOrWhiteSpace(voicePrompt))
+		{
+			settings.voicePrompt = voicePrompt;
+		}
+		if (!string.IsNullOrWhiteSpace(personaPrompt))
+		{
+			settings.personaPrompt = personaPrompt;
+		}
+		return SanitizePersonaPlexSettings(settings);
+	}
+
+	private async Task<(bool ready, string status, string detail, long elapsedMs, string handshakeKind)> ProbePersonaPlexStatusAsync(Uri upstreamUri, TimeSpan timeout)
+	{
+		Stopwatch sw = Stopwatch.StartNew();
+		if (upstreamUri == null)
+		{
+			return (false, "error", "PersonaPlex target URL is empty.", 0L, "");
+		}
+		using ClientWebSocket websocket = new ClientWebSocket();
+		try
+		{
+			using CancellationTokenSource cts = new CancellationTokenSource(timeout);
+			await websocket.ConnectAsync(upstreamUri, cts.Token).ConfigureAwait(false);
+			byte[] buffer = new byte[4096];
+			WebSocketReceiveResult result = await websocket.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token).ConfigureAwait(false);
+			string handshakeKind = "";
+			if (result.MessageType == WebSocketMessageType.Binary && result.Count > 0)
+			{
+				handshakeKind = "0x" + buffer[0].ToString("X2", CultureInfo.InvariantCulture);
+				if (buffer[0] == 0x00)
+				{
+					await ClosePersonaPlexProbeSocketAsync(websocket).ConfigureAwait(false);
+					return (true, "ready", "", sw.ElapsedMilliseconds, handshakeKind);
+				}
+				if (buffer[0] == 0x05)
+				{
+					string errorText = Encoding.UTF8.GetString(buffer, 1, Math.Max(0, result.Count - 1));
+					await ClosePersonaPlexProbeSocketAsync(websocket).ConfigureAwait(false);
+					return (false, "error", errorText, sw.ElapsedMilliseconds, handshakeKind);
+				}
+			}
+			await ClosePersonaPlexProbeSocketAsync(websocket).ConfigureAwait(false);
+			return (false, "loading", "Connected, but PersonaPlex did not send its expected 0x00 handshake.", sw.ElapsedMilliseconds, handshakeKind);
+		}
+		catch (OperationCanceledException)
+		{
+			return (false, "loading", "Timed out waiting for the PersonaPlex WebSocket handshake.", sw.ElapsedMilliseconds, "");
+		}
+		catch (Exception ex)
+		{
+			return (false, "unavailable", ex.Message, sw.ElapsedMilliseconds, "");
+		}
+	}
+
+	private async Task ClosePersonaPlexProbeSocketAsync(ClientWebSocket websocket)
+	{
+		try
+		{
+			if (websocket != null && (websocket.State == WebSocketState.Open || websocket.State == WebSocketState.CloseReceived))
+			{
+				await websocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "status", CancellationToken.None).ConfigureAwait(false);
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	private Uri BuildPersonaPlexUpstreamUri(PersonaPlexSettings settings)
+	{
+		settings = SanitizePersonaPlexSettings(settings ?? CreateDefaultPersonaPlexSettings());
+		string raw = NormalizePersonaPlexServerUrl(settings.serverUrl);
+		if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri))
+		{
+			throw new InvalidOperationException("PersonaPlex server URL is not valid.");
+		}
+		UriBuilder builder = new UriBuilder(uri);
+		if (string.IsNullOrWhiteSpace(builder.Path) || string.Equals(builder.Path, "/", StringComparison.Ordinal))
+		{
+			builder.Path = "/api/chat";
+		}
+		Dictionary<string, string> query = ParsePersonaPlexQuery(builder.Query);
+		query["voice_prompt"] = settings.voicePrompt;
+		query["text_prompt"] = settings.personaPrompt;
+		builder.Query = BuildPersonaPlexQueryString(query);
+		return builder.Uri;
+	}
+
+	private string NormalizePersonaPlexServerUrl(string serverUrl)
+	{
+		string value = string.IsNullOrWhiteSpace(serverUrl) ? "ws://localhost:8998" : serverUrl.Trim();
+		if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+		{
+			value = "ws://" + value.Substring("http://".Length);
+		}
+		else if (value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+		{
+			value = "wss://" + value.Substring("https://".Length);
+		}
+		else if (!value.Contains("://"))
+		{
+			value = "ws://" + value;
+		}
+		return value;
+	}
+
+	private Dictionary<string, string> ParsePersonaPlexQuery(string query)
+	{
+		Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		query = (query ?? "").TrimStart('?');
+		if (string.IsNullOrWhiteSpace(query))
+		{
+			return result;
+		}
+		foreach (string part in query.Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries))
+		{
+			int equals = part.IndexOf('=');
+			string key = equals >= 0 ? part.Substring(0, equals) : part;
+			string value = equals >= 0 ? part.Substring(equals + 1) : "";
+			key = Uri.UnescapeDataString(key.Replace("+", " "));
+			if (string.IsNullOrWhiteSpace(key))
+			{
+				continue;
+			}
+			result[key] = Uri.UnescapeDataString(value.Replace("+", " "));
+		}
+		return result;
+	}
+
+	private string BuildPersonaPlexQueryString(Dictionary<string, string> query)
+	{
+		if (query == null || query.Count == 0)
+		{
+			return "";
+		}
+		return string.Join("&", query
+			.Where(pair => !string.IsNullOrWhiteSpace(pair.Key))
+			.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value ?? "")));
 	}
 
 	private string HandleChatUserSearchRequest(NetworkConnection connection, HttpRequest request)
@@ -20405,6 +23038,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				rawUrl = MergeChatBrowserProxyOuterQueryIntoTarget(rawUrl, request);
 			}
+			rawUrl = SanitizeBrowserSkillUrlArgument(rawUrl);
 			if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out Uri targetUri) || (!targetUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && !targetUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
 			{
 				return BuildJsonError(request, 400, "Bad Request", "Browser proxy can only open absolute HTTP or HTTPS URLs.");
@@ -20558,22 +23192,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		string methodName = (string.IsNullOrWhiteSpace(request?.Method) ? "GET" : request.Method.Trim().ToUpperInvariant());
 		HttpRequestMessage upstreamRequest = new HttpRequestMessage(new HttpMethod(methodName), targetUri);
 		string accept = GetChatBrowserProxyRequestHeader(request, "Accept");
-		if (!string.IsNullOrWhiteSpace(accept))
-		{
-			upstreamRequest.Headers.TryAddWithoutValidation("Accept", accept);
-		}
+		upstreamRequest.Headers.TryAddWithoutValidation("Accept", string.IsNullOrWhiteSpace(accept) ? BrowserLikeAccept : accept);
 		string acceptLanguage = GetChatBrowserProxyRequestHeader(request, "Accept-Language");
-		if (!string.IsNullOrWhiteSpace(acceptLanguage))
-		{
-			upstreamRequest.Headers.TryAddWithoutValidation("Accept-Language", acceptLanguage);
-		}
+		upstreamRequest.Headers.TryAddWithoutValidation("Accept-Language", string.IsNullOrWhiteSpace(acceptLanguage) ? "en-US,en;q=0.9" : acceptLanguage);
+		upstreamRequest.Headers.TryAddWithoutValidation("Accept-Encoding", "gzip, deflate");
 		string range = GetChatBrowserProxyRequestHeader(request, "Range");
 		if (!string.IsNullOrWhiteSpace(range))
 		{
 			upstreamRequest.Headers.TryAddWithoutValidation("Range", range);
 		}
 		string userAgent = GetChatBrowserProxyRequestHeader(request, "User-Agent");
-		upstreamRequest.Headers.TryAddWithoutValidation("User-Agent", string.IsNullOrWhiteSpace(userAgent) ? "JackLLM-BrowserProxy/1.0" : userAgent);
+		upstreamRequest.Headers.TryAddWithoutValidation("User-Agent", string.IsNullOrWhiteSpace(userAgent) ? BrowserLikeUserAgent : userAgent);
+		upstreamRequest.Headers.TryAddWithoutValidation("Sec-CH-UA", "\"Chromium\";v=\"125\", \"Google Chrome\";v=\"125\", \"Not.A/Brand\";v=\"24\"");
+		upstreamRequest.Headers.TryAddWithoutValidation("Sec-CH-UA-Mobile", "?0");
+		upstreamRequest.Headers.TryAddWithoutValidation("Sec-CH-UA-Platform", "\"Windows\"");
 		upstreamRequest.Headers.TryAddWithoutValidation("Referer", BuildChatBrowserProxyUpstreamReferer(request, targetUri));
 		string origin = GetChatBrowserProxyRequestHeader(request, "Origin");
 		if (!string.IsNullOrWhiteSpace(origin))
@@ -22995,6 +25627,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			GetDeveloperProjectWorkspacesTable();
 			GetChatSessionCommentsTable();
 			GetChatPermissionsTable();
+			GetPersonaPlexConfigTable();
 			GetChatFilesystemAccessTable();
 			GetChatFilesystemDeniedTable();
 			GetChatFtpConfigTable();
@@ -23013,6 +25646,160 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			GetErrorDiagnosticsTable();
 			SaveChatSessionDataAndInvalidateCaches();
 		}
+	}
+
+	private PersonaPlexSettings GetPersonaPlexSettings()
+	{
+		lock (_chatSessionLock)
+		{
+			Table table = GetPersonaPlexConfigTable();
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				object[] row = NormalizePersonaPlexConfigRow(table.Rows[i]);
+				table.Rows[i] = row;
+				if (string.Equals(GetRowValue(row, 0), "global", StringComparison.OrdinalIgnoreCase))
+				{
+					return PersonaPlexSettingsFromRow(row);
+				}
+			}
+			object[] newRow = CreateDefaultPersonaPlexConfigRow();
+			table.Rows.Add(newRow);
+			SaveChatSessionDataAndInvalidateCaches();
+			return PersonaPlexSettingsFromRow(newRow);
+		}
+	}
+
+	private void SavePersonaPlexSettings(PersonaPlexSettings settings)
+	{
+		settings = SanitizePersonaPlexSettings(settings ?? CreateDefaultPersonaPlexSettings());
+		lock (_chatSessionLock)
+		{
+			Table table = GetPersonaPlexConfigTable();
+			object[] row = PersonaPlexSettingsToRow(settings);
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				object[] existing = NormalizePersonaPlexConfigRow(table.Rows[i]);
+				if (string.Equals(GetRowValue(existing, 0), "global", StringComparison.OrdinalIgnoreCase))
+				{
+					table.Rows[i] = row;
+					SaveChatSessionDataAndInvalidateCaches();
+					return;
+				}
+			}
+			table.Rows.Add(row);
+			SaveChatSessionDataAndInvalidateCaches();
+		}
+	}
+
+	private PersonaPlexSettings PersonaPlexSettingsFromRow(object[] row)
+	{
+		row = NormalizePersonaPlexConfigRow(row);
+		return SanitizePersonaPlexSettings(new PersonaPlexSettings
+		{
+			enabled = ParseStoredBool(GetRowValue(row, 1), fallback: true),
+			serverUrl = GetRowValue(row, 2),
+			voicePrompt = GetRowValue(row, 3),
+			personaPrompt = GetRowValue(row, 4),
+			updatedUtc = GetRowValue(row, 5)
+		});
+	}
+
+	private object[] PersonaPlexSettingsToRow(PersonaPlexSettings settings)
+	{
+		settings = SanitizePersonaPlexSettings(settings ?? CreateDefaultPersonaPlexSettings());
+		return NormalizePersonaPlexConfigRow(new object[6]
+		{
+			"global",
+			settings.enabled ? "true" : "false",
+			settings.serverUrl,
+			settings.voicePrompt,
+			settings.personaPrompt,
+			DateTimeOffset.UtcNow.ToString("O")
+		});
+	}
+
+	private PersonaPlexSettings PersonaPlexSettingsFromJson(JsonElement root, PersonaPlexSettings fallback)
+	{
+		PersonaPlexSettings settings = ClonePersonaPlexSettings(fallback ?? CreateDefaultPersonaPlexSettings());
+		if (root.ValueKind != JsonValueKind.Object)
+		{
+			return SanitizePersonaPlexSettings(settings);
+		}
+		if (root.TryGetProperty("enabled", out var enabled))
+		{
+			settings.enabled = ReadJsonBool(enabled, settings.enabled);
+		}
+		string serverUrl = FirstNonEmpty(
+			ExtractStringProperty(root, "serverUrl"),
+			ExtractStringProperty(root, "server_url"),
+			ExtractStringProperty(root, "url"));
+		if (!string.IsNullOrWhiteSpace(serverUrl))
+		{
+			settings.serverUrl = serverUrl;
+		}
+		string voicePrompt = FirstNonEmpty(
+			ExtractStringProperty(root, "voicePrompt"),
+			ExtractStringProperty(root, "voice_prompt"));
+		if (!string.IsNullOrWhiteSpace(voicePrompt))
+		{
+			settings.voicePrompt = voicePrompt;
+		}
+		string personaPrompt = FirstNonEmpty(
+			ExtractStringProperty(root, "personaPrompt"),
+			ExtractStringProperty(root, "persona_prompt"),
+			ExtractStringProperty(root, "textPrompt"),
+			ExtractStringProperty(root, "text_prompt"));
+		if (personaPrompt != null)
+		{
+			settings.personaPrompt = personaPrompt;
+		}
+		return SanitizePersonaPlexSettings(settings);
+	}
+
+	private PersonaPlexSettings ClonePersonaPlexSettings(PersonaPlexSettings settings)
+	{
+		settings = SanitizePersonaPlexSettings(settings ?? CreateDefaultPersonaPlexSettings());
+		return new PersonaPlexSettings
+		{
+			enabled = settings.enabled,
+			serverUrl = settings.serverUrl,
+			voicePrompt = settings.voicePrompt,
+			personaPrompt = settings.personaPrompt,
+			updatedUtc = settings.updatedUtc
+		};
+	}
+
+	private PersonaPlexSettings SanitizePersonaPlexSettings(PersonaPlexSettings settings)
+	{
+		PersonaPlexSettings defaults = CreateDefaultPersonaPlexSettings();
+		settings = settings ?? defaults;
+		settings.serverUrl = LimitPersonaPlexText(FirstNonEmpty(settings.serverUrl, defaults.serverUrl), 2048);
+		settings.voicePrompt = LimitPersonaPlexText(FirstNonEmpty(settings.voicePrompt, defaults.voicePrompt), 180);
+		settings.personaPrompt = LimitPersonaPlexText(settings.personaPrompt ?? defaults.personaPrompt, 4000);
+		if (string.IsNullOrWhiteSpace(settings.personaPrompt))
+		{
+			settings.personaPrompt = defaults.personaPrompt;
+		}
+		if (string.IsNullOrWhiteSpace(settings.updatedUtc))
+		{
+			settings.updatedUtc = DateTimeOffset.UtcNow.ToString("O");
+		}
+		return settings;
+	}
+
+	private PersonaPlexSettings CreateDefaultPersonaPlexSettings()
+	{
+		return new PersonaPlexSettings();
+	}
+
+	private string LimitPersonaPlexText(string value, int maxLength)
+	{
+		value = (value ?? "").Trim();
+		if (maxLength > 0 && value.Length > maxLength)
+		{
+			value = value.Substring(0, maxLength);
+		}
+		return value;
 	}
 
 	private ChatPermissionState GetChatPermissions()
@@ -27154,6 +29941,26 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return table;
 	}
 
+	private Table GetPersonaPlexConfigTable()
+	{
+		SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd("SocketJack", (string _) => new SocketJack.Net.Database.Database("SocketJack"));
+		Table table = db.Tables.GetOrAdd("JackLLMPersonaPlexConfig", (string _) => new Table("JackLLMPersonaPlexConfig"));
+		EnsurePersonaPlexConfigColumns(table);
+		if (table.Rows == null)
+		{
+			table.Rows = new List<object[]>();
+		}
+		for (int i = 0; i < table.Rows.Count; i++)
+		{
+			table.Rows[i] = NormalizePersonaPlexConfigRow(table.Rows[i]);
+		}
+		if (table.Rows.Count == 0)
+		{
+			table.Rows.Add(CreateDefaultPersonaPlexConfigRow());
+		}
+		return table;
+	}
+
 	private Table GetChatSessionCommentsTable()
 	{
 		SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd("SocketJack", (string _) => new SocketJack.Net.Database.Database("SocketJack"));
@@ -27604,6 +30411,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		EnsureColumn(table, 13, "ImageUploads", 16);
 		EnsureColumn(table, 14, "TerminalCommands", 16);
 		EnsureColumn(table, 15, "TerminalForeverApproved", 16);
+	}
+
+	private void EnsurePersonaPlexConfigColumns(Table table)
+	{
+		if (table.Columns == null)
+		{
+			table.Columns = new List<Column>();
+		}
+		EnsureColumn(table, 0, "Id", 80);
+		EnsureColumn(table, 1, "Enabled", 16);
+		EnsureColumn(table, 2, "ServerUrl", 2048);
+		EnsureColumn(table, 3, "VoicePrompt", 180);
+		EnsureColumn(table, 4, "PersonaPrompt", 4000);
+		EnsureColumn(table, 5, "UpdatedUtc", 80);
 	}
 
 	private void EnsureTerminalPermissionRuleColumns(Table table)
@@ -29370,6 +32191,49 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			LinkWebAuthUserToIp(principal.UserName, ExtractClientIp(connection, request) ?? "");
 		}
 		return true;
+	}
+
+	private object[] NormalizePersonaPlexConfigRow(object[] row)
+	{
+		object[] normalized = CreateDefaultPersonaPlexConfigRow();
+		if (row != null)
+		{
+			int copy = Math.Min(row.Length, normalized.Length);
+			for (int i = 0; i < copy; i++)
+			{
+				if (row[i] != null)
+				{
+					normalized[i] = row[i];
+				}
+			}
+		}
+		if (string.IsNullOrWhiteSpace(normalized[0]?.ToString()))
+		{
+			normalized[0] = "global";
+		}
+		normalized[1] = (ParseStoredBool(normalized[1]?.ToString(), fallback: true) ? "true" : "false");
+		normalized[2] = LimitPersonaPlexText(FirstNonEmpty(normalized[2]?.ToString(), "ws://localhost:8998"), 2048);
+		normalized[3] = LimitPersonaPlexText(FirstNonEmpty(normalized[3]?.ToString(), "NATF0.pt"), 180);
+		normalized[4] = LimitPersonaPlexText(FirstNonEmpty(normalized[4]?.ToString(), CreateDefaultPersonaPlexSettings().personaPrompt), 4000);
+		if (string.IsNullOrWhiteSpace(normalized[5]?.ToString()))
+		{
+			normalized[5] = DateTimeOffset.UtcNow.ToString("O");
+		}
+		return normalized;
+	}
+
+	private object[] CreateDefaultPersonaPlexConfigRow()
+	{
+		PersonaPlexSettings defaults = CreateDefaultPersonaPlexSettings();
+		return new object[6]
+		{
+			"global",
+			defaults.enabled ? "true" : "false",
+			defaults.serverUrl,
+			defaults.voicePrompt,
+			defaults.personaPrompt,
+			DateTimeOffset.UtcNow.ToString("O")
+		};
 	}
 
 	private object[] NormalizeChatPermissionRow(object[] row)
@@ -37227,7 +40091,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				}
 				if (mediaGenerationMode)
 				{
-					await HandleChatUiMediaGenerationStreamAsync(output, request?.Body, mediaServiceId, mediaKind, promptSessionId, streamOwnerKey, sessionId, sharedParticipantKey, usageMeter, cancellationToken, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+					await HandleChatUiMediaGenerationStreamAsync(output, request?.Body, mediaServiceId, mediaKind, promptSessionId, streamOwnerKey, sessionId, sharedParticipantKey, usageMeter, cancellationToken, emitToolCall, activeStreamCancellation).ConfigureAwait(continueOnCapturedContext: false);
 					return;
 				}
 				runtimeModelUse = BeginWebChatRuntimeModelUse(await EnsureWebChatRuntimeModelReadyAsync(progress: delegate(string status, double? progress)
@@ -37334,6 +40198,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					}
 				}
 				string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: true, permissions, promptUserName, streamOwnerKey);
+				bool suppressOpenAiReasoning = ShouldSuppressChatUiReasoningForRequest(lmRequestJson);
 				await EnsureLmStudioForPromptAsync();
 				string url = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/v1/chat/completions";
 				if (string.IsNullOrWhiteSpace(promptSessionId))
@@ -37394,10 +40259,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 								continue;
 							}
 							openAiRawContent.Append(delta.Content ?? "");
-							completedReasoning.Append(delta.Reasoning ?? "");
+							if (!suppressOpenAiReasoning)
+							{
+								completedReasoning.Append(delta.Reasoning ?? "");
+							}
 							ChatUiCompletion splitDelta = SplitThinkTags(openAiRawContent.ToString(), completedReasoning.ToString(), preserveWhitespace: true);
 							string answerDelta = ExtractUnsentNativeSuffix(splitDelta.Content, openAiEmittedContent.ToString());
-							string reasoningDelta = ExtractUnsentNativeSuffix(splitDelta.Reasoning, openAiEmittedReasoning.ToString());
+							string reasoningDelta = suppressOpenAiReasoning ? "" : ExtractUnsentNativeSuffix(splitDelta.Reasoning, openAiEmittedReasoning.ToString());
 							if (!string.IsNullOrEmpty(answerDelta) || !string.IsNullOrEmpty(reasoningDelta))
 							{
 								openAiPendingContentDelta.Append(answerDelta);
@@ -37648,7 +40516,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return "";
 	}
 
-	private async Task HandleChatUiMediaGenerationStreamAsync(ChunkedStream output, string requestBody, string serviceId, string mediaKind, string promptSessionId, string ownerKey, string sessionId, string sharedParticipantKey, ChatUsageMeter usageMeter, CancellationToken cancellationToken, Action<ChatUiToolCallStreamEvent> emitToolCall = null)
+	private async Task HandleChatUiMediaGenerationStreamAsync(ChunkedStream output, string requestBody, string serviceId, string mediaKind, string promptSessionId, string ownerKey, string sessionId, string sharedParticipantKey, ChatUsageMeter usageMeter, CancellationToken cancellationToken, Action<ChatUiToolCallStreamEvent> emitToolCall = null, ActiveChatStreamCancellation activeStreamCancellation = null)
 	{
 		string serviceLabel = GetMediaGenerationServiceLabel(mediaKind);
 		string promptText = ExtractChatUiLastUserPromptText(requestBody);
@@ -37670,6 +40538,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			string mediaModelId = await ResolveLoadedMediaGenerationModelIdAsync(serviceId, requestedModel, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 			string mediaToolName = GetMediaGenerationToolName(mediaKind);
 			string mediaToolCallId = "call_media_" + Guid.NewGuid().ToString("N").Substring(0, 16);
+			if (activeStreamCancellation != null)
+			{
+				activeStreamCancellation.MediaToolCallId = mediaToolCallId;
+			}
 			string toolPayload = BuildChatUiMediaGenerationToolCallPayload(mediaKind, promptText, mediaModelId, requestBody, mediaToolCallId);
 			DateTimeOffset mediaToolStartedUtc = DateTimeOffset.UtcNow;
 			string url = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/api/v1/tools/calls";
@@ -37680,7 +40552,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			using StringContent content = new StringContent(toolPayload, Encoding.UTF8, "application/json");
 			using HttpRequestMessage upstreamRequest = new HttpRequestMessage(HttpMethod.Post, url);
 			upstreamRequest.Content = content;
-			using HttpResponseMessage response = await AwaitChatUiMediaGenerationWithProgressAsync(_httpClient.SendAsync(upstreamRequest, HttpCompletionOption.ResponseContentRead, cancellationToken), output, promptSessionId, ownerKey, usageMeter, mediaToolCallId, serviceLabel, runningStatus, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+			using HttpResponseMessage response = await AwaitChatUiMediaGenerationWithProgressAsync(_httpClient.SendAsync(upstreamRequest, HttpCompletionOption.ResponseContentRead, cancellationToken), output, promptSessionId, ownerKey, usageMeter, mediaToolCallId, serviceLabel, runningStatus, cancellationToken, activeStreamCancellation).ConfigureAwait(continueOnCapturedContext: false);
 			string text = ((response.Content != null) ? (await response.Content.ReadAsStringAsync()) : "");
 			string body = text;
 			if (!response.IsSuccessStatusCode)
@@ -37778,7 +40650,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		public string Message { get; set; } = "";
 	}
 
-	private async Task<HttpResponseMessage> AwaitChatUiMediaGenerationWithProgressAsync(Task<HttpResponseMessage> operation, ChunkedStream output, string promptSessionId, string ownerKey, ChatUsageMeter usageMeter, string toolCallId, string serviceLabel, string fallbackStatus, CancellationToken cancellationToken)
+	private async Task<HttpResponseMessage> AwaitChatUiMediaGenerationWithProgressAsync(Task<HttpResponseMessage> operation, ChunkedStream output, string promptSessionId, string ownerKey, ChatUsageMeter usageMeter, string toolCallId, string serviceLabel, string fallbackStatus, CancellationToken cancellationToken, ActiveChatStreamCancellation activeStreamCancellation = null)
 	{
 		if (operation == null)
 		{
@@ -37797,6 +40669,14 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			double? progress = null;
 			if (snapshot != null)
 			{
+				if (activeStreamCancellation != null)
+				{
+					activeStreamCancellation.MediaToolCallId = toolCallId;
+					if (!string.IsNullOrWhiteSpace(snapshot.JobId))
+					{
+						activeStreamCancellation.MediaJobId = snapshot.JobId;
+					}
+				}
 				double percent = Math.Max(0.0, Math.Min(100.0, snapshot.Percent));
 				bool completed = IsChatUiMediaProgressTerminal(snapshot.State);
 				double ratio = percent / 100.0;
@@ -39203,6 +42083,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			durationMs = toolEvent.DurationMs,
 			argumentsPreview = (toolEvent.ArgumentsPreview ?? ""),
 			resultPreview = (toolEvent.ResultPreview ?? ""),
+			progressPercent = toolEvent.ProgressPercent,
 			sourceCount = toolEvent.SourceCount,
 			error = (toolEvent.Error ?? ""),
 			undoToken = (toolEvent.UndoToken ?? ""),
@@ -39476,6 +42357,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		chatUiToolCallStreamEvent.DurationMs = durationMs;
 		chatUiToolCallStreamEvent.ArgumentsPreview = BuildSafeToolArgumentsPreview(argumentsJson);
 		chatUiToolCallStreamEvent.ResultPreview = BuildSafeToolResultPreview(result);
+		chatUiToolCallStreamEvent.ProgressPercent = ExtractToolEventProgressPercent(argumentsJson, result);
 		chatUiToolCallStreamEvent.SourceCount = CountToolResultSources(name, result);
 		chatUiToolCallStreamEvent.Error = error ?? "";
 		return chatUiToolCallStreamEvent;
@@ -39491,6 +42373,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		if (name.Equals("internet_search", StringComparison.Ordinal) || name.Equals("nuget_search", StringComparison.Ordinal) || name.Equals("nuget_package_info", StringComparison.Ordinal) || name.Equals("github_code_search", StringComparison.Ordinal))
 		{
 			return "internet_search";
+		}
+		if (IsProxyOwnedCoordinationTool(name))
+		{
+			return "coordination";
 		}
 		if (IsProxyOwnedSockJackDmlTool(name))
 		{
@@ -39539,7 +42425,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			display = char.ToUpperInvariant(display[0]) + display.Substring(1);
 		}
-		string detail = FirstNonEmpty(ExtractJsonStringProperty(argumentsJson, "model"), ExtractJsonStringProperty(argumentsJson, "query"), ExtractJsonStringProperty(argumentsJson, "packageId"), ExtractJsonStringProperty(argumentsJson, "id"), ExtractJsonStringProperty(argumentsJson, "command"), ExtractJsonStringProperty(argumentsJson, "path"), ExtractJsonStringProperty(argumentsJson, "filePath"), ExtractJsonStringProperty(argumentsJson, "filename"), ExtractJsonStringProperty(argumentsJson, "url"), ExtractJsonStringProperty(argumentsJson, "repository"), ExtractJsonStringProperty(argumentsJson, "prompt"), ExtractJsonStringProperty(argumentsJson, "text"), ExtractJsonStringProperty(argumentsJson, "action"));
+		string detail = FirstNonEmpty(ExtractJsonStringProperty(argumentsJson, "goal"), ExtractJsonStringProperty(argumentsJson, "nextStep"), ExtractJsonStringProperty(argumentsJson, "model"), ExtractJsonStringProperty(argumentsJson, "query"), ExtractJsonStringProperty(argumentsJson, "packageId"), ExtractJsonStringProperty(argumentsJson, "id"), ExtractJsonStringProperty(argumentsJson, "command"), ExtractJsonStringProperty(argumentsJson, "path"), ExtractJsonStringProperty(argumentsJson, "filePath"), ExtractJsonStringProperty(argumentsJson, "filename"), ExtractJsonStringProperty(argumentsJson, "url"), ExtractJsonStringProperty(argumentsJson, "repository"), ExtractJsonStringProperty(argumentsJson, "prompt"), ExtractJsonStringProperty(argumentsJson, "text"), ExtractJsonStringProperty(argumentsJson, "action"));
 		if (string.IsNullOrWhiteSpace(detail))
 		{
 			return display;
@@ -39557,6 +42443,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return kind switch
 			{
 				"internet_search" => "Looking up current external information.", 
+				"coordination" => "Updating the goal state for this prompt.",
 				"file" => "Accessing files through the approved workspace tools.", 
 				"terminal" => "Running an approved terminal tool.", 
 				"media_generation" => "Routing the media request to the local runtime.", 
@@ -39726,6 +42613,81 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 		}
 		return redacted;
+	}
+
+	private int ExtractToolEventProgressPercent(string argumentsJson, string result)
+	{
+		int progress = ExtractProgressPercentFromJsonText(argumentsJson);
+		if (progress >= 0)
+		{
+			return progress;
+		}
+		progress = ExtractProgressPercentFromJsonText(result);
+		if (progress >= 0)
+		{
+			return progress;
+		}
+		if (string.IsNullOrWhiteSpace(result))
+		{
+			return -1;
+		}
+		Match match = Regex.Match(result, "\\b(?:progress|progressPercent|percent)\\s*[:=]\\s*(?<value>-?\\d+(?:\\.\\d+)?)\\s*%?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+		if (!match.Success || !double.TryParse(match.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+		{
+			return -1;
+		}
+		return ClampProgressPercent(value);
+	}
+
+	private int ExtractProgressPercentFromJsonText(string json)
+	{
+		if (string.IsNullOrWhiteSpace(json))
+		{
+			return -1;
+		}
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(json);
+			JsonElement root = document.RootElement;
+			if (root.ValueKind != JsonValueKind.Object)
+			{
+				return -1;
+			}
+			string[] names = new string[4] { "progressPercent", "progress_percent", "percent", "progress" };
+			foreach (string name in names)
+			{
+				if (!root.TryGetProperty(name, out var value))
+				{
+					continue;
+				}
+				if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number))
+				{
+					return ClampProgressPercent(number);
+				}
+				if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number))
+				{
+					return ClampProgressPercent(number);
+				}
+			}
+		}
+		catch
+		{
+		}
+		return -1;
+	}
+
+	private int ClampProgressPercent(double value)
+	{
+		if (double.IsNaN(value) || double.IsInfinity(value))
+		{
+			return -1;
+		}
+		if (value > 0.0 && value <= 1.0)
+		{
+			value *= 100.0;
+		}
+		value = Math.Max(0.0, Math.Min(100.0, value));
+		return (int)Math.Round(value, MidpointRounding.AwayFromZero);
 	}
 
 	private int CountToolResultSources(string toolName, string result)
@@ -40586,6 +43548,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		string url = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/v1/chat/completions";
 		string currentRequestJson = lmRequestJson;
 		sessionId = EnsureChatUiSessionId(sessionId);
+		currentRequestJson = EnsureRequiredProxyFileWriteToolsEnabled(currentRequestJson, ownerKey);
+		if (ShouldPreloadExplicitProxyToolCalls() && TryBuildExplicitRequiredProxyFileWriteToolCall(currentRequestJson, out var explicitFileWriteCall))
+		{
+			LogToolCalls("chat ui explicit required file write", new List<ToolCallData> { explicitFileWriteCall });
+			string continuationRequest0 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { explicitFileWriteCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+			if (!string.IsNullOrWhiteSpace(continuationRequest0))
+			{
+				if (TryBuildImmediatePostToolCompletion(currentRequestJson, continuationRequest0, emitLiveContent, out var immediateFileWriteCompletion0))
+				{
+					return immediateFileWriteCompletion0;
+				}
+				currentRequestJson = continuationRequest0;
+			}
+		}
 		if (ShouldPreloadExplicitProxyToolCalls() && TryBuildExplicitBrowserOpenToolCall(currentRequestJson, out var explicitBrowserOpenCall))
 		{
 			LogToolCalls("chat ui explicit browser open", new List<ToolCallData> { explicitBrowserOpenCall });
@@ -40631,7 +43607,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				if (timeboxFinalAnswer)
 				{
 					finalAnswerTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-					finalAnswerTimeoutCts.CancelAfter(TimeSpan.FromSeconds(28.0));
+					finalAnswerTimeoutCts.CancelAfter(GetProxyFinalAnswerTimeout(currentRequestJson));
 					roundCancellationToken = finalAnswerTimeoutCts.Token;
 				}
 				Func<string, bool> roundContentEmitter = finalAnswerOnlyRound && !timeboxFinalAnswer ? emitLiveContent : null;
@@ -40661,7 +43637,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 						continue;
 					}
 					LogMessage("[Chat UI] Model returned reasoning only after proxy tool results; returning latest tool result fallback.");
-					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35);
+					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass produced no visible text after completed tool results, so I am rendering the clean tool fallback instead of leaving the turn stuck.");
 				}
 				if (string.IsNullOrWhiteSpace(final.Content) && string.IsNullOrWhiteSpace(final.Reasoning))
 				{
@@ -40672,7 +43648,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 						continue;
 					}
 					LogMessage("[Chat UI] LM Studio requested proxy tools after final-answer mode disabled tools; returning latest tool results.");
-					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35);
+					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The runtime requested more tools after tool use was already closed for final synthesis, so I am rendering the latest completed tool output instead of stalling.");
 				}
 				string finalPendingSteering = ((consumeSteering == null) ? "" : NormalizeChatStreamSteeringText(consumeSteering()));
 				if (!string.IsNullOrWhiteSpace(finalPendingSteering) && toolRound < 35)
@@ -40705,6 +43681,17 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 						continue;
 					}
 				}
+				if (RequestRequiresUnmetProxyFileWrite(currentRequestJson))
+				{
+					if (toolRound < 35 && ShouldContinueForRequiredProxyFileWrite(currentRequestJson, final.Content, out var finalMissingFileWriteInstruction))
+					{
+						LogMessage("[Chat UI] Rejected final-answer-only text for file-write prompt without a successful vs_write_file result; reopening the agent loop.");
+						currentRequestJson = EnsureRequiredProxyFileWriteToolsEnabled(AppendAssistantAndSystemMessage(currentRequestJson, final.Content ?? "", finalMissingFileWriteInstruction), ownerKey);
+						continue;
+					}
+					LogMessage("[Chat UI] Blocking final answer for file-write prompt because no successful vs_write_file result was observed.");
+					return BuildRequiredProxyFileWriteBlockedCompletion(currentRequestJson, final.Content, emitLiveContent);
+				}
 				return AttachProxySearchCitationsIfNeeded(final, currentRequestJson);
 			}
 			List<ToolCallData> toolCalls = ExtractProxyToolCallsFromChatCompletion(responseBody);
@@ -40722,7 +43709,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					if (finalAnswerRound)
 					{
 						LogMessage("[Chat UI] Proxy agent reached final tool round; summarizing latest tool results without another model pass.");
-						return BuildAndStreamProxyToolLoopFallbackCompletion(continuationRequest3, emitLiveContent, loopLimitReached: true);
+						return BuildAndStreamProxyToolLoopFallbackCompletion(continuationRequest3, emitLiveContent, loopLimitReached: true, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The agent reached the final tool round, so I am summarizing the latest completed tool output.");
 					}
 					currentRequestJson = continuationRequest3;
 					continue;
@@ -40731,6 +43718,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			ChatUiCompletion direct = ExtractChatUiCompletionFromChatCompletion(responseBody);
 			direct.Raw = responseBody;
 			bool hasProxyToolResult = ExtractLatestProxyToolResultText(currentRequestJson, 1).Count > 0;
+			if (TryBuildRequiredProxyFileWriteToolCallFromAssistantDraft(responseBody, currentRequestJson, out var rescuedFileWriteToolCall))
+			{
+				LogToolCalls("chat ui required file-write rescue", new List<ToolCallData> { rescuedFileWriteToolCall });
+				string continuationRequest4a = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { rescuedFileWriteToolCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+				if (!string.IsNullOrWhiteSpace(continuationRequest4a))
+				{
+					if (TryBuildImmediatePostToolCompletion(currentRequestJson, continuationRequest4a, emitLiveContent, out var immediateFileWriteCompletion))
+					{
+						return immediateFileWriteCompletion;
+					}
+					currentRequestJson = continuationRequest4a;
+					continue;
+				}
+			}
 			if (!hasProxyToolResult && TryBuildProxyToolCallFromAssistantIntent(responseBody, currentRequestJson, out var rescuedToolCall))
 			{
 				LogToolCalls("chat ui assistant intent rescue", new List<ToolCallData> { rescuedToolCall });
@@ -40751,7 +43752,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					continue;
 				}
 				LogMessage("[Chat UI] Model returned unusable final content after proxy tool results; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35);
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass returned unusable content after completed tool results, so I am rendering the clean tool fallback.");
 			}
 			string pendingSteering = ((consumeSteering == null) ? "" : NormalizeChatStreamSteeringText(consumeSteering()));
 			if (!string.IsNullOrWhiteSpace(pendingSteering) && toolRound < 35)
@@ -40763,6 +43764,17 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			if (hasProxyToolResult)
 			{
 				direct.Reasoning = "";
+			}
+			if (toolRound < 35 && ShouldContinueForRequiredProxyFileWrite(currentRequestJson, direct.Content, out var missingFileWriteInstruction))
+			{
+				LogMessage("[Chat UI] Rejected final answer for file-write prompt without a successful vs_write_file result; continuing the agent loop.");
+				currentRequestJson = EnsureRequiredProxyFileWriteToolsEnabled(AppendAssistantAndSystemMessage(currentRequestJson, direct.Content ?? "", missingFileWriteInstruction), ownerKey);
+				continue;
+			}
+			if (RequestRequiresUnmetProxyFileWrite(currentRequestJson))
+			{
+				LogMessage("[Chat UI] Blocking final answer for file-write prompt because no successful vs_write_file result was observed.");
+				return BuildRequiredProxyFileWriteBlockedCompletion(currentRequestJson, direct.Content, emitLiveContent);
 			}
 			if (hasProxyToolResult && toolRound < 35 && ShouldContinueAfterRecoverableToolFailure(currentRequestJson, direct.Content))
 			{
@@ -40785,7 +43797,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					continue;
 				}
 				LogMessage("[Chat UI] Model final content after proxy tool use contained unsafe transcript/markup leakage; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35);
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass leaked tool markup after completed tool results, so I am rendering the clean tool fallback.");
 			}
 			if (hasProxyToolResult && string.IsNullOrWhiteSpace(direct.Content))
 			{
@@ -40796,7 +43808,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					continue;
 				}
 				LogMessage("[Chat UI] Model returned no visible final content after proxy tool results; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35);
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass came back empty after completed tool results, so I am rendering the clean tool fallback.");
 			}
 			if (!hasProxyToolResult && toolRound < 35 && ShouldRejectUngroundedExternalAnswer(currentRequestJson, direct.Content) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var groundingSearchCall))
 			{
@@ -40813,7 +43825,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			catch (OperationCanceledException) when (timeboxFinalAnswer && !cancellationToken.IsCancellationRequested)
 			{
 				LogMessage("[Chat UI] Final-answer pass timed out after proxy tool results; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35);
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, synthesisTimedOut: true, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer synthesis pass timed out after completed tool results, so I am rendering the source/tool fallback instead of leaving the turn stalled.");
 			}
 			finally
 			{
@@ -40821,7 +43833,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 		}
 		LogMessage("[Chat UI] Proxy agent tool loop reached the maximum; returning latest tool results instead of an error.");
-		return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, loopLimitReached: true);
+		return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, loopLimitReached: true, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The agent reached the maximum tool-loop count, so I am summarizing the latest completed tool output.");
 	}
 
 	private bool ShouldContinueAfterRecoverableToolFailure(string requestBody, string finalContent)
@@ -40871,6 +43883,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		string instruction = "[LmVsProxy tool result digest retry] The previous answer attempt did not use the completed tool output" + (string.IsNullOrWhiteSpace(reason) ? "." : (" because " + reason.Trim() + ".")) + " Use the compact digest below as direct context for the same user request. Do not mention that tool progress is shown above. Do not dump raw JSON, XML, HTML, terminal transcripts, stack traces, or tool-call markup. If the user asked for URLs, list them with readable labels. If the user asked for examples, source material, scraped page details, or page contents and this digest only contains search-result URLs, choose the best URL(s) yourself and continue with internet_search action=read, browser_read_page, or download_file followed by read_file when those tools are still available before finalizing. Otherwise answer directly from the digest and clearly say what could not be verified.\nUser request: " + TruncateForLog(prompt, 700) + "\n\nTool result digest:\n" + digest;
 		continuationRequest = AppendAssistantAndSystemMessage(requestBody, "", instruction);
 		return !string.IsNullOrWhiteSpace(continuationRequest);
+	}
+
+	private TimeSpan GetProxyFinalAnswerTimeout(string requestBody)
+	{
+		string prompt = FirstNonEmpty(NormalizeChatUiIntentPrompt(ExtractChatUiLastUserPromptText(requestBody)), NormalizeChatUiIntentPrompt(ExtractLastUserMessage(requestBody) ?? ""));
+		if (PromptRequestsSourceMaterialInspection(prompt) || PromptRequestsCompiledListOrResearch(prompt))
+		{
+			return TimeSpan.FromSeconds(75.0);
+		}
+		if (PromptRequestsLinksOrSources(prompt) || PromptLooksLikeExternalLookupIntent(prompt))
+		{
+			return TimeSpan.FromSeconds(55.0);
+		}
+		return TimeSpan.FromSeconds(42.0);
 	}
 
 	private bool TryBuildProxyAnswerSufficiencyInstruction(string requestBody, string content, out string instruction)
@@ -41090,13 +44116,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return "";
 		}
-		string text = prompt.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+		string text = StripHiddenChatControlDirectives(prompt).Trim();
 		int marker = text.LastIndexOf("User request:", StringComparison.OrdinalIgnoreCase);
 		if (marker >= 0)
 		{
 			text = text.Substring(marker + "User request:".Length).Trim();
 		}
-		text = Regex.Replace(text, "(?im)^\\s*/no_think\\s*$", "", RegexOptions.CultureInvariant);
 		text = Regex.Replace(text, "(?im)^\\s*\\[SocketJack\\s+Auto\\s+(?:tools|text)\\s+request\\]\\s*$", "", RegexOptions.CultureInvariant);
 		text = Regex.Replace(text, "(?is)^\\s*Complete\\s+this\\s+as\\s+a\\s+single\\s+clean\\s+tools\\s+cycle\\..*?(?:\\n\\s*\\n|$)", "", RegexOptions.CultureInvariant);
 		return text.Trim();
@@ -41156,6 +44181,499 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 		}
 		return false;
+	}
+
+	private string EnsureRequiredProxyFileWriteToolsEnabled(string requestBody, string ownerKey)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody))
+		{
+			return requestBody;
+		}
+		string prompt = ExtractRequiredProxyFileWritePrompt(requestBody);
+		if (!PromptRequestsProxyFileWrite(prompt) || RequestHasSuccessfulProxyToolResult(requestBody, "vs_write_file"))
+		{
+			return requestBody;
+		}
+		if (IsToolAdvertised(requestBody, "vs_write_file"))
+		{
+			if (IsToolChoiceNone(requestBody))
+			{
+				LogMessage("[Chat UI] Re-enabled proxy tools for required file-write prompt.");
+				return RewriteRequestToolChoiceRequired(requestBody);
+			}
+			return RewriteRequestToolChoiceRequired(requestBody);
+		}
+		string withTools = AddProxyResearchTools(requestBody, GetChatPermissions(ownerKey), includeVsTools: true, includeTerminalTools: false, includeBrowserTools: false, ownerKey);
+		if (IsToolAdvertised(withTools, "vs_write_file"))
+		{
+			LogMessage("[Chat UI] Attached VS filesystem tools for required file-write prompt.");
+			return RewriteRequestToolChoiceRequired(withTools);
+		}
+		return requestBody;
+	}
+
+	private string RewriteRequestToolChoiceAuto(string requestBody)
+	{
+		return RewriteRequestToolChoice(requestBody, "auto");
+	}
+
+	private string RewriteRequestToolChoiceRequired(string requestBody)
+	{
+		return RewriteRequestToolChoice(requestBody, "required");
+	}
+
+	private string RewriteRequestToolChoice(string requestBody, string toolChoice)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody))
+		{
+			return requestBody;
+		}
+		toolChoice = string.IsNullOrWhiteSpace(toolChoice) ? "auto" : toolChoice.Trim();
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			using MemoryStream stream = new MemoryStream();
+			using Utf8JsonWriter writer = new Utf8JsonWriter(stream);
+			bool wroteToolChoice = false;
+			writer.WriteStartObject();
+			foreach (JsonProperty property in document.RootElement.EnumerateObject())
+			{
+				if (property.NameEquals("tool_choice"))
+				{
+					writer.WriteString("tool_choice", toolChoice);
+					wroteToolChoice = true;
+				}
+				else
+				{
+					property.WriteTo(writer);
+				}
+			}
+			if (!wroteToolChoice)
+			{
+				writer.WriteString("tool_choice", toolChoice);
+			}
+			writer.WriteEndObject();
+			writer.Flush();
+			return Encoding.UTF8.GetString(stream.ToArray());
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Chat UI] Could not rewrite tool_choice=" + toolChoice + ": " + ex.Message);
+			return requestBody;
+		}
+	}
+
+	private bool RequestRequiresUnmetProxyFileWrite(string requestBody)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody))
+		{
+			return false;
+		}
+		string prompt = ExtractRequiredProxyFileWritePrompt(requestBody);
+		return (PromptRequestsProxyFileWrite(prompt) || RequestContainsRequiredProxyFileWriteHint(requestBody)) &&
+			!RequestHasSuccessfulProxyToolResult(requestBody, "vs_write_file");
+	}
+
+	private static bool RequestContainsRequiredProxyFileWriteHint(string requestBody)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody))
+		{
+			return false;
+		}
+		return requestBody.IndexOf("[LmVsProxy compact file tools]", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			requestBody.IndexOf("[LmVsProxy required file write]", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			requestBody.IndexOf("\"lmvs_required_file_write\":true", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			requestBody.IndexOf("\"lmvs_required_file_write\": true", StringComparison.OrdinalIgnoreCase) >= 0;
+	}
+
+	private string ExtractRequiredProxyFileWritePrompt(string requestBody)
+	{
+		List<string> candidates = new List<string>();
+		string prompt = ExtractChatUiLastUserPromptText(requestBody);
+		if (!string.IsNullOrWhiteSpace(prompt))
+		{
+			candidates.Add(prompt);
+		}
+		prompt = ExtractLastUserMessage(requestBody) ?? "";
+		if (!string.IsNullOrWhiteSpace(prompt))
+		{
+			candidates.Add(prompt);
+		}
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody ?? "");
+			if (document.RootElement.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array)
+			{
+				List<JsonElement> messageList = messages.EnumerateArray().Select(message => message.Clone()).ToList();
+				for (int i = messageList.Count - 1; i >= 0; i--)
+				{
+					JsonElement message = messageList[i];
+					string role = ExtractStringProperty(message, "role") ?? "";
+					if (!role.Equals("user", StringComparison.OrdinalIgnoreCase))
+					{
+						continue;
+					}
+					string content = ExtractStringProperty(message, "content") ?? ExtractChatUiMessageContentText(message) ?? "";
+					if (!string.IsNullOrWhiteSpace(content))
+					{
+						candidates.Add(content);
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		foreach (string candidate in candidates)
+		{
+			string normalizedCandidate = NormalizeChatUiIntentPrompt(candidate);
+			if (PromptRequestsProxyFileWrite(normalizedCandidate))
+			{
+				return normalizedCandidate;
+			}
+		}
+		return candidates.Select(NormalizeChatUiIntentPrompt).FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate)) ?? "";
+	}
+
+	private ChatUiCompletion BuildRequiredProxyFileWriteBlockedCompletion(string requestBody, string finalContent, Func<string, bool> emitLiveContent)
+	{
+		string prompt = ExtractRequiredProxyFileWritePrompt(requestBody);
+		string target = ExtractLikelyRequestedFileTarget(prompt);
+		string targetText = string.IsNullOrWhiteSpace(target) ? "the requested file" : target;
+		string content = "Blocked: the model did not produce a successful vs_write_file tool result for " + targetText + ", so the runtime refused to claim the file was created.";
+		if (!string.IsNullOrWhiteSpace(finalContent))
+		{
+			content += "\n\nLatest model text was not accepted as completion:\n" + TruncateForLog(finalContent.Trim(), 1200);
+		}
+		emitLiveContent?.Invoke(content);
+		return new ChatUiCompletion
+		{
+			Content = content,
+			Reasoning = ""
+		};
+	}
+
+	private bool TryBuildRequiredProxyFileWriteToolCallFromAssistantDraft(string responseBody, string requestBody, out ToolCallData toolCall)
+	{
+		toolCall = null;
+		if (string.IsNullOrWhiteSpace(requestBody) || IsToolChoiceNone(requestBody) || !IsToolAdvertised(requestBody, "vs_write_file") || RequestHasSuccessfulProxyToolResult(requestBody, "vs_write_file"))
+		{
+			return false;
+		}
+		string prompt = ExtractRequiredProxyFileWritePrompt(requestBody);
+		if (!PromptRequestsProxyFileWrite(prompt))
+		{
+			return false;
+		}
+		string target = ExtractLikelyRequestedFileTarget(prompt);
+		if (string.IsNullOrWhiteSpace(target))
+		{
+			return false;
+		}
+		string content = "";
+		if (!TryExtractExactRequestedFileContent(prompt, out content))
+		{
+			ChatUiCompletion completion = ExtractChatUiCompletionFromChatCompletion(responseBody);
+			string candidate = completion?.Content ?? "";
+			if (!AssistantContentLooksLikeRequestedFileDraft(prompt, candidate))
+			{
+				return false;
+			}
+			content = candidate.TrimEnd() + "\n";
+		}
+		toolCall = new ToolCallData
+		{
+			Id = "call_proxy_" + Guid.NewGuid().ToString("N").Substring(0, 16),
+			Name = "vs_write_file",
+			ArgumentsJson = "{\"path\":\"" + EscapeJson(target) + "\",\"content\":\"" + EscapeJson(content ?? "") + "\",\"overwrite\":true}",
+			ArgumentsWereMalformed = false
+		};
+		LogMessage("[Chat UI] Rescued required file-write intent for " + TruncateForLog(target, 180) + ".");
+		return true;
+	}
+
+	private bool TryBuildExplicitRequiredProxyFileWriteToolCall(string requestBody, out ToolCallData toolCall)
+	{
+		toolCall = null;
+		if (string.IsNullOrWhiteSpace(requestBody) || RequestHasSuccessfulProxyToolResult(requestBody, "vs_write_file"))
+		{
+			return false;
+		}
+		string prompt = ExtractRequiredProxyFileWritePrompt(requestBody);
+		if (!PromptRequestsProxyFileWrite(prompt) || !TryExtractExactRequestedFileContent(prompt, out var content))
+		{
+			return false;
+		}
+		string target = ExtractLikelyRequestedFileTarget(prompt);
+		if (string.IsNullOrWhiteSpace(target))
+		{
+			return false;
+		}
+		toolCall = new ToolCallData
+		{
+			Id = "call_proxy_" + Guid.NewGuid().ToString("N").Substring(0, 16),
+			Name = "vs_write_file",
+			ArgumentsJson = "{\"path\":\"" + EscapeJson(target) + "\",\"content\":\"" + EscapeJson(content ?? "") + "\",\"overwrite\":true}",
+			ArgumentsWereMalformed = false
+		};
+		LogMessage("[Chat UI] Preloaded explicit vs_write_file for " + TruncateForLog(target, 180) + ".");
+		return true;
+	}
+
+	private static bool TryExtractExactRequestedFileContent(string prompt, out string content)
+	{
+		content = "";
+		if (string.IsNullOrWhiteSpace(prompt))
+		{
+			return false;
+		}
+		foreach (string pattern in new[]
+		{
+			"(?im)\\bcontaining\\s+exactly(?:\\s+this)?(?:\\s+single)?\\s+line\\s*:\\s*(?<content>[^\\r\\n]+)",
+			"(?im)\\b(?:content|contents)\\s+(?:must\\s+be\\s+)?exactly\\s*[:=]\\s*(?<content>[^\\r\\n]+)",
+			"(?im)\\bwrite\\s+exactly\\s*[:=]\\s*(?<content>[^\\r\\n]+)"
+		})
+		{
+			Match match = Regex.Match(prompt, pattern, RegexOptions.CultureInvariant);
+			if (match.Success)
+			{
+				content = match.Groups["content"].Value.Trim().Trim('"', '\'');
+				content = Regex.Replace(content, "(?is)\\s+(?:do\\s+not\\s+answer|after\\s+the\\s+tool|after\\s+that|when\\s+finished|when\\s+complete|then\\s+reply|reply\\s+exactly|respond\\s+exactly)\\b.*$", "", RegexOptions.CultureInvariant).Trim().Trim('"', '\'');
+				return !string.IsNullOrEmpty(content);
+			}
+		}
+		return false;
+	}
+
+	private bool AssistantContentLooksLikeRequestedFileDraft(string prompt, string candidate)
+	{
+		string text = (candidate ?? "").Trim();
+		if (text.Length < 180)
+		{
+			return false;
+		}
+		if (Regex.IsMatch(text, "(?is)^\\s*(?:done|created|saved|wrote|written|tool_write_ok|socketjack_md_written|project_summary_written)\\b", RegexOptions.CultureInvariant))
+		{
+			return false;
+		}
+		if (Regex.IsMatch(text, "(?is)\\b(?:i (?:cannot|can't|do not|don't)|unable to|permission denied|access denied|blocked:)\\b", RegexOptions.CultureInvariant))
+		{
+			return false;
+		}
+		if (Regex.IsMatch(text, "(?is)<tool_call|\"tool_calls\"|\"function\"\\s*:\\s*\\{", RegexOptions.CultureInvariant))
+		{
+			return false;
+		}
+		string promptText = (prompt ?? "").ToLowerInvariant();
+		if (Regex.IsMatch(promptText, "\\b(?:summarize|summarise|summary|document)\\b", RegexOptions.CultureInvariant))
+		{
+			return text.Length >= 300 && (Regex.IsMatch(text, "(?m)^\\s*#{1,4}\\s+\\S", RegexOptions.CultureInvariant) || CountVisibleListItems(text) >= 2 || Regex.Matches(text, "[.!?](?:\\s|$)", RegexOptions.CultureInvariant).Count >= 3);
+		}
+		return true;
+	}
+
+	private bool ShouldContinueForRequiredProxyFileWrite(string requestBody, string finalContent, out string instruction)
+	{
+		instruction = "";
+		if (string.IsNullOrWhiteSpace(requestBody) || CountTextOccurrences(requestBody, "[LmVsProxy required file write]") >= 4)
+		{
+			return false;
+		}
+		string prompt = ExtractChatUiLastUserPromptText(requestBody);
+		if (string.IsNullOrWhiteSpace(prompt))
+		{
+			prompt = ExtractLastUserMessage(requestBody) ?? "";
+		}
+		prompt = NormalizeChatUiIntentPrompt(prompt);
+		if ((!PromptRequestsProxyFileWrite(prompt) && !RequestContainsRequiredProxyFileWriteHint(requestBody)) || RequestHasSuccessfulProxyToolResult(requestBody, "vs_write_file"))
+		{
+			return false;
+		}
+		string target = ExtractLikelyRequestedFileTarget(prompt);
+		string targetText = string.IsNullOrWhiteSpace(target) ? "the requested file" : target;
+		if (!IsToolAdvertised(requestBody, "vs_write_file"))
+		{
+			instruction = "[LmVsProxy required file write] The user asked to create or save " + targetText + ", but this request does not currently advertise vs_write_file. Do not claim the file was created. Give a brief blocked answer explaining that filesystem write tools are unavailable for this Agent turn.";
+			return true;
+		}
+		string available = string.Join(", ", GetAvailableRealProxyToolNames(requestBody));
+		if (string.IsNullOrWhiteSpace(available))
+		{
+			available = "vs_write_file";
+		}
+		instruction = "[LmVsProxy required file write] The user asked to create or save " + targetText + ". The previous assistant text did not satisfy the request because no successful vs_write_file tool result exists yet. Do not answer in prose, do not repeat success text, and do not claim the file exists. Continue the same request with real tools. Inspect with vs_list_files, vs_search_files, or vs_read_file if needed, then call vs_write_file with the completed content. If the runtime cannot emit native tool_calls, emit a Qwen-compatible tool block for vs_write_file. Available real tools include: " + available + ".";
+		return true;
+	}
+
+	private static bool PromptRequestsProxyFileWrite(string prompt)
+	{
+		string text = StripHiddenChatControlDirectives(prompt).Trim().ToLowerInvariant();
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			return false;
+		}
+		bool writeVerb = Regex.IsMatch(text, "\\b(?:write|create|save|overwrite|generate|produce|output|add)\\b", RegexOptions.CultureInvariant) ||
+			Regex.IsMatch(text, "\\bmake\\b.{0,100}\\b(?:a\\s+)?(?:file|[\\w.-]+\\.[a-z0-9]{1,12})\\b", RegexOptions.CultureInvariant) ||
+			Regex.IsMatch(text, "\\b(?:summarize|summarise|document)\\b.{0,220}\\b(?:to|into|as)\\b.{0,120}\\b(?:a\\s+)?(?:file|[\\w.-]+\\.[a-z0-9]{1,8})\\b", RegexOptions.CultureInvariant) ||
+			Regex.IsMatch(text, "\\b(?:summarize|summarise|document)\\b.{0,260}\\b(?:file\\s+called|file\\s+named|called|named)\\b.{0,100}\\b[\\w.-]+\\.[a-z0-9]{1,8}\\b", RegexOptions.CultureInvariant) ||
+			Regex.IsMatch(text, "\\bvs_write_file\\b.{0,260}\\b(?:[a-z]:\\\\|/[^\\s\"'`<>]+|[\\w.-]+\\.[a-z0-9]{1,8})\\b", RegexOptions.CultureInvariant);
+		if (!writeVerb)
+		{
+			return false;
+		}
+		return Regex.IsMatch(text, "\\bfile\\b|[a-z]:\\\\|/[^\\s\"'`<>]+/[^\\s\"'`<>]+|/[^\\s\"'`<>]+\\.[a-z0-9]{1,12}\\b|\\b[\\w.-]+\\.(?:md|markdown|txt|json|yaml|yml|xml|html|htm|cs|vb|fs|js|ts|tsx|jsx|css|scss|py|ps1|bat|cmd|sql|sln|csproj|props|targets)\\b", RegexOptions.CultureInvariant);
+	}
+
+	private static string ExtractLikelyRequestedFileTarget(string prompt)
+	{
+		prompt = StripHiddenChatControlDirectives(prompt);
+		if (string.IsNullOrWhiteSpace(prompt))
+		{
+			return "";
+		}
+		string windowsAbsolutePattern = "[a-z]:\\\\[^\\r\\n\"'`<>]+";
+		string rootedPathPattern = "(?<![\\w.-])/(?:[^\\s\"'`<>/]+/)*[^\\s\"'`<>/]+";
+		string namedFilePattern = "\\b[\\w.-]+\\.(?:md|markdown|txt|json|yaml|yml|xml|html|htm|cs|vb|fs|js|ts|tsx|jsx|css|scss|py|ps1|bat|cmd|sql|sln|csproj|props|targets)\\b";
+		Match match;
+		foreach (string pattern in new[]
+		{
+			"(?im)\\bvs_write_file\\s*:\\s*(?<target>" + windowsAbsolutePattern + "|" + rootedPathPattern + "|" + namedFilePattern + ")",
+			"(?im)^\\s*(?<target>" + windowsAbsolutePattern + "|" + rootedPathPattern + ")\\s*$",
+			"(?i)\\b(?:file|path)\\s+(?:called\\s+|named\\s+)?(?<target>" + windowsAbsolutePattern + "|" + rootedPathPattern + "|" + namedFilePattern + ")",
+			"(?i)\\b(?:called|named|to|into|as|create|created|save|saved|write|wrote|output|generate|generated)\\s+(?:a\\s+|an\\s+|the\\s+)?(?:file\\s+)?(?:called\\s+|named\\s+)?(?<target>" + windowsAbsolutePattern + "|" + rootedPathPattern + "|" + namedFilePattern + ")"
+		})
+		{
+			match = Regex.Match(prompt, pattern, RegexOptions.CultureInvariant);
+			if (match.Success)
+			{
+				string target = CleanLikelyRequestedFileTarget(match.Groups["target"].Value);
+				if (!string.IsNullOrWhiteSpace(target) && !IsHiddenChatControlPathCandidate(target))
+				{
+					return target;
+				}
+			}
+		}
+		match = Regex.Match(prompt, "(?i)(" + windowsAbsolutePattern + ")", RegexOptions.CultureInvariant);
+		if (match.Success)
+		{
+			string target = CleanLikelyRequestedFileTarget(match.Groups[1].Value);
+			return IsHiddenChatControlPathCandidate(target) ? "" : target;
+		}
+		match = Regex.Match(prompt, "(?i)(" + rootedPathPattern + ")", RegexOptions.CultureInvariant);
+		if (match.Success)
+		{
+			string target = CleanLikelyRequestedFileTarget(match.Groups[1].Value);
+			return IsHiddenChatControlPathCandidate(target) ? "" : target;
+		}
+		match = Regex.Match(prompt, "(?i)(" + namedFilePattern + ")", RegexOptions.CultureInvariant);
+		if (!match.Success)
+		{
+			return "";
+		}
+		string namedTarget = CleanLikelyRequestedFileTarget(match.Groups[1].Value);
+		return IsHiddenChatControlPathCandidate(namedTarget) ? "" : namedTarget;
+	}
+
+	private static string CleanLikelyRequestedFileTarget(string value)
+	{
+		string target = (value ?? "").Trim().TrimEnd('.', ',', ';', ')', ']');
+		if (string.IsNullOrWhiteSpace(target))
+		{
+			return "";
+		}
+		target = Regex.Replace(target, "(?is)\\s+(?:containing|with\\s+exactly|with\\s+content|whose\\s+content|after\\s+the\\s+tool|after\\s+that|do\\s+not\\s+answer|when\\s+finished|when\\s+complete|then\\s+reply|reply\\s+exactly|respond\\s+exactly)\\b.*$", "", RegexOptions.CultureInvariant);
+		target = target.Trim().TrimEnd('.', ',', ';', ')', ']');
+		return IsHiddenChatControlPathCandidate(target) ? "" : target;
+	}
+
+	private static string StripHiddenChatControlDirectives(string text)
+	{
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			return "";
+		}
+		string cleaned = text.Replace("\r\n", "\n").Replace('\r', '\n');
+		cleaned = Regex.Replace(cleaned, "(?im)^\\s*/(?:no[_-]?think|think|reason|reasoning|analysis)\\s*$", "", RegexOptions.CultureInvariant);
+		cleaned = Regex.Replace(cleaned, "(?im)^\\s*Do\\s+not\\s+write\\s+a\\s+thought\\s+process,\\s*analysis,\\s*or\\s*<think>\\s+block\\.\\s*Start\\s+with\\s+the\\s+final\\s+answer\\s+immediately\\.\\s*$", "", RegexOptions.CultureInvariant);
+		return cleaned;
+	}
+
+	private static bool IsHiddenChatControlPathCandidate(string value)
+	{
+		string text = (value ?? "").Trim().Trim('"', '\'', '`', '.', ',', ';', ')', ']', Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+			.Replace('-', '_');
+		return text.Equals("no_think", StringComparison.OrdinalIgnoreCase) ||
+			text.Equals("think", StringComparison.OrdinalIgnoreCase) ||
+			text.Equals("reason", StringComparison.OrdinalIgnoreCase) ||
+			text.Equals("reasoning", StringComparison.OrdinalIgnoreCase) ||
+			text.Equals("analysis", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private bool RequestHasSuccessfulProxyToolResult(string requestBody, string toolName)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody) || string.IsNullOrWhiteSpace(toolName))
+		{
+			return false;
+		}
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			if (!document.RootElement.TryGetProperty("messages", out var messages) || messages.ValueKind != JsonValueKind.Array)
+			{
+				return false;
+			}
+			Dictionary<string, string> toolCallNames = new Dictionary<string, string>(StringComparer.Ordinal);
+			foreach (JsonElement message in messages.EnumerateArray())
+			{
+				string role = ExtractStringProperty(message, "role") ?? "";
+				if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && message.TryGetProperty("tool_calls", out var toolCalls) && toolCalls.ValueKind == JsonValueKind.Array)
+				{
+					foreach (JsonElement toolCall in toolCalls.EnumerateArray())
+					{
+						string id = ExtractStringProperty(toolCall, "id") ?? "";
+						string name = "";
+						if (toolCall.TryGetProperty("function", out var function) && function.ValueKind == JsonValueKind.Object)
+						{
+							name = ExtractStringProperty(function, "name") ?? "";
+						}
+						if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(name))
+						{
+							toolCallNames[id] = name;
+						}
+					}
+				}
+				else if (role.Equals("tool", StringComparison.OrdinalIgnoreCase))
+				{
+					string toolCallId = ExtractStringProperty(message, "tool_call_id") ?? "";
+					string mappedName = "";
+					string content = ExtractStringProperty(message, "content") ?? ExtractChatUiMessageContentText(message) ?? "";
+					if ((!string.IsNullOrWhiteSpace(toolCallId) && toolCallNames.TryGetValue(toolCallId, out mappedName) && mappedName.Equals(toolName, StringComparison.Ordinal)) ||
+						content.StartsWith(toolName + " ", StringComparison.OrdinalIgnoreCase))
+					{
+						if (toolName.Equals("vs_write_file", StringComparison.Ordinal) && IsSuccessfulProxyFileWriteResultText(content))
+						{
+							return true;
+						}
+						if (!toolName.Equals("vs_write_file", StringComparison.Ordinal) && !ToolResultIndicatesFailure(content))
+						{
+							return true;
+						}
+					}
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Chat UI] Error checking proxy tool result satisfaction: " + ex.Message);
+		}
+		return false;
+	}
+
+	private static bool IsSuccessfulProxyFileWriteResultText(string content)
+	{
+		string text = (content ?? "").Trim();
+		return text.StartsWith("vs_write_file wrote ", StringComparison.OrdinalIgnoreCase) ||
+			text.StartsWith("vs_write_file skipped write because identical content already exists", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private bool AssistantTextLooksLikeSearchIntent(string assistantText)
@@ -41233,6 +44751,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		List<string> latestResults = ExtractLatestProxyToolResultText(continuationRequestJson, 4);
 		if (latestResults.Count == 0 || latestResults.Any(ToolResultIndicatesFailure))
 		{
+			return false;
+		}
+		if (latestResults.Any(IsProxyCoordinationToolResultBlock))
+		{
+			return false;
+		}
+		if (RequestRequiresUnmetProxyFileWrite(continuationRequestJson) || RequestRequiresUnmetProxyFileWrite(requestBody))
+		{
+			LogMessage("[Chat UI] Suppressed immediate post-tool exact reply because a required vs_write_file result is still missing.");
 			return false;
 		}
 		if (PromptRequestsCompiledListOrResearch(prompt) && TryBuildInternetSearchImmediateCompletion(prompt, continuationRequestJson, latestResults, out var searchContent))
@@ -41319,6 +44846,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		exactReply = reply;
 		return true;
+	}
+
+	private bool IsProxyCoordinationToolResultBlock(string resultBlock)
+	{
+		if (string.IsNullOrWhiteSpace(resultBlock))
+		{
+			return false;
+		}
+		return Regex.IsMatch(resultBlock, "^(?:goal_checkpoint|continue_with_tools)\\s+result\\s*:", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 	}
 
 	private bool TryBuildExplicitBrowserOpenToolCall(string requestBody, out ToolCallData toolCall)
@@ -41603,13 +45139,63 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return fallback;
 	}
 
+	private long ReadBenchmarkLong(JsonElement element, long fallback, params string[] names)
+	{
+		string[] array = names ?? Array.Empty<string>();
+		foreach (string name in array)
+		{
+			if (TryGetMasterJsonProperty(element, name, out var value))
+			{
+				return ReadJsonLong(value, fallback);
+			}
+		}
+		return fallback;
+	}
+
+	private void ReadModelPaymentInfo(
+		JsonElement element,
+		out bool requiresPayment,
+		out string stripePriceId,
+		out string stripeAccount,
+		out long unitAmountCents,
+		out string stripeCurrency,
+		out string paymentStatus)
+	{
+		JsonElement payment = element;
+		if (TryGetMasterJsonProperty(element, "payment", out JsonElement paymentElement) &&
+			paymentElement.ValueKind == JsonValueKind.Object)
+		{
+			payment = paymentElement;
+		}
+
+		requiresPayment =
+			ReadBenchmarkBool(payment, false, "requiresPayment", "paymentRequired") ||
+			ReadBenchmarkBool(element, false, "requiresPayment", "paymentRequired");
+		stripePriceId = FirstNonEmpty(
+			ReadBenchmarkString(payment, "stripePriceId", "priceId"),
+			ReadBenchmarkString(element, "stripePriceId", "priceId"));
+		stripeAccount = FirstNonEmpty(
+			ReadBenchmarkString(payment, "stripeAccount", "connectedAccount", "account"),
+			ReadBenchmarkString(element, "stripeAccount", "connectedAccount", "account"));
+		unitAmountCents = Math.Max(0L, Math.Max(
+			ReadBenchmarkLong(payment, 0L, "stripeUnitAmountCents", "unitAmountCents", "amountCents"),
+			ReadBenchmarkLong(element, 0L, "stripeUnitAmountCents", "unitAmountCents", "amountCents")));
+		stripeCurrency = FirstNonEmpty(
+			ReadBenchmarkString(payment, "stripeCurrency", "currency"),
+			ReadBenchmarkString(element, "stripeCurrency", "currency"),
+			"usd").ToLowerInvariant();
+		paymentStatus = FirstNonEmpty(
+			ReadBenchmarkString(payment, "paymentStatus", "status"),
+			ReadBenchmarkString(element, "paymentStatus"));
+	}
+
 	private bool ContainsUnsafePostToolFinalContent(string content, string requestBody)
 	{
 		if (string.IsNullOrWhiteSpace(content))
 		{
 			return false;
 		}
-		if (Regex.IsMatch(content, "(?is)<\\s*/?\\s*(?:tool_(?:call|result)|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text)\\b|\"tool_calls?\"\\s*:", RegexOptions.CultureInvariant))
+		if (Regex.IsMatch(content, "(?is)<\\s*/?\\s*(?:tool_(?:call|result)|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\\b|\"tool_calls?\"\\s*:", RegexOptions.CultureInvariant))
 		{
 			return true;
 		}
@@ -42650,9 +46236,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return url;
 	}
 
-	private ChatUiCompletion BuildAndStreamProxyToolLoopFallbackCompletion(string requestBody, Func<string, bool> emitLiveContent, bool loopLimitReached = false)
+	private ChatUiCompletion BuildAndStreamProxyToolLoopFallbackCompletion(string requestBody, Func<string, bool> emitLiveContent, bool loopLimitReached = false, Func<string, bool> emitLiveReasoning = null, string fallbackReason = null, bool synthesisTimedOut = false)
 	{
-		ChatUiCompletion completion = BuildProxyToolLoopFallbackCompletion(requestBody, loopLimitReached);
+		if (emitLiveReasoning != null && !string.IsNullOrWhiteSpace(fallbackReason) && !emitLiveReasoning(fallbackReason))
+		{
+			throw new OperationCanceledException("The chat UI stream stopped while sending the proxy tool fallback status.");
+		}
+		ChatUiCompletion completion = BuildProxyToolLoopFallbackCompletion(requestBody, loopLimitReached, synthesisTimedOut);
 		if (emitLiveContent != null && !string.IsNullOrWhiteSpace(completion.Content) && !emitLiveContent(completion.Content))
 		{
 			throw new OperationCanceledException("The chat UI stream stopped while sending the proxy tool fallback answer.");
@@ -42660,15 +46250,17 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return completion;
 	}
 
-	private ChatUiCompletion BuildProxyToolLoopFallbackCompletion(string requestBody, bool loopLimitReached = false)
+	private ChatUiCompletion BuildProxyToolLoopFallbackCompletion(string requestBody, bool loopLimitReached = false, bool synthesisTimedOut = false)
 	{
 		List<string> toolResults = ExtractLatestProxyToolResultText(requestBody, 4);
 		string bestEffortPrefix = loopLimitReached
 			? "I reached the 36-step agent loop limit for this turn. Here is the latest usable progress from the tool results gathered so far."
-			: "I could not get the model to turn the tool output into a normal final answer, so here is the cleanest usable summary from the completed tool work.";
+			: (synthesisTimedOut
+				? "The completed tool work is available, but the final answer synthesis pass timed out. Here is the cleanest usable summary from the completed tool work."
+				: "I could not get the model to turn the tool output into a normal final answer, so here is the cleanest usable summary from the completed tool work.");
 		string content = (toolResults.Count == 0)
 			? bestEffortPrefix
-			: ((!TryBuildProxyToolResultFallbackContent(requestBody, toolResults, out content))
+			: ((!TryBuildProxyToolResultFallbackContent(requestBody, toolResults, out content, synthesisTimedOut))
 				? BuildBestEffortProxyToolResultSummary(requestBody, toolResults, bestEffortPrefix)
 				: (loopLimitReached ? (bestEffortPrefix + "\n\n" + content) : content));
 		return new ChatUiCompletion
@@ -43079,7 +46671,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			return string.IsNullOrWhiteSpace(query) ? "internet_search returned results, but no parseable citation list." : ("internet_search returned results for \"" + query + "\", but no parseable citation list.");
 		}
-		if (result.IndexOf("browser_open result:", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_open]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("browser_read_page result:", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_read_page]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("browser_click_link result:", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_click_link]", StringComparison.OrdinalIgnoreCase) >= 0)
+		if (result.IndexOf("browser_open result:", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_open]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("browser_read_page result:", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_read_page]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("browser_click_link result:", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_click_link]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_click]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_type]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_select]", StringComparison.OrdinalIgnoreCase) >= 0 || result.IndexOf("[Browser Skill browser_press]", StringComparison.OrdinalIgnoreCase) >= 0)
 		{
 			string url = ExtractLineValue(result, "url:");
 			string title = ExtractLineValue(result, "title:");
@@ -43124,7 +46716,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return TryBuildProxyToolResultFallbackContent("", toolResults, out content);
 	}
 
-	private bool TryBuildProxyToolResultFallbackContent(string requestBody, List<string> toolResults, out string content)
+	private bool TryBuildProxyToolResultFallbackContent(string requestBody, List<string> toolResults, out string content, bool synthesisTimedOut = false)
 	{
 		content = "";
 		if (toolResults == null || toolResults.Count == 0)
@@ -43143,7 +46735,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				string prompt = FirstNonEmpty(NormalizeChatUiIntentPrompt(ExtractChatUiLastUserPromptText(requestBody)), NormalizeChatUiIntentPrompt(ExtractLastUserMessage(requestBody) ?? ""));
 				string query = FirstNonEmpty(ExtractLineValue(latest, "Internet search results for:"), ExtractExplicitInternetSearchQuery(prompt));
-				content = BuildInternetSearchFallbackAnswer(prompt, query, sources);
+				content = BuildInternetSearchFallbackAnswer(prompt, query, sources, synthesisTimedOut);
 				return !string.IsNullOrWhiteSpace(content);
 			}
 		}
@@ -43156,7 +46748,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		if (latest.IndexOf("HTTP 403", StringComparison.OrdinalIgnoreCase) >= 0 || latest.IndexOf("Access Denied", StringComparison.OrdinalIgnoreCase) >= 0)
 		{
 			StringBuilder sb = new StringBuilder();
-			sb.AppendLine("Browser Skill opened the eBay page, but eBay blocked the fetch with HTTP 403 Access Denied.");
+			sb.AppendLine("Browser Skill opened the page, but the fetch was blocked with HTTP 403 Access Denied.");
 			if (!string.IsNullOrWhiteSpace(url))
 			{
 				sb.AppendLine("URL: " + url);
@@ -43166,8 +46758,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				sb.AppendLine("Page title: " + title);
 			}
 			sb.AppendLine();
-			sb.AppendLine("I cannot verify current listing titles, prices, condition, shipping, seller, or item URLs from that blocked page, so I am not going to invent listing details.");
-			sb.AppendLine("Also: normal desktop GeForce RTX 3070 cards are generally 8GB, not 12GB, so RTX 3070 12GB should be treated as suspicious or a closest-match search until a specific listing can be opened and verified.");
+			sb.AppendLine("I cannot verify current page contents, listings, prices, condition, shipping, seller details, or item URLs from that blocked response, so I will not invent them.");
+			sb.AppendLine("Use another reachable source URL or a live browser observation if the page requires real user-side access.");
 			content = sb.ToString().TrimEnd();
 			return true;
 		}
@@ -43177,7 +46769,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return true;
 	}
 
-	private string BuildInternetSearchFallbackAnswer(string prompt, string query, List<(int Number, string Title, string Url)> sources, bool synthesisTimedOut = true)
+	private string BuildInternetSearchFallbackAnswer(string prompt, string query, List<(int Number, string Title, string Url)> sources, bool synthesisTimedOut = false)
 	{
 		if (sources == null || sources.Count == 0)
 		{
@@ -43186,36 +46778,17 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		prompt = NormalizeChatUiIntentPrompt(prompt);
 		string lower = (prompt ?? "").ToLowerInvariant();
 		bool wantsMatrix = Regex.IsMatch(lower, "\\b(?:grid|matrix|table|compare|comparison|versus|vs\\.?)\\b", RegexOptions.CultureInvariant);
-		bool gpuInference = Regex.IsMatch(lower, "\\b(?:rtx|graphics\\s+card|gpu|inference|ai)\\b", RegexOptions.CultureInvariant);
 		StringBuilder sb = new StringBuilder();
-		if (gpuInference)
+		sb.Append(synthesisTimedOut ? "I found current search sources" : "Here are current search sources");
+		if (!string.IsNullOrWhiteSpace(query))
 		{
-			sb.AppendLine(synthesisTimedOut
-				? "I found usable current search sources for the GPU benchmark request, but the model synthesis pass timed out, so this is a clean source-backed fallback."
-				: "Here is a source-backed GPU benchmark matrix for RTX 2000-series and RTX 3000-series cards that are useful for AI inference.");
-			sb.AppendLine();
-			sb.AppendLine("| Practical AI-inference tier | GPUs to compare first | Why it matters |");
-			sb.AppendLine("|---|---|---|");
-			sb.AppendLine("| Best RTX 3000 target | RTX 3090 / 3090 Ti | 24GB VRAM is the biggest practical advantage for local inference workloads. |");
-			sb.AppendLine("| Strong RTX 3000 target | RTX 3080 / 3080 Ti, RTX 3070 / 3070 Ti | Higher compute than 2000-series cards, but VRAM can be the limiter. |");
-			sb.AppendLine("| Budget RTX 3000 target | RTX 3060 12GB | Lower raw speed, but the 12GB model is useful when model size matters. |");
-			sb.AppendLine("| Best RTX 2000 target | RTX 2080 Ti | 11GB VRAM and strong Tensor performance for its generation. |");
-			sb.AppendLine("| Budget RTX 2000 target | RTX 2060 Super / 2070 Super / 2080 Super | Usable for smaller models, but usually less attractive than 3000-series deals. |");
-			sb.AppendLine();
+			sb.Append(" for \"").Append(query.Trim()).Append("\"");
 		}
-		else
-		{
-			sb.Append(synthesisTimedOut ? "I found current search sources" : "Here are current search sources");
-			if (!string.IsNullOrWhiteSpace(query))
-			{
-				sb.Append(" for \"").Append(query.Trim()).Append("\"");
-			}
-			sb.AppendLine(synthesisTimedOut
-				? ", but the model synthesis pass timed out, so this is the clean source list instead of a stalled cycle."
-				: ".");
-			sb.AppendLine();
-		}
-		if (wantsMatrix || gpuInference)
+		sb.AppendLine(synthesisTimedOut
+			? ", but the final answer synthesis pass timed out, so this is the clean source list instead of a stalled cycle."
+			: ".");
+		sb.AppendLine();
+		if (wantsMatrix)
 		{
 			sb.AppendLine("| # | Source | Useful for | Link |");
 			sb.AppendLine("|---:|---|---|---|");
@@ -43982,7 +47555,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private string BuildPlainChatModeSystemHint()
 	{
-		return "[LmVsProxy plain chat mode] This is ordinary chatbot mode. Do not call, request, or imply access to tools, files, downloads, terminal commands, internet search, Agent, Companion, or media generation. Answer the user's message directly and include a final answer even when the model emits private reasoning.";
+		return "[JackLLM plain chat mode] This is ordinary chatbot mode. Do not call, request, or imply access to tools, files, downloads, terminal commands, internet search, Agent, Companion, or media generation. Answer the user's message directly in final-answer form. Keep any private reasoning internal; do not write a thought process, analysis, reasoning section, thinking section, or <think> block.";
 	}
 
 	private string BuildChatBrowserSkillSystemHint(JsonElement root)
@@ -44016,7 +47589,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			sb.AppendLine("Viewport: " + (string.IsNullOrWhiteSpace(viewport) ? "unknown" : viewport));
 			sb.AppendLine("Screenshot included in the user message: " + (screenshotIncluded ? "yes" : "no"));
 			sb.AppendLine("Live DOM access: " + (sameOrigin ? "same-origin HTML/text included" : "limited or cross-origin; use browser tools for fetched HTML/text"));
-			sb.AppendLine("Use browser_open, browser_read_page, browser_click_link, and browser_find_text when more page data is needed. The UI mirrors browser_open/browser_click_link navigation in the visible browser panel.");
+			sb.AppendLine("Use browser_open, browser_read_page, browser_click_link, browser_click, browser_type, browser_select, browser_press, and browser_find_text when more page data or interaction is needed. The UI mirrors browser navigation and DOM actions in the visible browser panel.");
 			sb.AppendLine("When criteria is met, put BROWSER_SKILL_DONE on its own line. Put BROWSER_SKILL_OBSERVE when another live screenshot/HTML observation is needed. Put BROWSER_SKILL_USER for login, CAPTCHA, payment, consent, or other user intervention.");
 			string linksText = BuildChatBrowserSkillLinksHint(browserSkill, "links", 40);
 			if (!string.IsNullOrWhiteSpace(linksText))
@@ -45432,6 +49005,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return completion;
 		}
 		ChatUiCompletion split = SplitThinkTags(completion.Content ?? "", completion.Reasoning ?? "");
+		split = SplitPlainReasoningHeadings(split.Content ?? "", split.Reasoning ?? "");
 		completion.Content = CleanAssistantVisibleContent(StripQwenToolCalls(split.Content ?? "", requestBody));
 		completion.Reasoning = ShouldSuppressChatUiReasoningForRequest(requestBody) ? "" : CleanAssistantReasoningText(split.Reasoning ?? "", requestBody);
 		return completion;
@@ -45452,8 +49026,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		cleaned = RemoveTaggedBlocks(cleaned, "thought");
 		cleaned = RemoveTaggedBlocks(cleaned, "analysis");
 		cleaned = RemoveResidualReasoningTags(cleaned);
+		cleaned = SplitPlainReasoningHeadings(cleaned, "").Content ?? "";
 		cleaned = CleanAssistantFinalAnswerMarkup(cleaned);
 		cleaned = RepairRuntimeSpacingArtifacts(cleaned);
+		cleaned = TrimRunawayUnpunctuatedTail(cleaned);
 		return CollapseRepeatedText(cleaned).Trim();
 	}
 
@@ -45602,6 +49178,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return false;
 		}
+		if (ShouldSuppressChatUiReasoningByDefault(requestBody))
+		{
+			return true;
+		}
 		string prompt = ExtractChatUiLastUserPromptText(requestBody);
 		if (string.IsNullOrWhiteSpace(prompt))
 		{
@@ -45611,6 +49191,34 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return text.IndexOf("/no_think", StringComparison.OrdinalIgnoreCase) >= 0
 			|| Regex.IsMatch(text, "\\bdo\\s+not\\s+(?:write|show|include|return|display)\\b.{0,80}\\b(?:thought\\s+process|analysis|reasoning|thinking|<think>)\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
 			|| Regex.IsMatch(text, "\\b(?:no|without)\\s+(?:thought\\s+process|analysis|reasoning|thinking|<think>)\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+	}
+
+	private bool ShouldSuppressChatUiReasoningByDefault(string requestBody)
+	{
+		if (requestBody.IndexOf("[JackLLM plain chat mode]", StringComparison.OrdinalIgnoreCase) >= 0)
+		{
+			return true;
+		}
+		if (requestBody.IndexOf("[LmVsProxy service selection]", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			requestBody.IndexOf("[LmVsProxy agent mode]", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			requestBody.IndexOf("[LmVsProxy permissions]", StringComparison.OrdinalIgnoreCase) >= 0)
+		{
+			return false;
+		}
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			if (document.RootElement.ValueKind != JsonValueKind.Object)
+			{
+				return false;
+			}
+			string service = ExtractStringProperty(document.RootElement, "service") ?? "";
+			return string.IsNullOrWhiteSpace(service);
+		}
+		catch
+		{
+			return false;
+		}
 	}
 
 	private string CleanAssistantFinalAnswerMarkup(string content)
@@ -45662,6 +49270,90 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		cleaned = RemoveSerializedChatUiControlEvents(cleaned);
 		cleaned = RepairRuntimeSpacingArtifacts(cleaned);
 		return cleaned.Trim();
+	}
+
+	private ChatUiCompletion SplitPlainReasoningHeadings(string content, string reasoning, bool preserveWhitespace = false)
+	{
+		content = content ?? "";
+		if (string.IsNullOrWhiteSpace(content))
+		{
+			return new ChatUiCompletion
+			{
+				Content = preserveWhitespace ? content : content.Trim(),
+				Reasoning = preserveWhitespace ? (reasoning ?? "") : (reasoning ?? "").Trim()
+			};
+		}
+		MatchCollection matches = Regex.Matches(content, "(?im)(?:^|\\n)\\s*(?:\\*\\*)?\\s*(?<label>thought\\s+process|chain\\s+of\\s+thought|reasoning|analysis|thinking)\\s*:?\\s*(?:\\*\\*)?\\s*(?:\\n|$)");
+		foreach (Match match in matches)
+		{
+			string before = content.Substring(0, match.Index);
+			string after = content.Substring(match.Index + match.Length);
+			if (!LooksSubstantiveFinalAnswer(before))
+			{
+				continue;
+			}
+			string label = match.Groups["label"].Value ?? "";
+			if (!IsPrivateReasoningHeading(label) && !LooksLikeReasoningLeak(after))
+			{
+				continue;
+			}
+			string nextReasoning = AppendSplitReasoningSegment(reasoning ?? "", preserveWhitespace ? after : after.Trim(), preserveWhitespace);
+			return new ChatUiCompletion
+			{
+				Content = preserveWhitespace ? before : before.TrimEnd(),
+				Reasoning = preserveWhitespace ? nextReasoning : nextReasoning.Trim()
+			};
+		}
+		return new ChatUiCompletion
+		{
+			Content = preserveWhitespace ? content : content.Trim(),
+			Reasoning = preserveWhitespace ? (reasoning ?? "") : (reasoning ?? "").Trim()
+		};
+	}
+
+	private bool IsPrivateReasoningHeading(string label)
+	{
+		string normalized = Regex.Replace(label ?? "", "\\s+", " ").Trim();
+		return normalized.Equals("thought process", StringComparison.OrdinalIgnoreCase) ||
+			normalized.Equals("chain of thought", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private string TrimRunawayUnpunctuatedTail(string content)
+	{
+		if (string.IsNullOrWhiteSpace(content) || content.Length < 1800 || content.IndexOf("```", StringComparison.Ordinal) >= 0)
+		{
+			return content ?? "";
+		}
+		MatchCollection boundaries = Regex.Matches(content, "[.!?][\\\"')\\]]?\\s+");
+		int boundaryEnd = -1;
+		foreach (Match boundary in boundaries)
+		{
+			int end = boundary.Index + boundary.Length;
+			if (end < content.Length - 900)
+			{
+				boundaryEnd = end;
+			}
+		}
+		if (boundaryEnd < 0)
+		{
+			return content;
+		}
+		string tail = content.Substring(boundaryEnd).Trim();
+		if (tail.Length < 900)
+		{
+			return content;
+		}
+		int wordCount = Regex.Matches(tail, "\\b[\\p{L}\\p{N}][\\p{L}\\p{N}'-]*\\b").Count;
+		int punctuationCount = Regex.Matches(tail, "[.!?;:]").Count;
+		if (wordCount < 140 || punctuationCount > 2)
+		{
+			return content;
+		}
+		if (Regex.IsMatch(tail, "[{}=;<>]{3,}", RegexOptions.CultureInvariant))
+		{
+			return content;
+		}
+		return content.Substring(0, boundaryEnd).TrimEnd() + Environment.NewLine + Environment.NewLine + "[Response shortened by proxy after runaway output.]";
 	}
 
 	private string RemovePromptEchoReasoning(string reasoning, string requestBody)
@@ -48607,7 +52299,21 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private bool IsProxyOwnedResearchTool(string toolName)
 	{
-		return toolName != null && (toolName.Equals("internet_search", StringComparison.Ordinal) || toolName.Equals("download_file", StringComparison.Ordinal) || toolName.Equals("nuget_search", StringComparison.Ordinal) || toolName.Equals("nuget_package_info", StringComparison.Ordinal) || toolName.Equals("github_code_search", StringComparison.Ordinal) || IsProxyOwnedWorkstationModelTool(toolName) || IsProxyOwnedSockJackDmlTool(toolName) || IsProxyOwnedGitTool(toolName) || IsProxyOwnedTerminalTool(toolName) || IsProxyOwnedBrowserTool(toolName) || IsProxyOwnedVsTool(toolName) || IsLlmRuntimeToolName(toolName));
+		return toolName != null && (toolName.Equals("internet_search", StringComparison.Ordinal) || toolName.Equals("download_file", StringComparison.Ordinal) || toolName.Equals("nuget_search", StringComparison.Ordinal) || toolName.Equals("nuget_package_info", StringComparison.Ordinal) || toolName.Equals("github_code_search", StringComparison.Ordinal) || IsProxyOwnedCoordinationTool(toolName) || IsProxyOwnedWorkstationModelTool(toolName) || IsProxyOwnedSockJackDmlTool(toolName) || IsProxyOwnedGitTool(toolName) || IsProxyOwnedTerminalTool(toolName) || IsProxyOwnedBrowserTool(toolName) || IsProxyOwnedVsTool(toolName) || IsLlmRuntimeToolName(toolName));
+	}
+
+	private bool IsProxyOwnedCoordinationTool(string toolName)
+	{
+		if (string.IsNullOrWhiteSpace(toolName))
+		{
+			return false;
+		}
+		return toolName.Equals(GoalCheckpointToolName, StringComparison.Ordinal) || toolName.Equals(ContinueWithToolsToolName, StringComparison.Ordinal);
+	}
+
+	private bool IsRealProxyOwnedResearchTool(string toolName)
+	{
+		return IsProxyOwnedResearchTool(toolName) && !IsProxyOwnedCoordinationTool(toolName);
 	}
 
 	private bool IsProxyOwnedWorkstationModelTool(string toolName)
@@ -48637,6 +52343,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		case "browser_open":
 		case "browser_read_page":
 		case "browser_click_link":
+		case "browser_click":
+		case "browser_type":
+		case "browser_select":
+		case "browser_press":
 		case "browser_find_text":
 			return true;
 		default:
@@ -48840,10 +52550,247 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 	}
 
+	private ProxyCoordinationToolResult BuildProxyCoordinationToolResult(string toolName, string argumentsJson, string requestBody)
+	{
+		string goal = FirstNonEmpty(ExtractJsonStringProperty(argumentsJson, "goal"), ExtractChatUiLastUserPromptText(requestBody), ExtractLastUserMessage(requestBody) ?? "the user request");
+		string status = NormalizeProxyCoordinationStatus(toolName, ExtractJsonStringProperty(argumentsJson, "status"));
+		int progressPercent = ExtractProgressPercentFromJsonText(argumentsJson);
+		if (progressPercent < 0)
+		{
+			progressPercent = EstimateProxyCoordinationProgressPercent(requestBody, status);
+		}
+		if (toolName.Equals(GoalCheckpointToolName, StringComparison.Ordinal))
+		{
+			return BuildGoalCheckpointToolResult(argumentsJson, goal, status, progressPercent);
+		}
+		if (toolName.Equals(ContinueWithToolsToolName, StringComparison.Ordinal))
+		{
+			return BuildContinueWithToolsToolResult(argumentsJson, requestBody, goal, status, progressPercent);
+		}
+		return new ProxyCoordinationToolResult
+		{
+			Result = toolName + " failed: Unknown coordination tool.",
+			SystemInstruction = "[JackLLM coordination] The previous coordination tool name was unknown. Continue using the available real tools or provide a clean blocker if none are viable.",
+			ProgressPercent = progressPercent
+		};
+	}
+
+	private ProxyCoordinationToolResult BuildGoalCheckpointToolResult(string argumentsJson, string goal, string status, int progressPercent)
+	{
+		string successCriteria = ExtractJsonStringProperty(argumentsJson, "successCriteria") ?? "";
+		string completed = ExtractJsonStringProperty(argumentsJson, "completed") ?? "";
+		string remaining = ExtractJsonStringProperty(argumentsJson, "remaining") ?? "";
+		string blockedReason = ExtractJsonStringProperty(argumentsJson, "blockedReason") ?? "";
+		string notes = ExtractJsonStringProperty(argumentsJson, "notes") ?? "";
+		bool blocked = status.Equals("blocked", StringComparison.Ordinal);
+		bool readyFinal = status.Equals("ready_final", StringComparison.Ordinal);
+		string result = JsonSerializer.Serialize(new
+		{
+			ok = true,
+			coordination = true,
+			tool = GoalCheckpointToolName,
+			status,
+			progressPercent,
+			goal,
+			successCriteria,
+			completed,
+			remaining,
+			blockedReason,
+			notes
+		});
+		string instruction = readyFinal
+			? "[JackLLM goal checkpoint] The model marked the goal ready for final answer. Produce a clean final answer now using the gathered context. Do not expose checkpoint JSON, internal progress notes, or tool transcripts."
+			: (blocked
+				? "[JackLLM goal checkpoint] The model marked the goal blocked. Produce a brief user-facing blocker explanation and the best next user action. Do not expose checkpoint JSON, internal progress notes, or tool transcripts."
+				: "[JackLLM goal checkpoint] Goal progress recorded at " + progressPercent.ToString(CultureInfo.InvariantCulture) + "%. Continue the same user request. If more external action, source material, files, browser work, shell output, or generated media is needed, call a real available tool next or use continue_with_tools to name the needed real tools.");
+		return new ProxyCoordinationToolResult
+		{
+			Result = result,
+			SystemInstruction = instruction,
+			ForceFinalAnswer = readyFinal || blocked,
+			ProgressPercent = progressPercent
+		};
+	}
+
+	private ProxyCoordinationToolResult BuildContinueWithToolsToolResult(string argumentsJson, string requestBody, string goal, string status, int progressPercent)
+	{
+		string nextStep = ExtractJsonStringProperty(argumentsJson, "nextStep") ?? "";
+		string successCriteria = ExtractJsonStringProperty(argumentsJson, "successCriteria") ?? "";
+		string evidenceNeeded = ExtractJsonStringProperty(argumentsJson, "evidenceNeeded") ?? "";
+		string reason = ExtractJsonStringProperty(argumentsJson, "reason") ?? "";
+		string blockedReason = ExtractJsonStringProperty(argumentsJson, "blockedReason") ?? "";
+		List<string> requestedTools = ExtractStringArrayToolArgument(argumentsJson, "requiredTools");
+		List<string> availableRealTools = GetAvailableRealProxyToolNames(requestBody);
+		List<string> validTools = ResolveRequestedRealProxyTools(requestedTools, availableRealTools, out var invalidTools);
+		bool blocked = status.Equals("blocked", StringComparison.Ordinal);
+		bool readyFinal = status.Equals("ready_final", StringComparison.Ordinal);
+		bool needsTools = status.Equals("needs_tools", StringComparison.Ordinal);
+		if (needsTools && validTools.Count == 0)
+		{
+			string result2 = ContinueWithToolsToolName + " failed: requiredTools must name at least one currently advertised non-coordination tool. Available real tools: " + (availableRealTools.Count == 0 ? "none" : string.Join(", ", availableRealTools)) + ". Requested: " + (requestedTools.Count == 0 ? "none" : string.Join(", ", requestedTools)) + ".";
+			return new ProxyCoordinationToolResult
+			{
+				Result = result2,
+				SystemInstruction = "[JackLLM tool continuation] The previous continue_with_tools call did not name an available real tool. Retry with one or more available real tools, or set status=blocked if no viable tool path remains. Available real tools: " + (availableRealTools.Count == 0 ? "none" : string.Join(", ", availableRealTools)) + ".",
+				ProgressPercent = progressPercent
+			};
+		}
+		string result = JsonSerializer.Serialize(new
+		{
+			ok = invalidTools.Count == 0,
+			coordination = true,
+			tool = ContinueWithToolsToolName,
+			status,
+			progressPercent,
+			goal,
+			requiredTools = validTools,
+			invalidTools,
+			nextStep,
+			successCriteria,
+			evidenceNeeded,
+			reason,
+			blockedReason
+		});
+		string instruction;
+		if (readyFinal)
+		{
+			instruction = "[JackLLM tool continuation] The model marked the requested goal ready for final answer at " + progressPercent.ToString(CultureInfo.InvariantCulture) + "%. Produce a clean final answer now from the gathered context. Do not call more tools, and do not expose coordination JSON or tool transcripts.";
+		}
+		else if (blocked)
+		{
+			instruction = "[JackLLM tool continuation] The model marked the requested goal blocked at " + progressPercent.ToString(CultureInfo.InvariantCulture) + "%. Produce a brief user-facing blocker explanation and the best next user action. Do not expose coordination JSON or tool transcripts. Blocker: " + TruncateForLog(blockedReason, 700);
+		}
+		else
+		{
+			instruction = "[JackLLM tool continuation] Continue the same user request. Do not answer yet. Next, call one of these available real tools: " + string.Join(", ", validTools) + ". Prefer the first listed tool unless the latest context makes another listed tool clearly better. Do not call goal_checkpoint or continue_with_tools again until after at least one real tool result, unless the task becomes blocked or ready for final answer. Progress: " + progressPercent.ToString(CultureInfo.InvariantCulture) + "%. Goal: " + TruncateForLog(goal, 700) + ". Next step: " + TruncateForLog(nextStep, 700) + (string.IsNullOrWhiteSpace(successCriteria) ? "" : ". Success criteria: " + TruncateForLog(successCriteria, 700)) + (invalidTools.Count == 0 ? "" : ". Ignored unavailable requested tools: " + string.Join(", ", invalidTools));
+		}
+		return new ProxyCoordinationToolResult
+		{
+			Result = result,
+			SystemInstruction = instruction,
+			ForceFinalAnswer = readyFinal || blocked,
+			ProgressPercent = progressPercent
+		};
+	}
+
+	private string NormalizeProxyCoordinationStatus(string toolName, string status)
+	{
+		string value = (status ?? "").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+		if (toolName.Equals(GoalCheckpointToolName, StringComparison.Ordinal))
+		{
+			return value switch
+			{
+				"started" => "started",
+				"in_progress" => "in_progress",
+				"ready_final" => "ready_final",
+				"ready" => "ready_final",
+				"final" => "ready_final",
+				"blocked" => "blocked",
+				_ => "in_progress",
+			};
+		}
+		return value switch
+		{
+			"ready_final" => "ready_final",
+			"ready" => "ready_final",
+			"final" => "ready_final",
+			"blocked" => "blocked",
+			_ => "needs_tools",
+		};
+	}
+
+	private int EstimateProxyCoordinationProgressPercent(string requestBody, string status)
+	{
+		if (status.Equals("ready_final", StringComparison.Ordinal))
+		{
+			return 96;
+		}
+		if (status.Equals("blocked", StringComparison.Ordinal))
+		{
+			return 80;
+		}
+		int realResults = ExtractLatestProxyToolResultText(requestBody, 36).Count(result => !Regex.IsMatch(result ?? "", "^(?:goal_checkpoint|continue_with_tools)\\s+result\\s*:", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+		if (status.Equals("started", StringComparison.Ordinal))
+		{
+			return realResults == 0 ? 8 : Math.Min(88, 18 + realResults * 12);
+		}
+		return Math.Min(92, Math.Max(18, 24 + realResults * 12));
+	}
+
+	private List<string> GetAvailableRealProxyToolNames(string requestBody)
+	{
+		return GetAvailableToolNames(requestBody)
+			.Where(IsRealProxyOwnedResearchTool)
+			.OrderBy(name => name, StringComparer.Ordinal)
+			.ToList();
+	}
+
+	private List<string> ResolveRequestedRealProxyTools(List<string> requestedTools, List<string> availableRealTools, out List<string> invalidTools)
+	{
+		invalidTools = new List<string>();
+		List<string> resolved = new List<string>();
+		Dictionary<string, string> availableLookup = availableRealTools.ToDictionary(name => name, name => name, StringComparer.OrdinalIgnoreCase);
+		foreach (string rawTool in requestedTools ?? new List<string>())
+		{
+			string requested = (rawTool ?? "").Trim();
+			if (string.IsNullOrWhiteSpace(requested))
+			{
+				continue;
+			}
+			if (availableLookup.TryGetValue(requested, out var actual) && !resolved.Contains(actual, StringComparer.Ordinal))
+			{
+				resolved.Add(actual);
+			}
+			else if (!invalidTools.Contains(requested, StringComparer.OrdinalIgnoreCase))
+			{
+				invalidTools.Add(requested);
+			}
+		}
+		return resolved;
+	}
+
+	private List<string> ExtractStringArrayToolArgument(string argumentsJson, string propertyName)
+	{
+		List<string> values = new List<string>();
+		if (string.IsNullOrWhiteSpace(argumentsJson) || string.IsNullOrWhiteSpace(propertyName))
+		{
+			return values;
+		}
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(argumentsJson);
+			if (!document.RootElement.TryGetProperty(propertyName, out var value))
+			{
+				return values;
+			}
+			if (value.ValueKind == JsonValueKind.Array)
+			{
+				foreach (JsonElement item in value.EnumerateArray())
+				{
+					string text = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString();
+					if (!string.IsNullOrWhiteSpace(text))
+					{
+						values.Add(text.Trim());
+					}
+				}
+			}
+			else if (value.ValueKind == JsonValueKind.String)
+			{
+				values.AddRange(value.GetString().Split(new char[3] { ',', ';', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(item => item.Trim()).Where(item => item.Length > 0));
+			}
+		}
+		catch
+		{
+		}
+		return values.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+	}
+
 	private async Task<string> BuildProxyToolContinuationRequestAsync(string requestBody, List<ToolCallData> toolCalls, bool keepProxyTools = false, string ownerKey = null, string sessionId = null, Action<ChatUiToolCallStreamEvent> emitToolCall = null)
 	{
 		List<ProxyToolExecutionResult> proxyResults = new List<ProxyToolExecutionResult>();
 		List<ToolCallData> passthroughToolCalls = new List<ToolCallData>();
+		List<string> coordinationInstructions = new List<string>();
+		bool forceFinalAnswerFromCoordination = false;
 		sessionId = EnsureChatUiSessionId(sessionId);
 		foreach (ToolCallData toolCall in toolCalls)
 		{
@@ -48857,16 +52804,35 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				DateTimeOffset startedUtc = DateTimeOffset.UtcNow;
 				string toolKind = ClassifyChatUiToolKind(toolCall.Name);
 				string label = BuildChatUiToolDisplayLabel(toolCall.Name, toolCall.ArgumentsJson);
-				EmitChatUiToolCallEvent(emitToolCall, BuildChatUiToolCallStreamEvent(toolCallId, toolCall.Name, toolKind, "started", label, BuildChatUiToolSummary(toolCall.Name, toolCall.ArgumentsJson, "started"), toolCall.ArgumentsJson, null, startedUtc));
+				ProxyCoordinationToolResult coordinationResult = IsProxyOwnedCoordinationTool(toolCall.Name) ? BuildProxyCoordinationToolResult(toolCall.Name, toolCall.ArgumentsJson, requestBody) : null;
+				ChatUiToolCallStreamEvent startedEvent = BuildChatUiToolCallStreamEvent(toolCallId, toolCall.Name, toolKind, "started", label, BuildChatUiToolSummary(toolCall.Name, toolCall.ArgumentsJson, "started"), toolCall.ArgumentsJson, null, startedUtc);
+				if (coordinationResult != null && coordinationResult.ProgressPercent >= 0)
+				{
+					startedEvent.ProgressPercent = coordinationResult.ProgressPercent;
+				}
+				EmitChatUiToolCallEvent(emitToolCall, startedEvent);
 				string result;
 				ChatFileUndoScope undoScope = null;
 				try
 				{
-					if (IsProxyOwnedMutatingVsTool(toolCall.Name))
+					if (coordinationResult != null)
+					{
+						result = coordinationResult.Result ?? "";
+						if (!string.IsNullOrWhiteSpace(coordinationResult.SystemInstruction))
+						{
+							coordinationInstructions.Add(coordinationResult.SystemInstruction);
+						}
+						forceFinalAnswerFromCoordination = forceFinalAnswerFromCoordination || coordinationResult.ForceFinalAnswer;
+					}
+					else if (IsProxyOwnedMutatingVsTool(toolCall.Name))
 					{
 						undoScope = BeginChatFileUndoScope(ownerKey, sessionId, toolCall.Name);
+						result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson, ownerKey, sessionId);
 					}
-					result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson, ownerKey, sessionId);
+					else
+					{
+						result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson, ownerKey, sessionId);
+					}
 				}
 				catch (Exception ex)
 				{
@@ -48881,6 +52847,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				bool failed = ToolResultIndicatesFailure(result);
 				ChatFileUndoTransaction undoTransaction = failed ? null : StoreChatFileUndoTransaction(undoScope?.Transaction);
 				ChatUiToolCallStreamEvent completedEvent = BuildChatUiToolCallStreamEvent(completedUtc: DateTimeOffset.UtcNow, id: toolCallId, name: toolCall.Name, kind: toolKind, status: failed ? "failed" : "completed", label: label, summary: BuildChatUiToolSummary(toolCall.Name, toolCall.ArgumentsJson, failed ? "failed" : "completed", result), argumentsJson: toolCall.ArgumentsJson, result: result, startedUtc: startedUtc, error: failed ? ExtractFirstToolResultLine(result) : "");
+				if (coordinationResult != null && coordinationResult.ProgressPercent >= 0)
+				{
+					completedEvent.ProgressPercent = coordinationResult.ProgressPercent;
+				}
 				AttachChatFileUndoToToolEvent(completedEvent, undoTransaction);
 				EmitChatUiToolCallEvent(emitToolCall, completedEvent);
 				proxyResults.Add(new ProxyToolExecutionResult
@@ -48903,6 +52873,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		using JsonDocument document = JsonDocument.Parse(requestBody);
 		using MemoryStream stream = new MemoryStream();
 		using Utf8JsonWriter writer = new Utf8JsonWriter(stream);
+		bool requiredFileWriteStillUnmet = RequestRequiresUnmetProxyFileWrite(requestBody) &&
+			!proxyResults.Any(result => string.Equals(result.Name, "vs_write_file", StringComparison.Ordinal) && IsSuccessfulProxyFileWriteResultText(result.Result));
 		writer.WriteStartObject();
 		bool wroteMessages = false;
 		bool wroteStream = false;
@@ -48942,7 +52914,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			else if (property.NameEquals("tool_choice"))
 			{
-				writer.WriteString("tool_choice", "auto");
+				writer.WriteString("tool_choice", requiredFileWriteStillUnmet ? "required" : "auto");
 				wroteToolChoice = true;
 			}
 			else
@@ -48963,11 +52935,27 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (!wroteToolChoice)
 		{
-			writer.WriteString("tool_choice", "auto");
+			writer.WriteString("tool_choice", requiredFileWriteStillUnmet ? "required" : "auto");
 		}
 		writer.WriteEndObject();
 		writer.Flush();
-		return Encoding.UTF8.GetString(stream.ToArray());
+		string continuationRequest = Encoding.UTF8.GetString(stream.ToArray());
+		if (requiredFileWriteStillUnmet && CountTextOccurrences(continuationRequest, "[LmVsProxy required file write]") < 4)
+		{
+			string prompt = ExtractRequiredProxyFileWritePrompt(continuationRequest);
+			string target = ExtractLikelyRequestedFileTarget(prompt);
+			string targetText = string.IsNullOrWhiteSpace(target) ? "the requested output file" : target;
+			continuationRequest = AppendSystemMessage(continuationRequest, "[LmVsProxy required file write] A successful vs_write_file result is still required for " + targetText + ". The next acceptable completion must call vs_write_file with the completed file content, or continue inspecting only if absolutely necessary and then call vs_write_file before any final text. Do not emit the requested done marker or claim success until vs_write_file completes.");
+		}
+		foreach (string instruction in coordinationInstructions.Where(instruction => !string.IsNullOrWhiteSpace(instruction)))
+		{
+			continuationRequest = AppendSystemMessage(continuationRequest, instruction);
+		}
+		if (forceFinalAnswerFromCoordination)
+		{
+			continuationRequest = BuildProxyToolFinalAnswerRequest(continuationRequest);
+		}
+		return continuationRequest;
 	}
 
 	private void WriteProxyResearchAssistantAndToolMessages(Utf8JsonWriter writer, List<ProxyToolExecutionResult> proxyResults)
@@ -49463,6 +53451,22 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return await ExecuteBrowserSkillClickLinkAsync(argumentsJson, ownerKey, sessionId).ConfigureAwait(continueOnCapturedContext: false);
 		}
+		if (normalized.Equals("browser_click", StringComparison.Ordinal))
+		{
+			return ExecuteBrowserSkillDomAction("browser_click", argumentsJson, ownerKey, sessionId);
+		}
+		if (normalized.Equals("browser_type", StringComparison.Ordinal))
+		{
+			return ExecuteBrowserSkillDomAction("browser_type", argumentsJson, ownerKey, sessionId);
+		}
+		if (normalized.Equals("browser_select", StringComparison.Ordinal))
+		{
+			return ExecuteBrowserSkillDomAction("browser_select", argumentsJson, ownerKey, sessionId);
+		}
+		if (normalized.Equals("browser_press", StringComparison.Ordinal))
+		{
+			return ExecuteBrowserSkillDomAction("browser_press", argumentsJson, ownerKey, sessionId);
+		}
 		if (normalized.Equals("browser_find_text", StringComparison.Ordinal))
 		{
 			return ExecuteBrowserSkillFindText(argumentsJson, ownerKey, sessionId);
@@ -49552,6 +53556,57 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return (root.ValueKind == JsonValueKind.Object) ? (ExtractStringProperty(root, name) ?? "") : "";
 	}
 
+	private string SanitizeBrowserSkillUrlArgument(string value)
+	{
+		string raw = WebUtility.HtmlDecode(value ?? "").Trim();
+		if (string.IsNullOrWhiteSpace(raw))
+		{
+			return "";
+		}
+		int firstHttp = FirstBrowserSkillHttpUrlIndex(raw);
+		if (firstHttp > 0)
+		{
+			raw = raw.Substring(firstHttp).TrimStart();
+		}
+		const string metadataLabels = "(?:query|text|selector|href|url|take|index|value|key|label|action|mode)";
+		RegexOptions options = RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant;
+		raw = Regex.Replace(raw, @"(?:\\r)?\\n\s*" + metadataLabels + @"\s*:.*$", "", options);
+		raw = Regex.Replace(raw, @"(?:%5c%5cr|%5cr)?(?:%5c%5cn|%5cn)\s*" + metadataLabels + @"\s*:.*$", "", options);
+		raw = Regex.Replace(raw, @"(?:%0d)?%0a\s*" + metadataLabels + @"\s*:.*$", "", options);
+		int newlineIndex = raw.IndexOfAny(new[] { '\r', '\n' });
+		if (newlineIndex >= 0)
+		{
+			raw = raw.Substring(0, newlineIndex);
+		}
+		Match absoluteUrl = Regex.Match(raw, "https?://[^\\s<>\"']+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+		if (absoluteUrl.Success)
+		{
+			raw = absoluteUrl.Value;
+		}
+		raw = raw.Trim().Trim('"', '\'', '`');
+		raw = Regex.Replace(raw, @"[)\].,;]+$", "", RegexOptions.CultureInvariant);
+		return raw.Trim();
+	}
+
+	private static int FirstBrowserSkillHttpUrlIndex(string value)
+	{
+		if (string.IsNullOrEmpty(value))
+		{
+			return -1;
+		}
+		int http = value.IndexOf("http://", StringComparison.OrdinalIgnoreCase);
+		int https = value.IndexOf("https://", StringComparison.OrdinalIgnoreCase);
+		if (http < 0)
+		{
+			return https;
+		}
+		if (https < 0)
+		{
+			return http;
+		}
+		return Math.Min(http, https);
+	}
+
 	private int BrowserSkillArgumentInt(JsonElement root, string name, int fallback)
 	{
 		if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(name, out var value))
@@ -49584,6 +53639,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			baseUri = parsedBase;
 		}
+		raw = SanitizeBrowserSkillUrlArgument(raw);
+		if (string.IsNullOrWhiteSpace(raw))
+		{
+			error = "URL is required.";
+			return false;
+		}
 		if (!Uri.TryCreate(raw, UriKind.Absolute, out uri) && (baseUri == null || !Uri.TryCreate(baseUri, raw, out uri)))
 		{
 			error = "Could not resolve URL: " + raw;
@@ -49595,6 +53656,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return false;
 		}
 		return true;
+	}
+
+	private static Uri TryCreateBrowserSkillReferer(ChatBrowserSkillPageState state)
+	{
+		if (state != null && Uri.TryCreate(state.Url, UriKind.Absolute, out Uri referer) && (referer.Scheme == Uri.UriSchemeHttp || referer.Scheme == Uri.UriSchemeHttps))
+		{
+			return referer;
+		}
+		return null;
 	}
 
 	private async Task<string> ExecuteBrowserSkillOpenAsync(string argumentsJson, string ownerKey, string sessionId)
@@ -49612,7 +53682,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return "browser_open failed: " + error;
 			}
-			ChatBrowserSkillPageState page = await FetchBrowserSkillPageAsync(uri, ownerKey, sessionId).ConfigureAwait(continueOnCapturedContext: false);
+			ChatBrowserSkillPageState page = await FetchBrowserSkillPageAsync(uri, ownerKey, sessionId, null).ConfigureAwait(continueOnCapturedContext: false);
 			_chatBrowserSkillPages[key] = page;
 			return BuildBrowserSkillPageResult("browser_open", page, BrowserSkillArgumentInt(document.RootElement, "take", 40));
 		}
@@ -49636,7 +53706,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				{
 					return "browser_read_page failed: " + error;
 				}
-				state = await FetchBrowserSkillPageAsync(uri, ownerKey, sessionId).ConfigureAwait(continueOnCapturedContext: false);
+				state = await FetchBrowserSkillPageAsync(uri, ownerKey, sessionId, TryCreateBrowserSkillReferer(state)).ConfigureAwait(continueOnCapturedContext: false);
 				_chatBrowserSkillPages[key] = state;
 			}
 			if (state == null)
@@ -49680,7 +53750,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return "browser_click_link failed: " + error;
 			}
-			ChatBrowserSkillPageState page = await FetchBrowserSkillPageAsync(uri, ownerKey, sessionId).ConfigureAwait(continueOnCapturedContext: false);
+			ChatBrowserSkillPageState page = await FetchBrowserSkillPageAsync(uri, ownerKey, sessionId, TryCreateBrowserSkillReferer(state)).ConfigureAwait(continueOnCapturedContext: false);
 			_chatBrowserSkillPages[key] = page;
 			return "clickedLink: " + link.Index.ToString(CultureInfo.InvariantCulture) + " " + link.Text + Environment.NewLine + BuildBrowserSkillPageResult("browser_click_link", page, BrowserSkillArgumentInt(document.RootElement, "take", 40));
 		}
@@ -49726,18 +53796,60 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 	}
 
+	private string ExecuteBrowserSkillDomAction(string toolName, string argumentsJson, string ownerKey, string sessionId)
+	{
+		if (!TryParseBrowserSkillArguments(argumentsJson, out var document, out var error))
+		{
+			return toolName + " failed: " + error;
+		}
+		using (document)
+		{
+			string key = BrowserSkillStateKey(ownerKey, sessionId);
+			_chatBrowserSkillPages.TryGetValue(key, out var state);
+			string selector = BrowserSkillArgumentString(document.RootElement, "selector");
+			string text = BrowserSkillArgumentString(document.RootElement, "text");
+			string value = BrowserSkillArgumentString(document.RootElement, "value");
+			string query = BrowserSkillArgumentString(document.RootElement, "query");
+			string keyName = BrowserSkillArgumentString(document.RootElement, "key");
+			int index = BrowserSkillArgumentInt(document.RootElement, "index", 0);
+			string target = FirstNonEmpty(selector, index > 0 ? ("control #" + index.ToString(CultureInfo.InvariantCulture)) : "", text, value, query, keyName, "current focus");
+			StringBuilder sb = new StringBuilder();
+			sb.AppendLine("[Browser Skill " + toolName + "]");
+			sb.AppendLine("action: " + toolName);
+			if (state != null)
+			{
+				sb.AppendLine("url: " + state.Url);
+				sb.AppendLine("title: " + (string.IsNullOrWhiteSpace(state.Title) ? "(untitled)" : state.Title));
+			}
+			else
+			{
+				sb.AppendLine("url: (none)");
+			}
+			sb.AppendLine("target: " + target);
+			if (!string.IsNullOrWhiteSpace(value))
+				sb.AppendLine("value: " + value);
+			if (!string.IsNullOrWhiteSpace(keyName))
+				sb.AppendLine("key: " + keyName);
+			sb.AppendLine("The visible Web Chat browser mirrors this DOM action when the page allows same-origin proxy access. Request BROWSER_SKILL_OBSERVE next if updated page text, form state, or a screenshot is needed.");
+			return sb.ToString().TrimEnd();
+		}
+	}
+
 	private void AddBrowserLikeHeaders(HttpRequestMessage request, Uri uri, Uri referer = null)
 	{
 		if (request == null)
 		{
 			return;
 		}
-		request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
-		request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
+		request.Headers.TryAddWithoutValidation("User-Agent", BrowserLikeUserAgent);
+		request.Headers.TryAddWithoutValidation("Accept", BrowserLikeAccept);
 		request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
 		request.Headers.TryAddWithoutValidation("Cache-Control", "no-cache");
 		request.Headers.TryAddWithoutValidation("Pragma", "no-cache");
 		request.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
+		request.Headers.TryAddWithoutValidation("Sec-CH-UA", "\"Chromium\";v=\"125\", \"Google Chrome\";v=\"125\", \"Not.A/Brand\";v=\"24\"");
+		request.Headers.TryAddWithoutValidation("Sec-CH-UA-Mobile", "?0");
+		request.Headers.TryAddWithoutValidation("Sec-CH-UA-Platform", "\"Windows\"");
 		request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "document");
 		request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "navigate");
 		request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", referer == null || uri == null || string.Equals(referer.Host, uri.Host, StringComparison.OrdinalIgnoreCase) ? "same-origin" : "cross-site");
@@ -49748,10 +53860,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 	}
 
-	private async Task<ChatBrowserSkillPageState> FetchBrowserSkillPageAsync(Uri uri, string ownerKey, string sessionId)
+	private async Task<ChatBrowserSkillPageState> FetchBrowserSkillPageAsync(Uri uri, string ownerKey, string sessionId, Uri referer)
 	{
 		using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri);
-		AddBrowserLikeHeaders(request, uri, null);
+		AddBrowserLikeHeaders(request, uri, referer);
 		ChatBrowserClientSession browserSession = GetOrCreateChatBrowserClientSession(ownerKey, sessionId);
 		using HttpResponseMessage response = await browserSession.ReadClient.SendAsync(request).ConfigureAwait(continueOnCapturedContext: false);
 		string text = ((response.Content != null) ? (await response.Content.ReadAsStringAsync().ConfigureAwait(continueOnCapturedContext: false)) : "");
@@ -49766,6 +53878,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			FetchedUtc = DateTimeOffset.UtcNow
 		};
 		state.Links = ExtractBrowserSkillLinks(state.Html, state.Url, 120);
+		state.Controls = ExtractBrowserSkillControls(state.Html, 80);
 		if (!response.IsSuccessStatusCode)
 		{
 			state.Text = "HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " " + response.ReasonPhrase + Environment.NewLine + state.Text;
@@ -49776,6 +53889,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private string BuildBrowserSkillPageResult(string action, ChatBrowserSkillPageState page, int take)
 	{
 		take = Math.Max(1, Math.Min(40, (take <= 0) ? 20 : take));
+		List<ChatBrowserSkillLink> links = page.Links ?? new List<ChatBrowserSkillLink>();
+		List<ChatBrowserSkillControl> controls = page.Controls ?? new List<ChatBrowserSkillControl>();
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("[Browser Skill " + action + "]");
 		sb.AppendLine("url: " + page.Url);
@@ -49786,13 +53901,23 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		sb.AppendLine(TruncateForLog(page.Text ?? "", 6000));
 		sb.AppendLine();
 		sb.AppendLine("[Links]");
-		foreach (ChatBrowserSkillLink link in page.Links.Take(take))
+		foreach (ChatBrowserSkillLink link in links.Take(take))
 		{
 			sb.AppendLine(link.Index.ToString(CultureInfo.InvariantCulture) + ". " + FirstNonEmpty(link.Text, "(untitled link)") + " - " + link.Href);
 		}
-		if (page.Links.Count == 0)
+		if (links.Count == 0)
 		{
 			sb.AppendLine("No links found.");
+		}
+		sb.AppendLine();
+		sb.AppendLine("[Controls]");
+		foreach (ChatBrowserSkillControl control in controls.Take(take))
+		{
+			sb.AppendLine(control.Index.ToString(CultureInfo.InvariantCulture) + ". " + FirstNonEmpty(control.Label, control.Name, control.Id, control.Type, control.Tag, "control") + " - " + control.Tag + (string.IsNullOrWhiteSpace(control.Type) ? "" : (" type=" + control.Type)));
+		}
+		if (controls.Count == 0)
+		{
+			sb.AppendLine("No controls found.");
 		}
 		sb.AppendLine();
 		sb.AppendLine("[HTML excerpt]");
@@ -49878,8 +54003,61 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return links;
 	}
 
+	private List<ChatBrowserSkillControl> ExtractBrowserSkillControls(string html, int take)
+	{
+		List<ChatBrowserSkillControl> controls = new List<ChatBrowserSkillControl>();
+		if (string.IsNullOrWhiteSpace(html))
+		{
+			return controls;
+		}
+		foreach (Match match in Regex.Matches(html, "<(?<tag>button|input|textarea|select)\\b(?<attrs>[^>]*)>(?<text>.*?)</\\s*\\k<tag>\\s*>|<(?<single>input)\\b(?<singleAttrs>[^>]*)/?\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant))
+		{
+			if (controls.Count >= take)
+			{
+				break;
+			}
+			string tag = FirstNonEmpty(match.Groups["tag"].Value, match.Groups["single"].Value).ToLowerInvariant();
+			string attrs = FirstNonEmpty(match.Groups["attrs"].Value, match.Groups["singleAttrs"].Value);
+			string type = FirstNonEmpty(ExtractBrowserSkillAttribute(attrs, "type"), tag);
+			string id = ExtractBrowserSkillAttribute(attrs, "id");
+			string name = ExtractBrowserSkillAttribute(attrs, "name");
+			string label = FirstNonEmpty(
+				ExtractBrowserSkillAttribute(attrs, "aria-label"),
+				ExtractBrowserSkillAttribute(attrs, "placeholder"),
+				ExtractBrowserSkillAttribute(attrs, "value"),
+				NormalizeBrowserSkillText(HtmlToBrowserSkillText(match.Groups["text"].Value)),
+				name,
+				id,
+				type);
+			controls.Add(new ChatBrowserSkillControl
+			{
+				Index = controls.Count + 1,
+				Tag = tag,
+				Type = TruncateForLog(type, 80),
+				Label = TruncateForLog(label, 180),
+				Name = TruncateForLog(name, 120),
+				Id = TruncateForLog(id, 120)
+			});
+		}
+		return controls;
+	}
+
+	private string ExtractBrowserSkillAttribute(string attrs, string name)
+	{
+		if (string.IsNullOrWhiteSpace(attrs) || string.IsNullOrWhiteSpace(name))
+		{
+			return "";
+		}
+		Match match = Regex.Match(attrs, "\\b" + Regex.Escape(name) + "\\s*=\\s*(?:\"(?<value>[^\"]*)\"|'(?<value>[^']*)'|(?<value>[^\\s>]+))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+		return match.Success ? NormalizeBrowserSkillText(WebUtility.HtmlDecode(match.Groups["value"].Value ?? "")) : "";
+	}
+
 	private async Task<string> ExecuteProxyResearchToolAsync(string toolName, string argumentsJson, string ownerKey = null, string sessionId = null)
 	{
+		if (IsProxyOwnedCoordinationTool(toolName))
+		{
+			return BuildProxyCoordinationToolResult(toolName, argumentsJson, "").Result;
+		}
 		ChatPermissionState permissions = (string.IsNullOrWhiteSpace(ownerKey) ? GetChatPermissions() : GetChatPermissions(ownerKey));
 		if (IsProxyOwnedSockJackDmlTool(toolName))
 		{
@@ -51824,6 +56002,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return false;
 		}
+		if (toolName.Equals("vs_write_file", StringComparison.Ordinal))
+		{
+			return false;
+		}
 		if (TryResolveAuthorizedExistingChatAgentFilePath(cleaned, ownerKey, sessionId, out var _))
 		{
 			return false;
@@ -51836,10 +56018,6 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			fileName = GetRemoteSessionFileName(cleaned, directUri);
 			localPath = BuildRemoteSessionCloneLocalPath(selection, directUri, cleaned, sessionId, fileName);
 			return true;
-		}
-		if (toolName.Equals("vs_write_file", StringComparison.Ordinal) && !selection.Enabled)
-		{
-			return false;
 		}
 		if (!selection.Enabled)
 		{
@@ -54945,7 +59123,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return;
 		}
-		foreach (Match match in Regex.Matches(content, "(?is)<\\s*(?<tag>search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text)\\b[^>]*>(?<body>[\\s\\S]*?)(?:<\\s*/\\s*\\k<tag>\\s*>|<\\s*/\\s*>|<\\s*/\\s*|$)", RegexOptions.CultureInvariant))
+		foreach (Match match in Regex.Matches(content, "(?is)<\\s*(?<tag>search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\\b[^>]*>(?<body>[\\s\\S]*?)(?:<\\s*/\\s*\\k<tag>\\s*>|<\\s*/\\s*>|<\\s*/\\s*|$)", RegexOptions.CultureInvariant))
 		{
 			string tag = match.Groups["tag"].Value;
 			string body = CleanPseudoToolTagBody(match.Groups["body"].Value);
@@ -55021,6 +59199,18 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				return "{\"index\":" + index.ToString(CultureInfo.InvariantCulture) + "}";
 			}
 			return "{\"text\":\"" + EscapeJson(body) + "\",\"take\":40}";
+		case "browser_click":
+			if (int.TryParse(body, NumberStyles.Integer, CultureInfo.InvariantCulture, out var controlIndex) && controlIndex > 0)
+			{
+				return "{\"index\":" + controlIndex.ToString(CultureInfo.InvariantCulture) + "}";
+			}
+			return "{\"text\":\"" + EscapeJson(body) + "\"}";
+		case "browser_type":
+			return "{\"text\":\"" + EscapeJson(body) + "\"}";
+		case "browser_select":
+			return "{\"value\":\"" + EscapeJson(body) + "\"}";
+		case "browser_press":
+			return "{\"key\":\"" + EscapeJson(body) + "\"}";
 		case "browser_find_text":
 			return "{\"query\":\"" + EscapeJson(body) + "\"}";
 		default:
@@ -57264,7 +61454,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return "";
 		}
-		return Regex.Replace(content, "(?is)<\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text)\\b[^>]*>[\\s\\S]*?(?:<\\s*/\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_find_text)\\s*>|<\\s*/\\s*>|<\\s*/\\s*|$)", "", RegexOptions.CultureInvariant);
+		return Regex.Replace(content, "(?is)<\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\\b[^>]*>[\\s\\S]*?(?:<\\s*/\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\\s*>|<\\s*/\\s*>|<\\s*/\\s*|$)", "", RegexOptions.CultureInvariant);
 	}
 
 	private string SanitizeAssistantText(string content)
@@ -58429,21 +62619,35 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return requestBody;
 			}
-			if (includeVsTools && ShouldBypassAgentToolSchemasForDirectPrompt(requestBody))
+			bool requiresProxyFileWrite = includeVsTools && PromptRequestsProxyFileWrite(ExtractRequiredProxyFileWritePrompt(requestBody));
+			if (includeVsTools && ShouldBypassAgentToolSchemasForDirectPrompt(requestBody) && !requiresProxyFileWrite)
 			{
 				LogMessage("[Proxy Research] Skipped Agent tool schemas for a direct prompt.");
 				return RewriteDirectAgentPromptWithoutTools(requestBody);
 			}
-			if (RequestAlreadyHasProxyResearchTools(requestBody) || IsToolChoiceNone(requestBody))
+			bool alreadyHasProxyResearchTools = RequestAlreadyHasProxyResearchTools(requestBody);
+			if (alreadyHasProxyResearchTools && IsToolAdvertised(requestBody, "vs_write_file"))
+			{
+				return requiresProxyFileWrite ? RewriteRequestToolChoiceRequired(requestBody) : requestBody;
+			}
+			if (alreadyHasProxyResearchTools && !requiresProxyFileWrite)
 			{
 				return requestBody;
 			}
+			if (IsToolChoiceNone(requestBody) && !requiresProxyFileWrite)
+			{
+				return requestBody;
+			}
+			bool compactFileToolsOnly = requiresProxyFileWrite;
 			using JsonDocument document = JsonDocument.Parse(requestBody);
 			using MemoryStream stream = new MemoryStream();
 			using Utf8JsonWriter writer = new Utf8JsonWriter(stream);
 			writer.WriteStartObject();
 			bool wroteTools = false;
 			bool wroteMessages = false;
+			bool wroteToolChoice = false;
+			bool wroteRequiredFileWriteMarker = false;
+			string requiredFileWriteTarget = compactFileToolsOnly ? ExtractLikelyRequestedFileTarget(ExtractRequiredProxyFileWritePrompt(requestBody)) : "";
 			foreach (JsonProperty property in document.RootElement.EnumerateObject())
 			{
 				if (property.NameEquals("tools") && property.Value.ValueKind == JsonValueKind.Array)
@@ -58455,7 +62659,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					{
 						item.WriteTo(writer);
 					}
-					WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools);
+					WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools, compactFileToolsOnly);
 					writer.WriteEndArray();
 				}
 				else if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array)
@@ -58469,9 +62673,19 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					}
 					writer.WriteStartObject();
 					writer.WriteString("role", "system");
-					writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey));
+					writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey, compactFileToolsOnly));
 					writer.WriteEndObject();
 					writer.WriteEndArray();
+				}
+				else if (property.NameEquals("tool_choice"))
+				{
+					writer.WriteString("tool_choice", compactFileToolsOnly ? "required" : "auto");
+					wroteToolChoice = true;
+				}
+				else if (property.NameEquals("lmvs_required_file_write") || property.NameEquals("lmvs_required_file_write_target"))
+				{
+					property.WriteTo(writer);
+					wroteRequiredFileWriteMarker = true;
 				}
 				else
 				{
@@ -58482,7 +62696,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				writer.WritePropertyName("tools");
 				writer.WriteStartArray();
-				WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools);
+				WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools, compactFileToolsOnly);
 				writer.WriteEndArray();
 			}
 			if (!wroteMessages)
@@ -58491,13 +62705,25 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				writer.WriteStartArray();
 				writer.WriteStartObject();
 				writer.WriteString("role", "system");
-				writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey));
+				writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey, compactFileToolsOnly));
 				writer.WriteEndObject();
 				writer.WriteEndArray();
 			}
+			if (!wroteToolChoice)
+			{
+				writer.WriteString("tool_choice", compactFileToolsOnly ? "required" : "auto");
+			}
+			if (compactFileToolsOnly && !wroteRequiredFileWriteMarker)
+			{
+				writer.WriteBoolean("lmvs_required_file_write", value: true);
+				if (!string.IsNullOrWhiteSpace(requiredFileWriteTarget))
+				{
+					writer.WriteString("lmvs_required_file_write_target", requiredFileWriteTarget);
+				}
+			}
 			writer.WriteEndObject();
 			writer.Flush();
-			LogMessage("[Proxy Research] Added permission-enabled research tools to LM Studio request.");
+			LogMessage(compactFileToolsOnly ? "[Proxy Research] Added compact file-write tools to LM Studio request." : "[Proxy Research] Added permission-enabled research tools to LM Studio request.");
 			return Encoding.UTF8.GetString(stream.ToArray());
 		}
 		catch (Exception ex)
@@ -58661,31 +62887,38 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (!wroteContent)
 		{
-			writer.WriteString("content", "/no_think");
+			writer.WriteString("content", "");
 		}
 		writer.WriteEndObject();
 	}
 
 	private static string AddNoThinkDirective(string prompt)
 	{
-		prompt = prompt ?? "";
-		string directive = "Do not write a thought process, analysis, or <think> block. Start with the final answer immediately.";
-		if (prompt.IndexOf("/no_think", StringComparison.OrdinalIgnoreCase) >= 0)
-		{
-			return (prompt.IndexOf(directive, StringComparison.OrdinalIgnoreCase) >= 0) ? prompt : (prompt.TrimEnd() + "\n" + directive);
-		}
-		return prompt.TrimEnd() + "\n/no_think\n" + directive;
+		return prompt ?? "";
 	}
 
 	private static bool DirectPromptShouldDisableThinking(string model, string prompt)
 	{
-		string modelText = (model ?? "").ToLowerInvariant();
-		return PromptRequestsExactReply(prompt) || modelText.Contains("qwen") || modelText.Contains("reasoning") || modelText.Contains("think");
+		return false;
 	}
 
 	private static bool PromptRequestsExactReply(string prompt)
 	{
 		return Regex.IsMatch(prompt ?? "", "\\b(reply|respond|say|answer)\\s+(with\\s+)?exactly\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+	}
+
+	private bool ShouldAdvertiseProxyCoordinationTools(ChatPermissionState permissions, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false)
+	{
+		if (permissions == null)
+		{
+			return false;
+		}
+		return permissions.internetSearch ||
+			permissions.fileDownloads ||
+			(includeBrowserTools && permissions.agentAccess) ||
+			(includeVsTools && permissions.vsCopilotTools) ||
+			(includeVsTools && permissions.agentAccess) ||
+			(includeTerminalTools && permissions.terminalCommands);
 	}
 
 	private static int ReadBoundedDirectMaxTokens(JsonElement value, int cap)
@@ -58705,10 +62938,6 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return false;
 		}
-		if (PromptRequestsExactReply(text))
-		{
-			return false;
-		}
 		if (Regex.IsMatch(text, "https?://|www\\.", RegexOptions.CultureInvariant))
 		{
 			return true;
@@ -58718,6 +62947,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return true;
 		}
 		if (Regex.IsMatch(text, "\\b(file|folder|directory|path|repo|repository|solution|workspace|read|write|edit|modify|replace|rename|delete|list files|open file|save)\\b", RegexOptions.CultureInvariant))
+		{
+			return true;
+		}
+		if (Regex.IsMatch(text, "\\b(create|add|make|overwrite|save)\\b.{0,160}([a-z]:\\\\|/[^\\s]+|\\.[a-z0-9]{1,8}\\b)", RegexOptions.CultureInvariant))
 		{
 			return true;
 		}
@@ -58736,9 +62969,23 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return false;
 	}
 
-	private string BuildProxyResearchToolSystemPrompt(ChatPermissionState permissions, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, string ownerKey = null)
+	private string BuildProxyResearchToolSystemPrompt(ChatPermissionState permissions, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, string ownerKey = null, bool compactFileToolsOnly = false)
 	{
 		List<string> tools = new List<string>();
+		if (compactFileToolsOnly)
+		{
+			if (includeVsTools && permissions != null && permissions.vsCopilotTools)
+			{
+				tools.Add("read_file");
+				tools.Add("vs_read_file");
+				tools.Add("vs_write_file");
+				tools.Add("vs_replace_in_file");
+				tools.Add("vs_search_files");
+				tools.Add("vs_list_files");
+			}
+			string compactRootText = (includeVsTools ? (" " + BuildAccessibleRootDirectorySystemHint(ownerKey)) : "");
+			return "[LmVsProxy compact file tools] The user asked for a file to be created or updated. The admin enabled these proxy-owned tools for this turn: " + ((tools.Count == 0) ? "none" : string.Join(", ", tools)) + ". Use tool calls, not prose, to perform filesystem actions. If the runtime cannot emit native OpenAI tool_calls, emit exactly Qwen-compatible tool blocks like <tool_call>{\"name\":\"vs_write_file\",\"arguments\":{\"path\":\"C:\\\\path\\\\file.md\",\"content\":\"complete file content\",\"overwrite\":true}}</tool_call>; these are executable calls, not final-answer prose. Inspect only the minimum files needed, then call vs_write_file with the completed file content. Do not call browser, Git, terminal, workstation, workflow, model-delegation, download, search, or coordination tools for this turn. Do not claim the file was created or updated until vs_write_file succeeds." + compactRootText + " Summarize the tool result in the final answer.";
+		}
 		if (permissions != null && permissions.internetSearch)
 		{
 			tools.Add("internet_search");
@@ -58755,6 +63002,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			tools.Add("browser_open");
 			tools.Add("browser_read_page");
 			tools.Add("browser_click_link");
+			tools.Add("browser_click");
+			tools.Add("browser_type");
+			tools.Add("browser_select");
+			tools.Add("browser_press");
 			tools.Add("browser_find_text");
 		}
 		if (includeVsTools && permissions != null && permissions.vsCopilotTools)
@@ -58817,8 +63068,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				tools.Add("llmruntime:" + toolName);
 			}
 		}
+		bool includeCoordinationTools = ShouldAdvertiseProxyCoordinationTools(permissions, includeVsTools, includeTerminalTools, includeBrowserTools);
+		if (includeCoordinationTools)
+		{
+			tools.Add(GoalCheckpointToolName);
+			tools.Add(ContinueWithToolsToolName);
+		}
 		string rootText = (includeVsTools ? (" " + BuildAccessibleRootDirectorySystemHint(ownerKey)) : "");
-		return (includeVsTools ? "[LmVsProxy agent mode] VS_tools is enabled for this request when the VS tool schemas are present. " : "[LmVsProxy permissions] ") + "The admin enabled these proxy-owned tools: " + ((tools.Count == 0) ? "none" : string.Join(", ", tools)) + ". Use tool calls, not prose, to perform actions. If the runtime cannot emit native OpenAI tool_calls, emit exactly Qwen-compatible tool blocks like <tool_call>{\"name\":\"internet_search\",\"arguments\":{\"action\":\"search\",\"query\":\"example\",\"take\":8}}</tool_call>; these are executable calls, not final-answer prose. Prefer internet_search for general web lookup when available. Use action=search to find source URLs, then choose the relevant URL yourself and call action=read with url to read/scrape full page text, headings, links, forms, inputs, textareas, lists, tables, metadata, and selector matches. Do not assume search snippets are enough when the user asks for page contents, examples, source material, scraped details, tables, forms, or lists. The internet_search browser client uses realistic browser headers and its cookies/logins are sandboxed to the current owner and chat session; do not paste cookies or credentials into final answers. Cite result-backed claims with bracket citations like [1] and include a Sources section with links at the bottom of the answer. download_file can save public HTTP/HTTPS files and webpages into the current session Downloads folder. If the user asks to download a website or page as HTML, call download_file with the page URL and a fileName ending in .html; do not refuse just because the URL is a website. When download_file succeeds, use the returned savedPath with read_file; never pass the original URL to read_file. When the user asks for examples, source material, scraped details, page contents, or code samples, do not stop at search-result snippets; open/read or download the best source page(s), scrape the useful information, and continue until the requested criteria are actually satisfied or a real blocker is established. " + (includeBrowserTools ? "For Browser Skill work, call browser_open to navigate the visible Web Chat browser, browser_read_page to fetch or re-read page HTML/text, browser_click_link to follow a link from the last browser page by index or visible text, and browser_find_text to search the current page text. The Web Chat UI shows screenshots and mirrors browser navigation live. Continue until the criteria is met, then output BROWSER_SKILL_DONE on its own line; output BROWSER_SKILL_OBSERVE if another live screenshot/HTML observation is needed, or BROWSER_SKILL_USER if human intervention is required. " : "") + (includeVsTools ? "For VS_tools filesystem work: inspect with vs_read_file or vs_list_files before editing; create files with vs_write_file; copy files with vs_copy_file; do precise edits with vs_replace_in_file; move or rename with vs_rename_file; delete only with vs_delete_file; search with vs_search_files. Only create, edit, copy, rename, delete, list, or read paths inside the current session files or explicitly accessible filesystem roots for this session. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && IsGitCliAvailable()) ? "For Git work, use git_dependency_check when Git availability is unclear, git_changed_files and git_status to understand the repo, git_file_diff for a single file patch, git_file_at_ref to compare a file against HEAD or another ref, git_file_history and git_file_blame for provenance, git_grep for repository search, git_stage with explicit paths, git_commit with a clear message, and git_push only after the user asks or the workflow clearly requires publishing. The Git service blocks destructive reset/clean/checkout-file operations and uses the GUI approval gate for mutating commands. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess) ? "For Workstation model delegation, call workstation_list_models when you need enabled model ids, then call workstation_run_model with a chat-capable enabled model id and a focused prompt when another enabled Web Chat model should check, specialize, compare, or draft a sub-answer. Do not claim that a delegated model ran unless the tool result returns ok, and summarize the returned model id with its answer. For SockJackDml workflow work, use sockjackdml_workflow_status to inspect active plans/progress/executions/evidence, sockjackdml_progress_document_find to locate the matching *_Progress.md tracker, sockjackdml_plan_create to iteratively shape a plan, sockjackdml_progress_document_create to create or refresh the ProjectOrSessionName_FeatureName_Progress.md tracker, sockjackdml_plan_execute for preview, approved_apply, or auto_approval_gated execution packets, sockjackdml_execution_control to pause/resume/cancel/retry/skip execution cursors, and sockjackdml_evidence_link to attach evidence packets. Auto approval-gated execution may continue through supplied bounded actions, but file writes, Git mutations, and terminal commands still use their existing approval and permission gates. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && permissions.vsCopilotTools) ? "For LlmRuntime Agent turns, these proxy-owned OpenAI-style schemas are the supported tool surface. Do not print raw JSON, XML, or proprietary tool transcripts as prose in the final answer. " : "") + "When terminal is enabled, call run_command_in_terminal with the full PowerShell command and a short summary; commands may require JackLLM approval, so do not claim they ran until the tool result says so. " + (includeVsTools ? "FTP and web auth are permissions/surfaces, not chat tools: mention FTP only as the configured server surface, and use web auth only for authenticated session context." : "Respect disabled permissions and do not claim VS_tools filesystem access unless Agent service is active.") + rootText + " Summarize changed files and any command results in the final answer.";
+		string coordinationText = includeCoordinationTools ? ("For multi-step requests, use " + GoalCheckpointToolName + " to record the user goal, success criteria, current status, remaining work, blockers, and a 0-100 progressPercent. Use " + ContinueWithToolsToolName + " when you are not done and need more real tool calls: set status=needs_tools, requiredTools to currently available non-coordination tool names, nextStep to the specific next action, and progressPercent if you can estimate it. Do not call " + ContinueWithToolsToolName + " repeatedly without an intervening real tool result. Set status=ready_final only when the requested goal is satisfied; set status=blocked only for a real blocker that needs user action or cannot be recovered with available tools. Coordination tools are internal progress signals, not final-answer content. ") : "";
+		return (includeVsTools ? "[LmVsProxy agent mode] VS_tools is enabled for this request when the VS tool schemas are present. " : "[LmVsProxy permissions] ") + "The admin enabled these proxy-owned tools: " + ((tools.Count == 0) ? "none" : string.Join(", ", tools)) + ". Use tool calls, not prose, to perform actions. If the runtime cannot emit native OpenAI tool_calls, emit exactly Qwen-compatible tool blocks like <tool_call>{\"name\":\"internet_search\",\"arguments\":{\"action\":\"search\",\"query\":\"example\",\"take\":8}}</tool_call>; these are executable calls, not final-answer prose. " + coordinationText + "Prefer internet_search for general web lookup when available. For uncommon, product/project, library, repository, company, person, or current names, do not rely on stale model memory or old scraped GitHub data; use internet_search action=search/read to establish what the name refers to and cite the sources before making claims. Use action=search to find source URLs, then choose the relevant URL yourself and call action=read with url to read/scrape full page text, headings, links, forms, inputs, textareas, lists, tables, metadata, and selector matches. Do not assume search snippets are enough when the user asks for page contents, examples, source material, scraped details, tables, forms, or lists. The internet_search browser client uses realistic browser headers and its cookies/logins are sandboxed to the current owner and chat session; do not paste cookies or credentials into final answers. Cite result-backed claims with bracket citations like [1] and include a Sources section with links at the bottom of the answer. download_file can save public HTTP/HTTPS files and webpages into the current session Downloads folder. If the user asks to download a website or page as HTML, call download_file with the page URL and a fileName ending in .html; do not refuse just because the URL is a website. When download_file succeeds, use the returned savedPath with read_file; never pass the original URL to read_file. When the user asks for examples, source material, scraped details, page contents, or code samples, do not stop at search-result snippets; open/read or download the best source page(s), scrape the useful information, and continue until the requested criteria are actually satisfied or a real blocker is established. " + (includeBrowserTools ? "For Browser Skill work, call browser_open to navigate the visible Web Chat browser, browser_read_page to fetch or re-read page HTML/text, browser_click_link to follow a link from the last browser page by index or visible text, browser_click to activate visible controls, browser_type to enter text, browser_select to choose select/menu values, browser_press to send keys, and browser_find_text to search the current page text. The Web Chat UI shows screenshots and mirrors browser navigation and DOM actions live. Continue until the criteria is met, then output BROWSER_SKILL_DONE on its own line; output BROWSER_SKILL_OBSERVE if another live screenshot/HTML observation is needed, or BROWSER_SKILL_USER if human intervention is required. " : "") + (includeVsTools ? "For VS_tools filesystem work: inspect with vs_read_file or vs_list_files before editing; create files with vs_write_file; copy files with vs_copy_file; do precise edits with vs_replace_in_file; move or rename with vs_rename_file; delete only with vs_delete_file; search with vs_search_files. Only create, edit, copy, rename, delete, list, or read paths inside the current session files or explicitly accessible filesystem roots for this session. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && IsGitCliAvailable()) ? "For Git work, use git_dependency_check when Git availability is unclear, git_changed_files and git_status to understand the repo, git_file_diff for a single file patch, git_file_at_ref to compare a file against HEAD or another ref, git_file_history and git_file_blame for provenance, git_grep for repository search, git_stage with explicit paths, git_commit with a clear message, and git_push only after the user asks or the workflow clearly requires publishing. The Git service blocks destructive reset/clean/checkout-file operations and uses the GUI approval gate for mutating commands. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess) ? "For Workstation model delegation, call workstation_list_models when you need enabled model ids, then call workstation_run_model with a chat-capable enabled model id and a focused prompt when another enabled Web Chat model should check, specialize, compare, or draft a sub-answer. Do not claim that a delegated model ran unless the tool result returns ok, and summarize the returned model id with its answer. For SockJackDml workflow work, use sockjackdml_workflow_status to inspect active plans/progress/executions/evidence, sockjackdml_progress_document_find to locate the matching *_Progress.md tracker, sockjackdml_plan_create to iteratively shape a plan, sockjackdml_progress_document_create to create or refresh the ProjectOrSessionName_FeatureName_Progress.md tracker, sockjackdml_plan_execute for preview, approved_apply, or auto_approval_gated execution packets, sockjackdml_execution_control to pause/resume/cancel/retry/skip execution cursors, and sockjackdml_evidence_link to attach evidence packets. Auto approval-gated execution may continue through supplied bounded actions, but file writes, Git mutations, and terminal commands still use their existing approval and permission gates. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && permissions.vsCopilotTools) ? "For LlmRuntime Agent turns, these proxy-owned OpenAI-style schemas are the supported tool surface. Do not print raw JSON, XML, or proprietary tool transcripts as prose in the final answer. " : "") + "When terminal is enabled, call run_command_in_terminal with the full PowerShell command and a short summary; commands may require JackLLM approval, so do not claim they ran until the tool result says so. " + (includeVsTools ? "FTP and web auth are permissions/surfaces, not chat tools: mention FTP only as the configured server surface, and use web auth only for authenticated session context." : "Respect disabled permissions and do not claim VS_tools filesystem access unless Agent service is active.") + rootText + " Summarize changed files and any command results in the final answer.";
 	}
 
 	private string BuildAccessibleRootDirectorySystemHint(string ownerKey)
@@ -58854,8 +63112,60 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return "Accessible root directories currently approved for filesystem commands: " + string.Join(" | ", roots) + ".";
 	}
 
-	private void WriteProxyResearchToolSchemas(Utf8JsonWriter writer, ChatPermissionState permissions = null, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false)
+	private void WriteCompactProxyFileToolSchemas(Utf8JsonWriter writer, ChatPermissionState permissions = null, bool includeVsTools = false)
 	{
+		if (!includeVsTools || permissions == null || !permissions.vsCopilotTools)
+		{
+			return;
+		}
+		WriteProxyResearchToolSchema(writer, "read_file", "Read an uploaded, downloaded, session, or explicitly accessible local file through LmVsProxy. This does not read HTTP URLs.", new string[1] { "path" }, new ProxyToolParameter[4]
+		{
+			new ProxyToolParameter("path", "string", "Exact session file path or explicitly accessible local path to read."),
+			new ProxyToolParameter("startLine", "integer", "1-based first line to read. Default 1."),
+			new ProxyToolParameter("endLine", "integer", "1-based last line to read. Default startLine + 240."),
+			new ProxyToolParameter("includeLineNumbers", "boolean", "Whether to include line numbers. Default true.")
+		});
+		WriteProxyResearchToolSchema(writer, "vs_read_file", "Read a local source file through the LmVsProxy VS agent. Use only when needed before writing the requested file.", new string[1] { "path" }, new ProxyToolParameter[4]
+		{
+			new ProxyToolParameter("path", "string", "Session-relative path, explicitly accessible absolute path, or file name to read."),
+			new ProxyToolParameter("startLine", "integer", "1-based first line to read. Default 1."),
+			new ProxyToolParameter("endLine", "integer", "1-based last line to read. Default startLine + 240."),
+			new ProxyToolParameter("includeLineNumbers", "boolean", "Whether to include line numbers. Default true.")
+		});
+		WriteProxyResearchToolSchema(writer, "vs_write_file", "Create or overwrite the user-requested output file inside the current session files or explicitly accessible filesystem roots.", new string[2] { "path", "content" }, new ProxyToolParameter[3]
+		{
+			new ProxyToolParameter("path", "string", "Session-relative or explicitly accessible absolute output path."),
+			new ProxyToolParameter("content", "string", "Complete file content to write."),
+			new ProxyToolParameter("overwrite", "boolean", "Whether to overwrite an existing file. Default false.")
+		});
+		WriteProxyResearchToolSchema(writer, "vs_replace_in_file", "Replace exact text in a local file through the LmVsProxy VS agent. Use only for targeted updates to the requested output file.", new string[3] { "path", "oldString", "newString" }, new ProxyToolParameter[4]
+		{
+			new ProxyToolParameter("path", "string", "Session-relative path or explicitly accessible absolute path to edit."),
+			new ProxyToolParameter("oldString", "string", "Exact text to replace."),
+			new ProxyToolParameter("newString", "string", "Replacement text."),
+			new ProxyToolParameter("replaceAll", "boolean", "Replace all occurrences instead of the first occurrence. Default false.")
+		});
+		WriteProxyResearchToolSchema(writer, "vs_search_files", "Search local files by file name and text content through the LmVsProxy VS agent. Use sparingly to find sources needed for the requested file.", new string[1] { "query" }, new ProxyToolParameter[3]
+		{
+			new ProxyToolParameter("query", "string", "Text, symbol, file name, or extension to search for."),
+			new ProxyToolParameter("path", "string", "Optional session-relative or explicitly accessible directory to search within."),
+			new ProxyToolParameter("take", "integer", "Maximum results to return. Default 30, max 100.")
+		});
+		WriteProxyResearchToolSchema(writer, "vs_list_files", "List local files and directories through the LmVsProxy VS agent. Use sparingly to locate sources needed for the requested file.", new string[0], new ProxyToolParameter[3]
+		{
+			new ProxyToolParameter("path", "string", "Optional session-relative or explicitly accessible directory to list."),
+			new ProxyToolParameter("recursive", "boolean", "Whether to recurse. Default false."),
+			new ProxyToolParameter("take", "integer", "Maximum entries to return. Default 100, max 500.")
+		});
+	}
+
+	private void WriteProxyResearchToolSchemas(Utf8JsonWriter writer, ChatPermissionState permissions = null, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, bool compactFileToolsOnly = false)
+	{
+		if (compactFileToolsOnly)
+		{
+			WriteCompactProxyFileToolSchemas(writer, permissions, includeVsTools);
+			return;
+		}
 		if (permissions != null && permissions.internetSearch)
 		{
 			WriteProxyResearchToolSchema(writer, "internet_search", "Search or read public HTTP/HTTPS pages with a session-scoped browser client. Use action=search with query to get numbered source URLs. Then choose the relevant URL yourself and call action=read with url to read the page text, links, forms, inputs, textareas, lists, tables, headings, metadata, and optional selector matches. Cookies and logins are sandboxed by chat owner and session.", Array.Empty<string>(), new ProxyToolParameter[8]
@@ -58904,6 +63214,35 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				new ProxyToolParameter("index", "integer", "1-based link index from the previous browser_read_page/browser_open result."),
 				new ProxyToolParameter("text", "string", "Visible link text to match when index is not provided."),
 				new ProxyToolParameter("reason", "string", "Short reason for following this link.")
+			});
+			WriteProxyResearchToolSchema(writer, "browser_click", "Click a visible control in the live Web Chat browser panel by selector, control index, text, or approximate x/y percentage. Mirrors the action in the visible page and returns an action acknowledgement.", new string[0], new ProxyToolParameter[5]
+			{
+				new ProxyToolParameter("selector", "string", "CSS selector for the target control when known."),
+				new ProxyToolParameter("index", "integer", "1-based control index from the latest Browser Skill observation."),
+				new ProxyToolParameter("text", "string", "Visible control text or accessible label to match."),
+				new ProxyToolParameter("xPercent", "number", "Optional horizontal click position as 0-100 percent of the visible browser frame."),
+				new ProxyToolParameter("yPercent", "number", "Optional vertical click position as 0-100 percent of the visible browser frame.")
+			});
+			WriteProxyResearchToolSchema(writer, "browser_type", "Type text into a focused or targeted control in the live Web Chat browser panel. Use selector/index/text to focus a field first when needed.", new string[1] { "text" }, new ProxyToolParameter[4]
+			{
+				new ProxyToolParameter("text", "string", "Text to type."),
+				new ProxyToolParameter("selector", "string", "CSS selector for the target input/textarea/contenteditable control."),
+				new ProxyToolParameter("index", "integer", "1-based control index from the latest Browser Skill observation."),
+				new ProxyToolParameter("clear", "boolean", "When true, clear the target field before typing.")
+			});
+			WriteProxyResearchToolSchema(writer, "browser_select", "Select an option in a native select/menu control in the live Web Chat browser panel.", new string[1] { "value" }, new ProxyToolParameter[4]
+			{
+				new ProxyToolParameter("value", "string", "Option value or visible label to select."),
+				new ProxyToolParameter("selector", "string", "CSS selector for the select control."),
+				new ProxyToolParameter("index", "integer", "1-based control index from the latest Browser Skill observation."),
+				new ProxyToolParameter("text", "string", "Visible select label to target when selector/index is not supplied.")
+			});
+			WriteProxyResearchToolSchema(writer, "browser_press", "Press a key in the live Web Chat browser panel, optionally after focusing a target control.", new string[1] { "key" }, new ProxyToolParameter[4]
+			{
+				new ProxyToolParameter("key", "string", "Key to press, such as Enter, Escape, Tab, ArrowDown, or Control+A."),
+				new ProxyToolParameter("selector", "string", "Optional CSS selector to focus before pressing."),
+				new ProxyToolParameter("index", "integer", "Optional 1-based control index to focus before pressing."),
+				new ProxyToolParameter("text", "string", "Optional visible target text or label to focus before pressing.")
 			});
 			WriteProxyResearchToolSchema(writer, "browser_find_text", "Search the current Browser Skill page text and HTML for a phrase. Returns nearby matches and link hints.", new string[1] { "query" }, new ProxyToolParameter[2]
 			{
@@ -59012,6 +63351,37 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				new ProxyToolParameter("timeoutMs", "integer", "Optional timeout in milliseconds. Default 120000, max 600000.")
 			});
 		}
+		if (ShouldAdvertiseProxyCoordinationTools(permissions, includeVsTools, includeTerminalTools, includeBrowserTools))
+		{
+			WriteProxyCoordinationToolSchemas(writer);
+		}
+	}
+
+	private void WriteProxyCoordinationToolSchemas(Utf8JsonWriter writer)
+	{
+		WriteProxyResearchToolSchema(writer, GoalCheckpointToolName, "Record the current prompt goal, success criteria, progress percent, completed work, remaining work, and blockers. This is an internal progress checkpoint, not a final answer.", new string[2] { "goal", "status" }, new ProxyToolParameter[8]
+		{
+			new ProxyToolParameter("goal", "string", "Concise restatement of the user-requested goal."),
+			new ProxyToolParameter("status", "string", "One of started, in_progress, ready_final, or blocked."),
+			new ProxyToolParameter("progressPercent", "number", "Estimated completion from 0 to 100. Values outside 0-100 are clamped by the runtime."),
+			new ProxyToolParameter("successCriteria", "string", "What must be true before the final answer is ready."),
+			new ProxyToolParameter("completed", "string", "Work already completed."),
+			new ProxyToolParameter("remaining", "string", "Work still needed before the final answer."),
+			new ProxyToolParameter("blockedReason", "string", "Reason this goal is blocked, only when status=blocked."),
+			new ProxyToolParameter("notes", "string", "Brief internal notes for the next reasoning step.")
+		});
+		WriteProxyResearchToolSchema(writer, ContinueWithToolsToolName, "Continue the same prompt by naming the next real tools required to reach the user goal. Use when more tool work is required instead of prematurely answering.", new string[4] { "goal", "status", "requiredTools", "nextStep" }, new ProxyToolParameter[9]
+		{
+			new ProxyToolParameter("goal", "string", "Concise restatement of the user-requested goal."),
+			new ProxyToolParameter("status", "string", "One of needs_tools, ready_final, or blocked."),
+			new ProxyToolParameter("requiredTools", "array", "Ordered names of currently advertised non-coordination tools needed next."),
+			new ProxyToolParameter("nextStep", "string", "Specific next tool action needed to continue the prompt."),
+			new ProxyToolParameter("progressPercent", "number", "Estimated completion from 0 to 100. Values outside 0-100 are clamped by the runtime."),
+			new ProxyToolParameter("successCriteria", "string", "What the gathered tool results must prove or produce."),
+			new ProxyToolParameter("evidenceNeeded", "string", "Evidence, source, file, page, command, or artifact still needed."),
+			new ProxyToolParameter("reason", "string", "Brief reason these tools are needed."),
+			new ProxyToolParameter("blockedReason", "string", "Reason this goal is blocked, only when status=blocked.")
+		});
 	}
 
 	private void WriteSockJackDmlToolSchemas(Utf8JsonWriter writer)
@@ -59106,7 +63476,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return false;
 		}
-		return requestBody.Contains("\"internet_search\"", StringComparison.Ordinal) || requestBody.Contains("\"download_file\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_open\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_read_page\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_click_link\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_find_text\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_search\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_package_info\"", StringComparison.Ordinal) || requestBody.Contains("\"github_code_search\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_list_models\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_run_model\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_execute\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_workflow_status\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_find\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_execution_control\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_evidence_link\"", StringComparison.Ordinal) || requestBody.Contains("\"git_dependency_check\"", StringComparison.Ordinal) || requestBody.Contains("\"git_status\"", StringComparison.Ordinal) || requestBody.Contains("\"git_changed_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_tracked_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_at_ref\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_history\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_blame\"", StringComparison.Ordinal) || requestBody.Contains("\"git_grep\"", StringComparison.Ordinal) || requestBody.Contains("\"git_log\"", StringComparison.Ordinal) || requestBody.Contains("\"git_show\"", StringComparison.Ordinal) || requestBody.Contains("\"git_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_remote\"", StringComparison.Ordinal) || requestBody.Contains("\"git_stage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_unstage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_commit\"", StringComparison.Ordinal) || requestBody.Contains("\"git_create_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_switch_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_fetch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_pull\"", StringComparison.Ordinal) || requestBody.Contains("\"git_push\"", StringComparison.Ordinal) || requestBody.Contains("\"read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_write_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_replace_in_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_copy_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_rename_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_delete_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_search_files\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_list_files\"", StringComparison.Ordinal) || requestBody.Contains("\"run_command_in_terminal\"", StringComparison.Ordinal);
+		return requestBody.Contains("\"internet_search\"", StringComparison.Ordinal) || requestBody.Contains("\"download_file\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_open\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_read_page\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_click_link\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_click\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_type\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_select\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_press\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_find_text\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_search\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_package_info\"", StringComparison.Ordinal) || requestBody.Contains("\"github_code_search\"", StringComparison.Ordinal) || requestBody.Contains("\"goal_checkpoint\"", StringComparison.Ordinal) || requestBody.Contains("\"continue_with_tools\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_list_models\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_run_model\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_execute\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_workflow_status\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_find\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_execution_control\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_evidence_link\"", StringComparison.Ordinal) || requestBody.Contains("\"git_dependency_check\"", StringComparison.Ordinal) || requestBody.Contains("\"git_status\"", StringComparison.Ordinal) || requestBody.Contains("\"git_changed_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_tracked_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_at_ref\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_history\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_blame\"", StringComparison.Ordinal) || requestBody.Contains("\"git_grep\"", StringComparison.Ordinal) || requestBody.Contains("\"git_log\"", StringComparison.Ordinal) || requestBody.Contains("\"git_show\"", StringComparison.Ordinal) || requestBody.Contains("\"git_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_remote\"", StringComparison.Ordinal) || requestBody.Contains("\"git_stage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_unstage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_commit\"", StringComparison.Ordinal) || requestBody.Contains("\"git_create_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_switch_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_fetch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_pull\"", StringComparison.Ordinal) || requestBody.Contains("\"git_push\"", StringComparison.Ordinal) || requestBody.Contains("\"read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_write_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_replace_in_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_copy_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_rename_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_delete_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_search_files\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_list_files\"", StringComparison.Ordinal) || requestBody.Contains("\"run_command_in_terminal\"", StringComparison.Ordinal);
 	}
 
 	private void WriteGitToolSchemas(Utf8JsonWriter writer)
@@ -60455,7 +64825,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		writer.WriteEndObject();
 		writer.Flush();
-		return Encoding.UTF8.GetString(stream.ToArray());
+		string continuationRequest = Encoding.UTF8.GetString(stream.ToArray());
+		return continuationRequest;
 	}
 
 	private static void WriteAssistantAndSystemMessages(Utf8JsonWriter writer, string assistantContent, string systemContent)
