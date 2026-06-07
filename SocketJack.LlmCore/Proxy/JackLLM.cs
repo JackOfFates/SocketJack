@@ -13209,7 +13209,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		if (string.IsNullOrWhiteSpace(id))
 		{
 			id = ReadMasterJsonString(profile, "id");
-		}
+		} 
 		if (string.IsNullOrWhiteSpace(id))
 		{
 			id = ReadMasterJsonString(profile, "serverId");
@@ -45369,7 +45369,7 @@ except Exception as exc:
 		{
 			return "";
 		}
-		foreach (Match quoted in Regex.Matches(prompt, "[\"'`â€œâ€â€˜â€™](?<query>[^\"'`â€œâ€â€˜â€™]{2,180})[\"'`â€œâ€â€˜â€™]"))
+		foreach (Match quoted in Regex.Matches(prompt, "[\"'`“”‘’](?<query>[^\"'`“”‘’]{2,180})[\"'`“”‘’]"))
 		{
 			string query = NormalizeInternetSearchQueryCandidate(quoted.Groups["query"].Value);
 			if (IsUsefulInternetSearchQueryCandidate(query) && !query.Contains("internet_search", StringComparison.OrdinalIgnoreCase))
