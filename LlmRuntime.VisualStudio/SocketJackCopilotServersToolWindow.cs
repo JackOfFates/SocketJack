@@ -328,7 +328,7 @@ public sealed class SocketJackCopilotServersControl : UserControl
                 "MCP: " + mcpResult.ServerKey + " written to " + mcpResult.Path +
                 ". Ollama BYOM: " + (ollamaResult == null ? "not updated" : ollamaResult.CustomUrl + " / " + ollamaResult.ModelId) +
                 ". " + routeMessage +
-                " Visual Studio Copilot model override uses public MCP/Ollama paths only. " + duplicatorMessage);
+                " Visual Studio Copilot BYOM uses the packaged SocketJack bridge when a local proxy URL is configured. " + duplicatorMessage);
         }
         catch (Exception ex)
         {
@@ -382,11 +382,11 @@ public sealed class SocketJackCopilotServersControl : UserControl
             using HttpResponseMessage response = await _httpClient.PostAsync(new Uri(new Uri(baseUrl), "api/copilot-duplicator"), content).ConfigureAwait(true);
             return response.IsSuccessStatusCode
                 ? "Local JackLLM copilot duplicator updated."
-                : "Local JackLLM copilot duplicator returned " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + ".";
+                : "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return "Local JackLLM copilot duplicator unavailable: " + ex.Message;
+            return "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
     }
 

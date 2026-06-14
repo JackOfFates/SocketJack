@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.CopilotMcpBridge;
+using System.Reflection;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -61,6 +62,18 @@ public sealed class SocketJackCopilotBridgeTests
         Assert.AreEqual("/v1/chat/completions", SocketJackProxyPath.NormalizeForUpstream("/v1/chat/completions"));
         Assert.IsTrue(SocketJackProxyPath.IsOpenAiResponsesPath("/v1/responses"));
         Assert.IsTrue(SocketJackProxyPath.IsOllamaTagsPath("/api/tags"));
+    }
+
+    [TestMethod]
+    public void BridgePrefersModelRuntimeOpenAiChatForwardPath()
+    {
+        FieldInfo? field = typeof(SocketJackModelProxyForwarder).GetField("OpenAiChatForwardPaths", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.IsNotNull(field);
+
+        string[] paths = (string[])field!.GetValue(null)!;
+
+        Assert.AreEqual("api/model-runtime/v1/chat/completions", paths[0]);
+        Assert.AreEqual("v1/chat/completions", paths[1]);
     }
 
     [TestMethod]
@@ -659,6 +672,31 @@ public sealed class SocketJackCopilotBridgeTests
         StringAssert.Contains(sse, "event: response.function_call_arguments.done");
         StringAssert.Contains(sse, "event: response.completed");
         StringAssert.Contains(sse, "data: [DONE]");
+    }
+
+    [TestMethod]
+    public void OpenAiAdapterBuildsResponsesToolCallStreamWithoutBlankMessagePrelude()
+    {
+        var toolCalls = new[]
+        {
+            new SocketJackOpenAiToolCall
+            {
+                Id = "call_1",
+                Name = "get_projects_in_solution",
+                ArgumentsJson = "{}"
+            }
+        };
+
+        string sse =
+            SocketJackOpenAiChatAdapter.BuildResponseLifecycleStartSse("resp_test", 123, "qwen-tools") +
+            SocketJackOpenAiChatAdapter.BuildResponseToolCallsSse("resp_test", 123, "qwen-tools", toolCalls, includeLifecycle: false);
+
+        StringAssert.Contains(sse, "event: response.created");
+        StringAssert.Contains(sse, "\"type\":\"function_call\"");
+        StringAssert.Contains(sse, "\"call_id\":\"call_1\"");
+        Assert.IsFalse(sse.Contains("\"type\":\"message\"", StringComparison.Ordinal), sse);
+        Assert.IsFalse(sse.Contains("response.content_part.added", StringComparison.Ordinal), sse);
+        Assert.IsFalse(sse.Contains("response.output_text.delta", StringComparison.Ordinal), sse);
     }
 
     [TestMethod]
@@ -1641,6 +1679,21 @@ public sealed class SocketJackCopilotBridgeTests
     }
 
     [TestMethod]
+    public void BridgeChunkFrameFilterOnlyMatchesHexLengthMarkers()
+    {
+        MethodInfo method = typeof(SocketJackModelProxyForwarder).GetMethod("IsHttpChunkSizeLine", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new AssertFailedException("IsHttpChunkSizeLine helper was not found.");
+        bool IsHttpChunkSizeLine(string text) => (bool)method.Invoke(null, new object?[] { text })!;
+
+        Assert.IsTrue(IsHttpChunkSizeLine("4C4"));
+        Assert.IsTrue(IsHttpChunkSizeLine("3c1"));
+        Assert.IsTrue(IsHttpChunkSizeLine("4AF;chunk-extension=true"));
+        Assert.IsFalse(IsHttpChunkSizeLine("100"));
+        Assert.IsFalse(IsHttpChunkSizeLine("bad"));
+        Assert.IsFalse(IsHttpChunkSizeLine("visible-ok"));
+    }
+
+    [TestMethod]
     public void OpenAiAdapterSuppressesReasoningWhenDeltaHasNoContent()
     {
         string text = SocketJackOpenAiChatAdapter.ExtractAssistantText("""
@@ -1754,7 +1807,7 @@ public sealed class SocketJackCopilotBridgeTests
     }
 
     [TestMethod]
-    public void OpenAiAdapterDoesNotReplayResponsesTextInTerminalEvents()
+    public void OpenAiAdapterCarriesResponsesTextInTerminalEvents()
     {
         JsonObject request = JsonNode.Parse("""{ "model": "qwen-tools", "stream": true }""")!.AsObject();
         string marker = "unique-visible-response-text";
@@ -1768,8 +1821,11 @@ public sealed class SocketJackCopilotBridgeTests
             occurrences++;
         }
 
-        Assert.AreEqual(1, occurrences);
+        Assert.IsTrue(occurrences > 1, body);
         StringAssert.Contains(body, "event: response.output_text.delta");
+        StringAssert.Contains(body, "event: response.output_text.done");
+        StringAssert.Contains(body, "\"text\":\"unique-visible-response-text\"");
+        StringAssert.Contains(body, "\"output_text\":\"unique-visible-response-text\"");
         StringAssert.Contains(body, "event: response.completed");
         StringAssert.Contains(body, "[DONE]");
     }
@@ -1778,6 +1834,7 @@ public sealed class SocketJackCopilotBridgeTests
     public void OpenAiAdapterBuildsFriendlyOfflineMessage()
     {
         Assert.IsTrue(SocketJackOpenAiChatAdapter.LooksLikeOfflineServer(503, "JackLLM has not connected its reverse agent."));
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.LooksLikeOfflineServer(503, "The selected model endpoint returned HTTP 503 for v1/chat/completions."));
 
         string message = SocketJackOpenAiChatAdapter.BuildServerOfflineAssistantText("sable");
 
@@ -1817,10 +1874,11 @@ public sealed class SocketJackCopilotBridgeTests
         ProxyResponse response = SocketJackOpenAiChatAdapter.BuildStreamingChatResponse(request, fallback, "fallback-model");
         string body = Encoding.UTF8.GetString(response.Body);
 
-        StringAssert.Contains(fallback, "without a visible reply");
-        Assert.IsFalse(fallback.Contains("[SocketJack]", StringComparison.Ordinal));
+        StringAssert.Contains(fallback, "SocketJack bridge");
+        Assert.IsFalse(fallback.Contains("The model finished without a visible reply", StringComparison.Ordinal));
+        Assert.IsFalse(fallback.Contains("select another enabled chat model", StringComparison.Ordinal));
         Assert.IsFalse(fallback.TrimStart().StartsWith("{", StringComparison.Ordinal));
-        StringAssert.Contains(body, "without a visible reply");
+        StringAssert.Contains(body, "SocketJack bridge");
         StringAssert.Contains(body, "[DONE]");
     }
 
@@ -1828,9 +1886,12 @@ public sealed class SocketJackCopilotBridgeTests
     public void OpenAiAdapterRecognizesNoVisibleFallbackForVisualStudioRecovery()
     {
         string fallback = SocketJackOpenAiChatAdapter.BuildNoVisibleAssistantTextFallback();
+        string legacyCopilotFallback = "The model finished without a visible reply. Please try again, or select another enabled chat model.";
 
         Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(fallback));
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(legacyCopilotFallback));
         Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText("data: {\"choices\":[{\"delta\":{\"content\":\"" + fallback + "\"}}]}"));
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText("data: {\"choices\":[{\"delta\":{\"content\":\"" + legacyCopilotFallback + "\"}}]}"));
         Assert.IsFalse(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText("The model paused before writing a final answer."));
     }
 
@@ -1923,6 +1984,7 @@ public sealed class SocketJackCopilotBridgeTests
     [TestMethod]
     public void OpenAiAdapterRecoversVisualStudioPlanAfterNoVisibleFallbackLoop()
     {
+        string socketJackFallback = SocketJackOpenAiChatAdapter.BuildNoVisibleAssistantTextFallback();
         JsonObject request = JsonNode.Parse("""
         {
           "model": "qwen-tools",
@@ -1931,11 +1993,39 @@ public sealed class SocketJackCopilotBridgeTests
             { "role": "system", "content": "You are an AI programming assistant." },
             { "role": "user", "content": "# IDESTATE CONTEXT\nUser's solution file is:\nC:\\Users\\Vin\\source\\repos\\Maf Scale\\ME7Tools.sln" },
             { "role": "user", "content": "Implement the plan" },
-            { "role": "assistant", "content": "The model finished without a visible reply. Please try again, or select another enabled chat model." },
+            { "role": "assistant", "content": "__SOCKETJACK_FALLBACK__" },
             { "role": "user", "content": "You have not yet marked the task as complete using the task_complete tool. If you believe the task is done, call task_complete now. Otherwise, continue working on the task." }
           ],
           "tools": [
             { "type": "function", "function": { "name": "get_projects_in_solution", "description": "List projects." } },
+            { "type": "function", "function": { "name": "task_complete", "description": "Finish." } }
+          ],
+          "tool_choice": "auto"
+        }
+        """.Replace("__SOCKETJACK_FALLBACK__", socketJackFallback.Replace("\\", "\\\\").Replace("\"", "\\\"")))!.AsObject();
+
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(Encoding.UTF8.GetBytes(request.ToJsonString()), out IReadOnlyList<SocketJackOpenAiToolCall> toolCalls));
+
+        Assert.AreEqual(1, toolCalls.Count);
+        Assert.AreEqual("get_projects_in_solution", toolCalls[0].Name);
+    }
+
+    [TestMethod]
+    public void OpenAiAdapterRecoversGenericVisualStudioToolRequestByStartingProjectDiscovery()
+    {
+        JsonObject request = JsonNode.Parse("""
+        {
+          "model": "qwen-tools",
+          "stream": true,
+          "messages": [
+            { "role": "system", "content": "You are an AI programming assistant." },
+            { "role": "user", "content": "# IDESTATE CONTEXT\nUser's solution file is:\nC:\\Users\\Vin\\source\\repos\\Maf Scale\\ME7Tools.sln" },
+            { "role": "user", "content": "Look at this solution and keep working." }
+          ],
+          "tools": [
+            { "type": "function", "function": { "name": "get_projects_in_solution", "description": "List projects." } },
+            { "type": "function", "function": { "name": "get_files_in_project", "description": "List files." } },
+            { "type": "function", "function": { "name": "get_file", "description": "Read file." } },
             { "type": "function", "function": { "name": "task_complete", "description": "Finish." } }
           ],
           "tool_choice": "auto"
@@ -1946,6 +2036,42 @@ public sealed class SocketJackCopilotBridgeTests
 
         Assert.AreEqual(1, toolCalls.Count);
         Assert.AreEqual("get_projects_in_solution", toolCalls[0].Name);
+        Assert.AreEqual("{}", toolCalls[0].ArgumentsJson);
+    }
+
+    [TestMethod]
+    public void OpenAiAdapterRecoversGenericVisualStudioToolRequestAfterProjectList()
+    {
+        JsonObject request = JsonNode.Parse("""
+        {
+          "model": "qwen-tools",
+          "stream": true,
+          "messages": [
+            { "role": "system", "content": "You are an AI programming assistant." },
+            { "role": "user", "content": "# IDESTATE CONTEXT\nUser's solution file is:\nC:\\Users\\Vin\\source\\repos\\Maf Scale\\ME7Tools.sln" },
+            { "role": "user", "content": "Look at this solution and keep working." },
+            {
+              "role": "assistant",
+              "tool_calls": [
+                { "id": "projects", "type": "function", "function": { "name": "get_projects_in_solution", "arguments": "{}" } }
+              ]
+            },
+            { "role": "tool", "tool_call_id": "projects", "content": "Maf Scale\\ME7Tools.vbproj" }
+          ],
+          "tools": [
+            { "type": "function", "function": { "name": "get_projects_in_solution", "description": "List projects." } },
+            { "type": "function", "function": { "name": "get_files_in_project", "description": "List files." } },
+            { "type": "function", "function": { "name": "get_file", "description": "Read file." } }
+          ]
+        }
+        """)!.AsObject();
+
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(Encoding.UTF8.GetBytes(request.ToJsonString()), out IReadOnlyList<SocketJackOpenAiToolCall> toolCalls));
+
+        Assert.AreEqual(1, toolCalls.Count);
+        Assert.AreEqual("get_files_in_project", toolCalls[0].Name);
+        JsonObject arguments = JsonNode.Parse(toolCalls[0].ArgumentsJson)!.AsObject();
+        Assert.AreEqual("Maf Scale\\ME7Tools.vbproj", arguments["projectPath"]!.ToString());
     }
 
     [TestMethod]
@@ -1976,6 +2102,33 @@ public sealed class SocketJackCopilotBridgeTests
     }
 
     [TestMethod]
+    public void OpenAiAdapterRequiresToolChoiceForVisualStudioSummaryMarkdown()
+    {
+        JsonObject request = JsonNode.Parse("""
+        {
+          "model": "qwen-tools",
+          "stream": true,
+          "messages": [
+            { "role": "user", "content": "summarize this project to summary.md" }
+          ],
+          "tools": [
+            { "type": "function", "function": { "name": "get_projects_in_solution", "description": "List projects." } },
+            { "type": "function", "function": { "name": "get_files_in_project", "description": "List files." } },
+            { "type": "function", "function": { "name": "create_file", "description": "Create file." } },
+            { "type": "function", "function": { "name": "task_complete", "description": "Finish." } }
+          ]
+        }
+        """)!.AsObject();
+
+        JsonObject forward = SocketJackOpenAiChatAdapter.BuildOpenAiChatCompletionsForwardRequest(request, "fallback-model");
+
+        Assert.AreEqual("required", forward["tool_choice"]!.ToString());
+        JsonArray tools = forward["tools"]!.AsArray();
+        Assert.AreEqual(1, tools.Count);
+        Assert.AreEqual("get_projects_in_solution", tools[0]!["function"]!["name"]!.ToString());
+    }
+
+    [TestMethod]
     public void OpenAiAdapterRecoversVisualStudioReadmeSummaryByStartingProjectDiscovery()
     {
         JsonObject request = JsonNode.Parse("""
@@ -1984,6 +2137,30 @@ public sealed class SocketJackCopilotBridgeTests
           "stream": true,
           "messages": [
             { "role": "user", "content": "summarize this project and save it to readme.md" }
+          ],
+          "tools": [
+            { "type": "function", "function": { "name": "get_projects_in_solution", "description": "List projects." } },
+            { "type": "function", "function": { "name": "get_files_in_project", "description": "List files." } },
+            { "type": "function", "function": { "name": "get_file", "description": "Read file." } }
+          ]
+        }
+        """)!.AsObject();
+
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(Encoding.UTF8.GetBytes(request.ToJsonString()), out IReadOnlyList<SocketJackOpenAiToolCall> toolCalls));
+
+        Assert.AreEqual(1, toolCalls.Count);
+        Assert.AreEqual("get_projects_in_solution", toolCalls[0].Name);
+    }
+
+    [TestMethod]
+    public void OpenAiAdapterRecoversVisualStudioSummaryMarkdownByStartingProjectDiscovery()
+    {
+        JsonObject request = JsonNode.Parse("""
+        {
+          "model": "qwen-tools",
+          "stream": true,
+          "messages": [
+            { "role": "user", "content": "summarize this project to summary.md" }
           ],
           "tools": [
             { "type": "function", "function": { "name": "get_projects_in_solution", "description": "List projects." } },

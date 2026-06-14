@@ -20314,6 +20314,7 @@ public partial class MainWindow : Window {
         private readonly string _ownerToken;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _pending = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, ProxyWebSocketSession> _webSockets = new(StringComparer.OrdinalIgnoreCase);
         private CancellationTokenSource? _cts;
         private Task? _runTask;
         private bool _disposed;
@@ -20405,6 +20406,10 @@ public partial class MainWindow : Window {
                     AppendDebugLog("received close frame state=" + socket.State + " closeStatus=" + socket.CloseStatus + " closeDescription=" + TrimForDisplay(socket.CloseStatusDescription ?? "", 160));
                     break;
                 }
+                if (message.Type == WebSocketMessageType.Binary) {
+                    _ = Task.Run(() => HandleTunnelBinaryMessageAsync(socket, message.Bytes, cancellationToken), cancellationToken);
+                    continue;
+                }
                 if (message.Type != WebSocketMessageType.Text)
                     continue;
 
@@ -20415,6 +20420,14 @@ public partial class MainWindow : Window {
                     AppendDebugLog("received request id=" + ReadJsonString(root, "id") + " method=" + ReadJsonString(root, "method") + " path=" + ReadJsonString(root, "path"));
                     JsonElement requestElement = root.Clone();
                     _ = Task.Run(() => HandleProxyRequestAsync(socket, requestElement, cancellationToken), cancellationToken);
+                } else if (type.Equals("websocket-open", StringComparison.OrdinalIgnoreCase)) {
+                    AppendDebugLog("received websocket-open id=" + ReadJsonString(root, "id") + " path=" + ReadJsonString(root, "path"));
+                    JsonElement requestElement = root.Clone();
+                    _ = Task.Run(() => HandleWebSocketOpenAsync(socket, requestElement, cancellationToken), cancellationToken);
+                } else if (type.Equals("websocket-close", StringComparison.OrdinalIgnoreCase)) {
+                    string id = ReadJsonString(root, "id");
+                    if (!string.IsNullOrWhiteSpace(id) && _webSockets.TryRemove(id, out ProxyWebSocketSession? session))
+                        await CloseProxyWebSocketSessionAsync(session).ConfigureAwait(false);
                 } else if (type.Equals("cancel", StringComparison.OrdinalIgnoreCase)) {
                     string id = ReadJsonString(root, "id");
                     if (!string.IsNullOrWhiteSpace(id) && _pending.TryRemove(id, out CancellationTokenSource? pendingCts)) {
@@ -20487,6 +20500,196 @@ public partial class MainWindow : Window {
             } finally {
                 _pending.TryRemove(id, out _);
             }
+        }
+
+        private async Task HandleWebSocketOpenAsync(ClientWebSocket tunnelSocket, JsonElement root, CancellationToken tunnelCancellationToken) {
+            string id = ReadJsonString(root, "id");
+            if (string.IsNullOrWhiteSpace(id))
+                return;
+
+            ClientWebSocket? upstream = null;
+            try {
+                string path = NormalizeProxyWebSocketPath(ReadJsonString(root, "path"));
+                string queryString = ReadJsonString(root, "queryString");
+                Uri localUri = BuildLocalWebSocketUri(path, queryString);
+                upstream = new ClientWebSocket();
+                upstream.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+                foreach (KeyValuePair<string, string> header in ReadJsonObjectStrings(root, "headers")) {
+                    if (!ShouldSkipProxyWebSocketHeader(header.Key))
+                        upstream.Options.SetRequestHeader(header.Key, header.Value);
+                }
+
+                using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(tunnelCancellationToken);
+                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(sessionCts.Token);
+                connectCts.CancelAfter(ConnectTimeout);
+                await upstream.ConnectAsync(localUri, connectCts.Token).ConfigureAwait(false);
+
+                var session = new ProxyWebSocketSession(id, upstream, sessionCts);
+                if (!_webSockets.TryAdd(id, session))
+                    throw new InvalidOperationException("WebSocket tunnel session id collision.");
+
+                upstream = null;
+                await SendWebSocketReadyAsync(tunnelSocket, id, true, "").ConfigureAwait(false);
+                _ = Task.Run(() => PumpProxyWebSocketToTunnelAsync(tunnelSocket, session), session.Cancellation);
+            } catch (Exception ex) {
+                try { upstream?.Dispose(); } catch { }
+                await SendWebSocketReadyAsync(tunnelSocket, id, false, ex.Message).ConfigureAwait(false);
+            }
+        }
+
+        private async Task HandleTunnelBinaryMessageAsync(ClientWebSocket tunnelSocket, byte[] payload, CancellationToken tunnelCancellationToken) {
+            if (payload == null || payload.Length < 33)
+                return;
+            string id = Encoding.ASCII.GetString(payload, 0, 32).Trim();
+            if (string.IsNullOrWhiteSpace(id) || !_webSockets.TryGetValue(id, out ProxyWebSocketSession? session))
+                return;
+
+            byte opcode = payload[32];
+            byte[] framePayload = new byte[payload.Length - 33];
+            Buffer.BlockCopy(payload, 33, framePayload, 0, framePayload.Length);
+            try {
+                await SendProxyWebSocketFrameToLocalAsync(session, opcode, framePayload, tunnelCancellationToken).ConfigureAwait(false);
+            } catch (Exception ex) {
+                await SendWebSocketErrorAsync(tunnelSocket, id, ex.Message).ConfigureAwait(false);
+                if (_webSockets.TryRemove(id, out ProxyWebSocketSession? removed))
+                    await CloseProxyWebSocketSessionAsync(removed).ConfigureAwait(false);
+            }
+        }
+
+        private async Task SendProxyWebSocketFrameToLocalAsync(ProxyWebSocketSession session, byte opcode, byte[] payload, CancellationToken tunnelCancellationToken) {
+            if (session.Socket.State != WebSocketState.Open)
+                return;
+            if ((opcode & 0x0F) == 0x8) {
+                await CloseProxyWebSocketSessionAsync(session).ConfigureAwait(false);
+                return;
+            }
+
+            WebSocketMessageType type = (opcode & 0x0F) == 0x1 ? WebSocketMessageType.Text : WebSocketMessageType.Binary;
+            using CancellationTokenSource sendCts = CancellationTokenSource.CreateLinkedTokenSource(session.Cancellation, tunnelCancellationToken);
+            await session.SendLock.WaitAsync(sendCts.Token).ConfigureAwait(false);
+            try {
+                await session.Socket.SendAsync(new ArraySegment<byte>(payload ?? Array.Empty<byte>()), type, true, sendCts.Token).ConfigureAwait(false);
+            } finally {
+                session.SendLock.Release();
+            }
+        }
+
+        private async Task PumpProxyWebSocketToTunnelAsync(ClientWebSocket tunnelSocket, ProxyWebSocketSession session) {
+            try {
+                byte[] buffer = new byte[32 * 1024];
+                while (!session.Cancellation.IsCancellationRequested && session.Socket.State == WebSocketState.Open) {
+                    using var message = new MemoryStream();
+                    WebSocketReceiveResult result;
+                    do {
+                        result = await session.Socket.ReceiveAsync(new ArraySegment<byte>(buffer), session.Cancellation).ConfigureAwait(false);
+                        if (result.MessageType == WebSocketMessageType.Close) {
+                            await SendWebSocketCloseAsync(tunnelSocket, session.Id).ConfigureAwait(false);
+                            return;
+                        }
+                        if (result.Count > 0)
+                            message.Write(buffer, 0, result.Count);
+                    } while (!result.EndOfMessage);
+
+                    byte opcode = result.MessageType == WebSocketMessageType.Text ? (byte)0x1 : (byte)0x2;
+                    await SendWebSocketBinaryFrameAsync(tunnelSocket, session.Id, opcode, message.ToArray(), session.Cancellation).ConfigureAwait(false);
+                }
+            } catch (OperationCanceledException) {
+            } catch (Exception ex) {
+                await SendWebSocketErrorAsync(tunnelSocket, session.Id, ex.Message).ConfigureAwait(false);
+            } finally {
+                if (_webSockets.TryRemove(session.Id, out ProxyWebSocketSession? removed))
+                    await CloseProxyWebSocketSessionAsync(removed).ConfigureAwait(false);
+                await SendWebSocketCloseAsync(tunnelSocket, session.Id).ConfigureAwait(false);
+            }
+        }
+
+        private Uri BuildLocalWebSocketUri(string path, string queryString) {
+            var builder = new UriBuilder("ws", _localHost, _localPort, NormalizeProxyWebSocketPath(path));
+            builder.Query = string.IsNullOrWhiteSpace(queryString) ? "" : queryString.TrimStart('?');
+            return builder.Uri;
+        }
+
+        private static string NormalizeProxyWebSocketPath(string path) {
+            if (string.IsNullOrWhiteSpace(path))
+                return "/";
+            path = path.Trim();
+            return path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
+        }
+
+        private static bool ShouldSkipProxyWebSocketHeader(string name) {
+            return string.IsNullOrWhiteSpace(name) ||
+                   name.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Connection", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Keep-Alive", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Upgrade", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("Accept-Encoding", StringComparison.OrdinalIgnoreCase) ||
+                   name.StartsWith("Sec-WebSocket", StringComparison.OrdinalIgnoreCase) ||
+                   name.StartsWith("Proxy-", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task SendWebSocketReadyAsync(ClientWebSocket socket, string id, bool ok, string error) {
+            await SendJsonAsync(socket, new {
+                type = "websocket-ready",
+                id,
+                ok,
+                error = error ?? "",
+                sentUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        private async Task SendWebSocketCloseAsync(ClientWebSocket socket, string id) {
+            try {
+                await SendJsonAsync(socket, new {
+                    type = "websocket-close",
+                    id,
+                    sentUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+                }, CancellationToken.None).ConfigureAwait(false);
+            } catch {
+            }
+        }
+
+        private async Task SendWebSocketErrorAsync(ClientWebSocket socket, string id, string error) {
+            try {
+                await SendJsonAsync(socket, new {
+                    type = "websocket-error",
+                    id,
+                    error = error ?? "WebSocket tunnel target failed.",
+                    sentUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+                }, CancellationToken.None).ConfigureAwait(false);
+            } catch {
+            }
+        }
+
+        private async Task SendWebSocketBinaryFrameAsync(ClientWebSocket socket, string id, byte opcode, byte[] payload, CancellationToken cancellationToken) {
+            payload ??= Array.Empty<byte>();
+            byte[] framed = new byte[33 + payload.Length];
+            byte[] idBytes = Encoding.ASCII.GetBytes((id ?? "").PadRight(32).Substring(0, 32));
+            Buffer.BlockCopy(idBytes, 0, framed, 0, 32);
+            framed[32] = opcode;
+            if (payload.Length > 0)
+                Buffer.BlockCopy(payload, 0, framed, 33, payload.Length);
+
+            await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try {
+                await socket.SendAsync(new ArraySegment<byte>(framed), WebSocketMessageType.Binary, true, cancellationToken).ConfigureAwait(false);
+            } finally {
+                _sendLock.Release();
+            }
+        }
+
+        private static async Task CloseProxyWebSocketSessionAsync(ProxyWebSocketSession session) {
+            try { session.CancellationSource.Cancel(); } catch { }
+            try {
+                if (session.Socket.State == WebSocketState.Open || session.Socket.State == WebSocketState.CloseReceived)
+                    await session.Socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "proxy closed", CancellationToken.None).ConfigureAwait(false);
+            } catch {
+                try { session.Socket.Abort(); } catch { }
+            }
+            try { session.Socket.Dispose(); } catch { }
+            try { session.SendLock.Dispose(); } catch { }
+            try { session.CancellationSource.Dispose(); } catch { }
         }
 
         private static int GetShellProxyResponseBufferSize(string contentType, string path) {
@@ -20734,6 +20937,20 @@ public partial class MainWindow : Window {
             }
             _pending.Clear();
             _sendLock.Dispose();
+        }
+
+        private sealed class ProxyWebSocketSession {
+            public ProxyWebSocketSession(string id, ClientWebSocket socket, CancellationTokenSource cancellationSource) {
+                Id = id ?? "";
+                Socket = socket;
+                CancellationSource = cancellationSource;
+            }
+
+            public string Id { get; }
+            public ClientWebSocket Socket { get; }
+            public CancellationTokenSource CancellationSource { get; }
+            public CancellationToken Cancellation => CancellationSource.Token;
+            public SemaphoreSlim SendLock { get; } = new(1, 1);
         }
 
         private readonly record struct WebSocketMessage(WebSocketMessageType Type, string Text, byte[] Bytes);

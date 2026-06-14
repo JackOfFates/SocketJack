@@ -1,5 +1,6 @@
 namespace LlmRuntime.VisualStudio2026;
 
+using System.Globalization;
 using System.Runtime.Serialization;
 using LlmRuntime.VisualStudio;
 using Microsoft.VisualStudio.Extensibility;
@@ -17,6 +18,8 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
     private List<SocketJackModelDisplayItem> models = new();
     private string serverDetails = "Refresh to load SocketJack MasterList servers.";
     private string modelDetails = "";
+    private string serverSummary = "No servers loaded.";
+    private string modelSummary = "No models loaded.";
     private string status = "Ready.";
     private bool isBusy;
 
@@ -28,6 +31,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
         this.LoadModelsCommand = new AsyncCommand(this.LoadModelsAsync);
         this.TestConnectionCommand = new AsyncCommand(this.TestConnectionAsync);
         this.ConfigureCommand = new AsyncCommand(this.ConfigureAsync);
+        this.LoadCachedServers("Showing cached SocketJack servers. Refresh for live status.");
     }
 
     [DataMember]
@@ -74,6 +78,20 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
     }
 
     [DataMember]
+    public string ServerSummary
+    {
+        get => this.serverSummary;
+        set => this.SetProperty(ref this.serverSummary, value);
+    }
+
+    [DataMember]
+    public string ModelSummary
+    {
+        get => this.modelSummary;
+        set => this.SetProperty(ref this.modelSummary, value);
+    }
+
+    [DataMember]
     public string SelectedServerId
     {
         get => this.selectedServerId;
@@ -88,6 +106,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
             this.SetProperty(ref this.selectedServerId, value);
             this.Models = new List<SocketJackModelDisplayItem>();
             this.SelectedModelId = "";
+            this.LoadCachedModelsForSelectedServer();
             this.UpdateServerDetails();
             this.UpdateModelDetails();
         }
@@ -142,6 +161,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
     {
         await this.RunBusyAsync("Loading SocketJack MasterList servers...", async token =>
         {
+            this.LoadCachedServers("Showing cached SocketJack servers while live refresh runs...");
             await this.EnsureSignedInAsync(token);
             IReadOnlyList<SocketJackServerCandidate> candidates = await this.configurator.GetServersAsync(token);
             this.allServers.Clear();
@@ -154,7 +174,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
                 this.SelectedServerId = selected.Id;
             }
 
-            this.Status = "Loaded " + this.Servers.Count + " SocketJack servers. Select a server, then load models.";
+            this.Status = "Loaded " + this.Servers.Count + " live SocketJack servers and updated the local cache.";
             if (selected?.CanUseForCopilot == true)
             {
                 await this.LoadModelsCoreAsync(token);
@@ -212,16 +232,18 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
 
     private async Task LoadModelsCoreAsync(CancellationToken cancellationToken)
     {
-        await this.EnsureSignedInAsync(cancellationToken);
         SocketJackServerCandidate server = this.GetSelectedServerOrThrow();
+        this.LoadCachedModels(server, "Showing cached models for " + server.DisplayName + " while live model discovery runs...");
+        await this.EnsureSignedInAsync(cancellationToken);
         SocketJackModelDiscoveryResult result = await this.configurator.GetModelsAsync(server, cancellationToken);
         this.Models = result.Models.Select(SocketJackModelDisplayItem.FromCandidate).ToList();
         SocketJackModelDisplayItem? selected = this.Models.FirstOrDefault(model => model.IsSelectable) ?? this.Models.FirstOrDefault();
         this.SelectedModelId = selected?.Id ?? "";
+        this.UpdateModelSummary();
         this.UpdateModelDetails();
 
         string warnings = result.Warnings.Count == 0 ? "" : " Warnings: " + string.Join(" ", result.Warnings);
-        this.Status = "Loaded " + this.Models.Count + " models for " + server.DisplayName + "." + warnings;
+        this.Status = "Loaded " + this.Models.Count + " live models for " + server.DisplayName + " and updated the local cache." + warnings;
     }
 
     private void ApplyServerFilter()
@@ -232,6 +254,8 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
         {
             filtered = filtered.Where(server =>
                 server.DisplayText.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                server.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                server.ModelSummary.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
                 server.Endpoint.Contains(filter, StringComparison.OrdinalIgnoreCase));
         }
 
@@ -243,6 +267,87 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
         }
 
         this.UpdateServerDetails();
+        this.UpdateServerSummary();
+    }
+
+    private void UpdateServerSummary()
+    {
+        int total = this.Servers.Count;
+        int eligible = this.Servers.Count(server => server.CanUseForCopilot);
+        int models = this.Servers.Sum(server => server.ModelCount);
+        this.ServerSummary = total == 0
+            ? "No servers loaded."
+            : total.ToString(CultureInfo.InvariantCulture) + " servers | " +
+                eligible.ToString(CultureInfo.InvariantCulture) + " eligible | " +
+                models.ToString(CultureInfo.InvariantCulture) + " advertised models";
+    }
+
+    private void UpdateModelSummary()
+    {
+        int total = this.Models.Count;
+        int selectable = this.Models.Count(model => model.IsSelectable);
+        int loaded = this.Models.Count(model => model.IsLoaded);
+        this.ModelSummary = total == 0
+            ? "No models loaded."
+            : total.ToString(CultureInfo.InvariantCulture) + " models | " +
+                selectable.ToString(CultureInfo.InvariantCulture) + " Copilot-ready | " +
+                loaded.ToString(CultureInfo.InvariantCulture) + " loaded";
+    }
+
+    private void LoadCachedServers(string status)
+    {
+        IReadOnlyList<SocketJackServerCandidate> cached = this.configurator.GetCachedServers();
+        if (cached.Count == 0)
+        {
+            this.UpdateServerSummary();
+            return;
+        }
+
+        string previousSelection = this.SelectedServerId;
+        this.allServers.Clear();
+        this.allServers.AddRange(cached.Select(SocketJackServerDisplayItem.FromCandidate));
+        this.ApplyServerFilter();
+        SocketJackServerDisplayItem? selected = this.Servers.FirstOrDefault(server => string.Equals(server.Id, previousSelection, StringComparison.OrdinalIgnoreCase)) ??
+            this.Servers.FirstOrDefault(server => server.CanUseForCopilot) ??
+            this.Servers.FirstOrDefault();
+        if (selected != null)
+            this.SelectedServerId = selected.Id;
+
+        this.Status = status;
+    }
+
+    private void LoadCachedModelsForSelectedServer()
+    {
+        SocketJackServerDisplayItem? selected = this.allServers.FirstOrDefault(server => string.Equals(server.Id, this.SelectedServerId, StringComparison.OrdinalIgnoreCase));
+        if (selected == null)
+        {
+            this.UpdateModelSummary();
+            return;
+        }
+
+        this.LoadCachedModels(selected.Candidate, "Showing cached models for " + selected.DisplayName + ".");
+    }
+
+    private void LoadCachedModels(SocketJackServerCandidate server, string status)
+    {
+        IReadOnlyList<SocketJackModelCandidate> models;
+        if (this.configurator.TryGetCachedModels(server, out SocketJackModelDiscoveryResult cachedModels))
+        {
+            models = cachedModels.Models;
+        }
+        else
+        {
+            models = SocketJackModelDiscoveryService.ParseAndMergeModels(null, null, server);
+        }
+
+        this.Models = models.Select(SocketJackModelDisplayItem.FromCandidate).ToList();
+        SocketJackModelDisplayItem? selected = this.Models.FirstOrDefault(model => model.IsSelectable) ?? this.Models.FirstOrDefault();
+        this.SelectedModelId = selected?.Id ?? "";
+        this.UpdateModelSummary();
+        this.UpdateModelDetails();
+
+        if (this.Models.Count > 0)
+            this.Status = status;
     }
 
     private SocketJackServerCandidate GetSelectedServerOrThrow()
@@ -275,6 +380,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
         SocketJackServerCandidate server = item.Candidate;
         this.ServerDetails =
             "Endpoint: " + server.EffectiveEndpoint + Environment.NewLine +
+            "Models: " + (server.AvailableModels.Count == 0 ? "not reported" : server.AvailableModels.Count.ToString(CultureInfo.InvariantCulture) + " advertised") + Environment.NewLine +
             "Tools: " + (string.IsNullOrWhiteSpace(server.ToolsAllowed) ? (server.ToolsAdvertised ? "advertised" : "not advertised") : server.ToolsAllowed) + Environment.NewLine +
             "Status: " + (server.CanUseForCopilot ? "eligible" : server.DisabledReason) + Environment.NewLine +
             "Hardware: " + (string.IsNullOrWhiteSpace(server.Hardware) ? "not reported" : server.Hardware);
@@ -291,10 +397,12 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
 
         SocketJackModelCandidate model = item.Candidate;
         this.ModelDetails =
+            "Model: " + item.DisplayName + Environment.NewLine +
             "Id: " + model.Id + Environment.NewLine +
             "Status: " + model.EligibilityReason + Environment.NewLine +
             "Tools: " + (model.SupportsTools ? "yes" : "no") + ", Vision: " + (model.SupportsVision ? "yes" : "no") + Environment.NewLine +
-            "Load: " + (model.IsLoaded ? "loaded" : model.RuntimeLoadable || model.WebChatDynamicLoadable ? "loadable" : "not loadable");
+            "Load: " + item.LoadText + Environment.NewLine +
+            "Tokens: " + item.TokenText;
     }
 
     private async Task RunBusyAsync(string message, Func<CancellationToken, Task> action, CancellationToken cancellationToken)
@@ -309,6 +417,10 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
         try
         {
             await action(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            this.Status = "SocketJack operation timed out or was canceled before it finished. Refresh the server list and try Configure again.";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -337,6 +449,21 @@ internal sealed class SocketJackServerDisplayItem
     public string DisplayText { get; init; } = "";
 
     [DataMember]
+    public string DisplayName { get; init; } = "";
+
+    [DataMember]
+    public string StatusText { get; init; } = "";
+
+    [DataMember]
+    public string ModelSummary { get; init; } = "";
+
+    [DataMember]
+    public string HardwareText { get; init; } = "";
+
+    [DataMember]
+    public int ModelCount { get; init; }
+
+    [DataMember]
     public string Endpoint { get; init; } = "";
 
     [DataMember]
@@ -346,13 +473,23 @@ internal sealed class SocketJackServerDisplayItem
     {
         string displayName = string.IsNullOrWhiteSpace(candidate.DisplayName) ? candidate.Id : candidate.DisplayName;
         string status = candidate.CanUseForCopilot ? "eligible" : candidate.DisabledReason;
+        int modelCount = candidate.AvailableModels.Count;
+        string modelSummary = modelCount == 0
+            ? "models not reported"
+            : modelCount.ToString(CultureInfo.InvariantCulture) + " models";
+        string hardware = string.IsNullOrWhiteSpace(candidate.Hardware) ? "hardware not reported" : candidate.Hardware;
         return new SocketJackServerDisplayItem
         {
             Candidate = candidate,
             Id = candidate.Id,
+            DisplayName = displayName,
             Endpoint = candidate.EffectiveEndpoint,
             CanUseForCopilot = candidate.CanUseForCopilot,
-            DisplayText = displayName + " - " + status,
+            StatusText = status,
+            ModelSummary = modelSummary,
+            ModelCount = modelCount,
+            HardwareText = hardware,
+            DisplayText = displayName + " - " + status + " - " + modelSummary,
         };
     }
 }
@@ -370,16 +507,47 @@ internal sealed class SocketJackModelDisplayItem
     public string DisplayText { get; init; } = "";
 
     [DataMember]
+    public string DisplayName { get; init; } = "";
+
+    [DataMember]
+    public string StatusText { get; init; } = "";
+
+    [DataMember]
+    public string CapabilityText { get; init; } = "";
+
+    [DataMember]
+    public string LoadText { get; init; } = "";
+
+    [DataMember]
+    public string TokenText { get; init; } = "";
+
+    [DataMember]
     public bool IsSelectable { get; init; }
+
+    [DataMember]
+    public bool IsLoaded { get; init; }
 
     public static SocketJackModelDisplayItem FromCandidate(SocketJackModelCandidate candidate)
     {
-        string displayName = candidate.Id;
+        string displayName = string.IsNullOrWhiteSpace(candidate.DisplayName) ? candidate.Id : candidate.DisplayName;
+        string loadText = candidate.IsLoaded
+            ? "loaded"
+            : candidate.RuntimeLoadable || candidate.WebChatDynamicLoadable ? "loadable" : "not loadable";
+        string tokenText = "input " + (candidate.MaxInputTokens?.ToString(CultureInfo.InvariantCulture) ?? "?") +
+            " / output " + (candidate.MaxOutputTokens?.ToString(CultureInfo.InvariantCulture) ?? "?");
+        string capabilityText = (candidate.SupportsTools ? "tools" : "no tools") + " | " +
+            (candidate.SupportsVision ? "vision" : "text");
         return new SocketJackModelDisplayItem
         {
             Candidate = candidate,
             Id = candidate.Id,
+            DisplayName = displayName,
             IsSelectable = candidate.IsSelectable,
+            IsLoaded = candidate.IsLoaded,
+            StatusText = candidate.EligibilityReason,
+            CapabilityText = capabilityText,
+            LoadText = loadText,
+            TokenText = tokenText,
             DisplayText = candidate.IsSelectable ? displayName : displayName + " - " + candidate.EligibilityReason,
         };
     }

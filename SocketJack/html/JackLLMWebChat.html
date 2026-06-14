@@ -4548,37 +4548,48 @@ body.agent-mode .solution-node-row.active-file {
 }
 .personaplex-panel {
     min-height: 0;
-    border: 1px solid rgba(64, 201, 162, 0.28);
-    border-radius: 12px;
-    padding: 10px;
+    border: 1px solid rgba(226, 232, 240, 0.16);
+    border-radius: 18px;
+    padding: 12px;
     display: grid;
-    grid-template-rows: auto auto auto minmax(54px, 104px);
-    gap: 9px;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
     background:
-        linear-gradient(135deg, rgba(64, 201, 162, 0.10), transparent 46%),
-        rgba(2, 6, 23, 0.46);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+        radial-gradient(circle at 14% 8%, rgba(45, 212, 191, 0.22), transparent 31%),
+        radial-gradient(circle at 88% 88%, rgba(251, 191, 36, 0.18), transparent 35%),
+        linear-gradient(145deg, rgba(15, 23, 42, 0.84), rgba(2, 6, 23, 0.72));
+    box-shadow:
+        0 22px 80px rgba(15, 23, 42, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.12);
     font-family: var(--ui-font);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
 }
 .personaplex-panel[hidden] {
     display: none;
+}
+.personaplex-dialog {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto auto auto minmax(54px, 1fr);
+    gap: 10px;
 }
 .personaplex-head {
     min-width: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
+    align-items: center;
     gap: 10px;
 }
 .personaplex-title {
-    color: #d9fff4;
-    font-size: 0.86rem;
+    color: #f8fafc;
+    font-size: 0.94rem;
     font-weight: 900;
 }
 .personaplex-status {
-    margin-top: 2px;
-    color: rgba(148, 163, 184, 0.86);
-    font-size: 0.68rem;
+    margin-top: 3px;
+    color: rgba(226, 232, 240, 0.72);
+    font-size: 0.70rem;
     overflow-wrap: anywhere;
 }
 .personaplex-status.ready {
@@ -4596,13 +4607,214 @@ body.agent-mode .solution-node-row.active-file {
 }
 .personaplex-actions button,
 .personaplex-run button {
-    min-height: 30px;
-    border-radius: 9px;
+    min-height: 32px;
+    border-radius: 10px;
     padding: 0 10px;
     font: 900 0.68rem var(--ui-font);
 }
 .personaplex-panel button:disabled {
     cursor: not-allowed;
+}
+.personaplex-presence {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.personaplex-voice-node {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid rgba(226, 232, 240, 0.14);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    backdrop-filter: blur(18px) saturate(145%);
+    -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+.personaplex-voice-ring {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    color: #f8fafc;
+    background:
+        radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.32), transparent 28%),
+        rgba(15, 23, 42, 0.58);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 0 rgba(45, 212, 191, 0);
+}
+.personaplex-voice-ring::before,
+.personaplex-voice-ring::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: inherit;
+    border: 1px solid rgba(45, 212, 191, 0);
+    opacity: 0;
+    transform: scale(0.86);
+}
+.personaplex-voice-node.speaking .personaplex-voice-ring {
+    background:
+        radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.42), transparent 28%),
+        linear-gradient(135deg, rgba(45, 212, 191, 0.86), rgba(59, 130, 246, 0.66));
+    box-shadow:
+        0 0 22px rgba(45, 212, 191, 0.62),
+        0 0 54px rgba(59, 130, 246, 0.30),
+        inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.personaplex-voice-node.model.speaking .personaplex-voice-ring {
+    background:
+        radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.42), transparent 28%),
+        linear-gradient(135deg, rgba(251, 191, 36, 0.88), rgba(45, 212, 191, 0.62));
+    box-shadow:
+        0 0 22px rgba(251, 191, 36, 0.56),
+        0 0 54px rgba(45, 212, 191, 0.26),
+        inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.personaplex-voice-node.speaking .personaplex-voice-ring::before,
+.personaplex-voice-node.speaking .personaplex-voice-ring::after {
+    animation: personaplex-voice-pulse 1.45s ease-out infinite;
+    border-color: rgba(45, 212, 191, 0.46);
+    opacity: 1;
+}
+.personaplex-voice-node.model.speaking .personaplex-voice-ring::before,
+.personaplex-voice-node.model.speaking .personaplex-voice-ring::after {
+    border-color: rgba(251, 191, 36, 0.46);
+}
+.personaplex-voice-node.speaking .personaplex-voice-ring::after {
+    animation-delay: 0.42s;
+}
+.personaplex-voice-node.listening:not(.speaking) .personaplex-voice-ring {
+    box-shadow:
+        0 0 18px rgba(45, 212, 191, 0.26),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.personaplex-voice-icon {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.personaplex-voice-label {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+}
+.personaplex-voice-label strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(248, 250, 252, 0.96);
+    font-size: 0.82rem;
+}
+.personaplex-voice-label span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(203, 213, 225, 0.70);
+    font-size: 0.68rem;
+}
+@keyframes personaplex-voice-pulse {
+    0% {
+        opacity: 0.66;
+        transform: scale(0.86);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1.34);
+    }
+}
+.personaplex-device-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+.personaplex-device-field {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+    border: 1px solid rgba(226, 232, 240, 0.15);
+    border-radius: 13px;
+    padding: 8px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    backdrop-filter: blur(18px) saturate(145%);
+    -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+.personaplex-device-icon {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    color: rgba(248, 250, 252, 0.96);
+    background: rgba(15, 23, 42, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.personaplex-device-icon svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.personaplex-device-copy {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+}
+.personaplex-device-copy span {
+    color: rgba(226, 232, 240, 0.70);
+    font: 900 0.58rem var(--ui-font);
+    text-transform: uppercase;
+}
+.personaplex-device-copy select,
+.personaplex-field select,
+.personaplex-field textarea {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 8px 9px;
+    font: 0.76rem var(--ui-font);
+    outline: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+}
+.personaplex-device-copy select:focus,
+.personaplex-field select:focus,
+.personaplex-field textarea:focus {
+    border-color: rgba(45, 212, 191, 0.58);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+.personaplex-device-copy select:disabled {
+    color: rgba(226, 232, 240, 0.62);
+    cursor: not-allowed;
+}
+.personaplex-device-copy option,
+.personaplex-field option {
+    color: #f8fafc;
+    background: #0f172a;
 }
 .personaplex-grid {
     display: grid;
@@ -4618,16 +4830,8 @@ body.agent-mode .solution-node-row.active-file {
     text-transform: uppercase;
 }
 .personaplex-field input,
-.personaplex-field select,
 .personaplex-field textarea {
-    width: 100%;
-    min-width: 0;
-    border: 1px solid rgba(125, 211, 252, 0.18);
-    border-radius: 9px;
     color: rgba(229, 237, 247, 0.94);
-    background: rgba(2, 6, 23, 0.50);
-    padding: 7px 8px;
-    font: 0.76rem var(--ui-font);
 }
 .personaplex-field[hidden] {
     display: none;
@@ -4644,7 +4848,7 @@ body.agent-mode .solution-node-row.active-file {
 }
 .personaplex-run {
     justify-content: space-between;
-    color: rgba(148, 163, 184, 0.86);
+    color: rgba(226, 232, 240, 0.78);
     font-size: 0.68rem;
 }
 .personaplex-run-left {
@@ -4683,14 +4887,17 @@ body.agent-mode .solution-node-row.active-file {
 .personaplex-transcript {
     min-height: 0;
     overflow: auto;
-    border: 1px solid rgba(148, 163, 184, 0.14);
-    border-radius: 10px;
-    padding: 8px;
-    background: rgba(2, 6, 23, 0.38);
-    color: rgba(229, 237, 247, 0.90);
+    border: 1px solid rgba(226, 232, 240, 0.13);
+    border-radius: 13px;
+    padding: 10px;
+    background: rgba(2, 6, 23, 0.34);
+    color: rgba(248, 250, 252, 0.90);
     font: 0.78rem/1.42 "Segoe UI", sans-serif;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
 }
 .share-comments {
     min-height: 0;
@@ -7447,6 +7654,78 @@ body.servers-open .servers-dashboard:focus-within::before {
 .server-card-actions .ghost:disabled {
     opacity: 0.46;
 }
+.api-markdown-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 13000;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: rgba(2, 6, 23, 0.72);
+    backdrop-filter: blur(14px) saturate(1.18);
+}
+.api-markdown-backdrop[hidden] {
+    display: none !important;
+}
+.api-markdown-window {
+    width: min(940px, calc(100vw - 28px));
+    max-height: calc(var(--runtime-viewport-height, 100dvh) - 28px);
+    display: grid;
+    grid-template-rows: auto minmax(280px, 1fr);
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid rgba(125, 211, 252, 0.30);
+    border-radius: 8px;
+    background: rgba(8, 15, 28, 0.96);
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+.api-markdown-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+}
+.api-markdown-title {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+.api-markdown-title strong {
+    color: #f8fbff;
+    font: 900 0.92rem var(--ui-font);
+}
+.api-markdown-title span {
+    min-width: 0;
+    overflow: hidden;
+    color: rgba(226, 232, 240, 0.72);
+    font: 0.68rem var(--ui-font);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.api-markdown-head .ghost {
+    min-height: 34px;
+    padding: 0 10px;
+    border-radius: 8px;
+}
+.api-markdown-text {
+    width: 100%;
+    min-width: 0;
+    height: min(66vh, 620px);
+    min-height: 280px;
+    padding: 12px;
+    border: 1px solid rgba(125, 211, 252, 0.24);
+    border-radius: 8px;
+    color: #e5edf7;
+    background: rgba(2, 6, 23, 0.74);
+    font: 0.76rem/1.55 "Cascadia Code", Consolas, monospace;
+    resize: vertical;
+    outline: none;
+    white-space: pre;
+}
+.api-markdown-text:focus {
+    border-color: rgba(0, 255, 140, 0.48);
+    box-shadow: 0 0 0 3px rgba(0, 255, 140, 0.12);
+}
 @keyframes matrix-border-orbit {
     0% { background-position: 0% 0%, 50% 50%; filter: hue-rotate(0deg) drop-shadow(0 0 18px rgba(0,255,140,0.34)); }
     50% { background-position: 100% 50%, 50% 50%; filter: hue-rotate(18deg) drop-shadow(0 0 28px rgba(0,255,140,0.52)); }
@@ -7913,6 +8192,17 @@ body.payouts-open .payouts-dashboard {
     #send { width: 84px; min-width: 84px; }
     .personaplex-grid {
         grid-template-columns: 1fr;
+    }
+    .personaplex-presence,
+    .personaplex-device-grid {
+        grid-template-columns: 1fr;
+    }
+    .personaplex-voice-node {
+        grid-template-columns: 44px minmax(0, 1fr);
+    }
+    .personaplex-voice-ring {
+        width: 44px;
+        height: 44px;
     }
     .retry-controls { grid-template-rows: 1fr; }
     .retry-toggle, .voice-button { min-height: 46px; }
@@ -13770,6 +14060,19 @@ body.shared-view .comments-panel-toggle {
         </div>
     </form>
 </div>
+<div id="serverApiMarkdownBackdrop" class="api-markdown-backdrop" hidden>
+    <section class="api-markdown-window" role="dialog" aria-modal="true" aria-labelledby="serverApiMarkdownTitle">
+        <div class="api-markdown-head">
+            <div class="api-markdown-title">
+                <strong id="serverApiMarkdownTitle">Server OpenAPI endpoints</strong>
+                <span id="serverApiMarkdownSubtitle">Copy-ready markdown for this JackLLM server.</span>
+            </div>
+            <button id="serverApiMarkdownCopy" class="ghost" type="button">Copy</button>
+            <button id="serverApiMarkdownClose" class="ghost" type="button" aria-label="Close API endpoint markdown">X</button>
+        </div>
+        <textarea id="serverApiMarkdownText" class="api-markdown-text" spellcheck="false" readonly></textarea>
+    </section>
+</div>
 <main class="shell">
     <div id="portraitDrawerBackdrop" class="portrait-drawer-backdrop" hidden></div>
     <nav id="portraitPullTabs" class="portrait-pull-tabs" aria-label="Mobile panels">
@@ -14038,34 +14341,94 @@ body.shared-view .comments-panel-toggle {
                 <div class="empty loading-empty"><span class="mini-throbber" aria-hidden="true"></span>Loading chat</div>
             </section>
             <section id="personaPlexPanel" class="personaplex-panel" aria-live="polite" hidden>
-                <div class="personaplex-head">
-                    <div>
-                        <div class="personaplex-title">Voice Mode</div>
-                        <div id="personaPlexStatus" class="personaplex-status">Idle</div>
+                <div class="personaplex-dialog">
+                    <div class="personaplex-head">
+                        <div>
+                            <div class="personaplex-title">Voice Mode</div>
+                            <div id="personaPlexStatus" class="personaplex-status">Idle</div>
+                        </div>
+                        <div class="personaplex-actions">
+                            <button id="personaPlexRefresh" class="ghost" type="button" title="Refresh Voice Mode">R</button>
+                            <button id="personaPlexSave" class="ghost" type="button" title="Save Voice Mode settings" hidden>Save</button>
+                            <button id="personaPlexClose" class="ghost" type="button" title="Close Voice Mode">x</button>
+                        </div>
                     </div>
-                    <div class="personaplex-actions">
-                        <button id="personaPlexRefresh" class="ghost" type="button" title="Refresh Voice Mode">R</button>
-                        <button id="personaPlexSave" class="ghost" type="button" title="Save Voice Mode settings" hidden>Save</button>
-                        <button id="personaPlexClose" class="ghost" type="button" title="Close Voice Mode">x</button>
+                    <div class="personaplex-presence" aria-label="Voice activity">
+                        <div id="personaPlexUserVoice" class="personaplex-voice-node user">
+                            <span class="personaplex-voice-ring" aria-hidden="true">
+                                <svg class="personaplex-voice-icon" viewBox="0 0 24 24">
+                                    <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path>
+                                    <path d="M5 10v2a7 7 0 0 0 14 0v-2"></path>
+                                    <path d="M12 19v3"></path>
+                                    <path d="M8 22h8"></path>
+                                </svg>
+                            </span>
+                            <span class="personaplex-voice-label">
+                                <strong>User</strong>
+                                <span id="personaPlexUserVoiceState">Idle</span>
+                            </span>
+                        </div>
+                        <div id="personaPlexModelVoice" class="personaplex-voice-node model">
+                            <span class="personaplex-voice-ring" aria-hidden="true">
+                                <svg class="personaplex-voice-icon" viewBox="0 0 24 24">
+                                    <path d="M11 5 6 9H3v6h3l5 4z"></path>
+                                    <path d="M15.5 8.5a5 5 0 0 1 0 7"></path>
+                                    <path d="M18.5 5.5a9 9 0 0 1 0 13"></path>
+                                </svg>
+                            </span>
+                            <span class="personaplex-voice-label">
+                                <strong>Model</strong>
+                                <span id="personaPlexModelVoiceState">Idle</span>
+                            </span>
+                        </div>
                     </div>
-                </div>
-                <div class="personaplex-grid">
-                    <label class="personaplex-field personaplex-wide">Profile <select id="personaPlexProfileSelect"></select></label>
-                    <label id="personaPlexCustomPersonaField" class="personaplex-field personaplex-wide" hidden>Custom instructions <textarea id="personaPlexPersonaPrompt" spellcheck="true"></textarea></label>
-                    <input id="personaPlexServerUrl" type="hidden" value="ws://localhost:8998">
-                    <input id="personaPlexVoicePrompt" type="hidden" value="NATF0.pt">
-                </div>
-                <div class="personaplex-run">
-                    <div class="personaplex-run-left">
-                        <button id="personaPlexStart" class="ghost" type="button">Start Voice</button>
+                    <div class="personaplex-device-grid">
+                        <label class="personaplex-device-field">
+                            <span class="personaplex-device-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path>
+                                    <path d="M5 10v2a7 7 0 0 0 14 0v-2"></path>
+                                    <path d="M12 19v3"></path>
+                                    <path d="M8 22h8"></path>
+                                </svg>
+                            </span>
+                            <span class="personaplex-device-copy">
+                                <span>Microphone</span>
+                                <select id="personaPlexInputSelect" aria-label="Voice Mode microphone"></select>
+                            </span>
+                        </label>
+                        <label class="personaplex-device-field">
+                            <span class="personaplex-device-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M11 5 6 9H3v6h3l5 4z"></path>
+                                    <path d="M15.5 8.5a5 5 0 0 1 0 7"></path>
+                                    <path d="M18.5 5.5a9 9 0 0 1 0 13"></path>
+                                </svg>
+                            </span>
+                            <span class="personaplex-device-copy">
+                                <span>Speaker</span>
+                                <select id="personaPlexOutputSelect" aria-label="Voice Mode speaker"></select>
+                            </span>
+                        </label>
                     </div>
-                    <span id="personaPlexTransportStatus">Idle</span>
+                    <div class="personaplex-grid">
+                        <label class="personaplex-field personaplex-wide">Profile <select id="personaPlexProfileSelect"></select></label>
+                        <label id="personaPlexCustomPersonaField" class="personaplex-field personaplex-wide" hidden>Custom instructions <textarea id="personaPlexPersonaPrompt" spellcheck="true"></textarea></label>
+                        <input id="personaPlexServerUrl" type="hidden" value="ws://localhost:8998">
+                        <input id="personaPlexVoicePrompt" type="hidden" value="NATF0.pt">
+                    </div>
+                    <div class="personaplex-run">
+                        <div class="personaplex-run-left">
+                            <button id="personaPlexStart" class="ghost" type="button">Start Voice</button>
+                        </div>
+                        <span id="personaPlexTransportStatus">Idle</span>
+                    </div>
+                    <div id="personaPlexInstallPanel" class="personaplex-install" hidden>
+                        <button id="personaPlexInstall" class="ghost" type="button">Install Voice Mode</button>
+                        <div id="personaPlexInstallStatus" class="personaplex-install-status"></div>
+                    </div>
+                    <div id="personaPlexTranscript" class="personaplex-transcript">No transcript yet.</div>
                 </div>
-                <div id="personaPlexInstallPanel" class="personaplex-install" hidden>
-                    <button id="personaPlexInstall" class="ghost" type="button">Install Voice Mode</button>
-                    <div id="personaPlexInstallStatus" class="personaplex-install-status"></div>
-                </div>
-                <div id="personaPlexTranscript" class="personaplex-transcript">No transcript yet.</div>
             </section>
         </section>
         <aside id="chatBrowserPanel" class="chat-browser-panel" aria-label="In-chat browser">
@@ -14372,7 +14735,7 @@ const premiumTokenLogin = document.getElementById('premiumTokenLogin');
 const send = document.getElementById('send');
 const streamAction = document.getElementById('streamAction');
 const voiceInput = document.getElementById('voiceInput');
-const personaPlexToggle = document.getElementById('personaPlexToggle');
+let personaPlexToggle = document.getElementById('personaPlexToggle');
 const personaPlexPanel = document.getElementById('personaPlexPanel');
 const personaPlexStatus = document.getElementById('personaPlexStatus');
 const personaPlexRefresh = document.getElementById('personaPlexRefresh');
@@ -14383,6 +14746,12 @@ const personaPlexCustomPersonaField = document.getElementById('personaPlexCustom
 const personaPlexServerUrl = document.getElementById('personaPlexServerUrl');
 const personaPlexVoicePrompt = document.getElementById('personaPlexVoicePrompt');
 const personaPlexPersonaPrompt = document.getElementById('personaPlexPersonaPrompt');
+const personaPlexInputSelect = document.getElementById('personaPlexInputSelect');
+const personaPlexOutputSelect = document.getElementById('personaPlexOutputSelect');
+const personaPlexUserVoice = document.getElementById('personaPlexUserVoice');
+const personaPlexModelVoice = document.getElementById('personaPlexModelVoice');
+const personaPlexUserVoiceState = document.getElementById('personaPlexUserVoiceState');
+const personaPlexModelVoiceState = document.getElementById('personaPlexModelVoiceState');
 const personaPlexStart = document.getElementById('personaPlexStart');
 const personaPlexStop = document.getElementById('personaPlexStop');
 const personaPlexTransportStatus = document.getElementById('personaPlexTransportStatus');
@@ -14648,6 +15017,12 @@ const serversRefresh = document.getElementById('serversRefresh');
 const serversUseLocal = document.getElementById('serversUseLocal');
 const serversMeta = document.getElementById('serversMeta');
 const serversGrid = document.getElementById('serversGrid');
+const serverApiMarkdownBackdrop = document.getElementById('serverApiMarkdownBackdrop');
+const serverApiMarkdownTitle = document.getElementById('serverApiMarkdownTitle');
+const serverApiMarkdownSubtitle = document.getElementById('serverApiMarkdownSubtitle');
+const serverApiMarkdownText = document.getElementById('serverApiMarkdownText');
+const serverApiMarkdownCopy = document.getElementById('serverApiMarkdownCopy');
+const serverApiMarkdownClose = document.getElementById('serverApiMarkdownClose');
 const serverFilterHardware = document.getElementById('serverFilterHardware');
 const serverFilterTitle = document.getElementById('serverFilterTitle');
 const serverFilterOwner = document.getElementById('serverFilterOwner');
@@ -15218,6 +15593,27 @@ function renderChatModeStrip() {
         { id: 'agent', symbol: 'A', title: 'Use Agent mode for tool-driven workflow.' }
     ].forEach(spec => appendModeButton(spec, 'chat-mode-primary-button'));
 
+    if (!sharedView) {
+        const button = document.createElement('button');
+        const open = personaPlexPanel && !personaPlexPanel.hidden;
+        button.id = 'personaPlexToggle';
+        button.type = 'button';
+        button.className = 'chat-mode-button chat-mode-voice-button';
+        button.textContent = 'VOX';
+        button.setAttribute('aria-label', open ? 'Close Voice Mode.' : 'Open Voice Mode.');
+        button.setAttribute('title', open ? 'Close Voice Mode' : 'Open Voice Mode');
+        button.setAttribute('aria-controls', 'personaPlexPanel');
+        button.setAttribute('aria-expanded', open ? 'true' : 'false');
+        button.setAttribute('aria-pressed', open ? 'true' : 'false');
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            setPersonaPlexPanelOpen(!personaPlexPanel || personaPlexPanel.hidden);
+        });
+        strip.appendChild(button);
+        personaPlexToggle = button;
+    }
+
     syncMediaModeIndexForService(current);
     positionChatModeDock();
 }
@@ -15276,6 +15672,8 @@ const mediaTypeByService = {
 };
 let activeStreamId = '';
 let activeStreamState = null;
+let localActiveStreamIds = new Map();
+const localActiveStreamIdTtlMs = 120000;
 let lmStudioConnectionState = 'connecting';
 let heartbeatInterval = 0;
 let heartbeatBeatTimer = 0;
@@ -15343,12 +15741,26 @@ const personaPlexDefaultConfig = {
     voicePrompt: 'NATF0.pt',
     personaPrompt: personaPlexDefaultProfile.prompt
 };
+const personaPlexDeviceSettingsKey = 'jackllm.personaplex.devices.v1';
+const personaPlexDefaultDeviceConfig = {
+    audioInputDeviceId: '',
+    audioOutputDeviceId: ''
+};
+const personaPlexSocketConnectTimeoutMs = 300000;
 let personaPlexConfig = { ...personaPlexDefaultConfig };
+let personaPlexDeviceConfig = { ...personaPlexDefaultDeviceConfig };
 let personaPlexReady = false;
 let personaPlexSocket = null;
 let personaPlexRecorder = null;
 let personaPlexRecorderMode = '';
 let personaPlexMicStream = null;
+let personaPlexUserAudioContext = null;
+let personaPlexUserAnalyser = null;
+let personaPlexUserAnalyserData = null;
+let personaPlexUserMeterSource = null;
+let personaPlexUserMeterFrame = 0;
+let personaPlexUserSpeaking = false;
+let personaPlexModelSpeakingCount = 0;
 let personaPlexAudioQueue = Promise.resolve();
 let personaPlexTranscriptText = '';
 let personaPlexTranscriptMessage = null;
@@ -15359,6 +15771,10 @@ let personaPlexInstallPollTimer = 0;
 let personaPlexLastStatusData = null;
 let personaPlexStartAttemptId = 0;
 let personaPlexStartPending = false;
+let personaPlexSocketRetryTimer = 0;
+let personaPlexSocketRetryCount = 0;
+let personaPlexSocketConnectDeadline = 0;
+let personaPlexHandshakeReceived = false;
 let currentArtifact = null;
 let activeParamField = null;
 let remoteAdminVisible = false;
@@ -17121,6 +17537,149 @@ function serverOpenAiBaseUrl(server) {
     return normalizeOpenAiBaseUrl(serverEndpoint(server));
 }
 
+function endpointBaseUrl(value) {
+    value = String(value || '').trim();
+    if (!value) return '';
+    try {
+        const url = new URL(value, window.location.origin);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+        url.search = '';
+        url.hash = '';
+        url.pathname = url.pathname.replace(/\/+$/, '');
+        return url.toString().replace(/\/$/, '');
+    } catch {
+        return value.replace(/\/+$/, '');
+    }
+}
+
+function joinEndpointUrl(base, path) {
+    base = endpointBaseUrl(base);
+    path = String(path || '');
+    if (!base || !path) return '';
+    return base.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
+}
+
+function markdownCell(value) {
+    return String(value || '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+}
+
+function codeFence(value, language) {
+    value = String(value || '').replace(/```/g, '` ` `');
+    return '```' + (language || '') + '\n' + value + '\n```';
+}
+
+function firstServerModelId(server) {
+    const textValue = serverModelsText(server);
+    if (textValue) {
+        const first = String(textValue).split(/[,;\n]+/).map(value => value.trim()).find(Boolean);
+        if (first) return first;
+    }
+    const modelList = server && (server.models || server.modelCapabilities) || server && server.profile && (server.profile.models || server.profile.modelCapabilities);
+    if (Array.isArray(modelList)) {
+        const first = modelList.map(model => String(model && (model.id || model.model || model.modelId || model.name) || '').trim()).find(Boolean);
+        if (first) return first;
+    }
+    return 'local-model';
+}
+
+function endpointRowsForBase(base, rows) {
+    if (!base) return [];
+    return rows.map(row => ({
+        standard: row.standard,
+        method: row.method,
+        path: row.path,
+        url: joinEndpointUrl(base, row.path),
+        notes: row.notes
+    }));
+}
+
+function buildServerApiEndpointRows(server) {
+    const openAiBase = serverOpenAiBaseUrl(server);
+    const chatBase = endpointBaseUrl(serverEndpoint(server)) || openAiBase;
+    const rows = [];
+    rows.push(...endpointRowsForBase(openAiBase, [
+        { standard: 'OpenAI compatible', method: 'GET', path: '/v1/models', notes: 'Model discovery.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/chat/completions', notes: 'Chat completions with optional SSE streaming.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/responses', notes: 'Responses API compatibility bridge when available.' }
+    ]));
+    rows.push(...endpointRowsForBase(chatBase, [
+        { standard: 'JackLLM web chat', method: 'GET', path: '/api/models', notes: 'Models exposed to the Workstation chat UI.' },
+        { standard: 'JackLLM web chat', method: 'GET', path: '/api/chat-services', notes: 'Available chat services and capabilities.' },
+        { standard: 'JackLLM web chat', method: 'POST', path: '/api/chat', notes: 'Non-streaming Workstation chat request.' },
+        { standard: 'JackLLM web chat', method: 'POST', path: '/api/chat-stream', notes: 'Streaming Workstation chat/events.' },
+        { standard: 'JackLLM web chat', method: 'POST', path: '/api/chat-stream/stop', notes: 'Stop an active stream.' },
+        { standard: 'JackLLM web chat', method: 'POST', path: '/api/chat-stream/steer', notes: 'Steer a running agent stream.' },
+        { standard: 'JackLLM web chat', method: 'GET', path: '/api/server-hardware', notes: 'Hardware and runtime telemetry.' },
+        { standard: 'LlmRuntime wrapper', method: 'GET', path: '/api/model-runtime/models', notes: 'LlmRuntime model catalog through JackLLM.' },
+        { standard: 'LlmRuntime wrapper', method: 'POST', path: '/api/model-runtime/v1/chat/completions', notes: 'Forwarded OpenAI chat completions to LlmRuntime.' },
+        { standard: 'LlmRuntime wrapper', method: 'POST', path: '/api/model-runtime/models/load', notes: 'Load an enabled runtime model.' },
+        { standard: 'LlmRuntime wrapper', method: 'POST', path: '/api/model-runtime/models/unload', notes: 'Unload a runtime model.' },
+        { standard: 'LlmRuntime native', method: 'GET', path: '/api/v1/runtime/compatibility', notes: 'Runtime compatibility and repair status.' },
+        { standard: 'MasterList discovery', method: 'GET', path: '/api/jackllm/servers', notes: 'Available JackLLM server list from this Workstation proxy.' }
+    ]));
+    return rows.filter(row => row.url);
+}
+
+function buildServerApiMarkdown(server) {
+    const title = serverTitle(server);
+    const owner = serverOwner(server) || 'Unknown owner';
+    const host = serverHost(server) || 'Host not advertised';
+    const endpoint = serverEndpoint(server) || 'Endpoint not advertised';
+    const openAiBase = serverOpenAiBaseUrl(server) || '';
+    const chatBase = endpointBaseUrl(serverEndpoint(server)) || '';
+    const model = firstServerModelId(server);
+    const rows = buildServerApiEndpointRows(server);
+    const lines = [
+        '# ' + title + ' API endpoints',
+        '',
+        '- Owner: ' + owner,
+        '- Host: ' + host,
+        '- Chat UI base: ' + (chatBase || endpoint),
+        '- OpenAI-compatible base: ' + (openAiBase || 'Not advertised'),
+        '- Suggested model: ' + model,
+        '- Auth: use `Authorization: Bearer <socketjack-token>` when the server is private, proxied, or token-gated.',
+        '',
+        '## Endpoints',
+        '',
+        '| Standard | Method | Endpoint | Notes |',
+        '| --- | --- | --- | --- |'
+    ];
+    rows.forEach(row => {
+        lines.push('| ' + markdownCell(row.standard) + ' | `' + markdownCell(row.method) + '` | `' + markdownCell(row.url) + '` | ' + markdownCell(row.notes) + ' |');
+    });
+    if (!rows.length)
+        lines.push('| None advertised | - | - | This server did not publish a usable endpoint. |');
+    lines.push(
+        '',
+        '## OpenAI-compatible curl',
+        '',
+        codeFence('curl -s ' + JSON.stringify(joinEndpointUrl(openAiBase || chatBase, '/v1/chat/completions')) + ' \\\n  -H "Authorization: Bearer <socketjack-token>" \\\n  -H "Content-Type: application/json" \\\n  -d ' + JSON.stringify(JSON.stringify({ model, messages: [{ role: 'user', content: 'Say hello from JackLLM.' }], stream: false })), 'bash'),
+        '',
+        '## JackLLM streaming curl',
+        '',
+        codeFence('curl -N ' + JSON.stringify(joinEndpointUrl(chatBase || openAiBase, '/api/chat-stream')) + ' \\\n  -H "Authorization: Bearer <socketjack-token>" \\\n  -H "Content-Type: application/json" \\\n  -d ' + JSON.stringify(JSON.stringify({ service: 'chat', model, prompt: 'Say hello from JackLLM.' })), 'bash')
+    );
+    return lines.join('\n');
+}
+
+function openServerApiMarkdown(server) {
+    if (!server || !serverApiMarkdownBackdrop || !serverApiMarkdownText) return;
+    const markdown = buildServerApiMarkdown(server);
+    if (serverApiMarkdownTitle) serverApiMarkdownTitle.textContent = serverTitle(server) + ' OpenAPI endpoints';
+    if (serverApiMarkdownSubtitle) serverApiMarkdownSubtitle.textContent = [serverOwner(server), serverHost(server), serverOpenAiBaseUrl(server)].filter(Boolean).join(' | ') || 'Copy-ready markdown for this JackLLM server.';
+    if (serverApiMarkdownCopy) serverApiMarkdownCopy.textContent = 'Copy';
+    serverApiMarkdownText.value = markdown;
+    serverApiMarkdownBackdrop.hidden = false;
+    window.setTimeout(() => {
+        serverApiMarkdownText.focus();
+        serverApiMarkdownText.select();
+    }, 0);
+}
+
+function closeServerApiMarkdown() {
+    if (serverApiMarkdownBackdrop) serverApiMarkdownBackdrop.hidden = true;
+}
+
 function serverHardwareText(server) {
     const parts = [
         serverValue(server, ['gpuName', 'gpuAvailable']),
@@ -17248,8 +17807,17 @@ function ensureServerCardStructure(card) {
         if (endpoint) window.open(endpoint, '_blank', 'noopener');
     });
 
+    const api = document.createElement('button');
+    api.className = 'ghost';
+    api.type = 'button';
+    api.dataset.serverPart = 'api';
+    api.textContent = 'OpenAPI';
+    api.title = 'Show copy-ready markdown for this server OpenAI and JackLLM endpoints.';
+    api.addEventListener('click', () => openServerApiMarkdown(card.__server));
+
     actions.appendChild(select);
     actions.appendChild(open);
+    actions.appendChild(api);
     card.appendChild(title);
     card.appendChild(meta);
     card.appendChild(location);
@@ -17298,6 +17866,9 @@ function updateServerCard(card, server, selectedBase) {
 
     const open = serverCardPart(card, 'open');
     if (open) open.disabled = !serverEndpoint(server);
+
+    const api = serverCardPart(card, 'api');
+    if (api) api.disabled = !serverOpenAiBaseUrl(server) && !serverEndpoint(server);
 }
 
 function renderServersDashboard() {
@@ -18484,6 +19055,32 @@ function isLocalStreamForSession(sessionId) {
     return !!(sessionId && activeStreamState && activeStreamState.sessionId === sessionId && activeAbortController);
 }
 
+function pruneLocalActiveStreamIds() {
+    const cutoff = Date.now() - localActiveStreamIdTtlMs;
+    localActiveStreamIds.forEach((timestamp, streamId) => {
+        if (!timestamp || timestamp < cutoff)
+            localActiveStreamIds.delete(streamId);
+    });
+}
+
+function rememberLocalActiveStreamId(streamId) {
+    const key = String(streamId || '').trim();
+    if (!key) return;
+    pruneLocalActiveStreamIds();
+    localActiveStreamIds.set(key, Date.now());
+}
+
+function isKnownLocalActiveStreamId(streamId) {
+    const key = String(streamId || '').trim();
+    if (!key) return false;
+    pruneLocalActiveStreamIds();
+    return localActiveStreamIds.has(key);
+}
+
+function activeSessionBelongsToLocalStream(active) {
+    return !!(active && isKnownLocalActiveStreamId(active.streamId || active.clientStreamId));
+}
+
 function queuedPromptCountForSession(sessionId) {
     const key = queueSessionKey(sessionId);
     if (!key) return 0;
@@ -18588,6 +19185,7 @@ function activeSessionForCurrentSession() {
     return activeChatSessions.find(active =>
         active &&
         active.sessionId === currentSessionId &&
+        !activeSessionBelongsToLocalStream(active) &&
         !isQueueStopRequestedForSession(active.sessionId) &&
         !isSessionLocallyStopped(active.sessionId) &&
         (!active.ownerKey || !currentSessionOwnerKey || active.ownerKey === currentSessionOwnerKey)) || null;
@@ -19039,12 +19637,12 @@ function selectedModelSupportsVoiceButton() {
 }
 
 function syncPersonaPlexPanelForSelectedModel() {
-    const showPersonaPlex = !sharedView && selectedModelSupportsVoiceButton();
+    const autoOpenPersonaPlex = !sharedView && selectedModelSupportsVoiceButton();
     if (personaPlexClose)
-        personaPlexClose.hidden = showPersonaPlex;
-    if (showPersonaPlex) {
+        personaPlexClose.hidden = autoOpenPersonaPlex;
+    if (autoOpenPersonaPlex) {
         setPersonaPlexPanelOpen(true);
-    } else {
+    } else if (sharedView) {
         setPersonaPlexPanelOpen(false);
     }
 }
@@ -19058,9 +19656,10 @@ function updateVoiceButtonVisibility() {
         voiceInput.tabIndex = -1;
     }
     if (personaPlexToggle) {
-        personaPlexToggle.hidden = true;
-        personaPlexToggle.setAttribute('aria-hidden', 'true');
-        personaPlexToggle.tabIndex = -1;
+        const showPersonaPlex = !sharedView;
+        personaPlexToggle.hidden = !showPersonaPlex;
+        personaPlexToggle.setAttribute('aria-hidden', showPersonaPlex ? 'false' : 'true');
+        personaPlexToggle.tabIndex = showPersonaPlex ? 0 : -1;
     }
     if (ttsToggleLabel) {
         ttsToggleLabel.hidden = true;
@@ -19291,6 +19890,239 @@ function savePersonaPlexLocalOverrides(config) {
     } catch { }
 }
 
+function readPersonaPlexDeviceConfig() {
+    try {
+        const raw = localStorage.getItem(personaPlexDeviceSettingsKey);
+        if (!raw) return { ...personaPlexDefaultDeviceConfig };
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object')
+            return { ...personaPlexDefaultDeviceConfig };
+        return {
+            audioInputDeviceId: String(parsed.audioInputDeviceId || parsed.inputDeviceId || ''),
+            audioOutputDeviceId: String(parsed.audioOutputDeviceId || parsed.outputDeviceId || '')
+        };
+    } catch {
+        return { ...personaPlexDefaultDeviceConfig };
+    }
+}
+
+function savePersonaPlexDeviceConfig(config) {
+    personaPlexDeviceConfig = {
+        ...personaPlexDefaultDeviceConfig,
+        ...(config || {})
+    };
+    try {
+        localStorage.setItem(personaPlexDeviceSettingsKey, JSON.stringify(personaPlexDeviceConfig));
+    } catch { }
+}
+
+function personaPlexOutputSelectionSupported() {
+    return typeof HTMLMediaElement !== 'undefined' &&
+        HTMLMediaElement.prototype &&
+        typeof HTMLMediaElement.prototype.setSinkId === 'function';
+}
+
+function selectedPersonaPlexInputDeviceId() {
+    return personaPlexInputSelect
+        ? String(personaPlexInputSelect.value || '')
+        : String(personaPlexDeviceConfig.audioInputDeviceId || '');
+}
+
+function selectedPersonaPlexOutputDeviceId() {
+    return personaPlexOutputSelect
+        ? String(personaPlexOutputSelect.value || '')
+        : String(personaPlexDeviceConfig.audioOutputDeviceId || '');
+}
+
+function personaPlexDeviceLabel(device, fallback, index) {
+    const label = String(device && device.label || '').trim();
+    return label || (fallback + ' ' + String(index + 1));
+}
+
+function renderPersonaPlexDeviceSelect(select, devices, selectedId, defaultLabel, fallbackLabel, disabled) {
+    if (!select) return;
+    const current = String(selectedId || '');
+    const list = Array.isArray(devices) ? devices : [];
+    select.textContent = '';
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = defaultLabel;
+    select.appendChild(defaultOption);
+
+    let hasSelected = !current;
+    list.forEach((device, index) => {
+        const option = document.createElement('option');
+        option.value = String(device.deviceId || '');
+        option.textContent = personaPlexDeviceLabel(device, fallbackLabel, index);
+        select.appendChild(option);
+        if (option.value === current)
+            hasSelected = true;
+    });
+
+    if (current && !hasSelected) {
+        const missing = document.createElement('option');
+        missing.value = current;
+        missing.textContent = fallbackLabel + ' unavailable';
+        select.appendChild(missing);
+    }
+
+    select.value = current && Array.from(select.options).some(option => option.value === current) ? current : '';
+    select.disabled = !!disabled;
+}
+
+async function refreshPersonaPlexDevices() {
+    const canEnumerate = !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices);
+    if (!canEnumerate) {
+        renderPersonaPlexDeviceSelect(personaPlexInputSelect, [], '', 'Default microphone', 'Microphone', true);
+        renderPersonaPlexDeviceSelect(personaPlexOutputSelect, [], '', 'Default speakers', 'Speaker', true);
+        return;
+    }
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices.filter(device => device && device.kind === 'audioinput');
+    const outputs = devices.filter(device => device && device.kind === 'audiooutput');
+    const outputSupported = personaPlexOutputSelectionSupported();
+    renderPersonaPlexDeviceSelect(
+        personaPlexInputSelect,
+        inputs,
+        personaPlexDeviceConfig.audioInputDeviceId,
+        'Default microphone',
+        'Microphone',
+        false);
+    renderPersonaPlexDeviceSelect(
+        personaPlexOutputSelect,
+        outputSupported ? outputs : [],
+        outputSupported ? personaPlexDeviceConfig.audioOutputDeviceId : '',
+        outputSupported ? 'Default speakers' : 'Default speakers',
+        'Speaker',
+        !outputSupported);
+}
+
+function setPersonaPlexVoiceNode(node, stateLabel, listening, speaking) {
+    if (!node) return;
+    node.classList.toggle('listening', !!listening);
+    node.classList.toggle('speaking', !!speaking);
+    node.setAttribute('aria-label', stateLabel || '');
+}
+
+function updatePersonaPlexVoiceActivity() {
+    const userListening = !!(personaPlexMicStream || personaPlexRecorder);
+    const userSpeaking = userListening && !!personaPlexUserSpeaking;
+    const modelSpeaking = personaPlexModelSpeakingCount > 0;
+    setPersonaPlexVoiceNode(personaPlexUserVoice, userSpeaking ? 'User speaking' : (userListening ? 'User listening' : 'User idle'), userListening, userSpeaking);
+    setPersonaPlexVoiceNode(personaPlexModelVoice, modelSpeaking ? 'Model speaking' : 'Model idle', modelSpeaking, modelSpeaking);
+    if (personaPlexUserVoiceState)
+        personaPlexUserVoiceState.textContent = userSpeaking ? 'Speaking' : (userListening ? 'Listening' : 'Idle');
+    if (personaPlexModelVoiceState)
+        personaPlexModelVoiceState.textContent = modelSpeaking ? 'Speaking' : 'Idle';
+    if (personaPlexPanel) {
+        personaPlexPanel.classList.toggle('user-speaking', userSpeaking);
+        personaPlexPanel.classList.toggle('model-speaking', modelSpeaking);
+    }
+}
+
+function setPersonaPlexUserSpeaking(speaking) {
+    const next = !!speaking;
+    if (personaPlexUserSpeaking === next) return;
+    personaPlexUserSpeaking = next;
+    updatePersonaPlexVoiceActivity();
+}
+
+function stopPersonaPlexUserActivityMeter() {
+    if (personaPlexUserMeterFrame) {
+        cancelAnimationFrame(personaPlexUserMeterFrame);
+        personaPlexUserMeterFrame = 0;
+    }
+    personaPlexUserAnalyser = null;
+    personaPlexUserAnalyserData = null;
+    personaPlexUserMeterSource = null;
+    if (personaPlexUserAudioContext) {
+        try { personaPlexUserAudioContext.close(); } catch { }
+    }
+    personaPlexUserAudioContext = null;
+    setPersonaPlexUserSpeaking(false);
+}
+
+function startPersonaPlexUserActivityMeter(stream) {
+    stopPersonaPlexUserActivityMeter();
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!stream || !AudioContextCtor) {
+        updatePersonaPlexVoiceActivity();
+        return;
+    }
+    try {
+        personaPlexUserAudioContext = new AudioContextCtor();
+        personaPlexUserAnalyser = personaPlexUserAudioContext.createAnalyser();
+        personaPlexUserAnalyser.fftSize = 1024;
+        personaPlexUserMeterSource = personaPlexUserAudioContext.createMediaStreamSource(stream);
+        personaPlexUserMeterSource.connect(personaPlexUserAnalyser);
+        personaPlexUserAnalyserData = new Uint8Array(personaPlexUserAnalyser.fftSize);
+        if (personaPlexUserAudioContext.state === 'suspended')
+            personaPlexUserAudioContext.resume().catch(() => { });
+    } catch {
+        stopPersonaPlexUserActivityMeter();
+        updatePersonaPlexVoiceActivity();
+        return;
+    }
+
+    const tick = () => {
+        if (!personaPlexUserAnalyser || !personaPlexUserAnalyserData) return;
+        personaPlexUserAnalyser.getByteTimeDomainData(personaPlexUserAnalyserData);
+        let total = 0;
+        for (let i = 0; i < personaPlexUserAnalyserData.length; i++) {
+            const sample = (personaPlexUserAnalyserData[i] - 128) / 128;
+            total += sample * sample;
+        }
+        const rms = Math.sqrt(total / Math.max(1, personaPlexUserAnalyserData.length));
+        setPersonaPlexUserSpeaking(rms > 0.045);
+        personaPlexUserMeterFrame = requestAnimationFrame(tick);
+    };
+    personaPlexUserMeterFrame = requestAnimationFrame(tick);
+    updatePersonaPlexVoiceActivity();
+}
+
+function personaPlexAudioConstraintsForSelectedInput() {
+    const deviceId = selectedPersonaPlexInputDeviceId();
+    const audio = {
+        channelCount: 1,
+        sampleRate: 24000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+    };
+    if (deviceId)
+        audio.deviceId = { exact: deviceId };
+    return { audio };
+}
+
+function personaPlexStatusIsFatal(data) {
+    const source = data || personaPlexLastStatusData || {};
+    const install = source.install || personaPlexInstallState || {};
+    const status = String(source.status || '').toLowerCase();
+    return install.runtimeSupported === false ||
+        !!install.needsHuggingFaceToken ||
+        !!(source.installRequired && !install.localInstalled) ||
+        status === 'error';
+}
+
+function personaPlexStatusSuggestsConnectable(data) {
+    const source = data || personaPlexLastStatusData || {};
+    if (personaPlexStatusIsFatal(source)) return false;
+    const install = source.install || personaPlexInstallState || {};
+    const status = String(source.status || '').toLowerCase();
+    return !!source.ready ||
+        !!source.serverRunning ||
+        !!install.serverRunning ||
+        status === 'ready' ||
+        status === 'running' ||
+        status === 'loaded' ||
+        status === 'warm' ||
+        status === 'listening' ||
+        status === 'serving' ||
+        status === 'loading';
+}
+
 function personaPlexProfileById(id) {
     const value = String(id || '').trim();
     return personaPlexProfiles.find(profile => profile.id === value) || null;
@@ -19374,6 +20206,7 @@ function setPersonaPlexStatus(text, kind) {
 function setPersonaPlexTransportStatus(text) {
     if (personaPlexTransportStatus)
         personaPlexTransportStatus.textContent = text || '';
+    updatePersonaPlexVoiceActivity();
 }
 
 function personaPlexInstallActive(state) {
@@ -19428,6 +20261,8 @@ function personaPlexCanAttemptStart() {
         return true;
     if (!personaPlexInstallState)
         return true;
+    if (personaPlexInstallState.runtimeSupported === false)
+        return false;
     if (personaPlexInstallState.needsHuggingFaceToken)
         return false;
     return !!personaPlexInstallState.localInstalled;
@@ -19446,13 +20281,20 @@ function updatePersonaPlexControls() {
         personaPlexStop.hidden = true;
         personaPlexStop.disabled = true;
     }
-    if (personaPlexToggle)
+    if (personaPlexToggle) {
         personaPlexToggle.classList.toggle('listening', running || !!personaPlexRecorder);
+        const open = personaPlexPanel && !personaPlexPanel.hidden;
+        personaPlexToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        personaPlexToggle.setAttribute('aria-pressed', open || running ? 'true' : 'false');
+        personaPlexToggle.setAttribute('aria-label', open ? 'Close Voice Mode.' : 'Open Voice Mode.');
+        personaPlexToggle.title = open ? 'Close Voice Mode' : 'Open Voice Mode';
+    }
     updateVoiceButtonVisibility();
     if (personaPlexInstall)
         personaPlexInstall.disabled = personaPlexReady ||
             personaPlexInstallActive(personaPlexInstallState) ||
             !!(personaPlexInstallState && personaPlexInstallState.localInstalled);
+    updatePersonaPlexVoiceActivity();
 }
 
 function personaPlexRouteUrl(path, config, explicitPrefix) {
@@ -19521,6 +20363,8 @@ async function refreshPersonaPlexStatus() {
         const install = data.install || {};
         if (data.installRequired && !install.localInstalled) {
             setPersonaPlexStatus('Install Voice Mode from JackLLM Workstation.', '');
+        } else if (install.runtimeSupported === false && install.runtimeCompatibilityError) {
+            setPersonaPlexStatus(voiceModeInstallMessage(install.runtimeCompatibilityError), 'error');
         } else if (install.localInstalled && install.needsHuggingFaceToken) {
             setPersonaPlexStatus('Open JackLLM Workstation to add the NVIDIA PersonaPlex model access token.', '');
         } else if (data.installRequired) {
@@ -19634,9 +20478,16 @@ function setPersonaPlexPanelOpen(open) {
     const wasOpen = !personaPlexPanel.hidden;
     if (wasOpen === shouldOpen) return;
     personaPlexPanel.hidden = !shouldOpen;
+    if (personaPlexToggle) {
+        personaPlexToggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+        personaPlexToggle.setAttribute('aria-pressed', shouldOpen ? 'true' : 'false');
+        personaPlexToggle.setAttribute('aria-label', shouldOpen ? 'Close Voice Mode.' : 'Open Voice Mode.');
+        personaPlexToggle.title = shouldOpen ? 'Close Voice Mode' : 'Open Voice Mode';
+    }
     if (!open)
         window.clearTimeout(personaPlexStatusTimer);
     if (shouldOpen) {
+        refreshPersonaPlexDevices().catch(() => { });
         loadPersonaPlexConfig()
             .then(refreshPersonaPlexStatus)
             .catch(error => {
@@ -19716,15 +20567,20 @@ function personaPlexMediaRecorderMimeType() {
 async function startPersonaPlexRecorder() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
         throw new Error('Microphone capture is not available in this browser.');
-    personaPlexMicStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            channelCount: 1,
-            sampleRate: 24000,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-        }
-    });
+    try {
+        personaPlexMicStream = await navigator.mediaDevices.getUserMedia(personaPlexAudioConstraintsForSelectedInput());
+    } catch (error) {
+        if (!selectedPersonaPlexInputDeviceId())
+            throw error;
+        savePersonaPlexDeviceConfig({
+            ...personaPlexDeviceConfig,
+            audioInputDeviceId: ''
+        });
+        await refreshPersonaPlexDevices().catch(() => { });
+        personaPlexMicStream = await navigator.mediaDevices.getUserMedia(personaPlexAudioConstraintsForSelectedInput());
+    }
+    startPersonaPlexUserActivityMeter(personaPlexMicStream);
+    refreshPersonaPlexDevices().catch(() => { });
 
     if (typeof window.Recorder === 'function') {
         const recorder = new window.Recorder({
@@ -19737,6 +20593,7 @@ async function startPersonaPlexRecorder() {
         recorder.start(personaPlexMicStream);
         personaPlexRecorder = recorder;
         personaPlexRecorderMode = 'opus-recorder';
+        updatePersonaPlexVoiceActivity();
         return;
     }
 
@@ -19753,6 +20610,7 @@ async function startPersonaPlexRecorder() {
     recorder.start(40);
     personaPlexRecorder = recorder;
     personaPlexRecorderMode = 'MediaRecorder ' + mimeType;
+    updatePersonaPlexVoiceActivity();
 }
 
 function stopPersonaPlexRecorder() {
@@ -19762,10 +20620,12 @@ function stopPersonaPlexRecorder() {
     }
     personaPlexRecorder = null;
     personaPlexRecorderMode = '';
+    stopPersonaPlexUserActivityMeter();
     if (personaPlexMicStream) {
         try { personaPlexMicStream.getTracks().forEach(track => track.stop()); } catch { }
     }
     personaPlexMicStream = null;
+    updatePersonaPlexVoiceActivity();
 }
 
 function playPersonaPlexAudio(payload) {
@@ -19776,20 +20636,124 @@ function playPersonaPlexAudio(payload) {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         let done = false;
+        let speaking = false;
+        const startSpeaking = () => {
+            if (speaking) return;
+            speaking = true;
+            personaPlexModelSpeakingCount++;
+            updatePersonaPlexVoiceActivity();
+        };
         const finish = () => {
             if (done) return;
             done = true;
+            if (speaking) {
+                speaking = false;
+                personaPlexModelSpeakingCount = Math.max(0, personaPlexModelSpeakingCount - 1);
+                updatePersonaPlexVoiceActivity();
+            }
             URL.revokeObjectURL(url);
             resolve();
         };
         audio.onended = finish;
         audio.onerror = finish;
-        audio.play().catch(finish);
-        setTimeout(finish, 5000);
+        const sinkId = selectedPersonaPlexOutputDeviceId();
+        const applySink = sinkId && typeof audio.setSinkId === 'function'
+            ? audio.setSinkId(sinkId).catch(() => { })
+            : Promise.resolve();
+        applySink.then(() => {
+            startSpeaking();
+            audio.play().catch(finish);
+        });
+        setTimeout(finish, 60000);
     })).catch(() => { });
 }
 
-function handlePersonaPlexMessage(event) {
+function clearPersonaPlexSocketRetry() {
+    if (personaPlexSocketRetryTimer) {
+        clearTimeout(personaPlexSocketRetryTimer);
+        personaPlexSocketRetryTimer = 0;
+    }
+}
+
+function personaPlexConnectStillAllowed(attemptId) {
+    return attemptId === personaPlexStartAttemptId &&
+        personaPlexStartPending &&
+        Date.now() < personaPlexSocketConnectDeadline &&
+        !personaPlexStatusIsFatal();
+}
+
+function schedulePersonaPlexSocketRetry(attemptId, reason) {
+    if (!personaPlexConnectStillAllowed(attemptId))
+        return false;
+    clearPersonaPlexSocketRetry();
+    const delay = Math.min(6500, 1000 + (personaPlexSocketRetryCount * 850));
+    personaPlexSocketRetryCount++;
+    const message = reason
+        ? voiceModeInstallMessage(reason) + ' Retrying voice connection...'
+        : 'Voice runtime is still opening. Retrying voice connection...';
+    setPersonaPlexStatus(message, '');
+    setPersonaPlexTransportStatus('Retrying');
+    updatePersonaPlexControls();
+    personaPlexSocketRetryTimer = setTimeout(() => {
+        personaPlexSocketRetryTimer = 0;
+        if (!personaPlexConnectStillAllowed(attemptId))
+            return;
+        refreshPersonaPlexStatus()
+            .catch(() => { })
+            .finally(() => {
+                if (personaPlexConnectStillAllowed(attemptId))
+                    openPersonaPlexSocket(attemptId);
+            });
+    }, delay);
+    return true;
+}
+
+function openPersonaPlexSocket(attemptId) {
+    if (attemptId !== personaPlexStartAttemptId)
+        return;
+    clearPersonaPlexSocketRetry();
+    if (personaPlexSocket) {
+        try { personaPlexSocket.close(); } catch { }
+    }
+    personaPlexSocket = null;
+    personaPlexHandshakeReceived = false;
+    setPersonaPlexTransportStatus('Connecting');
+    const socket = new WebSocket(personaPlexWebSocketUrl(personaPlexConfig));
+    personaPlexSocket = socket;
+    socket.binaryType = 'arraybuffer';
+    socket.onopen = () => {
+        if (personaPlexSocket !== socket) return;
+        setPersonaPlexTransportStatus('Waiting');
+        updatePersonaPlexControls();
+    };
+    socket.onmessage = event => handlePersonaPlexMessage(event, attemptId);
+    socket.onerror = () => {
+        if (personaPlexSocket !== socket) return;
+        if (personaPlexConnectStillAllowed(attemptId)) {
+            setPersonaPlexStatus('Voice bridge is warming up. Retrying voice connection...', '');
+        } else {
+            setPersonaPlexStatus('Voice connection error.', 'error');
+        }
+    };
+    socket.onclose = () => {
+        const handshook = personaPlexHandshakeReceived || !!personaPlexRecorder || !!personaPlexMicStream;
+        stopPersonaPlexRecorder();
+        if (personaPlexSocket === socket)
+            personaPlexSocket = null;
+        if (!handshook && schedulePersonaPlexSocketRetry(attemptId))
+            return;
+        if (attemptId === personaPlexStartAttemptId) {
+            personaPlexStartPending = false;
+            clearPersonaPlexSocketRetry();
+            setPersonaPlexTransportStatus('Idle');
+            updatePersonaPlexControls();
+            commitPersonaPlexTranscript(true);
+        }
+    };
+    updatePersonaPlexControls();
+}
+
+function handlePersonaPlexMessage(event, attemptId) {
     const data = event && event.data;
     if (typeof data === 'string') {
         appendPersonaPlexTranscript(data);
@@ -19802,6 +20766,11 @@ function handlePersonaPlexMessage(event) {
             const kind = bytes[0];
             const payload = bytes.slice(1);
             if (kind === 0x00) {
+                personaPlexHandshakeReceived = true;
+                personaPlexStartPending = false;
+                personaPlexSocketRetryCount = 0;
+                clearPersonaPlexSocketRetry();
+                setPersonaPlexStatus('Ready', 'ready');
                 setPersonaPlexTransportStatus('Connected');
                 startPersonaPlexRecorder()
                     .then(() => {
@@ -19810,7 +20779,7 @@ function handlePersonaPlexMessage(event) {
                     })
                     .catch(error => {
                         setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error');
-                        stopPersonaPlex();
+                        stopPersonaPlex(false);
                     });
             } else if (kind === 0x01) {
                 playPersonaPlexAudio(payload);
@@ -19820,8 +20789,10 @@ function handlePersonaPlexMessage(event) {
                 setPersonaPlexTransportStatus('Preparing');
             } else if (kind === 0x05) {
                 const errorText = new TextDecoder().decode(payload) || 'Voice Mode returned an error.';
-                setPersonaPlexStatus(errorText, 'error');
-                addMessage('error', errorText);
+                const canRetry = !personaPlexHandshakeReceived && personaPlexConnectStillAllowed(attemptId);
+                setPersonaPlexStatus(canRetry ? errorText + ' Retrying...' : errorText, canRetry ? '' : 'error');
+                if (!canRetry)
+                    addMessage('error', errorText);
             } else if (kind === 0x06 && personaPlexSocket && personaPlexSocket.readyState === WebSocket.OPEN) {
                 personaPlexSocket.send(new Uint8Array([0x06]));
             }
@@ -19831,10 +20802,21 @@ function handlePersonaPlexMessage(event) {
 
 async function waitForPersonaPlexReady(attemptId, timeoutMs) {
     const deadline = Date.now() + Math.max(3000, timeoutMs || 90000);
+    let connectableSince = 0;
     while (attemptId === personaPlexStartAttemptId && Date.now() < deadline) {
         const ready = await refreshPersonaPlexStatus();
         if (ready)
             return true;
+        if (personaPlexStatusSuggestsConnectable()) {
+            if (!connectableSince)
+                connectableSince = Date.now();
+            if (Date.now() - connectableSince >= 1600) {
+                setPersonaPlexStatus('Voice runtime is warm. Connecting...', '');
+                return true;
+            }
+        } else {
+            connectableSince = 0;
+        }
 
         const install = personaPlexInstallState || {};
         if (install.needsHuggingFaceToken || (personaPlexLastStatusData && personaPlexLastStatusData.installRequired && !install.localInstalled))
@@ -19846,6 +20828,10 @@ async function waitForPersonaPlexReady(attemptId, timeoutMs) {
             ? 'Starting voice model...'
             : 'Starting Voice Mode...', '');
         await new Promise(resolve => setTimeout(resolve, 1800));
+    }
+    if (personaPlexStatusSuggestsConnectable()) {
+        setPersonaPlexStatus('Voice runtime is warm. Connecting...', '');
+        return true;
     }
     return false;
 }
@@ -19862,6 +20848,10 @@ async function startPersonaPlex() {
 
     personaPlexStartPending = true;
     const attemptId = ++personaPlexStartAttemptId;
+    personaPlexSocketConnectDeadline = Date.now() + personaPlexSocketConnectTimeoutMs;
+    personaPlexSocketRetryCount = 0;
+    personaPlexHandshakeReceived = false;
+    clearPersonaPlexSocketRetry();
     setPersonaPlexTransportStatus('Starting');
     updatePersonaPlexControls();
     try {
@@ -19872,37 +20862,27 @@ async function startPersonaPlex() {
             await startPersonaPlexServer();
         const ready = personaPlexReady || await waitForPersonaPlexReady(attemptId, 90000);
         if (!ready || attemptId !== personaPlexStartAttemptId) {
-            if (attemptId === personaPlexStartAttemptId)
+            if (attemptId === personaPlexStartAttemptId) {
+                personaPlexStartPending = false;
                 setPersonaPlexTransportStatus('Idle');
+                updatePersonaPlexControls();
+            }
             return;
         }
-        stopPersonaPlex(false);
-        personaPlexStartPending = false;
+        stopPersonaPlexRecorder();
+        if (personaPlexSocket) {
+            try { personaPlexSocket.close(); } catch { }
+            personaPlexSocket = null;
+        }
         ensureSessionId();
         resetPersonaPlexTranscript();
-        setPersonaPlexTransportStatus('Connecting');
-        personaPlexSocket = new WebSocket(personaPlexWebSocketUrl(personaPlexConfig));
-        personaPlexSocket.binaryType = 'arraybuffer';
-        personaPlexSocket.onopen = () => {
-            setPersonaPlexTransportStatus('Waiting');
-            updatePersonaPlexControls();
-        };
-        personaPlexSocket.onmessage = handlePersonaPlexMessage;
-        personaPlexSocket.onerror = () => {
-            setPersonaPlexStatus('Voice connection error.', 'error');
-        };
-        personaPlexSocket.onclose = () => {
-            stopPersonaPlexRecorder();
-            setPersonaPlexTransportStatus('Idle');
-            updatePersonaPlexControls();
-            commitPersonaPlexTranscript(true);
-        };
+        openPersonaPlexSocket(attemptId);
         updatePersonaPlexControls();
     } catch (error) {
         setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error');
         updatePersonaPlexControls();
     } finally {
-        if (attemptId === personaPlexStartAttemptId && !personaPlexSocket) {
+        if (attemptId === personaPlexStartAttemptId && !personaPlexSocket && !personaPlexSocketRetryTimer) {
             personaPlexStartPending = false;
             updatePersonaPlexControls();
         }
@@ -19912,11 +20892,15 @@ async function startPersonaPlex() {
 function stopPersonaPlex(releaseServer = true) {
     personaPlexStartPending = false;
     personaPlexStartAttemptId++;
+    personaPlexSocketConnectDeadline = 0;
+    clearPersonaPlexSocketRetry();
     stopPersonaPlexRecorder();
     if (personaPlexSocket) {
         try { personaPlexSocket.close(); } catch { }
     }
     personaPlexSocket = null;
+    personaPlexHandshakeReceived = false;
+    personaPlexModelSpeakingCount = 0;
     setPersonaPlexTransportStatus('Idle');
     updatePersonaPlexControls();
     commitPersonaPlexTranscript(true);
@@ -27751,6 +28735,57 @@ function messageContentEquals(left, right) {
     }
 }
 
+function assistantMessageDisplayText(message) {
+    return stringifyMessageContent(message && message.content).trim();
+}
+
+function assistantMessagesAreExactDuplicates(left, right) {
+    if (!left || !right || left.role !== 'assistant' || right.role !== 'assistant')
+        return false;
+    return assistantMessageDisplayText(left) === assistantMessageDisplayText(right) &&
+        String(left.reasoning || '').trim() === String(right.reasoning || '').trim();
+}
+
+function mergeAssistantMessageMetadata(target, source) {
+    if (!target || !source) return target;
+    if (!target.reasoning && source.reasoning)
+        target.reasoning = source.reasoning;
+    if (!target.fileChanges && source.fileChanges)
+        target.fileChanges = source.fileChanges;
+    if (!target.fileChangesUndoToken && source.fileChangesUndoToken)
+        target.fileChangesUndoToken = source.fileChangesUndoToken;
+    if (!target.fileChangesSessionId && source.fileChangesSessionId)
+        target.fileChangesSessionId = source.fileChangesSessionId;
+    if ((!Array.isArray(target.toolCalls) || !target.toolCalls.length) && Array.isArray(source.toolCalls))
+        target.toolCalls = source.toolCalls;
+    return target;
+}
+
+function appendMessageUnlessDuplicate(targetMessages, message) {
+    if (!Array.isArray(targetMessages) || !message) return false;
+    const last = targetMessages.length ? targetMessages[targetMessages.length - 1] : null;
+    if (assistantMessagesAreExactDuplicates(last, message)) {
+        mergeAssistantMessageMetadata(last, message);
+        return false;
+    }
+    targetMessages.push(message);
+    return true;
+}
+
+function dedupeAdjacentAssistantMessages(sourceMessages) {
+    const result = [];
+    (Array.isArray(sourceMessages) ? sourceMessages : []).forEach(message => {
+        if (!message) return;
+        const last = result.length ? result[result.length - 1] : null;
+        if (assistantMessagesAreExactDuplicates(last, message)) {
+            mergeAssistantMessageMetadata(last, message);
+            return;
+        }
+        result.push(message);
+    });
+    return result;
+}
+
 function appendQueuedUserMessageIfMissing(targetMessages, userContent) {
     const list = Array.isArray(targetMessages) ? targetMessages : [];
     const last = list.length ? list[list.length - 1] : null;
@@ -27810,6 +28845,27 @@ function retryDelayForAttempt(attempt) {
 function retryErrorText(error) {
     const text = error && error.message ? error.message : String(error || 'Model runtime request failed.');
     return text.length <= 150 ? text : text.slice(0, 147) + '...';
+}
+
+function assistantPartsHaveVisibleContent(parts) {
+    if (!parts) return false;
+    const answerText = parts.answer ? normalizeDisplayText(parts.answer.dataset.renderedMarkdown || parts.answer.textContent || '').trim() : '';
+    const reasoningText = parts.pre ? normalizeDisplayText(parts.pre.textContent || '').trim() : '';
+    const hasTools = parts.toolActivity && !parts.toolActivity.hidden && normalizeDisplayText(parts.toolActivity.textContent || '').trim();
+    const hasFiles = parts.fileChanges && !parts.fileChanges.hidden && normalizeDisplayText(parts.fileChanges.textContent || '').trim();
+    return !!(answerText || reasoningText || hasTools || hasFiles);
+}
+
+function appendStreamErrorBelowTurn(item, error) {
+    const message = 'Model runtime request failed: ' + retryErrorText(error);
+    const parts = item && item._assistantParts ? item._assistantParts : null;
+    if (parts && assistantPartsHaveVisibleContent(parts)) {
+        hidePromptProcessing(parts);
+        updateAssistantParts(parts, parts.answer ? (parts.answer.dataset.renderedMarkdown || parts.answer.textContent || '') : '', parts.pre ? parts.pre.textContent || '' : '', true);
+    } else if (item && item.isConnected) {
+        item.remove();
+    }
+    addMessage('error', message);
 }
 
 function isRecoverableStreamTransportError(error) {
@@ -27963,10 +29019,7 @@ function updateRetryPlaceholder(item, attempt, delayMs, error) {
 }
 
 function finalizeFailedAssistantPlaceholder(item, error) {
-    const parts = item && item._assistantParts ? item._assistantParts : null;
-    if (!parts) return;
-    const message = retryErrorText(error);
-    updateAssistantParts(parts, 'Model runtime request failed: ' + message, '', true);
+    appendStreamErrorBelowTurn(item, error);
 }
 
 function finalizeStoppedRetry(item) {
@@ -28254,6 +29307,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
     const noThinkRequested = messagesRequestNoThink(turnMessages);
     const suppressReasoning = noThinkRequested || !selectedService();
     const streamId = 'stream_' + Math.random().toString(16).slice(2) + Date.now().toString(16);
+    rememberLocalActiveStreamId(streamId);
     const controller = new AbortController();
     activeAbortController = controller;
     activeStreamId = streamId;
@@ -28621,12 +29675,14 @@ function isCurrentSessionContext(sessionContext) {
 
 function appendSessionContextMessage(sessionContext, message) {
     if (!message) return;
+    let contextMessages = null;
     if (sessionContext && sessionContext.id) {
-        sessionContext.messages.push(message);
+        contextMessages = sessionContext.messages;
+        appendMessageUnlessDuplicate(contextMessages, message);
         sessionContext.title = inferSessionTitle(sessionContext.messages);
     }
-    if (isCurrentSessionContext(sessionContext))
-        messages.push(message);
+    if (isCurrentSessionContext(sessionContext) && contextMessages !== messages)
+        appendMessageUnlessDuplicate(messages, message);
     updateContextToggleMeta();
 }
 
@@ -30630,7 +31686,7 @@ async function handleSessionOwnershipSaveConflict(sessionId) {
 }
 
 async function saveSessionSnapshot(sessionId, title, model, sessionMessages, files, draftPrompt, forceSave) {
-    const normalizedMessages = Array.isArray(sessionMessages) ? sessionMessages : [];
+    const normalizedMessages = dedupeAdjacentAssistantMessages(Array.isArray(sessionMessages) ? sessionMessages : []);
     const normalizedFiles = Array.isArray(files) ? files : [];
     const draftText = typeof draftPrompt === 'string' ? draftPrompt : '';
     if (!sessionId || (!forceSave && normalizedMessages.length === 0 && normalizedFiles.length === 0 && !draftText.trim())) return;
@@ -32262,7 +33318,7 @@ async function loadSession(id) {
 
 function renderConversation() {
     list.textContent = '';
-    const visibleMessages = messages.filter(message => message && message.role !== 'system');
+    const visibleMessages = dedupeAdjacentAssistantMessages(messages.filter(message => message && message.role !== 'system'));
     if (!visibleMessages.length) {
         sessionToolCalls = [];
         renderSessionToolActivity();
@@ -34266,6 +35322,23 @@ if (serversRefresh)
     serversRefresh.addEventListener('click', () => loadServersDashboard().catch(error => addMessage('error', error && error.message ? error.message : String(error))));
 if (serversUseLocal)
     serversUseLocal.addEventListener('click', () => clearCopilotServer().catch(error => addMessage('error', error && error.message ? error.message : String(error))));
+if (serverApiMarkdownCopy)
+    serverApiMarkdownCopy.addEventListener('click', () => {
+        const markdown = serverApiMarkdownText ? serverApiMarkdownText.value : '';
+        copyTextToClipboard(markdown).then(() => {
+            serverApiMarkdownCopy.textContent = 'Copied';
+            window.setTimeout(() => {
+                if (serverApiMarkdownCopy) serverApiMarkdownCopy.textContent = 'Copy';
+            }, 1200);
+        }).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+    });
+if (serverApiMarkdownClose)
+    serverApiMarkdownClose.addEventListener('click', closeServerApiMarkdown);
+if (serverApiMarkdownBackdrop)
+    serverApiMarkdownBackdrop.addEventListener('click', event => {
+        if (event.target === serverApiMarkdownBackdrop)
+            closeServerApiMarkdown();
+    });
 [serverFilterHardware, serverFilterTitle, serverFilterOwner, serverFilterIp, serverFilterMonitor].forEach(input => {
     if (input) input.addEventListener('input', scheduleServerBrowserRender);
 });
@@ -34458,6 +35531,7 @@ if (personaPlexClose)
     personaPlexClose.addEventListener('click', () => setPersonaPlexPanelOpen(false));
 if (personaPlexRefresh)
     personaPlexRefresh.addEventListener('click', () => {
+        refreshPersonaPlexDevices().catch(() => { });
         refreshPersonaPlexStatus().catch(error => setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error'));
     });
 if (personaPlexSave)
@@ -34491,6 +35565,26 @@ if (personaPlexInstall)
         savePersonaPlexConfig().catch(error => setPersonaPlexStatus(error && error.message ? error.message : String(error), 'error'));
     });
 });
+[personaPlexInputSelect, personaPlexOutputSelect].forEach(select => {
+    if (!select) return;
+    select.addEventListener('change', () => {
+        savePersonaPlexDeviceConfig({
+            audioInputDeviceId: selectedPersonaPlexInputDeviceId(),
+            audioOutputDeviceId: selectedPersonaPlexOutputDeviceId()
+        });
+    });
+});
+if (navigator.mediaDevices) {
+    if (navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', () => {
+            refreshPersonaPlexDevices().catch(() => { });
+        });
+    } else {
+        navigator.mediaDevices.ondevicechange = () => {
+            refreshPersonaPlexDevices().catch(() => { });
+        };
+    }
+}
 if (ttsEnabled) {
     ttsEnabled.addEventListener('change', () => {
         saveSettings();
@@ -34639,6 +35733,7 @@ window.addEventListener('keydown', event => {
     closeSolutionNodeMenus();
     closeSessionAdminMenu();
     closeAdminPermissionsDialog();
+    closeServerApiMarkdown();
     closeTokenRateRequestPanel();
     setTokenPurchasePanelVisible(false);
     setContextExpanderOpen(false);
@@ -34769,6 +35864,8 @@ setSessionsPanelOpen(initialSessionsPanelOpen, { save: false, closePeers: false 
 setSolutionExplorerOpen(initialSolutionExplorerOpen, { save: false, closePeers: false });
 setCommentsCollapsed(initialWebUiLayoutState.commentsCollapsed === undefined ? false : !!initialWebUiLayoutState.commentsCollapsed);
 updatePermissionTargetUi();
+personaPlexDeviceConfig = readPersonaPlexDeviceConfig();
+refreshPersonaPlexDevices().catch(() => { });
 applyPersonaPlexConfig({ ...personaPlexDefaultConfig, ...personaPlexLocalOverrides() });
 updatePersonaPlexControls();
 if (initialWebUiLayoutState.browserExpanded)

@@ -103,14 +103,24 @@ public sealed class DirectMlGgufBackend : ILlmBackend
     public async Task<LlmChatResult> CompleteChatAsync(LlmChatRequest request, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
-        string text = await InvokeRunnerAsync(request, stream: false, cancellationToken).ConfigureAwait(false);
+        (string text, string finishReason, int rawCompletionTokens, bool stoppedInsideHiddenReasoning, bool hiddenReasoningOnly) = await InvokeRunnerAsync(request, stream: false, cancellationToken).ConfigureAwait(false);
         stopwatch.Stop();
+        int completionTokens = Math.Max(rawCompletionTokens, LlmInferenceMetrics.EstimateTokens(text));
+        int promptTokens = LlmInferenceMetrics.EstimateTokens(string.Join(Environment.NewLine, request.Messages.Select(message => message.Content)));
+        double elapsedSeconds = Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001d);
         return new LlmChatResult
         {
             Model = InstanceId,
             Content = text,
-            FinishReason = "stop",
-            Metrics = LlmInferenceMetrics.FromText(request, text, stopwatch.Elapsed)
+            FinishReason = NormalizeRunnerFinishReason(finishReason, request.MaxTokens, completionTokens, stoppedInsideHiddenReasoning || hiddenReasoningOnly),
+            Metrics = new LlmInferenceMetrics
+            {
+                PromptTokens = promptTokens,
+                CompletionTokens = completionTokens,
+                ElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
+                TokensPerSecond = completionTokens / elapsedSeconds,
+                ManagedMemoryBytes = GC.GetTotalMemory(false)
+            }
         };
     }
 
@@ -145,7 +155,7 @@ public sealed class DirectMlGgufBackend : ILlmBackend
         }
     }
 
-    private async Task<string> InvokeRunnerAsync(LlmChatRequest request, bool stream, CancellationToken cancellationToken)
+    private async Task<(string Text, string FinishReason, int RawCompletionTokens, bool StoppedInsideHiddenReasoning, bool HiddenReasoningOnly)> InvokeRunnerAsync(LlmChatRequest request, bool stream, CancellationToken cancellationToken)
     {
         using var operation = _lifetime.Enter();
         ThrowIfNotLoaded();
@@ -309,44 +319,58 @@ public sealed class DirectMlGgufBackend : ILlmBackend
         return string.Join(" ", arguments);
     }
 
-    private static string ParseRunnerOutput(string output)
+    private static (string Text, string FinishReason, int RawCompletionTokens, bool StoppedInsideHiddenReasoning, bool HiddenReasoningOnly) ParseRunnerOutput(string output)
     {
         if (string.IsNullOrWhiteSpace(output))
-            return "";
+            return ("", "", 0, false, false);
 
         var builder = new StringBuilder();
+        string finishReason = "";
         foreach (string line in output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (TryParseRunnerOutputLine(line, out string text, out _))
+            if (TryParseRunnerOutputLine(line, out string text, out _, out string lineFinishReason))
+            {
                 builder.Append(text);
+                if (!string.IsNullOrWhiteSpace(lineFinishReason))
+                    finishReason = lineFinishReason;
+            }
         }
 
-        return LlmRuntimeRepetitionGuard.TrimRepeatingTail(builder.ToString()).TrimEnd();
+        string rawText = LlmRuntimeRepetitionGuard.TrimRepeatingTail(builder.ToString()).TrimEnd();
+        string visibleText = StripHiddenReasoningTags(rawText, out bool stoppedInsideHiddenReasoning, out bool suppressedReasoning).TrimEnd();
+        int rawCompletionTokens = LlmInferenceMetrics.EstimateTokens(rawText);
+        bool hiddenReasoningOnly = rawCompletionTokens > 0 && suppressedReasoning && string.IsNullOrWhiteSpace(visibleText);
+        if (string.IsNullOrWhiteSpace(visibleText))
+            visibleText = "";
+        return (visibleText, finishReason, rawCompletionTokens, stoppedInsideHiddenReasoning, hiddenReasoningOnly);
     }
 
     internal static async IAsyncEnumerable<LlmChatToken> ReadRunnerTokenStreamAsync(TextReader reader, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var reasoningFilter = new HiddenReasoningTagFilter();
         while (!cancellationToken.IsCancellationRequested)
         {
             string? line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
             if (line == null)
                 yield break;
 
-            if (!TryParseRunnerOutputLine(line, out string text, out bool done))
+            if (!TryParseRunnerOutputLine(line, out string text, out bool done, out string finishReason))
                 continue;
 
             if (done)
                 yield break;
 
-            if (!string.IsNullOrEmpty(text))
-                yield return new LlmChatToken(text);
+            string visibleText = string.IsNullOrEmpty(text) ? "" : reasoningFilter.Accept(text);
+            if (!string.IsNullOrEmpty(visibleText) || !string.IsNullOrWhiteSpace(finishReason))
+                yield return new LlmChatToken(visibleText, finishReason);
         }
     }
 
-    internal static bool TryParseRunnerOutputLine(string line, out string text, out bool done)
+    internal static bool TryParseRunnerOutputLine(string line, out string text, out bool done, out string finishReason)
     {
         text = "";
         done = false;
+        finishReason = "";
 
         string trimmed = (line ?? "").Trim();
         if (trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
@@ -375,6 +399,8 @@ public sealed class DirectMlGgufBackend : ILlmBackend
             using var document = JsonDocument.Parse(jsonCandidate);
             var root = document.RootElement;
             var builder = new StringBuilder();
+            if (root.TryGetProperty("finish_reason", out var rootFinishReason) && rootFinishReason.ValueKind == JsonValueKind.String)
+                finishReason = rootFinishReason.GetString() ?? "";
 
             if (root.TryGetProperty("text", out var rootText) && rootText.ValueKind == JsonValueKind.String)
                 builder.Append(rootText.GetString());
@@ -386,6 +412,9 @@ public sealed class DirectMlGgufBackend : ILlmBackend
             {
                 foreach (var choice in choices.EnumerateArray())
                 {
+                    if (choice.TryGetProperty("finish_reason", out var choiceFinishReason) && choiceFinishReason.ValueKind == JsonValueKind.String)
+                        finishReason = choiceFinishReason.GetString() ?? finishReason;
+
                     if (choice.TryGetProperty("text", out var nestedText) && nestedText.ValueKind == JsonValueKind.String)
                         builder.Append(nestedText.GetString());
                     else if (choice.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object
@@ -400,6 +429,139 @@ public sealed class DirectMlGgufBackend : ILlmBackend
         catch (JsonException)
         {
             return false;
+        }
+    }
+
+    private static string NormalizeRunnerFinishReason(string finishReason, int maxTokens, int completionTokens, bool stoppedInsideHiddenReasoning)
+    {
+        string normalized = string.IsNullOrWhiteSpace(finishReason) ? "stop" : finishReason;
+        if (string.Equals(normalized, "stop", StringComparison.OrdinalIgnoreCase) &&
+            maxTokens > 0 &&
+            (completionTokens >= maxTokens || stoppedInsideHiddenReasoning))
+        {
+            return "length";
+        }
+
+        return normalized;
+    }
+
+    private static string StripHiddenReasoningTags(string text)
+    {
+        return StripHiddenReasoningTags(text, out _, out _);
+    }
+
+    private static string StripHiddenReasoningTags(string text, out bool stoppedInsideReasoning, out bool suppressedReasoning)
+    {
+        var filter = new HiddenReasoningTagFilter();
+        string visibleText = filter.Accept(text) + filter.Complete();
+        stoppedInsideReasoning = filter.StoppedInsideReasoning;
+        suppressedReasoning = filter.SuppressedReasoning;
+        return visibleText;
+    }
+
+    private sealed class HiddenReasoningTagFilter
+    {
+        private static readonly string[] OpenTags = ["<think>", "<thinking>", "<thought>", "<analysis>"];
+        private static readonly string[] CloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>"];
+        private const int MaxTagLength = 12;
+        private readonly StringBuilder _buffer = new();
+        private bool _insideReasoning;
+
+        public bool StoppedInsideReasoning { get; private set; }
+        public bool SuppressedReasoning { get; private set; }
+
+        public string Accept(string text)
+        {
+            if (!string.IsNullOrEmpty(text))
+                _buffer.Append(text);
+
+            var visible = new StringBuilder();
+            while (_buffer.Length > 0)
+            {
+                if (_insideReasoning)
+                {
+                    int closeIndex = FindEarliestTag(_buffer, CloseTags, out int closeLength);
+                    if (closeIndex < 0)
+                    {
+                        TrimBufferForPotentialTag();
+                        break;
+                    }
+
+                    _buffer.Remove(0, closeIndex + closeLength);
+                    _insideReasoning = false;
+                    continue;
+                }
+
+                int openIndex = FindEarliestTag(_buffer, OpenTags, out int openLength);
+                if (openIndex < 0)
+                {
+                    int flushLength = GetSafeFlushLength();
+                    if (flushLength <= 0)
+                        break;
+
+                    visible.Append(_buffer.ToString(0, flushLength));
+                    _buffer.Remove(0, flushLength);
+                    break;
+                }
+
+                if (openIndex > 0)
+                    visible.Append(_buffer.ToString(0, openIndex));
+
+                _buffer.Remove(0, openIndex + openLength);
+                SuppressedReasoning = true;
+                _insideReasoning = true;
+            }
+
+            return visible.ToString();
+        }
+
+        public string Complete()
+        {
+            if (_insideReasoning)
+            {
+                StoppedInsideReasoning = true;
+                _buffer.Clear();
+                return "";
+            }
+
+            string remainder = _buffer.ToString();
+            _buffer.Clear();
+            return remainder;
+        }
+
+        private void TrimBufferForPotentialTag()
+        {
+            if (_buffer.Length <= MaxTagLength)
+                return;
+
+            _buffer.Remove(0, _buffer.Length - MaxTagLength);
+        }
+
+        private int GetSafeFlushLength()
+        {
+            int lastOpenBracket = _buffer.ToString().LastIndexOf('<');
+            if (lastOpenBracket < 0)
+                return _buffer.Length;
+
+            return lastOpenBracket;
+        }
+
+        private static int FindEarliestTag(StringBuilder builder, string[] tags, out int tagLength)
+        {
+            string text = builder.ToString();
+            int bestIndex = -1;
+            tagLength = 0;
+            foreach (string tag in tags)
+            {
+                int index = text.IndexOf(tag, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0 && (bestIndex < 0 || index < bestIndex))
+                {
+                    bestIndex = index;
+                    tagLength = tag.Length;
+                }
+            }
+
+            return bestIndex;
         }
     }
 

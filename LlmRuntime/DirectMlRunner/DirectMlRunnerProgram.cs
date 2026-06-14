@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using LLama;
 using LLama.Common;
+using LLama.Exceptions;
 using LLama.Native;
 using LLama.Sampling;
 using LLama.Transformers;
@@ -216,6 +217,9 @@ internal static class Program
 
 internal sealed class LlamaRunnerEngine : IDisposable
 {
+    private static readonly string[] HiddenReasoningOpenTags = ["<think>", "<thinking>", "<thought>", "<analysis>"];
+    private static readonly string[] HiddenReasoningCloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>"];
+
     private readonly RunnerEnvelope _envelope;
     private readonly RunnerBackend _backend;
     private LLamaWeights? _weights;
@@ -247,32 +251,162 @@ internal sealed class LlamaRunnerEngine : IDisposable
         var stopwatch = Stopwatch.StartNew();
         var builder = new StringBuilder();
         var repetitionGuard = new LlmRuntimeRepetitionGuard();
+        int maxTokens = GetMaxTokens();
+        int generatedTokens = 0;
+        bool stoppedByGuard = false;
+        bool contextOverflowed = false;
 
-        await foreach (string token in InferAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            if (string.IsNullOrEmpty(token))
-                continue;
-
-            LlmRuntimeRepetitionGuardDecision decision = repetitionGuard.Accept(token);
-            if (!string.IsNullOrEmpty(decision.Text))
+            await foreach (string token in InferAsync(cancellationToken).ConfigureAwait(false))
             {
-                builder.Append(decision.Text);
-                if (stream)
-                    WriteJsonLine(new RunnerToken { Token = decision.Text });
-            }
+                if (string.IsNullOrEmpty(token))
+                    continue;
 
-            if (decision.ShouldStop)
-                break;
+                generatedTokens++;
+                LlmRuntimeRepetitionGuardDecision decision = repetitionGuard.Accept(token);
+                if (!string.IsNullOrEmpty(decision.Text))
+                {
+                    builder.Append(decision.Text);
+                    if (stream)
+                        WriteJsonLine(new RunnerToken { Token = decision.Text });
+                }
+
+                if (decision.ShouldStop)
+                {
+                    stoppedByGuard = true;
+                    break;
+                }
+            }
+        }
+        catch (ContextOverflowException)
+        {
+            contextOverflowed = true;
         }
 
         string output = ApplyStopSequences(builder.ToString(), _envelope.Request.Stop);
+        int completionTokenEstimate = LlmInferenceMetrics.EstimateTokens(output);
+        string finishReason = contextOverflowed
+            ? "length"
+            : DetermineFinishReason(
+            stoppedByGuard,
+            generatedTokens,
+            maxTokens,
+            completionTokenEstimate,
+            EndsInsideHiddenReasoning(output) || IsHiddenReasoningOnly(output));
         if (!stream)
-            WriteJsonLine(new RunnerToken { Content = output, FinishReason = "stop", ElapsedSeconds = stopwatch.Elapsed.TotalSeconds });
+            WriteJsonLine(new RunnerToken { Content = output, FinishReason = finishReason, ElapsedSeconds = stopwatch.Elapsed.TotalSeconds });
         else
         {
+            WriteJsonLine(new RunnerToken { Content = "", FinishReason = finishReason, ElapsedSeconds = stopwatch.Elapsed.TotalSeconds });
             Console.WriteLine("[DONE]");
             Console.Out.Flush();
         }
+    }
+
+    internal static string DetermineFinishReason(bool stoppedByGuard, int generatedTokens, int maxTokens, int completionTokenEstimate, bool stoppedInsideHiddenReasoning)
+    {
+        if (stoppedByGuard)
+            return "stop";
+
+        return generatedTokens >= maxTokens ||
+               completionTokenEstimate >= maxTokens ||
+               stoppedInsideHiddenReasoning
+            ? "length"
+            : "stop";
+    }
+
+    internal static bool EndsInsideHiddenReasoning(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        bool insideReasoning = false;
+        int offset = 0;
+        while (offset < text.Length)
+        {
+            string[] searchTags = insideReasoning ? HiddenReasoningCloseTags : HiddenReasoningOpenTags;
+            int index = FindEarliestTag(text, offset, searchTags, out int tagLength);
+            if (index < 0)
+                return insideReasoning;
+
+            insideReasoning = !insideReasoning;
+            offset = index + tagLength;
+        }
+
+        return insideReasoning;
+    }
+
+    internal static bool IsHiddenReasoningOnly(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        bool sawHiddenReasoning = false;
+        string visibleText = StripHiddenReasoningTags(text, out sawHiddenReasoning);
+        return sawHiddenReasoning && string.IsNullOrWhiteSpace(visibleText);
+    }
+
+    private static string StripHiddenReasoningTags(string text, out bool sawHiddenReasoning)
+    {
+        sawHiddenReasoning = false;
+        if (string.IsNullOrEmpty(text))
+            return "";
+
+        var visible = new StringBuilder();
+        bool insideReasoning = false;
+        int offset = 0;
+        while (offset < text.Length)
+        {
+            if (insideReasoning)
+            {
+                int closeIndex = FindEarliestTag(text, offset, HiddenReasoningCloseTags, out int closeLength);
+                if (closeIndex < 0)
+                    break;
+
+                offset = closeIndex + closeLength;
+                insideReasoning = false;
+                continue;
+            }
+
+            int openIndex = FindEarliestTag(text, offset, HiddenReasoningOpenTags, out int openLength);
+            if (openIndex < 0)
+            {
+                visible.Append(text, offset, text.Length - offset);
+                break;
+            }
+
+            if (openIndex > offset)
+                visible.Append(text, offset, openIndex - offset);
+
+            sawHiddenReasoning = true;
+            offset = openIndex + openLength;
+            insideReasoning = true;
+        }
+
+        return visible.ToString();
+    }
+
+    private static int FindEarliestTag(string text, int startIndex, string[] tags, out int tagLength)
+    {
+        int bestIndex = -1;
+        tagLength = 0;
+        foreach (string tag in tags)
+        {
+            int index = text.IndexOf(tag, startIndex, StringComparison.OrdinalIgnoreCase);
+            if (index >= 0 && (bestIndex < 0 || index < bestIndex))
+            {
+                bestIndex = index;
+                tagLength = tag.Length;
+            }
+        }
+
+        return bestIndex;
+    }
+
+    private int GetMaxTokens()
+    {
+        return Math.Clamp(_envelope.Request.MaxTokens <= 0 ? LlmChatRequest.DefaultMaxCompletionTokens : _envelope.Request.MaxTokens, 1, 131072);
     }
 
     private async IAsyncEnumerable<string> InferAsync([EnumeratorCancellation] CancellationToken cancellationToken)
@@ -281,9 +415,8 @@ internal sealed class LlamaRunnerEngine : IDisposable
         var executor = new InteractiveExecutor(context);
         var parameters = new InferenceParams
         {
-            MaxTokens = Math.Clamp(_envelope.Request.MaxTokens <= 0 ? LlmChatRequest.DefaultMaxCompletionTokens : _envelope.Request.MaxTokens, 1, 131072),
+            MaxTokens = GetMaxTokens(),
             AntiPrompts = _envelope.Request.Stop.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
-            OverflowStrategy = ContextOverflowStrategy.TruncateAndReprefill,
             SamplingPipeline = new DefaultSamplingPipeline
             {
                 Temperature = Math.Clamp(_envelope.Request.Temperature <= 0 ? 0.7f : _envelope.Request.Temperature, 0f, 10f),

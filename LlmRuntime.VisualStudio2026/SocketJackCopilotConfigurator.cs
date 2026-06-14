@@ -21,6 +21,7 @@ internal sealed class SocketJackCopilotConfigurator
 
     private readonly VisualStudioExtensibility extensibility;
     private readonly HttpClient httpClient;
+    private readonly SocketJackCopilotBrowserCache browserCache = new();
 
     public SocketJackCopilotConfigurator(VisualStudioExtensibility extensibility, HttpClient httpClient)
     {
@@ -33,7 +34,9 @@ internal sealed class SocketJackCopilotConfigurator
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         var client = new SocketJackMasterListClient(this.httpClient);
-        return await client.GetServersAsync(timeout.Token);
+        IReadOnlyList<SocketJackServerCandidate> servers = await client.GetServersAsync(timeout.Token);
+        this.browserCache.SaveServers(servers);
+        return servers;
     }
 
     public async Task<SocketJackModelDiscoveryResult> GetModelsAsync(SocketJackServerCandidate server, CancellationToken cancellationToken)
@@ -41,7 +44,19 @@ internal sealed class SocketJackCopilotConfigurator
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         var discovery = new SocketJackModelDiscoveryService(this.httpClient);
-        return await discovery.DiscoverModelsAsync(server, timeout.Token);
+        SocketJackModelDiscoveryResult result = await discovery.DiscoverModelsAsync(server, timeout.Token);
+        this.browserCache.SaveModels(server, result);
+        return result;
+    }
+
+    public IReadOnlyList<SocketJackServerCandidate> GetCachedServers()
+    {
+        return this.browserCache.LoadServers();
+    }
+
+    public bool TryGetCachedModels(SocketJackServerCandidate server, out SocketJackModelDiscoveryResult result)
+    {
+        return this.browserCache.TryLoadModels(server, out result);
     }
 
     public async Task<SocketJackEndpointAccessResult> TestModelRouteAsync(SocketJackServerCandidate server, CancellationToken cancellationToken)
@@ -49,7 +64,14 @@ internal sealed class SocketJackCopilotConfigurator
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         var prober = new SocketJackEndpointAccessProber(this.httpClient);
-        return await prober.ProbeAsync(server.ModelApiBaseUrl, timeout.Token);
+        try
+        {
+            return await prober.ProbeAsync(server.ModelApiBaseUrl, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new SocketJackEndpointAccessResult(false, "Direct endpoint probe timed out.", "");
+        }
     }
 
     public async Task<SocketJackEndpointAccessResult> TestChatRouteAsync(SocketJackServerCandidate server, SocketJackModelCandidate model, CancellationToken cancellationToken)
@@ -57,7 +79,14 @@ internal sealed class SocketJackCopilotConfigurator
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         var prober = new SocketJackEndpointAccessProber(this.httpClient);
-        return await prober.ProbeChatAsync(server.ModelApiBaseUrl, model.Id, timeout.Token);
+        try
+        {
+            return await prober.ProbeChatAsync(server.ModelApiBaseUrl, model.Id, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new SocketJackEndpointAccessResult(false, "Direct chat endpoint probe timed out; local WebSocket proxy is required.", "");
+        }
     }
 
     public async Task<SocketJackEndpointAccessResult> TestSocketJackFallbackRouteAsync(SocketJackServerCandidate server, CancellationToken cancellationToken)
@@ -65,7 +94,14 @@ internal sealed class SocketJackCopilotConfigurator
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         var prober = new SocketJackEndpointAccessProber(this.httpClient);
-        return await prober.ProbeSocketJackFallbackAsync(server.EffectiveEndpoint, timeout.Token);
+        try
+        {
+            return await prober.ProbeSocketJackFallbackAsync(server.EffectiveEndpoint, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new SocketJackEndpointAccessResult(false, "SocketJack fallback route probe timed out.", "");
+        }
     }
 
     public async Task<SocketJackConfigureResult> ConfigureFirstEligibleAsync(string authToken, CancellationToken cancellationToken)
@@ -97,22 +133,26 @@ internal sealed class SocketJackCopilotConfigurator
 
         string modelAccessUrl = server.ModelApiBaseUrl;
         string routeMessage = "Direct SocketJack model address configured.";
-        SocketJackEndpointAccessResult access = await this.TestChatRouteAsync(server, model, cancellationToken);
-        if (!access.CanUseDirectEndpoint)
+        if (ShouldPreferPackagedLocalProxy(server))
         {
-            SocketJackEndpointAccessResult fallback = await this.TestSocketJackFallbackRouteAsync(server, cancellationToken);
-            if (!fallback.CanUseDirectEndpoint)
-            {
-                throw new InvalidOperationException(access.Message + " " + fallback.Message);
-            }
-
             int port = this.StartLocalProxy(server, model, authToken, authUserName);
             modelAccessUrl = "http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture);
-            routeMessage = "Direct model route did not answer; " + fallback.Message + " Local WebSocket proxy configured at " + modelAccessUrl + ".";
+            routeMessage = "Packaged local SocketJack bridge configured at " + modelAccessUrl + ".";
         }
         else
         {
-            routeMessage = access.Message + " Direct SocketJack address configured.";
+            SocketJackEndpointAccessResult access = await this.TestChatRouteAsync(server, model, cancellationToken);
+            if (!access.CanUseDirectEndpoint)
+            {
+                SocketJackEndpointAccessResult fallback = await this.TestSocketJackFallbackRouteAsync(server, cancellationToken);
+                int port = this.StartLocalProxy(server, model, authToken, authUserName);
+                modelAccessUrl = "http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture);
+                routeMessage = "Direct model route did not answer; " + fallback.Message + " Packaged local SocketJack bridge configured at " + modelAccessUrl + ".";
+            }
+            else
+            {
+                routeMessage = access.Message + " Direct SocketJack address configured.";
+            }
         }
 
         OllamaByomWriteResult ollamaResult = new VisualStudioOllamaByomConfigWriter().Write(server, model, modelAccessUrl);
@@ -153,6 +193,12 @@ internal sealed class SocketJackCopilotConfigurator
 
     private BridgeLaunchInfo CreateStdioLaunch(SocketJackServerCandidate server, SocketJackModelCandidate model, string authToken, string authUserName)
     {
+        string? bridgeExecutablePath = ResolveBridgeExecutablePath();
+        if (!string.IsNullOrWhiteSpace(bridgeExecutablePath))
+        {
+            return SocketJackBridgeLaunchBuilder.CreateStdioLaunchFromExecutable(bridgeExecutablePath, server, model, authToken, authUserName);
+        }
+
         string? bridgeDllPath = ResolveBridgeDllPath();
         if (!string.IsNullOrWhiteSpace(bridgeDllPath))
         {
@@ -198,10 +244,14 @@ internal sealed class SocketJackCopilotConfigurator
             }
         }
 
-        int port = FindAvailablePort(11574);
+        int port = FindMatchingHealthyProxyPort(server, model, 11574) ?? FindAvailablePort(11574);
         BridgeLaunchInfo launch;
-        string? bridgeDllPath = ResolveBridgeDllPath();
-        if (!string.IsNullOrWhiteSpace(bridgeDllPath))
+        string? bridgeExecutablePath = ResolveBridgeExecutablePath();
+        if (!string.IsNullOrWhiteSpace(bridgeExecutablePath))
+        {
+            launch = SocketJackBridgeLaunchBuilder.CreateHttpProxyLaunchFromExecutable(bridgeExecutablePath, server, model, port, authToken, authUserName);
+        }
+        else if (ResolveBridgeDllPath() is string bridgeDllPath && !string.IsNullOrWhiteSpace(bridgeDllPath))
         {
             launch = SocketJackBridgeLaunchBuilder.CreateHttpProxyLaunchFromDll(bridgeDllPath, server, model, port, authToken, authUserName);
         }
@@ -236,6 +286,66 @@ internal sealed class SocketJackCopilotConfigurator
         return port;
     }
 
+    private static int? FindMatchingHealthyProxyPort(SocketJackServerCandidate server, SocketJackModelCandidate model, int preferredPort)
+    {
+        int start = preferredPort > 0 && preferredPort <= 65535 ? preferredPort : 11574;
+        int end = Math.Min(65535, start + 49);
+        for (int port = start; port <= end; port++)
+        {
+            if (IsMatchingHealthyProxyPort(server, model, port))
+                return port;
+        }
+
+        return null;
+    }
+
+    private static bool IsMatchingHealthyProxyPort(SocketJackServerCandidate server, SocketJackModelCandidate model, int port)
+    {
+        try
+        {
+            using var client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(1)
+            };
+            using var request = new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture) + "/socketjack-proxy-health");
+            using HttpResponseMessage response = client.Send(request, HttpCompletionOption.ResponseContentRead);
+            if (!response.IsSuccessStatusCode)
+                return false;
+
+            using Stream stream = response.Content.ReadAsStream();
+            using var reader = new StreamReader(stream);
+            string json = reader.ReadToEnd();
+            JsonObject root = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+            string selectedServer = root["selectedServer"]?.ToString() ?? "";
+            string selectedModel = root["selectedModel"]?.ToString() ?? "";
+            string endpoint = (root["endpoint"]?.ToString() ?? "").TrimEnd('/');
+            string expectedEndpoint = (server.EffectiveEndpoint ?? "").TrimEnd('/');
+
+            bool serverMatches =
+                string.Equals(selectedServer, server.Id, StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(endpoint) && string.Equals(endpoint, expectedEndpoint, StringComparison.OrdinalIgnoreCase));
+            bool modelMatches = string.IsNullOrWhiteSpace(model.Id) ||
+                string.Equals(selectedModel, model.Id, StringComparison.OrdinalIgnoreCase);
+
+            return serverMatches && modelMatches;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool ShouldPreferPackagedLocalProxy(SocketJackServerCandidate server)
+    {
+        if (!Uri.TryCreate(server.EffectiveEndpoint, UriKind.Absolute, out Uri? uri))
+        {
+            return false;
+        }
+
+        return uri.AbsolutePath.StartsWith("/proxy/", StringComparison.OrdinalIgnoreCase) ||
+            uri.AbsolutePath.Equals("/proxy", StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<string> TryConfigureLocalDuplicatorAsync(SocketJackServerCandidate server, SocketJackModelCandidate model, string modelAccessUrl, CancellationToken cancellationToken)
     {
         try
@@ -253,12 +363,29 @@ internal sealed class SocketJackCopilotConfigurator
             using HttpResponseMessage response = await this.httpClient.PostAsJsonAsync("http://127.0.0.1:11436/api/copilot-duplicator", payload, cancellationToken);
             return response.IsSuccessStatusCode
                 ? "Local JackLLM copilot duplicator updated."
-                : "Local JackLLM copilot duplicator returned " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + ".";
+                : "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return "Local JackLLM copilot duplicator unavailable: " + ex.Message;
+            return "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
+    }
+
+    private static string? ResolveBridgeExecutablePath()
+    {
+        string baseDirectory = AppContext.BaseDirectory;
+        string assemblyDirectory = Path.GetDirectoryName(typeof(SocketJackCopilotConfigurator).Assembly.Location) ?? baseDirectory;
+        string[] candidates =
+        [
+            Path.Combine(assemblyDirectory, "Bridge", "SocketJack.CopilotMcpBridge.exe"),
+            Path.Combine(assemblyDirectory, "SocketJack.CopilotMcpBridge.exe"),
+            Path.Combine(baseDirectory, "Bridge", "SocketJack.CopilotMcpBridge.exe"),
+            Path.Combine(baseDirectory, "SocketJack.CopilotMcpBridge.exe"),
+            Path.GetFullPath(Path.Combine(assemblyDirectory, @"..\..\..\..\SocketJack.CopilotMcpBridge\bin\Release\net8.0\publish\SocketJack.CopilotMcpBridge.exe")),
+            Path.GetFullPath(Path.Combine(assemblyDirectory, @"..\..\..\..\SocketJack.CopilotMcpBridge\bin\Debug\net8.0\publish\SocketJack.CopilotMcpBridge.exe")),
+        ];
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     private static string? ResolveBridgeDllPath()
@@ -486,8 +613,9 @@ internal static class SocketJackLocalProxySupervisor
             return false;
         }
 
+        string? bridgeExecutablePath = ResolveBridgeExecutablePath();
         string? bridgeDllPath = ResolveBridgeDllPath();
-        if (string.IsNullOrWhiteSpace(bridgeDllPath))
+        if (string.IsNullOrWhiteSpace(bridgeExecutablePath) && string.IsNullOrWhiteSpace(bridgeDllPath))
         {
             return false;
         }
@@ -504,13 +632,21 @@ internal static class SocketJackLocalProxySupervisor
             Id = selection.ModelId,
             DisplayName = string.IsNullOrWhiteSpace(selection.ModelDisplayName) ? selection.ModelId : selection.ModelDisplayName
         };
-        BridgeLaunchInfo launch = SocketJackBridgeLaunchBuilder.CreateHttpProxyLaunchFromDll(
-            bridgeDllPath,
-            server,
-            model,
-            port,
-            authState.AccessToken,
-            authState.UserName);
+        BridgeLaunchInfo launch = !string.IsNullOrWhiteSpace(bridgeExecutablePath)
+            ? SocketJackBridgeLaunchBuilder.CreateHttpProxyLaunchFromExecutable(
+                bridgeExecutablePath,
+                server,
+                model,
+                port,
+                authState.AccessToken,
+                authState.UserName)
+            : SocketJackBridgeLaunchBuilder.CreateHttpProxyLaunchFromDll(
+                bridgeDllPath!,
+                server,
+                model,
+                port,
+                authState.AccessToken,
+                authState.UserName);
 
         var info = new ProcessStartInfo
         {
@@ -608,6 +744,21 @@ internal static class SocketJackLocalProxySupervisor
 
         return candidates.FirstOrDefault(File.Exists);
     }
+
+    private static string? ResolveBridgeExecutablePath()
+    {
+        string baseDirectory = AppContext.BaseDirectory;
+        string assemblyDirectory = Path.GetDirectoryName(typeof(SocketJackLocalProxySupervisor).Assembly.Location) ?? baseDirectory;
+        string[] candidates =
+        [
+            Path.Combine(assemblyDirectory, "Bridge", "SocketJack.CopilotMcpBridge.exe"),
+            Path.Combine(assemblyDirectory, "SocketJack.CopilotMcpBridge.exe"),
+            Path.Combine(baseDirectory, "Bridge", "SocketJack.CopilotMcpBridge.exe"),
+            Path.Combine(baseDirectory, "SocketJack.CopilotMcpBridge.exe"),
+        ];
+
+        return candidates.FirstOrDefault(File.Exists);
+    }
 }
 
 internal sealed class SocketJackConfigureResult
@@ -650,6 +801,6 @@ internal sealed class SocketJackConfigureResult
             "MCP: " + this.McpServerKey + " written to " + this.McpPath + Environment.NewLine +
             "Ollama BYOM: " + this.OllamaUrl + " / " + this.OllamaModelId + " written to " + this.OllamaPath + Environment.NewLine +
             this.RouteMessage + Environment.NewLine +
-            "Visual Studio Copilot model override uses public MCP/Ollama paths only. " + this.DuplicatorMessage;
+            "Visual Studio Copilot BYOM uses the packaged SocketJack bridge when a local proxy URL is configured. " + this.DuplicatorMessage;
     }
 }

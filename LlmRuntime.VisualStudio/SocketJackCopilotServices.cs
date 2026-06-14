@@ -139,6 +139,316 @@ public sealed class SocketJackModelDiscoveryResult
     public IReadOnlyList<string> Warnings { get; }
 }
 
+public sealed class SocketJackCopilotBrowserCache
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true
+    };
+
+    private readonly string _cachePath;
+
+    public SocketJackCopilotBrowserCache(string? cachePath = null)
+    {
+        _cachePath = string.IsNullOrWhiteSpace(cachePath)
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SocketJack",
+                "VisualStudio",
+                "CopilotServerBrowserCache.json")
+            : cachePath!;
+    }
+
+    public string CachePath => _cachePath;
+
+    public IReadOnlyList<SocketJackServerCandidate> LoadServers()
+    {
+        SocketJackCopilotBrowserCacheState state = ReadState();
+        return state.Servers
+            .Select(ToServerCandidate)
+            .Where(server => !string.IsNullOrWhiteSpace(server.Id) || !string.IsNullOrWhiteSpace(server.EffectiveEndpoint))
+            .OrderByDescending(server => server.CanUseForCopilot)
+            .ThenBy(server => server.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public void SaveServers(IEnumerable<SocketJackServerCandidate> servers)
+    {
+        if (servers == null)
+            return;
+
+        SocketJackCopilotBrowserCacheState state = ReadState();
+        state.SavedAtUtc = DateTimeOffset.UtcNow;
+        state.Servers = servers.Select(FromServerCandidate).ToList();
+        WriteState(state);
+    }
+
+    public bool TryLoadModels(SocketJackServerCandidate server, out SocketJackModelDiscoveryResult result)
+    {
+        result = new SocketJackModelDiscoveryResult(Array.Empty<SocketJackModelCandidate>(), Array.Empty<string>());
+        SocketJackCopilotBrowserCacheState state = ReadState();
+        if (!state.ModelsByServer.TryGetValue(ServerKey(server), out SocketJackCachedModelSet? modelSet) ||
+            modelSet.Models.Count == 0)
+        {
+            return false;
+        }
+
+        SocketJackModelCandidate[] models = modelSet.Models
+            .Select(ToModelCandidate)
+            .Where(model => !string.IsNullOrWhiteSpace(model.Id))
+            .OrderByDescending(model => model.IsSelectable)
+            .ThenByDescending(model => model.IsLoaded)
+            .ThenBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        result = new SocketJackModelDiscoveryResult(models, Array.Empty<string>());
+        return models.Length > 0;
+    }
+
+    public void SaveModels(SocketJackServerCandidate server, SocketJackModelDiscoveryResult models)
+    {
+        if (server == null || models == null || models.Models.Count == 0)
+            return;
+
+        SocketJackCopilotBrowserCacheState state = ReadState();
+        state.ModelsByServer[ServerKey(server)] = new SocketJackCachedModelSet
+        {
+            SavedAtUtc = DateTimeOffset.UtcNow,
+            Models = models.Models.Select(FromModelCandidate).ToList()
+        };
+        WriteState(state);
+    }
+
+    private SocketJackCopilotBrowserCacheState ReadState()
+    {
+        try
+        {
+            if (!File.Exists(_cachePath))
+                return new SocketJackCopilotBrowserCacheState();
+
+            string json = File.ReadAllText(_cachePath);
+            if (string.IsNullOrWhiteSpace(json))
+                return new SocketJackCopilotBrowserCacheState();
+
+            return JsonSerializer.Deserialize<SocketJackCopilotBrowserCacheState>(json, JsonOptions) ?? new SocketJackCopilotBrowserCacheState();
+        }
+        catch (Exception ex) when (!(ex is OperationCanceledException))
+        {
+            return new SocketJackCopilotBrowserCacheState();
+        }
+    }
+
+    private void WriteState(SocketJackCopilotBrowserCacheState state)
+    {
+        string? directory = Path.GetDirectoryName(_cachePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        File.WriteAllText(_cachePath, JsonSerializer.Serialize(state, JsonOptions), new UTF8Encoding(false));
+    }
+
+    private static string ServerKey(SocketJackServerCandidate server)
+    {
+        string key = FirstNonEmpty(server?.Id ?? "", server?.EffectiveEndpoint ?? "", server?.DisplayName ?? "");
+        return string.IsNullOrWhiteSpace(key) ? "server" : key.Trim().ToLowerInvariant();
+    }
+
+    private static SocketJackCachedServer FromServerCandidate(SocketJackServerCandidate server)
+    {
+        return new SocketJackCachedServer
+        {
+            Id = server.Id,
+            DisplayName = server.DisplayName,
+            Endpoint = server.Endpoint,
+            ConnectHost = server.ConnectHost,
+            ProxyPort = server.ProxyPort,
+            Online = server.Online,
+            HostResponding = server.HostResponding,
+            ToolsAdvertised = server.ToolsAdvertised,
+            ToolsAllowed = server.ToolsAllowed,
+            Hardware = server.Hardware,
+            PaymentStatus = server.PaymentStatus,
+            LeaseStatus = server.LeaseStatus,
+            DirectMcpUrl = server.DirectMcpUrl,
+            OpenAiBaseUrl = server.OpenAiBaseUrl,
+            AvailableModels = server.AvailableModels.ToList(),
+            ModelCapabilitiesJson = ToJson(server.ModelCapabilitiesJson),
+            ModelCapabilitiesArray = ToJson(server.ModelCapabilitiesArray),
+            ModelBenchmarksJson = ToJson(server.ModelBenchmarksJson),
+            Raw = ToJson(server.Raw)
+        };
+    }
+
+    private static SocketJackServerCandidate ToServerCandidate(SocketJackCachedServer cached)
+    {
+        var server = new SocketJackServerCandidate
+        {
+            Id = cached.Id,
+            DisplayName = FirstNonEmpty(cached.DisplayName, cached.Id),
+            Endpoint = cached.Endpoint,
+            ConnectHost = cached.ConnectHost,
+            ProxyPort = cached.ProxyPort,
+            Online = cached.Online,
+            HostResponding = cached.HostResponding,
+            ToolsAdvertised = cached.ToolsAdvertised,
+            ToolsAllowed = cached.ToolsAllowed,
+            Hardware = cached.Hardware,
+            PaymentStatus = cached.PaymentStatus,
+            LeaseStatus = cached.LeaseStatus,
+            DirectMcpUrl = cached.DirectMcpUrl,
+            OpenAiBaseUrl = cached.OpenAiBaseUrl,
+            ModelCapabilitiesJson = ParseObject(cached.ModelCapabilitiesJson),
+            ModelCapabilitiesArray = ParseArray(cached.ModelCapabilitiesArray),
+            ModelBenchmarksJson = ParseObject(cached.ModelBenchmarksJson),
+            Raw = ParseObject(cached.Raw)
+        };
+
+        server.AvailableModels.AddRange(cached.AvailableModels.Where(model => !string.IsNullOrWhiteSpace(model)));
+        return server;
+    }
+
+    private static SocketJackCachedModel FromModelCandidate(SocketJackModelCandidate model)
+    {
+        return new SocketJackCachedModel
+        {
+            Id = model.Id,
+            DisplayName = model.DisplayName,
+            Type = model.Type,
+            ChatCapable = model.ChatCapable,
+            SupportsTools = model.SupportsTools,
+            SupportsVision = model.SupportsVision,
+            IsLoaded = model.IsLoaded,
+            RuntimeLoadable = model.RuntimeLoadable,
+            WebChatDynamicLoadable = model.WebChatDynamicLoadable,
+            Enabled = model.Enabled,
+            DisabledReason = model.DisabledReason,
+            MaxInputTokens = model.MaxInputTokens,
+            MaxOutputTokens = model.MaxOutputTokens,
+            RawCompact = ToJson(model.RawCompact),
+            RawRuntime = ToJson(model.RawRuntime)
+        };
+    }
+
+    private static SocketJackModelCandidate ToModelCandidate(SocketJackCachedModel cached)
+    {
+        return new SocketJackModelCandidate
+        {
+            Id = cached.Id,
+            DisplayName = FirstNonEmpty(cached.DisplayName, cached.Id),
+            Type = cached.Type,
+            ChatCapable = cached.ChatCapable,
+            SupportsTools = cached.SupportsTools,
+            SupportsVision = cached.SupportsVision,
+            IsLoaded = cached.IsLoaded,
+            RuntimeLoadable = cached.RuntimeLoadable,
+            WebChatDynamicLoadable = cached.WebChatDynamicLoadable,
+            Enabled = cached.Enabled,
+            DisabledReason = cached.DisabledReason,
+            MaxInputTokens = cached.MaxInputTokens,
+            MaxOutputTokens = cached.MaxOutputTokens,
+            RawCompact = ParseObject(cached.RawCompact),
+            RawRuntime = ParseObject(cached.RawRuntime)
+        };
+    }
+
+    private static string ToJson(JsonNode? node) => node == null ? "" : node.ToJsonString();
+
+    private static JsonObject? ParseObject(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonNode.Parse(json) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonArray? ParseArray(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonNode.Parse(json) as JsonArray;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (string value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return "";
+    }
+
+    private sealed class SocketJackCopilotBrowserCacheState
+    {
+        public DateTimeOffset SavedAtUtc { get; set; }
+        public List<SocketJackCachedServer> Servers { get; set; } = new();
+        public Dictionary<string, SocketJackCachedModelSet> ModelsByServer { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class SocketJackCachedServer
+    {
+        public string Id { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Endpoint { get; set; } = "";
+        public string ConnectHost { get; set; } = "";
+        public int? ProxyPort { get; set; }
+        public bool Online { get; set; }
+        public bool HostResponding { get; set; }
+        public bool ToolsAdvertised { get; set; }
+        public string ToolsAllowed { get; set; } = "";
+        public string Hardware { get; set; } = "";
+        public string PaymentStatus { get; set; } = "";
+        public string LeaseStatus { get; set; } = "";
+        public string DirectMcpUrl { get; set; } = "";
+        public string OpenAiBaseUrl { get; set; } = "";
+        public List<string> AvailableModels { get; set; } = new();
+        public string ModelCapabilitiesJson { get; set; } = "";
+        public string ModelCapabilitiesArray { get; set; } = "";
+        public string ModelBenchmarksJson { get; set; } = "";
+        public string Raw { get; set; } = "";
+    }
+
+    private sealed class SocketJackCachedModelSet
+    {
+        public DateTimeOffset SavedAtUtc { get; set; }
+        public List<SocketJackCachedModel> Models { get; set; } = new();
+    }
+
+    private sealed class SocketJackCachedModel
+    {
+        public string Id { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Type { get; set; } = "";
+        public bool ChatCapable { get; set; }
+        public bool SupportsTools { get; set; }
+        public bool SupportsVision { get; set; }
+        public bool IsLoaded { get; set; }
+        public bool RuntimeLoadable { get; set; }
+        public bool WebChatDynamicLoadable { get; set; }
+        public bool Enabled { get; set; } = true;
+        public string DisabledReason { get; set; } = "";
+        public int? MaxInputTokens { get; set; }
+        public int? MaxOutputTokens { get; set; }
+        public string RawCompact { get; set; } = "";
+        public string RawRuntime { get; set; } = "";
+    }
+}
+
 public sealed class SocketJackMasterListClient
 {
     public static readonly string[] DefaultMasterListUrls =
@@ -1207,6 +1517,36 @@ public sealed class BridgeLaunchInfo
 
 public static class SocketJackBridgeLaunchBuilder
 {
+    public static BridgeLaunchInfo CreateStdioLaunchFromExecutable(
+        string bridgeExecutablePath,
+        SocketJackServerCandidate server,
+        SocketJackModelCandidate model,
+        string? authToken = null,
+        string? authUserName = null)
+    {
+        var args = new List<string>
+        {
+            "--stdio",
+            "--server-endpoint",
+            server.EffectiveEndpoint,
+            "--server-id",
+            server.Id,
+            "--server-name",
+            server.DisplayName,
+            "--model",
+            model.Id
+        };
+
+        if (!string.IsNullOrWhiteSpace(authToken))
+        {
+            args.Add("--auth-token");
+            args.Add(authToken!);
+        }
+
+        AddAuthUser(args, authUserName);
+        return new BridgeLaunchInfo(bridgeExecutablePath, args);
+    }
+
     public static BridgeLaunchInfo CreateStdioLaunchFromDll(
         string bridgeDllPath,
         SocketJackServerCandidate server,
@@ -1345,6 +1685,41 @@ public static class SocketJackBridgeLaunchBuilder
 
         AddAuthUser(args, authUserName);
         return new BridgeLaunchInfo("dotnet", args);
+    }
+
+    public static BridgeLaunchInfo CreateHttpProxyLaunchFromExecutable(
+        string bridgeExecutablePath,
+        SocketJackServerCandidate server,
+        SocketJackModelCandidate model,
+        int listenPort,
+        string? authToken = null,
+        string? authUserName = null)
+    {
+        var args = new List<string>
+        {
+            "--http-proxy",
+            "--server-endpoint",
+            server.EffectiveEndpoint,
+            "--server-id",
+            server.Id,
+            "--server-name",
+            server.DisplayName,
+            "--model",
+            model.Id,
+            "--listen-port",
+            listenPort.ToString(CultureInfo.InvariantCulture)
+        };
+
+        AddRemoteProxyGuards(args, server);
+
+        if (!string.IsNullOrWhiteSpace(authToken))
+        {
+            args.Add("--auth-token");
+            args.Add(authToken!);
+        }
+
+        AddAuthUser(args, authUserName);
+        return new BridgeLaunchInfo(bridgeExecutablePath, args);
     }
 
     private static void AddRemoteProxyGuards(List<string> args, SocketJackServerCandidate server)

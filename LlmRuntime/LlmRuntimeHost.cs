@@ -2623,7 +2623,7 @@ public sealed class LlmRuntimeHost : IDisposable
         if (RejectGenerationModelChatRequest(chatRequest, request, stream))
             return;
 
-        ApplyAutomaticCompletionBudget(chatRequest);
+        ApplyPromptContextBudget(chatRequest);
 
         if (chatRequest.Stream)
         {
@@ -2651,25 +2651,217 @@ public sealed class LlmRuntimeHost : IDisposable
         return true;
     }
 
-    private void ApplyAutomaticCompletionBudget(LlmChatRequest request)
-    {
-        if (request.MaxTokensSpecified)
-            return;
-
-        request.MaxTokens = ResolveAutomaticCompletionBudget(request);
-    }
-
-    private int ResolveAutomaticCompletionBudget(LlmChatRequest request)
+    private void ApplyPromptContextBudget(LlmChatRequest request)
     {
         int contextLength = ResolveContextLength(request.Model);
-        int promptTokens = LlmInferenceMetrics.EstimateTokens(string.Join(Environment.NewLine, request.Messages.Select(message => message.Content)));
-        int reservedTokens = Math.Max(256, contextLength / 16);
+        ApplyContextCompressionForInference(request, contextLength);
+        ApplyAutomaticCompletionBudget(request, contextLength);
+    }
+
+    private void ApplyAutomaticCompletionBudget(LlmChatRequest request, int contextLength)
+    {
+        int promptTokens = EstimatePromptTokens(request.Messages);
+        int reservedTokens = GetPromptSafetyReserve(contextLength);
+        int available = contextLength - promptTokens - reservedTokens;
+
+        if (request.MaxTokensSpecified)
+        {
+            if (available > 0)
+                request.MaxTokens = Math.Clamp(Math.Min(request.MaxTokens, available), 1, Math.Max(1, available));
+            return;
+        }
+
+        request.MaxTokens = ResolveAutomaticCompletionBudget(contextLength, promptTokens);
+    }
+
+    private static int ResolveAutomaticCompletionBudget(int contextLength, int promptTokens)
+    {
+        int reservedTokens = GetPromptSafetyReserve(contextLength);
         int available = contextLength - promptTokens - reservedTokens;
 
         if (available > 0)
             return Math.Clamp(available, 128, LlmChatRequest.DefaultMaxCompletionTokens);
 
         return Math.Clamp(contextLength / 4, 128, LlmChatRequest.DefaultMaxCompletionTokens);
+    }
+
+    internal static void ApplyContextCompressionForInference(LlmChatRequest request, int contextLength)
+    {
+        if (request == null)
+            return;
+
+        int targetPromptTokens = GetTargetPromptTokens(contextLength, request.MaxTokens);
+        if (EstimatePromptTokens(request.Messages) <= targetPromptTokens)
+            return;
+
+        request.Messages = BuildCompressedPromptMessages(request.Messages, targetPromptTokens);
+    }
+
+    internal static IReadOnlyList<LlmChatMessage> BuildCompressedPromptMessages(IReadOnlyList<LlmChatMessage> messages, int targetPromptTokens)
+    {
+        var source = (messages ?? Array.Empty<LlmChatMessage>())
+            .Where(message => message != null && !string.IsNullOrWhiteSpace(message.Content))
+            .ToList();
+        if (source.Count == 0)
+            return Array.Empty<LlmChatMessage>();
+
+        int targetChars = Math.Max(800, targetPromptTokens * 4);
+        int lastUserIndex = FindLastMessageIndex(source, "user");
+        int tailStart = Math.Max(0, source.Count - 8);
+        if (lastUserIndex >= 0)
+            tailStart = Math.Min(tailStart, lastUserIndex);
+
+        var leadingSystem = source
+            .Select((message, index) => new { message, index })
+            .FirstOrDefault(item => item.index < tailStart && item.message.Role.Equals("system", StringComparison.OrdinalIgnoreCase));
+
+        var result = new List<LlmChatMessage>();
+        var omitted = new List<LlmChatMessage>();
+        for (int i = 0; i < source.Count; i++)
+        {
+            if (leadingSystem != null && i == leadingSystem.index)
+                continue;
+            if (i < tailStart)
+                omitted.Add(source[i]);
+        }
+
+        int systemLimit = Math.Max(800, Math.Min(targetChars / 3, 6000));
+        if (leadingSystem != null)
+            result.Add(new LlmChatMessage("system", CompressTextMiddle(leadingSystem.message.Content, systemLimit, "system prompt")));
+
+        if (omitted.Count > 0)
+            result.Add(new LlmChatMessage("system", BuildContextCompressionSummary(omitted, Math.Max(800, Math.Min(targetChars / 4, 5000)))));
+
+        int tailLimit = Math.Max(400, Math.Min(targetChars / Math.Max(2, source.Count - tailStart + 1), 5000));
+        for (int i = tailStart; i < source.Count; i++)
+        {
+            LlmChatMessage message = source[i];
+            result.Add(new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, tailLimit, message.Role + " message")));
+        }
+
+        return TightenCompressedPromptMessages(result, targetPromptTokens);
+    }
+
+    private static IReadOnlyList<LlmChatMessage> TightenCompressedPromptMessages(IReadOnlyList<LlmChatMessage> messages, int targetPromptTokens)
+    {
+        if (EstimatePromptTokens(messages) <= targetPromptTokens)
+            return messages;
+
+        int targetChars = Math.Max(400, targetPromptTokens * 4);
+        int perMessageLimit = Math.Max(240, targetChars / Math.Max(1, messages.Count));
+        var tightened = messages
+            .Select(message => new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, perMessageLimit, message.Role + " message")))
+            .ToList();
+
+        if (EstimatePromptTokens(tightened) <= targetPromptTokens)
+            return tightened;
+
+        string lastUser = tightened.LastOrDefault(message => message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Content ?? "";
+        string summary = BuildContextCompressionSummary(tightened, Math.Max(300, targetChars - Math.Min(targetChars / 2, Math.Max(240, lastUser.Length))));
+        var compact = new List<LlmChatMessage>
+        {
+            new("system", summary)
+        };
+        if (!string.IsNullOrWhiteSpace(lastUser))
+            compact.Add(new LlmChatMessage("user", CompressTextMiddle(lastUser, Math.Max(240, targetChars / 2), "latest user message")));
+
+        return compact;
+    }
+
+    private static string BuildContextCompressionSummary(IReadOnlyList<LlmChatMessage> messages, int maxChars)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("[Compressed conversation context]");
+        builder.AppendLine("Older context was compacted by JackLLM before inference to stay within the model context window. Use this only for continuity; the latest user message remains authoritative.");
+
+        int takeHead = Math.Min(2, messages.Count);
+        int takeTail = Math.Min(6, Math.Max(0, messages.Count - takeHead));
+        for (int i = 0; i < takeHead; i++)
+            AppendCompressedMessageLine(builder, messages[i], i + 1);
+        int omitted = Math.Max(0, messages.Count - takeHead - takeTail);
+        if (omitted > 0)
+            builder.Append("- [").Append(omitted.ToString(CultureInfo.InvariantCulture)).AppendLine(" middle messages compressed.]");
+        for (int i = Math.Max(takeHead, messages.Count - takeTail); i < messages.Count; i++)
+            AppendCompressedMessageLine(builder, messages[i], i + 1);
+
+        return CompressTextMiddle(builder.ToString().Trim(), maxChars, "compressed context");
+    }
+
+    private static void AppendCompressedMessageLine(StringBuilder builder, LlmChatMessage message, int index)
+    {
+        string role = string.IsNullOrWhiteSpace(message.Role) ? "message" : message.Role.Trim();
+        string text = NormalizeCompressedContextText(message.Content, 900);
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        builder.Append("- ")
+            .Append(char.ToUpperInvariant(role[0]))
+            .Append(role.Length > 1 ? role.Substring(1) : "")
+            .Append(" #")
+            .Append(index.ToString(CultureInfo.InvariantCulture))
+            .Append(": ")
+            .AppendLine(text.Replace("\n", "\n  "));
+    }
+
+    private static int FindLastMessageIndex(IReadOnlyList<LlmChatMessage> messages, string role)
+    {
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            if (messages[i].Role.Equals(role, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static int EstimatePromptTokens(IReadOnlyList<LlmChatMessage> messages)
+    {
+        if (messages == null || messages.Count == 0)
+            return 0;
+
+        return LlmInferenceMetrics.EstimateTokens(string.Join(Environment.NewLine, messages.Select(message => message.Content)));
+    }
+
+    private static int GetTargetPromptTokens(int contextLength, int maxTokens)
+    {
+        contextLength = Math.Clamp(contextLength, 512, 131072);
+        int requestedCompletion = Math.Clamp(maxTokens <= 0 ? LlmChatRequest.DefaultMaxCompletionTokens : maxTokens, 1, contextLength);
+        int reserve = GetPromptSafetyReserve(contextLength);
+        int target = contextLength - Math.Min(requestedCompletion, Math.Max(128, contextLength / 3)) - reserve;
+        return Math.Max(128, Math.Min(target, Math.Max(128, contextLength - reserve - 64)));
+    }
+
+    private static int GetPromptSafetyReserve(int contextLength)
+    {
+        return Math.Max(96, Math.Min(1024, contextLength / 16));
+    }
+
+    private static string NormalizeCompressedContextText(string text, int maxChars)
+    {
+        text = (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        text = Regex.Replace(text, "[ \\t]+", " ");
+        text = Regex.Replace(text, "\\n{3,}", "\n\n");
+        return CompressTextMiddle(text, maxChars, "message");
+    }
+
+    private static string CompressTextMiddle(string text, int maxChars, string label)
+    {
+        text ??= "";
+        maxChars = Math.Max(80, maxChars);
+        if (text.Length <= maxChars)
+            return text;
+
+        string marker = "\n[" + (string.IsNullOrWhiteSpace(label) ? "context" : label.Trim()) + " compressed]\n";
+        int keep = Math.Max(0, maxChars - marker.Length);
+        int head = Math.Max(20, keep / 2);
+        int tail = Math.Max(20, keep - head);
+        if (head + tail + marker.Length >= text.Length)
+            return text;
+
+        return text.Substring(0, head).TrimEnd() + marker + text.Substring(text.Length - tail).TrimStart();
     }
 
     private int ResolveContextLength(string model)
@@ -2693,13 +2885,6 @@ public sealed class LlmRuntimeHost : IDisposable
     {
         try
         {
-            if (TryBuildDeterministicExactReply(request, out var deterministicResult))
-            {
-                stream.ContentType = "application/json";
-                stream.Write(ToJson(ToOpenAiChatCompletion(deterministicResult, request)));
-                return;
-            }
-
             var result = await CompleteChatWithToolsAsync(request, cancellationToken).ConfigureAwait(false);
             stream.ContentType = "application/json";
             stream.Write(ToJson(ToOpenAiChatCompletion(result, request)));
@@ -3126,12 +3311,6 @@ public sealed class LlmRuntimeHost : IDisposable
         stream.LowLatencyMode = true;
         stream.SetHeader("X-SocketJack-Low-Latency", "1");
 
-        if (TryBuildDeterministicExactReply(request, out var deterministicResult))
-        {
-            WriteDeterministicChatStream(request, deterministicResult, stream);
-            return;
-        }
-
         string resolvedModel;
         try
         {
@@ -3159,7 +3338,7 @@ public sealed class LlmRuntimeHost : IDisposable
         }
 
         request.Model = resolvedModel;
-        ApplyAutomaticCompletionBudget(request);
+        ApplyPromptContextBudget(request);
         string id = NewCompletionId("chatcmpl");
         long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         int completionTokens = 0;
@@ -3204,7 +3383,8 @@ public sealed class LlmRuntimeHost : IDisposable
                 {
                     if (!string.IsNullOrEmpty(result.Content))
                         WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, result.Content, null, null, null)));
-                    WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", null, string.IsNullOrWhiteSpace(result.FinishReason) ? "stop" : result.FinishReason, new { usage = toolUsage, stats = toolStats, session = ToSessionCompatibilityPayload(request, toolUsage.prompt_tokens, completionTokens) })));
+                    string finishReason = NormalizeFinishReasonForBudget(result.FinishReason, request.MaxTokens, completionTokens);
+                    WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", null, finishReason, new { usage = toolUsage, stats = toolStats, session = ToSessionCompatibilityPayload(request, toolUsage.prompt_tokens, completionTokens) })));
                 }
 
                 WriteSseData(stream, "[DONE]");
@@ -3213,10 +3393,17 @@ public sealed class LlmRuntimeHost : IDisposable
 
             WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", "assistant", null, null)));
 
+            string streamFinishReason = "stop";
             await foreach (var token in Registry.StreamChatAsync(request, cancellationToken).ConfigureAwait(false))
             {
-                completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
-                WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, token.Text, null, null, null)));
+                if (!string.IsNullOrWhiteSpace(token.FinishReason))
+                    streamFinishReason = token.FinishReason;
+
+                if (!string.IsNullOrEmpty(token.Text))
+                {
+                    completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
+                    WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, token.Text, null, null, null)));
+                }
             }
 
             stopwatch.Stop();
@@ -3233,7 +3420,8 @@ public sealed class LlmRuntimeHost : IDisposable
                 managed_memory_bytes = GC.GetTotalMemory(false)
             };
 
-            WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", null, "stop", new { usage, stats, session = ToSessionCompatibilityPayload(request, usage.prompt_tokens, completionTokens) })));
+            string finalStreamFinishReason = NormalizeFinishReasonForBudget(streamFinishReason, request.MaxTokens, completionTokens);
+            WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", null, finalStreamFinishReason, new { usage, stats, session = ToSessionCompatibilityPayload(request, usage.prompt_tokens, completionTokens) })));
             WriteSseData(stream, "[DONE]");
         }
         catch (LlmRuntimeException ex)
@@ -3484,102 +3672,6 @@ public sealed class LlmRuntimeHost : IDisposable
         if (ToolChoiceForcesTool(request))
             return false;
         return !PromptLooksLikeToolUse(request);
-    }
-
-    private static bool TryBuildDeterministicExactReply(LlmChatRequest request, out LlmChatResult result)
-    {
-        result = null!;
-        if (request == null || ToolChoiceForcesTool(request))
-            return false;
-
-        string prompt = request.Messages
-            .LastOrDefault(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
-            ?.Content ?? "";
-        if (string.IsNullOrWhiteSpace(prompt) ||
-            PromptLooksLikeToolUse(request) ||
-            !TryExtractExactReplyText(prompt, out string exactText))
-            return false;
-
-        if (string.IsNullOrWhiteSpace(exactText))
-            return false;
-
-        if (request.MaxTokens > 0 &&
-            LlmInferenceMetrics.EstimateTokens(exactText) > request.MaxTokens)
-            return false;
-
-        result = new LlmChatResult
-        {
-            Model = request.Model,
-            Content = exactText,
-            FinishReason = "stop",
-            Metrics = LlmInferenceMetrics.FromText(request, exactText, TimeSpan.Zero)
-        };
-        return true;
-    }
-
-    private static bool TryExtractExactReplyText(string prompt, out string exactText)
-    {
-        exactText = "";
-        if (string.IsNullOrWhiteSpace(prompt))
-            return false;
-
-        string[] patterns =
-        [
-            @"\b(?:reply|respond|answer|say)\s+(?:with\s+)?exactly\s*:?\s*(?:""(?<dq>[^""]{1,400})""|'(?<sq>[^']{1,400})'|`(?<bt>[^`]{1,400})`|(?<plain>[^\r\n.!?]{1,200}))",
-            @"\b(?:return|output|print)\s+(?:only|exactly)\s*:?\s*(?:""(?<dq>[^""]{1,400})""|'(?<sq>[^']{1,400})'|`(?<bt>[^`]{1,400})`|(?<plain>[^\r\n.!?]{1,200}))"
-        ];
-
-        foreach (string pattern in patterns)
-        {
-            var match = Regex.Match(prompt, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            if (!match.Success)
-                continue;
-
-            string value = FirstNonEmptyString(
-                match.Groups["dq"].Value,
-                match.Groups["sq"].Value,
-                match.Groups["bt"].Value,
-                match.Groups["plain"].Value);
-            value = Regex.Replace(value ?? "", @"\s*/no_think\s*$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                exactText = value;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static void WriteDeterministicChatStream(LlmChatRequest request, LlmChatResult result, ChunkedStream stream)
-    {
-        stream.ContentType = "text/event-stream";
-        string id = NewCompletionId("chatcmpl");
-        long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        int promptTokens = result.Metrics.PromptTokens > 0
-            ? result.Metrics.PromptTokens
-            : LlmInferenceMetrics.EstimateTokens(string.Join(Environment.NewLine, request.Messages.Select(message => message.Content)));
-        int completionTokens = result.Metrics.CompletionTokens > 0
-            ? result.Metrics.CompletionTokens
-            : LlmInferenceMetrics.EstimateTokens(result.Content);
-        var usage = new
-        {
-            prompt_tokens = promptTokens,
-            completion_tokens = completionTokens,
-            total_tokens = promptTokens + completionTokens
-        };
-        var stats = new
-        {
-            elapsed_seconds = result.Metrics.ElapsedSeconds,
-            tokens_per_second = result.Metrics.TokensPerSecond,
-            managed_memory_bytes = result.Metrics.ManagedMemoryBytes
-        };
-
-        WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", "assistant", null, null)));
-        if (!string.IsNullOrEmpty(result.Content))
-            WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, result.Content, null, null, null)));
-        WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", null, "stop", new { usage, stats, session = ToSessionCompatibilityPayload(request, promptTokens, completionTokens) })));
-        WriteSseData(stream, "[DONE]");
     }
 
     private static bool ToolChoiceRequestsNoTool(LlmChatRequest request)
@@ -4053,16 +4145,20 @@ public sealed class LlmRuntimeHost : IDisposable
     {
         string id = NewCompletionId("chatcmpl");
         long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        string finishReason = request == null
+            ? result.FinishReason
+            : NormalizeFinishReasonForBudget(result.FinishReason, request.MaxTokens, result.Metrics.CompletionTokens);
+        string visibleContent = StripHiddenReasoningTags(result.Content);
         object message = result.ToolCalls.Count == 0
             ? new
             {
                 role = "assistant",
-                content = result.Content
+                content = visibleContent
             }
             : new
             {
                 role = "assistant",
-                content = result.Content,
+                content = visibleContent,
                 tool_calls = result.ToolCalls.Select(ToOpenAiToolCall).ToArray()
             };
 
@@ -4078,7 +4174,7 @@ public sealed class LlmRuntimeHost : IDisposable
                 {
                     index = 0,
                     message,
-                    finish_reason = result.FinishReason
+                    finish_reason = finishReason
                 }
             },
             usage = new
@@ -4119,6 +4215,37 @@ public sealed class LlmRuntimeHost : IDisposable
             arguments = call.Arguments.GetRawText()
         }
     };
+
+    private static string StripHiddenReasoningTags(string content)
+    {
+        if (string.IsNullOrEmpty(content))
+            return "";
+
+        string cleaned = Regex.Replace(
+            content,
+            "(?is)<\\s*(think|thinking|thought|analysis)\\s*>.*?(?:<\\s*/\\s*\\1\\s*>|$)",
+            "",
+            RegexOptions.CultureInvariant);
+        cleaned = Regex.Replace(
+            cleaned,
+            "(?is)<\\s*/\\s*(think|thinking|thought|analysis)\\s*>",
+            "",
+            RegexOptions.CultureInvariant);
+        return string.IsNullOrWhiteSpace(cleaned) ? "" : cleaned;
+    }
+
+    private static string NormalizeFinishReasonForBudget(string? finishReason, int maxTokens, int completionTokens)
+    {
+        string normalized = string.IsNullOrWhiteSpace(finishReason) ? "stop" : finishReason;
+        if (string.Equals(normalized, "stop", StringComparison.OrdinalIgnoreCase) &&
+            maxTokens > 0 &&
+            completionTokens >= maxTokens)
+        {
+            return "length";
+        }
+
+        return normalized;
+    }
 
     private static object ToOpenAiToolCallChunk(string id, long created, string model, IReadOnlyList<LlmToolCall> toolCalls, string? finishReason, object? extra)
     {

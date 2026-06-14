@@ -15,6 +15,11 @@
       <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,8"
                  IsEnabled="{Binding SessionControlsEnabled}">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button Content="Import Repo"
+                  MinWidth="92"
+                  Margin="4,0,0,0"
+                  Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                  Command="{Binding ShowImportRepoCommand}" />
           <Button Content="Refresh"
                   MinWidth="72"
                   Margin="4,0,0,0"
@@ -169,6 +174,64 @@
                 VerticalAlignment="Center"
                 Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
                 Command="{Binding CreateSessionCommand}" />
+      </Grid>
+
+      <Grid Grid.RowSpan="3" Background="#DD202020">
+        <Grid.Style>
+          <Style TargetType="{x:Type Grid}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding IsImportRepoVisible}" Value="True">
+                <Setter Property="Visibility" Value="Visible" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Grid.Style>
+        <Border Width="520"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="#303030"
+                BorderBrush="#585858"
+                BorderThickness="1"
+                Padding="16">
+          <StackPanel>
+            <TextBlock Text="Import GitHub Repository"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,10" />
+            <DockPanel LastChildFill="True">
+              <Button DockPanel.Dock="Right"
+                      Content="Import"
+                      MinWidth="80"
+                      Margin="8,0,0,0"
+                      Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                      Command="{Binding ImportRepoCommand}" />
+              <TextBox MinHeight="26"
+                       Text="{Binding ImportRepository, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                       Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+            </DockPanel>
+            <TextBox MinHeight="26"
+                     Margin="0,8,0,0"
+                     ToolTip="Optional GitHub token for private repositories"
+                     Text="{Binding ImportGitHubToken, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     FontFamily="Wingdings"
+                     Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+            <TextBlock Text="{Binding ImportRepoError}"
+                       Foreground="#FF6F6F"
+                       TextWrapping="Wrap"
+                       Margin="0,8,0,0" />
+            <TextBlock Text="{Binding ImportRepoStatus}"
+                       Foreground="#CFCFCF"
+                       TextWrapping="Wrap"
+                       Margin="0,8,0,0" />
+            <Button Content="Close"
+                    MinWidth="80"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,0,0"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding CancelImportRepoCommand}" />
+          </StackPanel>
+        </Border>
       </Grid>
 
       <Grid Grid.RowSpan="3" Background="#DD202020">

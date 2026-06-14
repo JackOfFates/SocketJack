@@ -172,12 +172,44 @@ namespace SocketJack.Net {
         }
 
         private async Task ConnectAndPumpAsync(MutableTcpServer server, NetworkConnection connection, State state) {
-            ClientWebSocket upstream = new ClientWebSocket();
+            ClientWebSocket upstream = null;
             try {
-                using (CancellationTokenSource connectCts = CancellationTokenSource.CreateLinkedTokenSource(state.Cancellation.Token)) {
-                    int timeout = Math.Max(1000, state.Endpoint.ConnectTimeoutMs);
-                    connectCts.CancelAfter(timeout);
-                    await upstream.ConnectAsync(state.Endpoint.UpstreamUri, connectCts.Token).ConfigureAwait(false);
+                int timeout = Math.Max(90000, state.Endpoint.ConnectTimeoutMs);
+                DateTimeOffset deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeout);
+                Exception lastConnectError = null;
+                bool loggedWaiting = false;
+
+                while (!state.Cancellation.IsCancellationRequested) {
+                    TimeSpan remaining = deadline - DateTimeOffset.UtcNow;
+                    if (remaining <= TimeSpan.Zero)
+                        break;
+
+                    upstream = new ClientWebSocket();
+                    try {
+                        using (CancellationTokenSource connectCts = CancellationTokenSource.CreateLinkedTokenSource(state.Cancellation.Token)) {
+                            TimeSpan attemptTimeout = remaining < TimeSpan.FromSeconds(5) ? remaining : TimeSpan.FromSeconds(5);
+                            connectCts.CancelAfter(attemptTimeout);
+                            await upstream.ConnectAsync(state.Endpoint.UpstreamUri, connectCts.Token).ConfigureAwait(false);
+                        }
+                        break;
+                    } catch (OperationCanceledException ex) when (!state.Cancellation.IsCancellationRequested && DateTimeOffset.UtcNow < deadline) {
+                        lastConnectError = ex;
+                    } catch (Exception ex) when (DateTimeOffset.UtcNow < deadline) {
+                        lastConnectError = ex;
+                    }
+
+                    try { upstream.Dispose(); } catch { }
+                    upstream = null;
+                    if (!loggedWaiting) {
+                        loggedWaiting = true;
+                        _log?.Invoke("[PersonaPlex] Bridge waiting for upstream server at " + state.Endpoint.UpstreamUri);
+                    }
+                    await Task.Delay(1000, state.Cancellation.Token).ConfigureAwait(false);
+                }
+
+                if (upstream == null || upstream.State != WebSocketState.Open) {
+                    string detail = lastConnectError == null ? "timed out" : lastConnectError.Message;
+                    throw new TimeoutException("PersonaPlex upstream server did not accept a WebSocket connection: " + detail);
                 }
 
                 List<PendingFrame> pending;
@@ -197,6 +229,9 @@ namespace SocketJack.Net {
             } catch (OperationCanceledException) {
                 if (!state.Cancellation.IsCancellationRequested)
                     SendPersonaPlexError(connection, state, "PersonaPlex bridge timed out connecting to the upstream server.");
+            } catch (TimeoutException ex) {
+                SendPersonaPlexError(connection, state, ex.Message);
+                _log?.Invoke("[PersonaPlex] Bridge timed out: " + ex.Message);
             } catch (Exception ex) {
                 SendPersonaPlexError(connection, state, "PersonaPlex bridge failed: " + ex.Message);
                 _log?.Invoke("[PersonaPlex] Bridge failed: " + ex.Message);

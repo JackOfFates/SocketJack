@@ -232,6 +232,7 @@ namespace LmVs
         public string Title { get; set; }
         public string OwnerKey { get; set; }
         public string ParticipantKey { get; set; }
+        public string StreamId { get; set; }
         public string Model { get; set; }
         public string Runtime { get; set; }
         public string Status { get; set; }
@@ -353,6 +354,8 @@ namespace LmVs
         public string hfTokenError { get; set; } = "";
         public bool installFootprintFound { get; set; }
         public bool installIncomplete { get; set; }
+        public bool runtimeSupported { get; set; } = true;
+        public string runtimeCompatibilityError { get; set; } = "";
         public List<string> missingComponents { get; set; } = new List<string>();
         public string installRoot { get; set; } = "";
         public string repositoryPath { get; set; } = "";

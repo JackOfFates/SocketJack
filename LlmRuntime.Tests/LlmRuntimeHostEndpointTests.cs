@@ -111,6 +111,30 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
+    public void ContextCompression_PreservesLatestUserMessageAndAddsSummary()
+    {
+        var request = new LlmChatRequest
+        {
+            MaxTokens = 256,
+            Messages = Enumerable.Range(0, 24)
+                .SelectMany(index => new[]
+                {
+                    new LlmChatMessage("user", "older user turn " + index + " " + new string('u', 700)),
+                    new LlmChatMessage("assistant", "older assistant turn " + index + " " + new string('a', 700))
+                })
+                .Append(new LlmChatMessage("user", "latest request: keep this exact task"))
+                .ToArray()
+        };
+
+        LlmRuntimeHost.ApplyContextCompressionForInference(request, contextLength: 1024);
+
+        Assert.IsTrue(request.Messages.Count < 49);
+        StringAssert.Contains(request.Messages[0].Content, "Compressed conversation context");
+        Assert.AreEqual("user", request.Messages[^1].Role);
+        Assert.AreEqual("latest request: keep this exact task", request.Messages[^1].Content);
+    }
+
+    [TestMethod]
     public async Task OpenAiModelsEndpoint_ReturnsList()
     {
         string root = LlmModelRegistryTests.CreateTempDirectory();
@@ -381,6 +405,90 @@ public sealed class LlmRuntimeHostEndpointTests
             Assert.AreEqual(1, factory.SeenMaxTokens.Count);
             Assert.IsTrue(factory.SeenMaxTokens[0] > 512, "Auto max token budget should not use the old short 512-token cap.");
             Assert.IsTrue(factory.SeenMaxTokens[0] <= LlmChatRequest.DefaultMaxCompletionTokens);
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ChatCompletionsEndpoint_DoesNotShortcutExactReplyPrompts()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "NoShortcut-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("backend response"));
+            registry.Load("NoShortcut-Q4_0");
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/chat/completions",
+                new StringContent("{\"model\":\"NoShortcut-Q4_0\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"Say exactly: hello world\"}]}", Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            Assert.AreEqual("backend response", document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ChatCompletionsEndpoint_HidesReasoningTagsFromMessageContent()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "HideThink-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("<think>hidden reasoning</think>visible answer"));
+            registry.Load("HideThink-Q4_0");
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/chat/completions",
+                new StringContent("{\"model\":\"HideThink-Q4_0\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}", Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            Assert.AreEqual("visible answer", document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ChatCompletionsEndpoint_DropsWhitespaceOnlyReasoningResidue()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "HideWhitespace-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("\n<think>hidden reasoning"));
+            registry.Load("HideWhitespace-Q4_0");
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/chat/completions",
+                new StringContent("{\"model\":\"HideWhitespace-Q4_0\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}", Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            Assert.AreEqual("", document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
         }
         finally
         {

@@ -47,6 +47,12 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     private bool hasSessionFile;
     private bool sessionControlsEnabled;
     private bool isSessionBootstrapVisible = true;
+    private bool isImportRepoVisible;
+    private bool isImportingRepo;
+    private string importRepository = "";
+    private string importGitHubToken = "";
+    private string importRepoStatus = "";
+    private string importRepoError = "";
     private List<SessionSyncTreeItem> treeItems = new();
     private SessionSyncSnapshot snapshot = new();
     private SessionSyncIgnoreManifest ignoreManifest = new();
@@ -60,6 +66,9 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         this.RefreshCommand = new AsyncCommand(this.RefreshAsync);
         this.PullCommand = new AsyncCommand(this.PullAsync);
         this.PushCommand = new AsyncCommand(this.PushAsync);
+        this.ShowImportRepoCommand = new AsyncCommand(this.ShowImportRepoAsync);
+        this.CancelImportRepoCommand = new AsyncCommand(this.CancelImportRepoAsync);
+        this.ImportRepoCommand = new AsyncCommand(this.ImportRepoAsync);
         this.CreateSessionCommand = new AsyncCommand(this.CreateSessionAsync);
         this.OpenFileLocationCommand = new AsyncCommand(this.OpenFileLocationAsync);
         this.IgnoreCommand = new AsyncCommand(this.IgnoreAsync);
@@ -93,6 +102,15 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
 
     [DataMember]
     public IAsyncCommand PushCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand ShowImportRepoCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand CancelImportRepoCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand ImportRepoCommand { get; }
 
     [DataMember]
     public IAsyncCommand CreateSessionCommand { get; }
@@ -206,6 +224,137 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         set => this.SetProperty(ref this.isSessionBootstrapVisible, value);
     }
 
+    [DataMember]
+    public bool IsImportRepoVisible
+    {
+        get => this.isImportRepoVisible;
+        set => this.SetProperty(ref this.isImportRepoVisible, value);
+    }
+
+    [DataMember]
+    public bool IsImportingRepo
+    {
+        get => this.isImportingRepo;
+        set => this.SetProperty(ref this.isImportingRepo, value);
+    }
+
+    [DataMember]
+    public string ImportRepository
+    {
+        get => this.importRepository;
+        set => this.SetProperty(ref this.importRepository, value ?? "");
+    }
+
+    [DataMember]
+    public string ImportGitHubToken
+    {
+        get => this.importGitHubToken;
+        set => this.SetProperty(ref this.importGitHubToken, value ?? "");
+    }
+
+    [DataMember]
+    public string ImportRepoStatus
+    {
+        get => this.importRepoStatus;
+        set => this.SetProperty(ref this.importRepoStatus, value ?? "");
+    }
+
+    [DataMember]
+    public string ImportRepoError
+    {
+        get => this.importRepoError;
+        set => this.SetProperty(ref this.importRepoError, value ?? "");
+    }
+
+    private Task ShowImportRepoAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        this.ImportRepoError = "";
+        this.ImportRepoStatus = "";
+        this.IsImportRepoVisible = true;
+        return Task.CompletedTask;
+    }
+
+    private Task CancelImportRepoAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        if (this.IsImportingRepo)
+        {
+            return Task.CompletedTask;
+        }
+
+        this.IsImportRepoVisible = false;
+        this.ImportRepoError = "";
+        this.ImportRepoStatus = "";
+        this.ImportGitHubToken = "";
+        return Task.CompletedTask;
+    }
+
+    private async Task ImportRepoAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        if (this.IsImportingRepo)
+        {
+            return;
+        }
+
+        string repository = (this.ImportRepository ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(repository))
+        {
+            this.ImportRepoError = "Enter a GitHub repository such as owner/repo.";
+            return;
+        }
+
+        this.ImportRepoError = "";
+        this.ImportRepoStatus = "Checking GitHub repository...";
+        this.IsImportingRepo = true;
+        try
+        {
+            await this.RunBusyAsync("Importing GitHub repository...", async token =>
+            {
+                try
+                {
+                    await this.EnsureSignedInAsync(token);
+                    await this.EnsureSolutionStateAsync(token);
+                    this.ThrowIfSessionFileMissing();
+                    SessionSyncRepositoryImportResult result = await this.service.ImportGitHubRepositoryAsync(
+                        this.bridgeSelection,
+                        this.SessionId,
+                        repository,
+                        this.ImportGitHubToken,
+                        token);
+                    this.ImportGitHubToken = "";
+                    foreach (SessionSyncRemoteFile remote in result.Files)
+                    {
+                        this.UpsertRemoteSnapshot(remote);
+                    }
+
+                    string remoteMessage = await this.LoadRemoteMetadataBestEffortAsync(token);
+                    this.BuildTree();
+                    this.SaveSnapshot();
+                    string folder = string.IsNullOrWhiteSpace(result.TargetFolder) ? result.Repository : result.TargetFolder;
+                    string message = "Imported " + result.FileCount.ToString(CultureInfo.InvariantCulture) +
+                        " files into " + folder +
+                        " (" + FormatBytes(result.ZipSizeBytes) + " zip, " +
+                        FormatBytes(result.ExtractedSizeBytes) + " extracted).";
+                    this.ImportRepoStatus = message;
+                    this.Status = message + (string.IsNullOrWhiteSpace(remoteMessage) ? "" : Environment.NewLine + remoteMessage);
+                    this.IsImportRepoVisible = false;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    this.ImportRepoError = ex.Message;
+                    if (!this.HandleAuthException(ex))
+                    {
+                        this.Status = "GitHub import failed: " + ex.Message;
+                    }
+                }
+            }, cancellationToken);
+        }
+        finally
+        {
+            this.IsImportingRepo = false;
+            this.ImportGitHubToken = "";
+        }
+    }
+
     private async Task RefreshAsync(object? commandParameter, CancellationToken cancellationToken)
     {
         await this.RunBusyAsync("Scanning solution files...", async token =>
@@ -280,7 +429,7 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
                     item.Progress = 15;
                 }
 
-                byte[] bytes = await this.service.DownloadRemoteFileAsync(this.bridgeSelection, this.SessionId, remoteFile.RelativePath, token);
+                byte[] bytes = await this.service.DownloadRemoteFileAsync(this.bridgeSelection, this.SessionId, remoteFile, token);
                 Directory.CreateDirectory(Path.GetDirectoryName(localPath) ?? this.solutionRoot);
                 await File.WriteAllBytesAsync(localPath, bytes, token);
                 if (remoteFile.LastWriteUtc > DateTimeOffset.MinValue)
@@ -1468,13 +1617,14 @@ internal sealed class SessionSyncService
             throw new InvalidOperationException("Auto session uploads are limited to 50 MB.");
         }
 
+        string effectiveMimeType = string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType.Trim();
         JsonObject payload = new()
         {
             ["sessionId"] = sessionId,
             ["fileName"] = relativePath,
-            ["mimeType"] = mimeType,
+            ["mimeType"] = effectiveMimeType,
             ["sizeBytes"] = bytes.LongLength,
-            ["base64"] = Convert.ToBase64String(bytes)
+            ["dataUrl"] = "data:" + effectiveMimeType + ";base64," + Convert.ToBase64String(bytes)
         };
 
         using HttpRequestMessage request = new(HttpMethod.Post, selection.BuildAutoUri("/auto/session-files"));
@@ -1491,10 +1641,74 @@ internal sealed class SessionSyncService
         return file ?? new SessionSyncRemoteFile(relativePath, bytes.LongLength, DateTimeOffset.UtcNow, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
     }
 
-    public async Task<byte[]> DownloadRemoteFileAsync(SessionSyncBridgeSelection selection, string sessionId, string relativePath, CancellationToken cancellationToken)
+    public async Task<SessionSyncRepositoryImportResult> ImportGitHubRepositoryAsync(SessionSyncBridgeSelection selection, string sessionId, string repository, string githubToken, CancellationToken cancellationToken)
     {
         selection.ThrowIfMissing();
-        Uri uri = selection.BuildAutoUri("/auto/session-file?sessionId=" + Uri.EscapeDataString(sessionId) + "&name=" + Uri.EscapeDataString(relativePath));
+        JsonObject payload = new()
+        {
+            ["sessionId"] = sessionId,
+            ["repository"] = (repository ?? "").Trim(),
+            ["serverId"] = selection.ServerId,
+            ["mode"] = "tools"
+        };
+        if (!string.IsNullOrWhiteSpace(githubToken))
+        {
+            payload["githubToken"] = githubToken.Trim();
+        }
+
+        using HttpRequestMessage request = new(HttpMethod.Post, selection.BuildAutoUri("/auto/session-github-import"));
+        ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        string json = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(ExtractError(json));
+        }
+
+        return ParseRepositoryImportResult(json);
+    }
+
+    public Task<byte[]> DownloadRemoteFileAsync(SessionSyncBridgeSelection selection, string sessionId, string relativePath, CancellationToken cancellationToken)
+    {
+        return this.DownloadRemoteFileAsync(selection, sessionId, new SessionSyncRemoteFile(relativePath, 0, DateTimeOffset.MinValue, ""), cancellationToken);
+    }
+
+    public async Task<byte[]> DownloadRemoteFileAsync(SessionSyncBridgeSelection selection, string sessionId, SessionSyncRemoteFile remoteFile, CancellationToken cancellationToken)
+    {
+        selection.ThrowIfMissing();
+        Uri uri;
+        if (remoteFile.IsUpstream)
+        {
+            string path = FirstNonEmpty(remoteFile.DownloadPath, remoteFile.RelativePath);
+            if (!path.StartsWith("\\", StringComparison.Ordinal) && !path.StartsWith("/", StringComparison.Ordinal))
+            {
+                path = "\\" + path;
+            }
+
+            List<string> query = new()
+            {
+                "endpoint=" + Uri.EscapeDataString("/api/chat-file-download"),
+                "mode=" + Uri.EscapeDataString(FirstNonEmpty(remoteFile.RouteMode, "tools")),
+                "kind=session",
+                "sessionId=" + Uri.EscapeDataString(sessionId),
+                "path=" + Uri.EscapeDataString(path)
+            };
+            string serverId = FirstNonEmpty(remoteFile.ServerId, selection.ServerId);
+            if (!string.IsNullOrWhiteSpace(serverId))
+            {
+                query.Add("serverId=" + Uri.EscapeDataString(serverId));
+                query.Add("strictServer=true");
+            }
+
+            uri = selection.BuildAutoUri("/auto/api?" + string.Join("&", query));
+        }
+        else
+        {
+            string relativePath = FirstNonEmpty(remoteFile.RelativePath, remoteFile.DownloadPath);
+            uri = selection.BuildAutoUri("/auto/session-file?sessionId=" + Uri.EscapeDataString(sessionId) + "&name=" + Uri.EscapeDataString(relativePath));
+        }
+
         using HttpRequestMessage request = new(HttpMethod.Get, uri);
         ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -1585,6 +1799,31 @@ internal sealed class SessionSyncService
         return null;
     }
 
+    private static SessionSyncRepositoryImportResult ParseRepositoryImportResult(string json)
+    {
+        JsonObject? obj = JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject;
+        if (obj == null)
+        {
+            throw new InvalidOperationException("GitHub import returned an invalid response.");
+        }
+
+        bool ok = obj["ok"] is JsonValue okValue && okValue.TryGetValue(out bool okResult) && okResult;
+        if (!ok)
+        {
+            throw new InvalidOperationException(ExtractError(json));
+        }
+
+        return new SessionSyncRepositoryImportResult(
+            FirstString(obj, "sessionId"),
+            FirstString(obj, "repository"),
+            FirstString(obj, "branch"),
+            FirstString(obj, "targetFolder"),
+            FirstLong(obj, "zipSizeBytes"),
+            FirstLong(obj, "extractedSizeBytes"),
+            (int)FirstLong(obj, "fileCount"),
+            ParseRemoteFiles(json));
+    }
+
     private static bool TryParseRemoteFile(JsonObject file, out SessionSyncRemoteFile? remoteFile)
     {
         remoteFile = null;
@@ -1595,9 +1834,13 @@ internal sealed class SessionSyncService
         }
 
         long size = FirstLong(file, "sizeBytes", "size", "bytes");
-        DateTimeOffset lastWrite = FirstDate(file, "lastWriteUtc", "uploadedUtc", "updatedUtc", "createdUtc");
-        string sha = FirstString(file, "sha256", "hash", "checksum");
-        remoteFile = new SessionSyncRemoteFile(relativePath.Replace('\\', '/').Trim('/'), size, lastWrite, sha);
+        DateTimeOffset lastWrite = FirstDate(file, "lastWriteUtc", "modifiedUtc", "uploadedUtc", "updatedUtc", "createdUtc");
+        string sha = FirstString(file, "sha256", "sandboxSha256", "hash", "checksum");
+        string source = FirstString(file, "source");
+        string serverId = FirstString(file, "serverId", "server_id", "server");
+        string routeMode = FirstString(file, "routeMode", "mode");
+        string downloadPath = FirstString(file, "downloadPath", "sessionFilePath", "filePath", "path");
+        remoteFile = new SessionSyncRemoteFile(relativePath.Replace('\\', '/').Trim('/'), size, lastWrite, sha, source, serverId, routeMode, downloadPath);
         return true;
     }
 
@@ -1613,6 +1856,19 @@ internal sealed class SessionSyncService
 
             string value = node.ToString();
             if (!string.IsNullOrWhiteSpace(value) && !string.Equals(value, "null", StringComparison.OrdinalIgnoreCase))
+            {
+                return value.Trim();
+            }
+        }
+
+        return "";
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (string value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
             {
                 return value.Trim();
             }
@@ -1673,7 +1929,30 @@ internal sealed class SessionSyncService
     }
 }
 
-internal sealed record SessionSyncRemoteFile(string RelativePath, long SizeBytes, DateTimeOffset LastWriteUtc, string Sha256);
+internal sealed record SessionSyncRepositoryImportResult(
+    string SessionId,
+    string Repository,
+    string Branch,
+    string TargetFolder,
+    long ZipSizeBytes,
+    long ExtractedSizeBytes,
+    int FileCount,
+    IReadOnlyList<SessionSyncRemoteFile> Files);
+
+internal sealed record SessionSyncRemoteFile(
+    string RelativePath,
+    long SizeBytes,
+    DateTimeOffset LastWriteUtc,
+    string Sha256,
+    string Source = "",
+    string ServerId = "",
+    string RouteMode = "",
+    string DownloadPath = "")
+{
+    public bool IsUpstream =>
+        this.Source.Equals("auto-upstream-session", StringComparison.OrdinalIgnoreCase) ||
+        !string.IsNullOrWhiteSpace(this.ServerId);
+}
 
 internal sealed class SessionSyncBridgeSelection
 {

@@ -33,6 +33,7 @@ public partial class LmVsProxy : IDisposable
 {
 	private const string GoalCheckpointToolName = "goal_checkpoint";
 	private const string ContinueWithToolsToolName = "continue_with_tools";
+	private const int GitHubRepoImportMaxFiles = 5000;
 
 private sealed class WebChatModelManagerLoadSettings
 	{
@@ -173,6 +174,43 @@ private sealed class WebChatModelManagerLoadSettings
 		public string Type { get; set; }
 
 		public byte[] Bytes { get; set; }
+	}
+
+	private sealed class ChatGitHubImportEntry
+	{
+		public ZipArchiveEntry Entry { get; set; }
+
+		public string RelativePath { get; set; } = "";
+
+		public string TargetRelativePath { get; set; } = "";
+
+		public long Length { get; set; }
+	}
+
+	private sealed class ChatGitHubRepositoryMetadata
+	{
+		public string FullName { get; set; } = "";
+
+		public string DefaultBranch { get; set; } = "";
+
+		public Uri ZipballUri { get; set; }
+	}
+
+	private sealed class ChatGitHubImportException : Exception
+	{
+		public ChatGitHubImportException(int statusCode, string reasonPhrase, string errorCode, string message)
+			: base(message)
+		{
+			StatusCode = statusCode;
+			ReasonPhrase = reasonPhrase;
+			ErrorCode = errorCode;
+		}
+
+		public int StatusCode { get; }
+
+		public string ReasonPhrase { get; }
+
+		public string ErrorCode { get; }
 	}
 
 	private sealed class ChatUiToolCallStreamEvent
@@ -896,6 +934,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private string _personaPlexLastServerErrorSummary = "";
 
+	private DateTimeOffset _personaPlexServerReadySignalUtc = DateTimeOffset.MinValue;
+
+	private DateTimeOffset _personaPlexLastRuntimeCompatibilityCheckUtc = DateTimeOffset.MinValue;
+
+	private string _personaPlexRuntimeCompatibilityError = "";
+
 	private string _personaPlexValidatedTokenFingerprint = "";
 
 	private string _personaPlexRejectedTokenFingerprint = "";
@@ -1499,6 +1543,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					Source = state.Source,
 					Title = state.Title,
 					OwnerKey = state.OwnerKey,
+					StreamId = state.StreamId ?? "",
 					Model = state.Model,
 					Runtime = state.Runtime,
 					Status = state.Status,
@@ -2439,6 +2484,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		DateTimeOffset now = DateTimeOffset.UtcNow;
 		string model = ExtractJsonStringProperty(requestBody, "model") ?? ChatModel ?? "lm-studio";
 		string promptText = ExtractChatUiLastUserPromptText(requestBody);
+		string streamId = ExtractChatUiStreamId(requestBody);
 		ActivePromptSessionState state = new ActivePromptSessionState
 		{
 			Id = id,
@@ -2447,6 +2493,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			Title = InferPromptSessionTitle(requestBody),
 			OwnerKey = NormalizeChatFilesystemOwnerKey(ownerKey),
 			ParticipantKey = (string.IsNullOrWhiteSpace(participantKey) ? "" : participantKey.Trim()),
+			StreamId = (string.IsNullOrWhiteSpace(streamId) ? "" : SanitizeFileName(streamId.Trim())),
 			Model = model,
 			Runtime = InferChatSessionRuntime(model),
 			Status = "Running",
@@ -5213,6 +5260,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("GET", "/api/chat-session-comments", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionCommentsGetRequest(connection, request));
 		server.Map("POST", "/api/chat-session-comments", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionCommentSaveRequest(connection, request));
 		server.Map("POST", "/api/chat-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatFileUploadRequest(connection, request));
+		server.Map("POST", "/api/chat-github-repo-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatGitHubRepoImportRequestAsync(connection, request, cancellationToken).GetAwaiter().GetResult());
+		server.Map("OPTIONS", "/api/chat-github-repo-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("POST", "/api/chat-file-undo", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatUiFileUndoRequest(connection, request));
 		server.Map("POST", "/api/chat", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("POST", "/api/chat", "chat", () => HandleChatUiRequest(request, cancellationToken), () => GetChatSessionOwnerKey(connection, request)));
 		server.MapStream("POST", "/api/chat-stream", async delegate(NetworkConnection connection, HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken)
@@ -16612,75 +16661,93 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				DateTimeOffset lastDeltaFlushUtc = DateTimeOffset.MinValue;
 				bool sawDoneMarker = false;
 				string finishReason = "";
-				using (StringContent content = new StringContent(lmRequestJson, Encoding.UTF8, "application/json"))
+				string currentStreamRequestJson = lmRequestJson;
+				int streamContinuationCount = 0;
+				int streamContinuationLastOutputLength = -1;
+				while (true)
 				{
-					using HttpRequestMessage upstreamRequest = new HttpRequestMessage(HttpMethod.Post, url);
-					upstreamRequest.Content = content;
-					using HttpResponseMessage response = await _httpClient.SendAsync(upstreamRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-					if (!response.IsSuccessStatusCode)
+					sawDoneMarker = false;
+					finishReason = "";
+					using (StringContent content = new StringContent(currentStreamRequestJson, Encoding.UTF8, "application/json"))
 					{
-						string text = ((response.Content != null) ? (await response.Content.ReadAsStringAsync()) : "");
-						WriteChatUiStreamEvent(body: text, output: output, type: "error", content: response.ReasonPhrase ?? (GetLocalModelRuntimeDisplayName() + " request failed."), reasoning: "", progress: null, phase: null, status: null, tokenDelta: 0, tokensUsed: 0L, tokenLimit: 0L, tokenUnlimited: false, tokensRemaining: 0L, gpuSecondsDelta: 0.0, gpuSecondsUsed: 0.0, tokenCostUsd: 0.0, electricityCostUsd: 0.0, serviceTaxCostUsd: 0.0, totalCostUsd: 0.0, tokenUsdPerToken: 0.0, electricityCentsPerKwh: 0.0, electricityMultiplier: 0.0, gpuTdpWatts: 0.0, serviceTaxRate: 0.0, storageCostUsd: 0.0, storageBytesUsed: 0L, storageLimitBytes: 0L, storageBytesRemaining: 0L, storageUnlimited: false, storageType: "", storageBaseUsdPerGb: 0.0, storageCostFactor: 1.0, cpuComputeSecondsUsed: 0.0, ramGbSecondsUsed: 0.0, systemSecondsUsed: 0.0, ioBytesProcessed: 0L, gpuElectricityCostUsd: 0.0, cpuElectricityCostUsd: 0.0, ramElectricityCostUsd: 0.0, systemElectricityCostUsd: 0.0, ioElectricityCostUsd: 0.0, cpuTdpWatts: 0.0, ramWattsPerGb: 0.0, systemWatts: 0.0, ioWattsPerGbps: 0.0, ramGbEstimated: 0.0, tokensRequired: true, promptTokensLoaded: 0L, promptTokensTotal: 0L);
-						return;
-					}
-					using Stream responseStream = await response.Content.ReadAsStreamAsync();
-					using StreamReader reader = new StreamReader(responseStream);
-					while (true)
-					{
-						string text2;
-						string line = (text2 = await reader.ReadLineAsync());
-						if (text2 == null)
+						using HttpRequestMessage upstreamRequest = new HttpRequestMessage(HttpMethod.Post, url);
+						upstreamRequest.Content = content;
+						using HttpResponseMessage response = await _httpClient.SendAsync(upstreamRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+						if (!response.IsSuccessStatusCode)
 						{
-							break;
-						}
-						cancellationToken.ThrowIfCancellationRequested();
-						if (string.IsNullOrWhiteSpace(line))
-						{
-							continue;
-						}
-						if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-						{
-							line = DecodeChatUiSseFieldValue(line, 5);
-						}
-						if (line.Trim().Equals("[DONE]", StringComparison.OrdinalIgnoreCase))
-						{
-							sawDoneMarker = true;
-							string finishNoticeDelta = AppendChatUiFinishReasonNoticeIfNeeded(completedContent, finishReason);
-							if (!string.IsNullOrEmpty(finishNoticeDelta))
-							{
-								pendingContentDelta.Append(finishNoticeDelta);
-							}
-							if (TryFlushChatUiDeltaBatch(output, ownerKey, pendingContentDelta, pendingReasoningDelta, usageMeter, ref lastDeltaFlushUtc, force: true, cancellationToken))
-							{
-								FlushChatUsageMeter(output, ownerKey, usageMeter);
-								WriteChatUiStreamEvent(output, "done", "", "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
-							}
+							string text = ((response.Content != null) ? (await response.Content.ReadAsStringAsync()) : "");
+							WriteChatUiStreamEvent(body: text, output: output, type: "error", content: response.ReasonPhrase ?? (GetLocalModelRuntimeDisplayName() + " request failed."), reasoning: "", progress: null, phase: null, status: null, tokenDelta: 0, tokensUsed: 0L, tokenLimit: 0L, tokenUnlimited: false, tokensRemaining: 0L, gpuSecondsDelta: 0.0, gpuSecondsUsed: 0.0, tokenCostUsd: 0.0, electricityCostUsd: 0.0, serviceTaxCostUsd: 0.0, totalCostUsd: 0.0, tokenUsdPerToken: 0.0, electricityCentsPerKwh: 0.0, electricityMultiplier: 0.0, gpuTdpWatts: 0.0, serviceTaxRate: 0.0, storageCostUsd: 0.0, storageBytesUsed: 0L, storageLimitBytes: 0L, storageBytesRemaining: 0L, storageUnlimited: false, storageType: "", storageBaseUsdPerGb: 0.0, storageCostFactor: 1.0, cpuComputeSecondsUsed: 0.0, ramGbSecondsUsed: 0.0, systemSecondsUsed: 0.0, ioBytesProcessed: 0L, gpuElectricityCostUsd: 0.0, cpuElectricityCostUsd: 0.0, ramElectricityCostUsd: 0.0, systemElectricityCostUsd: 0.0, ioElectricityCostUsd: 0.0, cpuTdpWatts: 0.0, ramWattsPerGb: 0.0, systemWatts: 0.0, ioWattsPerGbps: 0.0, ramGbEstimated: 0.0, tokensRequired: true, promptTokensLoaded: 0L, promptTokensTotal: 0L);
 							return;
 						}
-						foreach (ChatUiCompletion delta in ExtractChatUiStreamingDeltas(line))
+						using Stream responseStream = await response.Content.ReadAsStreamAsync();
+						using StreamReader reader = new StreamReader(responseStream);
+						while (true)
 						{
-							if (!string.IsNullOrWhiteSpace(delta.FinishReason))
+							string text2;
+							string line = (text2 = await reader.ReadLineAsync());
+							if (text2 == null)
 							{
-								finishReason = delta.FinishReason;
+								break;
 							}
-							if (!string.IsNullOrEmpty(delta.Content) || !string.IsNullOrEmpty(delta.Reasoning))
+							cancellationToken.ThrowIfCancellationRequested();
+							if (string.IsNullOrWhiteSpace(line))
 							{
-								string reasoningDelta = suppressStreamReasoning ? "" : (delta.Reasoning ?? "");
-								completedContent.Append(delta.Content ?? "");
-								completedReasoning.Append(reasoningDelta);
-								pendingContentDelta.Append(delta.Content ?? "");
-								pendingReasoningDelta.Append(reasoningDelta);
-								if (!TryFlushChatUiDeltaBatch(output, ownerKey, pendingContentDelta, pendingReasoningDelta, usageMeter, ref lastDeltaFlushUtc, force: false, cancellationToken))
+								continue;
+							}
+							if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+							{
+								line = DecodeChatUiSseFieldValue(line, 5);
+							}
+							if (line.Trim().Equals("[DONE]", StringComparison.OrdinalIgnoreCase))
+							{
+								sawDoneMarker = true;
+								break;
+							}
+							foreach (ChatUiCompletion delta in ExtractChatUiStreamingDeltas(line))
+							{
+								if (!string.IsNullOrWhiteSpace(delta.FinishReason))
 								{
-									return;
+									finishReason = delta.FinishReason;
+								}
+								if (!string.IsNullOrEmpty(delta.Content) || !string.IsNullOrEmpty(delta.Reasoning))
+								{
+									string reasoningDelta = suppressStreamReasoning ? "" : (delta.Reasoning ?? "");
+									completedContent.Append(delta.Content ?? "");
+									completedReasoning.Append(reasoningDelta);
+									pendingContentDelta.Append(delta.Content ?? "");
+									pendingReasoningDelta.Append(reasoningDelta);
+									if (!TryFlushChatUiDeltaBatch(output, ownerKey, pendingContentDelta, pendingReasoningDelta, usageMeter, ref lastDeltaFlushUtc, force: false, cancellationToken))
+									{
+										return;
+									}
 								}
 							}
 						}
 					}
-				}
-				if (!sawDoneMarker && string.IsNullOrWhiteSpace(finishReason))
-				{
-					finishReason = "stream_closed";
+					if (!sawDoneMarker && string.IsNullOrWhiteSpace(finishReason))
+					{
+						finishReason = "stream_closed";
+					}
+					if (!TryFlushChatUiDeltaBatch(output, ownerKey, pendingContentDelta, pendingReasoningDelta, usageMeter, ref lastDeltaFlushUtc, force: true, cancellationToken))
+					{
+						return;
+					}
+					string completedContentText = completedContent.ToString();
+					string completedReasoningText = completedReasoning.ToString();
+					if (ShouldAutoContinueChatUiCompletion(finishReason, completedContentText, completedReasoningText, streamContinuationCount, streamContinuationLastOutputLength, ownerKey, usageMeter, out var streamContinuationStopReason))
+					{
+						streamContinuationLastOutputLength = GetChatUiContinuationOutputLength(completedContentText, completedReasoningText);
+						streamContinuationCount++;
+						LogMessage("[LLM Client API] Streaming completion hit an output limit; recursively continuing answer pass " + streamContinuationCount.ToString(CultureInfo.InvariantCulture) + ".");
+						WriteChatUiProgressWithUsage(output, ownerKey, usageMeter, null, "auto_continuation", "Continuing clipped response...", 0L, 0L);
+						currentStreamRequestJson = BuildChatUiAutoContinuationRequest(currentStreamRequestJson, completedContentText, completedReasoningText, finishReason, streamContinuationCount);
+						continue;
+					}
+					if (!string.IsNullOrWhiteSpace(streamContinuationStopReason))
+					{
+						LogMessage("[LLM Client API] Stopped recursive continuation because " + streamContinuationStopReason + ".");
+					}
+					break;
 				}
 				string eofFinishNoticeDelta = AppendChatUiFinishReasonNoticeIfNeeded(completedContent, finishReason);
 				if (!string.IsNullOrEmpty(eofFinishNoticeDelta))
@@ -18747,9 +18814,28 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					installRequired = false
 				});
 			}
-			(bool ready, string status, string detail, long elapsedMs, string handshakeKind) = ProbePersonaPlexStatusAsync(endpoint.UpstreamUri, TimeSpan.FromMilliseconds(endpoint.ConnectTimeoutMs)).GetAwaiter().GetResult();
-			PersonaPlexInstallState install = BuildPersonaPlexInstallSnapshot(settings, ready);
+			PersonaPlexInstallState install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false);
 			RefreshPersonaPlexTokenValidationIfDue(install);
+			install = BuildPersonaPlexInstallSnapshot(settings, serverReady: false);
+			if (TryGetManagedPersonaPlexStatus(settings, install, out bool managedReady, out string managedStatus, out string managedDetail, out string managedHandshake))
+			{
+				install = BuildPersonaPlexInstallSnapshot(settings, managedReady);
+				return JsonSerializer.Serialize(new
+				{
+					ok = true,
+					ready = managedReady,
+					status = managedStatus,
+					target = endpoint.UpstreamUri.ToString(),
+					handshake = managedHandshake,
+					elapsedMs = 0L,
+					error = managedReady ? "" : managedDetail,
+					canInstall = CanManagePersonaPlexInstall(connection, request),
+					install = install,
+					installRequired = ShouldOfferPersonaPlexInstall(settings, managedReady, install)
+				});
+			}
+
+			(bool ready, string status, string detail, long elapsedMs, string handshakeKind) = ProbePersonaPlexStatusAsync(endpoint.UpstreamUri, TimeSpan.FromMilliseconds(endpoint.ConnectTimeoutMs)).GetAwaiter().GetResult();
 			install = BuildPersonaPlexInstallSnapshot(settings, ready);
 			if (!ready &&
 				IsDefaultLocalPersonaPlexServer(settings.serverUrl) &&
@@ -18815,6 +18901,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return BuildJsonError(request, 409, "Conflict", "Add the NVIDIA PersonaPlex Hugging Face token in JackLLM Workstation before starting Voice Mode.");
 			}
+			bool cpuOffload = ReadPersonaPlexStartCpuOffload(request);
+			string runtimeCompatibilityError = GetPersonaPlexRuntimeCompatibilityError(cpuOffload);
+			if (!string.IsNullOrWhiteSpace(runtimeCompatibilityError))
+			{
+				MarkPersonaPlexRuntimeUnsupported(runtimeCompatibilityError);
+				return BuildJsonError(request, 409, "Conflict", runtimeCompatibilityError);
+			}
 			string hfToken = ResolvePersonaPlexHfToken("");
 			try
 			{
@@ -18834,7 +18927,6 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				{
 					return BuildJsonError(request, 409, "Conflict", FirstNonEmpty(GetPersonaPlexRecentServerExitMessage(), "Voice model is still starting or recently exited."));
 				}
-				bool cpuOffload = ReadPersonaPlexStartCpuOffload(request);
 				UnloadLoadedWebChatRuntimeModelsForPersonaPlexAsync().GetAwaiter().GetResult();
 				StartPersonaPlexServerProcess(hfToken, cpuOffload);
 				status = "loading";
@@ -19416,6 +19508,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			Directory.CreateDirectory(GetPersonaPlexInstallRoot());
 			_personaPlexLastServerStartAttemptUtc = DateTimeOffset.UtcNow;
+			_personaPlexServerReadySignalUtc = DateTimeOffset.MinValue;
 			_personaPlexLastServerExitMessage = "";
 			_personaPlexLastServerErrorSummary = "";
 			Process serverProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
@@ -19425,6 +19518,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				if (!string.IsNullOrWhiteSpace(eventArgs.Data))
 				{
 					WritePersonaPlexInstallLog("[server] " + eventArgs.Data);
+					ObservePersonaPlexServerOutputLine(eventArgs.Data);
 				}
 			};
 			serverProcess.ErrorDataReceived += (_, eventArgs) =>
@@ -19432,6 +19526,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				if (!string.IsNullOrWhiteSpace(eventArgs.Data))
 				{
 					WritePersonaPlexInstallLog("[server] " + eventArgs.Data);
+					ObservePersonaPlexServerOutputLine(eventArgs.Data);
 					string summary = SummarizePersonaPlexServerError(eventArgs.Data);
 					if (!string.IsNullOrWhiteSpace(summary))
 					{
@@ -19466,6 +19561,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			process = _personaPlexServerProcess;
 			_personaPlexServerProcess = null;
+			_personaPlexServerReadySignalUtc = DateTimeOffset.MinValue;
 			_personaPlexLastServerExitUtc = DateTimeOffset.UtcNow;
 			_personaPlexLastServerExitMessage = "Voice model process stopped.";
 			_personaPlexLastServerErrorSummary = "";
@@ -19621,6 +19717,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			if (ReferenceEquals(_personaPlexServerProcess, process))
 			{
 				_personaPlexServerProcess = null;
+				_personaPlexServerReadySignalUtc = DateTimeOffset.MinValue;
 			}
 			if (_personaPlexInstallState != null)
 			{
@@ -19639,6 +19736,261 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 		}
 		WritePersonaPlexInstallLog("[server] " + message);
+	}
+
+	private void ObservePersonaPlexServerOutputLine(string line)
+	{
+		if (string.IsNullOrWhiteSpace(line))
+		{
+			return;
+		}
+		if (line.IndexOf("Access the Web UI directly", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			line.IndexOf("serving static content", StringComparison.OrdinalIgnoreCase) >= 0)
+		{
+			lock (_personaPlexInstallLock)
+			{
+				_personaPlexServerReadySignalUtc = DateTimeOffset.UtcNow;
+			}
+		}
+	}
+
+	private bool HasPersonaPlexServerReadySignal()
+	{
+		lock (_personaPlexInstallLock)
+		{
+			return _personaPlexServerReadySignalUtc > DateTimeOffset.MinValue && IsPersonaPlexServerProcessRunning();
+		}
+	}
+
+	private bool TryGetManagedPersonaPlexStatus(
+		PersonaPlexSettings settings,
+		PersonaPlexInstallState install,
+		out bool ready,
+		out string status,
+		out string detail,
+		out string handshakeKind)
+	{
+		ready = false;
+		status = "";
+		detail = "";
+		handshakeKind = "";
+		if (!IsDefaultLocalPersonaPlexServer(settings?.serverUrl) || install == null || !install.localInstalled)
+		{
+			return false;
+		}
+
+		string runtimeCompatibilityError = GetPersonaPlexRuntimeCompatibilityError(cpuOffload: false);
+		if (!string.IsNullOrWhiteSpace(runtimeCompatibilityError))
+		{
+			status = "error";
+			detail = runtimeCompatibilityError;
+			handshakeKind = "unsupported";
+			return true;
+		}
+
+		if (IsPersonaPlexServerProcessRunning())
+		{
+			ready = HasPersonaPlexServerReadySignal();
+			status = ready ? "ready" : "loading";
+			detail = ready ? "" : "Voice model is still loading.";
+			handshakeKind = ready ? "server-ready" : "";
+			return true;
+		}
+
+		if (install.hfTokenAvailable && !install.hfTokenRejected)
+		{
+			status = "stopped";
+			detail = "Voice model is installed. Press Start Voice to load it.";
+			return true;
+		}
+		return false;
+	}
+
+	private string GetPersonaPlexRuntimeCompatibilityError(bool cpuOffload)
+	{
+		if (IsTruthyEnvironmentVariable("JACKLLM_PERSONAPLEX_ALLOW_UNSUPPORTED_GPU") ||
+			IsTruthyEnvironmentVariable("JACKLLM_PERSONAPLEX_SKIP_RUNTIME_COMPATIBILITY"))
+		{
+			lock (_personaPlexInstallLock)
+			{
+				_personaPlexRuntimeCompatibilityError = "";
+				_personaPlexLastRuntimeCompatibilityCheckUtc = DateTimeOffset.UtcNow;
+			}
+			return "";
+		}
+
+		if (!IsPersonaPlexLocalInstalled())
+		{
+			return "";
+		}
+		string python = GetPersonaPlexVenvPythonPath();
+		if (string.IsNullOrWhiteSpace(python) || !File.Exists(python))
+		{
+			return "";
+		}
+
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		lock (_personaPlexInstallLock)
+		{
+			if (_personaPlexLastRuntimeCompatibilityCheckUtc > DateTimeOffset.MinValue &&
+				now - _personaPlexLastRuntimeCompatibilityCheckUtc < TimeSpan.FromMinutes(10))
+			{
+				return _personaPlexRuntimeCompatibilityError ?? "";
+			}
+			_personaPlexLastRuntimeCompatibilityCheckUtc = now;
+		}
+
+		string error = ProbePersonaPlexRuntimeCompatibilityError(python);
+		lock (_personaPlexInstallLock)
+		{
+			_personaPlexRuntimeCompatibilityError = error ?? "";
+		}
+		return error ?? "";
+	}
+
+	private static bool IsTruthyEnvironmentVariable(string name)
+	{
+		return IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(name));
+	}
+
+	private static bool IsTruthyEnvironmentValue(string value)
+	{
+		value = (value ?? "").Trim();
+		return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+			value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+			value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+			value.Equals("on", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private string ProbePersonaPlexRuntimeCompatibilityError(string python)
+	{
+		const string code = @"
+import json
+import sys
+
+try:
+    import torch
+    if not torch.cuda.is_available():
+        print(json.dumps({
+            'ok': False,
+            'error': 'PersonaPlex Voice Mode requires an NVIDIA CUDA GPU with native BF16 support.'
+        }))
+        sys.exit(0)
+    devices = []
+    for index in range(torch.cuda.device_count()):
+        major, minor = torch.cuda.get_device_capability(index)
+        devices.append({
+            'index': index,
+            'name': torch.cuda.get_device_name(index),
+            'major': int(major),
+            'minor': int(minor),
+            'bf16Native': int(major) >= 8,
+        })
+    print(json.dumps({
+        'ok': any(device['bf16Native'] for device in devices),
+        'devices': devices,
+    }))
+except Exception as exc:
+    print(json.dumps({
+        'ok': False,
+        'error': 'Could not inspect PersonaPlex CUDA compatibility: ' + str(exc)
+    }))
+";
+		try
+		{
+			using Process process = new Process();
+			process.StartInfo = new ProcessStartInfo
+			{
+				FileName = python,
+				WorkingDirectory = GetPersonaPlexRepositoryPath(),
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			process.StartInfo.ArgumentList.Add("-c");
+			process.StartInfo.ArgumentList.Add(code);
+			string cudaVisibleDevices = DetectPersonaPlexCudaVisibleDevices();
+			if (!string.IsNullOrWhiteSpace(cudaVisibleDevices))
+			{
+				process.StartInfo.EnvironmentVariables["CUDA_VISIBLE_DEVICES"] = cudaVisibleDevices;
+			}
+			if (!process.Start())
+			{
+				return "Could not start the PersonaPlex CUDA compatibility check.";
+			}
+			string stdout = process.StandardOutput.ReadToEnd();
+			string stderr = process.StandardError.ReadToEnd();
+			if (!process.WaitForExit(25000))
+			{
+				TryKillProcess(process);
+				return "Timed out checking PersonaPlex CUDA compatibility.";
+			}
+			if (process.ExitCode != 0)
+			{
+				string detail = FirstNonEmpty(TailText(stderr, 800), TailText(stdout, 800));
+				return "Could not check PersonaPlex CUDA compatibility. " + detail;
+			}
+			return InterpretPersonaPlexRuntimeCompatibilityJson(stdout);
+		}
+		catch (Exception ex)
+		{
+			return "Could not check PersonaPlex CUDA compatibility. " + ex.Message;
+		}
+	}
+
+	private static string InterpretPersonaPlexRuntimeCompatibilityJson(string json)
+	{
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(FirstNonEmpty(json, "{}"));
+			JsonElement root = document.RootElement;
+			if (root.TryGetProperty("ok", out JsonElement okElement) && okElement.ValueKind == JsonValueKind.True)
+			{
+				return "";
+			}
+			if (root.TryGetProperty("error", out JsonElement errorElement) && errorElement.ValueKind == JsonValueKind.String)
+			{
+				return errorElement.GetString() ?? "";
+			}
+			List<string> devices = new List<string>();
+			if (root.TryGetProperty("devices", out JsonElement devicesElement) && devicesElement.ValueKind == JsonValueKind.Array)
+			{
+				foreach (JsonElement device in devicesElement.EnumerateArray())
+				{
+					string name = device.TryGetProperty("name", out JsonElement nameElement) && nameElement.ValueKind == JsonValueKind.String
+						? nameElement.GetString()
+						: "NVIDIA GPU";
+					int major = device.TryGetProperty("major", out JsonElement majorElement) && majorElement.TryGetInt32(out int parsedMajor) ? parsedMajor : 0;
+					int minor = device.TryGetProperty("minor", out JsonElement minorElement) && minorElement.TryGetInt32(out int parsedMinor) ? parsedMinor : 0;
+					devices.Add((string.IsNullOrWhiteSpace(name) ? "NVIDIA GPU" : name.Trim()) + " (compute capability " + major.ToString(CultureInfo.InvariantCulture) + "." + minor.ToString(CultureInfo.InvariantCulture) + ")");
+				}
+			}
+			string detected = devices.Count == 0 ? "no compatible CUDA GPU" : string.Join(", ", devices);
+			return "PersonaPlex Voice Mode requires an NVIDIA CUDA GPU with native BF16 support (compute capability 8.0 or newer). Detected " + detected + ". Tesla V100 and GTX Titan X do not provide native BF16 support.";
+		}
+		catch
+		{
+			return "Could not parse the PersonaPlex CUDA compatibility check result.";
+		}
+	}
+
+	private void MarkPersonaPlexRuntimeUnsupported(string message)
+	{
+		message = FirstNonEmpty(message, "PersonaPlex Voice Mode is not supported by this GPU.");
+		StopPersonaPlexServerProcess();
+		lock (_personaPlexInstallLock)
+		{
+			_personaPlexRuntimeCompatibilityError = message;
+			_personaPlexLastRuntimeCompatibilityCheckUtc = DateTimeOffset.UtcNow;
+		}
+		UpdatePersonaPlexInstallState("unsupported", message, 100, state =>
+		{
+			state.localInstalled = IsPersonaPlexLocalInstalled();
+			state.serverRunning = false;
+			state.runtimeSupported = false;
+			state.runtimeCompatibilityError = message;
+		});
 	}
 
 	private static string SummarizePersonaPlexServerError(string line)
@@ -19677,6 +20029,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		state.missingComponents = inspection.MissingComponents;
 		state.serverRunning = serverReady || IsPersonaPlexServerProcessRunning();
 		state.hfTokenAvailable = HasPersonaPlexHfToken("");
+		state.runtimeCompatibilityError = _personaPlexRuntimeCompatibilityError ?? "";
+		state.runtimeSupported = string.IsNullOrWhiteSpace(state.runtimeCompatibilityError);
 		if (!state.hfTokenAvailable)
 		{
 			state.hfTokenValidated = false;
@@ -19698,6 +20052,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			state.status = state.localInstalled ? "installed" : "idle";
 			state.progress = state.localInstalled ? 100 : 0;
 			state.message = state.localInstalled ? "PersonaPlex is installed on this workstation." : "PersonaPlex is not installed on this workstation.";
+		}
+		if (state.localInstalled && !state.runtimeSupported)
+		{
+			state.status = "unsupported";
+			state.progress = 100;
+			state.message = state.runtimeCompatibilityError;
+			state.serverRunning = false;
 		}
 		state.needsHuggingFaceToken = (!state.hfTokenAvailable || state.hfTokenRejected) && !state.serverRunning;
 		state.updatedUtc = string.IsNullOrWhiteSpace(state.updatedUtc) ? DateTimeOffset.UtcNow.ToString("O") : state.updatedUtc;
@@ -20533,6 +20894,8 @@ except Exception as exc:
 			hfTokenError = state.hfTokenError ?? "",
 			installFootprintFound = state.installFootprintFound,
 			installIncomplete = state.installIncomplete,
+			runtimeSupported = state.runtimeSupported,
+			runtimeCompatibilityError = state.runtimeCompatibilityError ?? "",
 			missingComponents = new List<string>(state.missingComponents ?? new List<string>()),
 			installRoot = state.installRoot ?? "",
 			repositoryPath = state.repositoryPath ?? "",
@@ -21620,6 +21983,7 @@ except Exception as exc:
 							source = (state.Source ?? ""),
 							title = (state.Title ?? ""),
 							ownerKey = (state.OwnerKey ?? ""),
+							streamId = (state.StreamId ?? ""),
 							participantKey = (state.ParticipantKey ?? ""),
 							participantIp = DisplayIpFromOwnerKey(state.ParticipantKey),
 							model = (state.Model ?? ""),
@@ -25292,6 +25656,544 @@ except Exception as exc:
 		AttachSandboxMetadata(sessionId, ownerKey, file, entry, sandboxSessionId);
 		RegisterChatSessionFile(sessionId, ownerKey, file);
 		return file;
+	}
+
+	private async Task<object> HandleChatGitHubRepoImportRequestAsync(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken)
+	{
+		string tempZipPath = "";
+		long zipSizeBytes = 0L;
+		long extractedSizeBytes = 0L;
+		try
+		{
+			if (!TryAuthenticateWebAuthRequest(request, out var principal, out var authError) || principal == null || string.IsNullOrWhiteSpace(principal.UserName))
+			{
+				return BuildChatGitHubImportError(request, 401, "Unauthorized", FirstNonEmpty(authError, "Sign in before importing a GitHub repository."), "github_auth_failed");
+			}
+			if (principal.IsPublicAccount)
+			{
+				return BuildChatGitHubImportError(request, 403, "Forbidden", "Public accounts can view files but cannot import repositories.", "github_auth_failed");
+			}
+			string ownerKey = "webauth:" + principal.UserName.Trim().ToLowerInvariant();
+			RememberSocketJackBearerToken(ownerKey, principal.AccessToken);
+			RememberSocketJackServerOwnerPrincipal(principal);
+			if (StoreLocalWebAuthAccounts)
+			{
+				GetOrCreateWebAuthTokenAccount(principal.UserName, connection, request);
+				LinkWebAuthUserToIp(principal.UserName, ExtractClientIp(connection, request) ?? "");
+			}
+			ChatPermissionState permissions = GetChatPermissions(ownerKey);
+			string restriction = BuildChatRestrictionMessage(permissions);
+			if (!string.IsNullOrWhiteSpace(restriction))
+			{
+				return BuildChatGitHubImportError(request, 403, "Forbidden", restriction, "github_auth_failed");
+			}
+			if (!permissions.fileUploads)
+			{
+				return BuildChatGitHubImportError(request, 403, "Forbidden", "File uploads are disabled for this client.", "github_auth_failed");
+			}
+
+			string body = request?.Body ?? "{}";
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+			JsonElement root = document.RootElement;
+			string sessionId = EnsureChatUiSessionId(ExtractStringProperty(root, "sessionId"));
+			string repositoryInput = ExtractStringProperty(root, "repository") ?? ExtractStringProperty(root, "repo") ?? "";
+			string githubToken = ExtractStringProperty(root, "githubToken") ?? ExtractStringProperty(root, "token") ?? "";
+			if (string.IsNullOrWhiteSpace(sessionId))
+			{
+				return BuildChatGitHubImportError(request, 400, "Bad Request", "Session id is required.", "invalid_repository");
+			}
+			if (!TryNormalizeGitHubRepositoryInput(repositoryInput, out string owner, out string repoName, out string repositoryError))
+			{
+				return BuildChatGitHubImportError(request, 400, "Bad Request", repositoryError, "invalid_repository");
+			}
+
+			using HttpClientHandler handler = new HttpClientHandler
+			{
+				AllowAutoRedirect = false
+			};
+			using System.Net.Http.HttpClient githubClient = new System.Net.Http.HttpClient(handler)
+			{
+				Timeout = TimeSpan.FromMinutes(10)
+			};
+
+			ChatGitHubRepositoryMetadata repository = await FetchGitHubRepositoryMetadataAsync(githubClient, owner, repoName, githubToken, cancellationToken);
+			tempZipPath = Path.Combine(Path.GetTempPath(), "jackllm-github-repo-" + Guid.NewGuid().ToString("N") + ".zip");
+			zipSizeBytes = await DownloadGitHubArchiveToTempFileAsync(githubClient, repository.ZipballUri, githubToken, tempZipPath, cancellationToken);
+
+			List<ChatGitHubImportEntry> entries;
+			string targetFolder = BuildUniqueGitHubImportTargetFolder(sessionId, ownerKey, repoName);
+			using (FileStream zipStream = File.OpenRead(tempZipPath))
+			using (ZipArchive archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false))
+			{
+				string archiveRoot = FindGitHubArchiveWrapperRoot(archive);
+				entries = BuildGitHubImportEntries(archive, archiveRoot, targetFolder, out extractedSizeBytes);
+				if (entries.Count == 0)
+				{
+					return BuildChatGitHubImportError(request, 400, "Bad Request", "The GitHub archive did not contain any importable files.", "import_failed", null, zipSizeBytes, extractedSizeBytes);
+				}
+				if (!EnsureChatStorageCanAdd(ownerKey, sessionId, extractedSizeBytes, out var usageSnapshot, out var _))
+				{
+					string tooLarge = FormatGitHubRepositoryTooLargeMessage(extractedSizeBytes, usageSnapshot.currentSessionStorageBytes, usageSnapshot.storageLimitBytes, usageSnapshot.storageUnlimited);
+					return BuildChatGitHubImportError(request, 507, "Insufficient Storage", tooLarge, "repository_too_large", usageSnapshot, zipSizeBytes, extractedSizeBytes);
+				}
+
+				string sessionRoot = GetChatSessionFilesDirectory(sessionId);
+				string targetRoot = Path.GetFullPath(Path.Combine(sessionRoot, targetFolder));
+				List<ChatSessionFile> importedFiles = new List<ChatSessionFile>();
+				foreach (ChatGitHubImportEntry importEntry in entries)
+				{
+					cancellationToken.ThrowIfCancellationRequested();
+					if (importEntry.Length > int.MaxValue)
+					{
+						throw new InvalidOperationException("Repository file is too large to import: " + importEntry.RelativePath);
+					}
+					string targetPath = Path.GetFullPath(Path.Combine(sessionRoot, importEntry.TargetRelativePath));
+					if (!IsPathInsideRoot(targetPath, targetRoot))
+					{
+						throw new InvalidOperationException("Repository archive contains an invalid file path.");
+					}
+					byte[] bytes;
+					using (Stream input = importEntry.Entry.Open())
+					using (MemoryStream output = new MemoryStream(importEntry.Length > 0 && importEntry.Length <= int.MaxValue ? (int)importEntry.Length : 0))
+					{
+						await input.CopyToAsync(output, 81920, cancellationToken);
+						bytes = output.ToArray();
+					}
+					importedFiles.Add(StoreChatGitHubImportedSessionFile(sessionId, ownerKey, targetPath, Path.GetFileName(importEntry.RelativePath), bytes));
+				}
+
+				return JsonSerializer.Serialize(new
+				{
+					ok = true,
+					sessionId = sessionId,
+					repository = repository.FullName,
+					branch = repository.DefaultBranch,
+					targetFolder = targetFolder,
+					zipSizeBytes = zipSizeBytes,
+					extractedSizeBytes = extractedSizeBytes,
+					fileCount = importedFiles.Count,
+					files = importedFiles.Select(file => BuildPublicChatSessionFile(file, sessionId)).ToList(),
+					usage = GetChatUsageSnapshot(ownerKey, sessionId)
+				});
+			}
+		}
+		catch (ChatGitHubImportException ex)
+		{
+			return BuildChatGitHubImportError(request, ex.StatusCode, ex.ReasonPhrase, ex.Message, ex.ErrorCode, null, zipSizeBytes, extractedSizeBytes);
+		}
+		catch (JsonException ex)
+		{
+			return BuildChatGitHubImportError(request, 400, "Bad Request", "Invalid GitHub import JSON: " + ex.Message, "invalid_repository", null, zipSizeBytes, extractedSizeBytes);
+		}
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Chat UI] GitHub repository import failed: " + ex.Message);
+			return BuildChatGitHubImportError(request, 500, "Internal Server Error", "GitHub repository import failed: " + ex.Message, "import_failed", null, zipSizeBytes, extractedSizeBytes);
+		}
+		finally
+		{
+			if (!string.IsNullOrWhiteSpace(tempZipPath))
+			{
+				try
+				{
+					if (File.Exists(tempZipPath))
+					{
+						File.Delete(tempZipPath);
+					}
+				}
+				catch
+				{
+				}
+			}
+		}
+	}
+
+	private ChatSessionFile StoreChatGitHubImportedSessionFile(string sessionId, string ownerKey, string fullPath, string name, byte[] bytes)
+	{
+		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
+		string normalizedPath = Path.GetFullPath(fullPath);
+		if (string.IsNullOrWhiteSpace(sessionRoot) || !IsPathInsideRoot(normalizedPath, sessionRoot))
+		{
+			throw new InvalidOperationException("Repository import path is outside the current session files.");
+		}
+		string safeName = SanitizeFileName(string.IsNullOrWhiteSpace(name) ? Path.GetFileName(normalizedPath) : name);
+		ChatSessionFile file = new ChatSessionFile
+		{
+			id = "github_" + Guid.NewGuid().ToString("N"),
+			name = string.IsNullOrWhiteSpace(safeName) ? "file" : safeName,
+			type = GetChatFileDownloadMimeType(Path.GetExtension(safeName)),
+			size = (int)Math.Min(int.MaxValue, Math.Max(0L, bytes?.LongLength ?? 0L)),
+			path = normalizedPath,
+			uploadedUtc = DateTimeOffset.UtcNow.ToString("O")
+		};
+		SandboxFileEntry entry = WriteChatSessionFileBytesToSandbox(sessionId, ownerKey, normalizedPath, bytes ?? Array.Empty<byte>(), "github-repo-import", out string sandboxSessionId);
+		AttachSandboxMetadata(sessionId, ownerKey, file, entry, sandboxSessionId);
+		RegisterChatSessionFile(sessionId, ownerKey, file);
+		return file;
+	}
+
+	private string BuildUniqueGitHubImportTargetFolder(string sessionId, string ownerKey, string repoName)
+	{
+		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
+		if (string.IsNullOrWhiteSpace(sessionRoot))
+		{
+			throw new InvalidOperationException("Session file directory is unavailable.");
+		}
+		string baseName = SanitizeFileName(string.IsNullOrWhiteSpace(repoName) ? "repository" : repoName);
+		if (string.IsNullOrWhiteSpace(baseName))
+		{
+			baseName = "repository";
+		}
+		for (int i = 1; i < 1000; i++)
+		{
+			string candidate = i == 1 ? baseName : baseName + "-" + i.ToString(CultureInfo.InvariantCulture);
+			string candidatePath = Path.GetFullPath(Path.Combine(sessionRoot, candidate));
+			if (!IsPathInsideRoot(candidatePath, sessionRoot))
+			{
+				continue;
+			}
+			if (!ChatSessionManagedDirectoryExists(sessionId, ownerKey, candidatePath))
+			{
+				return candidate;
+			}
+		}
+		throw new InvalidOperationException("Could not allocate a unique repository import folder.");
+	}
+
+	private List<ChatGitHubImportEntry> BuildGitHubImportEntries(ZipArchive archive, string archiveRoot, string targetFolder, out long extractedSizeBytes)
+	{
+		extractedSizeBytes = 0L;
+		List<ChatGitHubImportEntry> entries = new List<ChatGitHubImportEntry>();
+		foreach (ZipArchiveEntry entry in archive.Entries)
+		{
+			if (entry == null || string.IsNullOrWhiteSpace(entry.FullName) || entry.FullName.EndsWith("/", StringComparison.Ordinal))
+			{
+				continue;
+			}
+			string strippedPath = StripGitHubArchiveWrapperPath(entry.FullName, archiveRoot);
+			string relativePath = NormalizeChatUploadRelativePath(strippedPath);
+			if (string.IsNullOrWhiteSpace(relativePath))
+			{
+				continue;
+			}
+			if (entries.Count >= GitHubRepoImportMaxFiles)
+			{
+				throw new InvalidOperationException("GitHub repository imports are limited to " + GitHubRepoImportMaxFiles.ToString(CultureInfo.InvariantCulture) + " files.");
+			}
+			long entryLength = Math.Max(0L, entry.Length);
+			if (extractedSizeBytes > long.MaxValue - entryLength)
+			{
+				extractedSizeBytes = long.MaxValue;
+			}
+			else
+			{
+				extractedSizeBytes += entryLength;
+			}
+			string targetRelativePath = NormalizeChatUploadRelativePath(targetFolder + "/" + relativePath.Replace('\\', '/'));
+			entries.Add(new ChatGitHubImportEntry
+			{
+				Entry = entry,
+				RelativePath = relativePath,
+				TargetRelativePath = targetRelativePath,
+				Length = entryLength
+			});
+		}
+		return entries;
+	}
+
+	private static string FindGitHubArchiveWrapperRoot(ZipArchive archive)
+	{
+		string root = "";
+		foreach (ZipArchiveEntry entry in archive.Entries)
+		{
+			string fullName = (entry?.FullName ?? "").Replace('\\', '/').TrimStart('/');
+			if (string.IsNullOrWhiteSpace(fullName))
+			{
+				continue;
+			}
+			string first = fullName.Split(new char[1] { '/' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+			if (string.IsNullOrWhiteSpace(first))
+			{
+				continue;
+			}
+			if (string.IsNullOrWhiteSpace(root))
+			{
+				root = first;
+				continue;
+			}
+			if (!root.Equals(first, StringComparison.Ordinal))
+			{
+				return "";
+			}
+		}
+		return root;
+	}
+
+	private static string StripGitHubArchiveWrapperPath(string entryFullName, string archiveRoot)
+	{
+		string normalized = (entryFullName ?? "").Replace('\\', '/').TrimStart('/');
+		string root = (archiveRoot ?? "").Replace('\\', '/').Trim('/');
+		if (string.IsNullOrWhiteSpace(normalized) || string.IsNullOrWhiteSpace(root))
+		{
+			return normalized;
+		}
+		if (normalized.Equals(root, StringComparison.Ordinal))
+		{
+			return "";
+		}
+		return normalized.StartsWith(root + "/", StringComparison.Ordinal)
+			? normalized.Substring(root.Length + 1)
+			: normalized;
+	}
+
+	private static async Task<ChatGitHubRepositoryMetadata> FetchGitHubRepositoryMetadataAsync(System.Net.Http.HttpClient client, string owner, string repoName, string githubToken, CancellationToken cancellationToken)
+	{
+		Uri uri = new Uri("https://api.github.com/repos/" + Uri.EscapeDataString(owner) + "/" + Uri.EscapeDataString(repoName));
+		using HttpResponseMessage response = await SendGitHubGetAsync(client, uri, githubToken, cancellationToken);
+		if (!response.IsSuccessStatusCode)
+		{
+			throw await BuildGitHubImportExceptionAsync(response, "repository_not_found", "GitHub repository was not found.", cancellationToken);
+		}
+		string json = await response.Content.ReadAsStringAsync();
+		using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+		JsonElement root = document.RootElement;
+		string fullName = FirstNonEmpty(ExtractStringProperty(root, "full_name"), owner + "/" + repoName);
+		string defaultBranch = FirstNonEmpty(ExtractStringProperty(root, "default_branch"), "main");
+		string zipballUrl = FirstNonEmpty(ExtractStringProperty(root, "zipball_url"), "https://api.github.com/repos/" + Uri.EscapeDataString(owner) + "/" + Uri.EscapeDataString(repoName) + "/zipball/" + Uri.EscapeDataString(defaultBranch));
+		return new ChatGitHubRepositoryMetadata
+		{
+			FullName = fullName,
+			DefaultBranch = defaultBranch,
+			ZipballUri = new Uri(zipballUrl)
+		};
+	}
+
+	private static async Task<long> DownloadGitHubArchiveToTempFileAsync(System.Net.Http.HttpClient client, Uri archiveUri, string githubToken, string tempZipPath, CancellationToken cancellationToken)
+	{
+		using HttpResponseMessage response = await SendGitHubGetAsync(client, archiveUri, githubToken, cancellationToken);
+		if (!response.IsSuccessStatusCode)
+		{
+			throw await BuildGitHubImportExceptionAsync(response, "import_failed", "Could not download GitHub repository archive.", cancellationToken);
+		}
+		Directory.CreateDirectory(Path.GetDirectoryName(tempZipPath) ?? Path.GetTempPath());
+		using Stream input = await response.Content.ReadAsStreamAsync();
+		using FileStream output = File.Create(tempZipPath);
+		await input.CopyToAsync(output, 81920, cancellationToken);
+		return output.Length;
+	}
+
+	private static async Task<HttpResponseMessage> SendGitHubGetAsync(System.Net.Http.HttpClient client, Uri uri, string githubToken, CancellationToken cancellationToken)
+	{
+		Uri current = uri;
+		for (int redirect = 0; redirect < 6; redirect++)
+		{
+			HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, current);
+			AddGitHubHeaders(request, githubToken);
+			HttpResponseMessage response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+			int status = (int)response.StatusCode;
+			if (status >= 300 && status <= 399 && response.Headers.Location != null)
+			{
+				Uri location = response.Headers.Location;
+				current = location.IsAbsoluteUri ? location : new Uri(current, location);
+				response.Dispose();
+				continue;
+			}
+			return response;
+		}
+		throw new ChatGitHubImportException(502, "Bad Gateway", "import_failed", "GitHub archive download redirected too many times.");
+	}
+
+	private static void AddGitHubHeaders(HttpRequestMessage request, string githubToken)
+	{
+		request.Headers.UserAgent.ParseAdd("JackLLM-Repo-Import/1.0");
+		request.Headers.Accept.ParseAdd("application/vnd.github+json");
+		request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
+		if (!string.IsNullOrWhiteSpace(githubToken))
+		{
+			request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", githubToken.Trim());
+		}
+	}
+
+	private static async Task<ChatGitHubImportException> BuildGitHubImportExceptionAsync(HttpResponseMessage response, string fallbackCode, string fallbackMessage, CancellationToken cancellationToken)
+	{
+		string detail = "";
+		try
+		{
+			detail = ExtractGitHubApiErrorMessage(await response.Content.ReadAsStringAsync());
+		}
+		catch
+		{
+		}
+		int status = (int)response.StatusCode;
+		string code = fallbackCode;
+		string message = string.IsNullOrWhiteSpace(detail) ? fallbackMessage : detail;
+		if (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden)
+		{
+			code = "github_auth_failed";
+			message = string.IsNullOrWhiteSpace(detail) ? "GitHub authentication failed for this repository." : detail;
+		}
+		else if (response.StatusCode == HttpStatusCode.NotFound)
+		{
+			code = "repository_not_found";
+			message = "GitHub repository was not found.";
+		}
+		return new ChatGitHubImportException(status, string.IsNullOrWhiteSpace(response.ReasonPhrase) ? response.StatusCode.ToString() : response.ReasonPhrase, code, message);
+	}
+
+	private static string ExtractGitHubApiErrorMessage(string json)
+	{
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+			string message = ExtractStringProperty(document.RootElement, "message");
+			return string.IsNullOrWhiteSpace(message) ? "" : message;
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
+	private static bool TryNormalizeGitHubRepositoryInput(string value, out string owner, out string repoName, out string error)
+	{
+		owner = "";
+		repoName = "";
+		error = "";
+		string text = (value ?? "").Trim().TrimEnd('/');
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			error = "Enter a GitHub repository such as owner/repo.";
+			return false;
+		}
+		if (Uri.TryCreate(text, UriKind.Absolute, out Uri uri))
+		{
+			if (!uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+			{
+				error = "Only github.com repositories can be imported.";
+				return false;
+			}
+			string[] segments = uri.AbsolutePath.Split(new char[1] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+			if (segments.Length < 2)
+			{
+				error = "Enter a GitHub repository URL such as https://github.com/owner/repo.";
+				return false;
+			}
+			owner = segments[0];
+			repoName = segments[1];
+		}
+		else
+		{
+			if (text.StartsWith("github.com/", StringComparison.OrdinalIgnoreCase))
+			{
+				text = text.Substring("github.com/".Length);
+			}
+			string[] parts = text.Split(new char[1] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length != 2)
+			{
+				error = "Enter a GitHub repository as owner/repo.";
+				return false;
+			}
+			owner = parts[0];
+			repoName = parts[1];
+		}
+		if (repoName.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+		{
+			repoName = repoName.Substring(0, repoName.Length - 4);
+		}
+		if (!Regex.IsMatch(owner, "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$") ||
+		    !Regex.IsMatch(repoName, "^[A-Za-z0-9._-]+$") ||
+		    repoName.Equals(".", StringComparison.Ordinal) ||
+		    repoName.Equals("..", StringComparison.Ordinal))
+		{
+			error = "GitHub repository must be owner/repo.";
+			owner = "";
+			repoName = "";
+			return false;
+		}
+		return true;
+	}
+
+	private static string FormatGitHubRepositoryTooLargeMessage(long repositoryBytes, long storageBytesUsed, long storageLimitBytes, bool storageUnlimited)
+	{
+		return "Repository is too large (" + FormatGitHubRepositoryBytes(repositoryBytes) + "), Session Storage (" + FormatGitHubRepositoryStoragePair(storageBytesUsed, storageLimitBytes, storageUnlimited) + ")";
+	}
+
+	private static string FormatGitHubRepositoryBytes(long bytes)
+	{
+		const double kb = 1024d;
+		const double mb = kb * 1024d;
+		const double gb = mb * 1024d;
+		double value = Math.Max(0L, bytes);
+		if (value >= gb)
+		{
+			double amount = value / gb;
+			return Math.Abs(amount - Math.Round(amount)) < 0.05d
+				? Math.Round(amount).ToString("0", CultureInfo.InvariantCulture) + "GB"
+				: amount.ToString("0.0", CultureInfo.InvariantCulture) + "GB";
+		}
+		if (value >= mb)
+		{
+			return (value / mb).ToString(value / mb >= 10d ? "0" : "0.0", CultureInfo.InvariantCulture) + "MB";
+		}
+		if (value >= kb)
+		{
+			return (value / kb).ToString(value / kb >= 10d ? "0" : "0.0", CultureInfo.InvariantCulture) + "KB";
+		}
+		return value.ToString("0", CultureInfo.InvariantCulture) + "B";
+	}
+
+	private static string FormatGitHubRepositoryStoragePair(long usedBytes, long limitBytes, bool storageUnlimited)
+	{
+		const double kb = 1024d;
+		const double mb = kb * 1024d;
+		const double gb = mb * 1024d;
+		if (storageUnlimited)
+		{
+			return FormatGitHubRepositoryBytes(usedBytes) + "/unlimited";
+		}
+		double used = Math.Max(0L, usedBytes);
+		double limit = Math.Max(0L, limitBytes);
+		if (limit >= gb)
+		{
+			return (used / gb).ToString("0.0", CultureInfo.InvariantCulture) + "/" + (limit / gb).ToString("0.0", CultureInfo.InvariantCulture) + "GB";
+		}
+		if (limit >= mb)
+		{
+			return (used / mb).ToString("0.0", CultureInfo.InvariantCulture) + "/" + (limit / mb).ToString("0.0", CultureInfo.InvariantCulture) + "MB";
+		}
+		if (limit >= kb)
+		{
+			return (used / kb).ToString("0.0", CultureInfo.InvariantCulture) + "/" + (limit / kb).ToString("0.0", CultureInfo.InvariantCulture) + "KB";
+		}
+		return used.ToString("0", CultureInfo.InvariantCulture) + "/" + limit.ToString("0", CultureInfo.InvariantCulture) + "B";
+	}
+
+	private string BuildChatGitHubImportError(HttpRequest request, int statusCode, string reasonPhrase, string message, string errorCode, ChatUsageSnapshot usage = null, long zipSizeBytes = 0L, long extractedSizeBytes = 0L)
+	{
+		SetHttpStatus(request, statusCode, reasonPhrase);
+		JsonObject output = new JsonObject
+		{
+			["ok"] = false,
+			["error"] = string.IsNullOrWhiteSpace(message) ? "GitHub repository import failed." : message,
+			["errorCode"] = string.IsNullOrWhiteSpace(errorCode) ? "import_failed" : errorCode
+		};
+		if (usage != null)
+		{
+			output["usage"] = JsonSerializer.SerializeToNode(usage);
+		}
+		if (zipSizeBytes > 0)
+		{
+			output["zipSizeBytes"] = zipSizeBytes;
+		}
+		if (extractedSizeBytes > 0)
+		{
+			output["extractedSizeBytes"] = extractedSizeBytes;
+		}
+		return output.ToJsonString();
 	}
 
 	private bool TryMaterializeInlineChatReferenceFiles(ref string requestBody, string ownerKey, string sessionId, ChatPermissionState permissions, out string error)
@@ -39609,7 +40511,7 @@ except Exception as exc:
 					return "_Response may be incomplete because the upstream stream closed before the normal done marker._";
 				}
 				string displayReason = SanitizeChatUiFinishReason(reason);
-				if (normalized.Contains("length") || normalized.Contains("max_token") || normalized.Contains("token_limit") || normalized.Contains("context_length") || normalized.Contains("context_limit"))
+				if (normalized.Contains("length") || normalized.Contains("max_token") || normalized.Contains("max_output") || normalized.Contains("output_limit") || normalized.Contains("token_limit") || normalized.Contains("context_length") || normalized.Contains("context_limit") || normalized.Contains("truncated"))
 				{
 					return "_Response stopped because the model hit an output limit (`finish_reason: " + displayReason + "`). Send \"continue\" or raise Max Tokens to finish the response._";
 				}
@@ -39643,6 +40545,214 @@ except Exception as exc:
 			}
 		}
 		return (sb.Length == 0) ? "unknown" : sb.ToString();
+	}
+
+	private bool ShouldAutoContinueChatUiCompletion(string finishReason, string content, string reasoning, int continuationCount, int lastContinuationOutputLength, string ownerKey, ChatUsageMeter usageMeter, out string stopReason)
+	{
+		stopReason = "";
+		string normalized = NormalizeChatUiFinishReason(finishReason);
+		if (string.IsNullOrWhiteSpace(normalized))
+		{
+			return false;
+		}
+		bool shouldContinue = IsChatUiOutputLimitFinishReason(normalized) ||
+			((normalized == "stream_closed" || normalized == "stream_eof") && ChatUiAnswerLooksAbruptlyIncomplete(content));
+		if (!shouldContinue)
+		{
+			return false;
+		}
+		if (!HasChatUiAutoContinuationTokenCapacity(ownerKey, usageMeter, out stopReason))
+		{
+			return false;
+		}
+		return true;
+	}
+
+	private int GetChatUiContinuationOutputLength(string content, string reasoning)
+	{
+		return Math.Max(0, content?.Length ?? 0) + Math.Max(0, reasoning?.Length ?? 0);
+	}
+
+	private bool HasChatUiAutoContinuationTokenCapacity(string ownerKey, ChatUsageMeter usageMeter, out string stopReason)
+	{
+		stopReason = "";
+		if (IsAdminOwnerKey(ownerKey) || IsServerOwnerOwnerKey(ownerKey))
+		{
+			return true;
+		}
+		ChatUsageSnapshot snapshot = GetChatUsageSnapshot(ownerKey);
+		if (snapshot == null || !snapshot.tokensRequired || snapshot.unlimited)
+		{
+			return true;
+		}
+		if (!snapshot.authenticated)
+		{
+			stopReason = "the chat owner is not authenticated for token usage";
+			return false;
+		}
+		long pendingTokens = Math.Max(0, usageMeter?.PendingChargeTokenDelta ?? 0);
+		if (snapshot.tokensRemaining <= pendingTokens)
+		{
+			stopReason = "no continuation tokens are available";
+			return false;
+		}
+		return true;
+	}
+
+	private string NormalizeChatUiFinishReason(string finishReason)
+	{
+		return (finishReason ?? "").Trim().ToLowerInvariant();
+	}
+
+	private bool IsChatUiOutputLimitFinishReason(string normalizedFinishReason)
+	{
+		string reason = NormalizeChatUiFinishReason(normalizedFinishReason);
+		if (string.IsNullOrWhiteSpace(reason))
+		{
+			return false;
+		}
+		return reason.Contains("length") ||
+			reason.Contains("max_token") ||
+			reason.Contains("max_output") ||
+			reason.Contains("output_limit") ||
+			reason.Contains("token_limit") ||
+			reason.Contains("context_length") ||
+			reason.Contains("context_limit") ||
+			reason.Contains("truncated");
+	}
+
+	private bool IsChatUiErrorFinishReason(string finishReason)
+	{
+		string reason = NormalizeChatUiFinishReason(finishReason);
+		return reason == "error" ||
+			reason == "exception" ||
+			reason == "inference_error" ||
+			reason == "backend_error" ||
+			reason == "runtime_error";
+	}
+
+	private bool LooksLikeChatUiRuntimeErrorContent(string content)
+	{
+		string text = (content ?? "").TrimStart();
+		return text.StartsWith("Model runtime error:", StringComparison.OrdinalIgnoreCase) ||
+			text.StartsWith("LlmRuntime error:", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private string ExtractChatUiRuntimeErrorContent(string content)
+	{
+		string text = (content ?? "").Trim();
+		if (text.StartsWith("Model runtime error:", StringComparison.OrdinalIgnoreCase))
+			return text.Substring("Model runtime error:".Length).Trim();
+		if (text.StartsWith("LlmRuntime error:", StringComparison.OrdinalIgnoreCase))
+			return text.Substring("LlmRuntime error:".Length).Trim();
+		return text;
+	}
+
+	private bool ChatUiAnswerLooksAbruptlyIncomplete(string content)
+	{
+		string text = (content ?? "").TrimEnd();
+		if (text.Length == 0)
+		{
+			return false;
+		}
+		if ((CountTextOccurrences(text, "```") % 2) != 0)
+		{
+			return true;
+		}
+		char last = text[text.Length - 1];
+		if (char.IsLetterOrDigit(last) || last == ',' || last == ':' || last == ';' || last == '-' || last == '(' || last == '[' || last == '{' || last == '/' || last == '\\')
+		{
+			return true;
+		}
+		string tail = text.Length <= 160 ? text : text.Substring(text.Length - 160);
+		return Regex.IsMatch(tail, "(?is)\\b(?:first|second|third|next|finally|because|therefore|for example|such as|including|and|or|but|with|without|from|to|of|the|a|an)\\s*$", RegexOptions.CultureInvariant);
+	}
+
+	private string BuildChatUiAutoContinuationRequest(string requestBody, string completedContent, string completedReasoning, string finishReason, int continuationNumber)
+	{
+		string prompt = FirstNonEmpty(ExtractChatUiLastUserPromptText(requestBody), ExtractLastUserMessage(requestBody) ?? "");
+		string visibleTail = TailText((completedContent ?? "").Trim(), 1200);
+		string instruction = "[JackLLM auto continuation] The previous assistant draft stopped before the answer was complete" +
+			(string.IsNullOrWhiteSpace(finishReason) ? "." : (" (`finish_reason: " + SanitizeChatUiFinishReason(finishReason) + "`).")) +
+			" Continue the same answer from exactly where the previous draft ended. Do not restart, apologize, mention token limits, mention this continuation instruction, or repeat earlier content. Reason internally about what remains, close any unfinished list/table/code block, and emit only the missing continuation text. If the answer is already complete, emit only a short closing sentence if needed. Continuation pass " + continuationNumber.ToString(CultureInfo.InvariantCulture) + "." +
+			(string.IsNullOrWhiteSpace(prompt) ? "" : ("\nOriginal user request: " + TruncateForLog(prompt, 700))) +
+			(string.IsNullOrWhiteSpace(visibleTail) ? "" : ("\nPrevious visible answer tail:\n" + visibleTail));
+		return AppendAssistantAndSystemMessage(requestBody, completedContent ?? "", instruction);
+	}
+
+	private ChatUiCompletion MergeChatUiAutoContinuation(ChatUiCompletion completion, StringBuilder accumulatedContent, StringBuilder accumulatedReasoning, string priorFinishReason)
+	{
+		completion = completion ?? new ChatUiCompletion();
+		if (accumulatedContent == null || accumulatedReasoning == null || (accumulatedContent.Length == 0 && accumulatedReasoning.Length == 0))
+		{
+			return completion;
+		}
+		bool completionHadOutput = HasChatUiCompletionOutput(completion);
+		string mergedContent = MergeChatUiContinuationText(accumulatedContent.ToString(), completion.Content ?? "");
+		string mergedReasoning = MergeChatUiContinuationText(accumulatedReasoning.ToString(), completion.Reasoning ?? "");
+		completion.Content = mergedContent;
+		completion.Reasoning = mergedReasoning;
+		if (!completionHadOutput && !string.IsNullOrWhiteSpace(priorFinishReason))
+		{
+			completion.FinishReason = priorFinishReason;
+		}
+		else if (string.IsNullOrWhiteSpace(completion.FinishReason))
+		{
+			completion.FinishReason = priorFinishReason ?? "";
+		}
+		return completion;
+	}
+
+	private void AppendChatUiAutoContinuationDraft(ChatUiCompletion completion, StringBuilder accumulatedContent, StringBuilder accumulatedReasoning)
+	{
+		if (completion == null)
+		{
+			return;
+		}
+		if (accumulatedContent != null)
+		{
+			string existingContent = accumulatedContent.ToString();
+			accumulatedContent.Clear();
+			accumulatedContent.Append(MergeChatUiContinuationText(existingContent, completion.Content ?? ""));
+		}
+		if (accumulatedReasoning != null)
+		{
+			string existingReasoning = accumulatedReasoning.ToString();
+			accumulatedReasoning.Clear();
+			accumulatedReasoning.Append(MergeChatUiContinuationText(existingReasoning, completion.Reasoning ?? ""));
+		}
+	}
+
+	private string MergeChatUiContinuationText(string existing, string next)
+	{
+		existing = existing ?? "";
+		next = next ?? "";
+		if (string.IsNullOrEmpty(existing))
+		{
+			return next;
+		}
+		if (string.IsNullOrEmpty(next))
+		{
+			return existing;
+		}
+		if (next.StartsWith(existing, StringComparison.Ordinal))
+		{
+			return next;
+		}
+		if (existing.EndsWith(next, StringComparison.Ordinal))
+		{
+			return existing;
+		}
+		int maxOverlap = Math.Min(existing.Length, next.Length);
+		for (int length = Math.Min(maxOverlap, 800); length >= 24; length--)
+		{
+			if (existing.EndsWith(next.Substring(0, length), StringComparison.Ordinal))
+			{
+				return existing + next.Substring(length);
+			}
+		}
+		bool needsNewline = !char.IsWhiteSpace(existing[existing.Length - 1]) && !char.IsWhiteSpace(next[0]);
+		return existing + (needsNewline ? "\n" : "") + next;
 	}
 
 	private string BuildChatUiNoContentErrorMessage(string source)
@@ -40216,87 +41326,118 @@ except Exception as exc:
 				DateTimeOffset openAiLastDeltaFlushUtc = DateTimeOffset.MinValue;
 				bool openAiSawDoneMarker = false;
 				string openAiFinishReason = "";
-				using (StringContent content = new StringContent(lmRequestJson, Encoding.UTF8, "application/json"))
+				string currentOpenAiRequestJson = lmRequestJson;
+				int openAiContinuationCount = 0;
+				int openAiContinuationLastOutputLength = -1;
+				while (true)
 				{
-					using HttpRequestMessage upstreamRequest = new HttpRequestMessage(HttpMethod.Post, url);
-					upstreamRequest.Content = content;
-					using HttpResponseMessage response = await AwaitChatUiOperationWithProgressAsync(_httpClient.SendAsync(upstreamRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken), output, promptSessionId, "prompt_processing", waitStatus, cancellationToken, streamOwnerKey, usageMeter);
-					if (!response.IsSuccessStatusCode)
+					openAiSawDoneMarker = false;
+					openAiFinishReason = "";
+					using (StringContent content = new StringContent(currentOpenAiRequestJson, Encoding.UTF8, "application/json"))
 					{
-						string text = ((response.Content != null) ? (await response.Content.ReadAsStringAsync()) : "");
-						string body = text;
-						LogMessage("[Chat UI] Streaming " + runtimeDisplayName + " returned " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " " + response.ReasonPhrase + ": " + TruncateForLog(body, 1000));
-						WriteChatUiStreamEvent(output, "error", response.ReasonPhrase ?? (runtimeDisplayName + " streaming request failed."), "", body, null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
-						return;
-					}
-					using Stream upstreamStream = await response.Content.ReadAsStreamAsync();
-					using StreamReader reader = new StreamReader(upstreamStream, Encoding.UTF8);
-					while (!cancellationToken.IsCancellationRequested)
-					{
-						string line = await AwaitChatUiOperationWithProgressAsync(reader.ReadLineAsync(), output, promptSessionId, "prompt_processing", imageRequest ? ("Processing image in " + runtimeDisplayName + "...") : ("Receiving stream from " + runtimeDisplayName + "..."), cancellationToken, streamOwnerKey, usageMeter);
-						if (line == null)
+						using HttpRequestMessage upstreamRequest = new HttpRequestMessage(HttpMethod.Post, url);
+						upstreamRequest.Content = content;
+						using HttpResponseMessage response = await AwaitChatUiOperationWithProgressAsync(_httpClient.SendAsync(upstreamRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken), output, promptSessionId, "prompt_processing", waitStatus, cancellationToken, streamOwnerKey, usageMeter);
+						if (!response.IsSuccessStatusCode)
 						{
-							break;
+							string text = ((response.Content != null) ? (await response.Content.ReadAsStringAsync()) : "");
+							string body = text;
+							LogMessage("[Chat UI] Streaming " + runtimeDisplayName + " returned " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " " + response.ReasonPhrase + ": " + TruncateForLog(body, 1000));
+							WriteChatUiStreamEvent(output, "error", response.ReasonPhrase ?? (runtimeDisplayName + " streaming request failed."), "", body, null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
+							return;
 						}
-						if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+						using Stream upstreamStream = await response.Content.ReadAsStreamAsync();
+						using StreamReader reader = new StreamReader(upstreamStream, Encoding.UTF8);
+						while (!cancellationToken.IsCancellationRequested)
 						{
-							continue;
-						}
-						string payload = DecodeChatUiSseFieldValue(line, 5);
-						if (payload.Trim().Equals("[DONE]", StringComparison.OrdinalIgnoreCase))
-						{
-							openAiSawDoneMarker = true;
-							break;
-						}
-						foreach (ChatUiCompletion delta in ExtractChatUiStreamingDeltas(payload))
-						{
-							if (!string.IsNullOrWhiteSpace(delta.FinishReason))
+							string line = await AwaitChatUiOperationWithProgressAsync(reader.ReadLineAsync(), output, promptSessionId, "prompt_processing", imageRequest ? ("Processing image in " + runtimeDisplayName + "...") : ("Receiving stream from " + runtimeDisplayName + "..."), cancellationToken, streamOwnerKey, usageMeter);
+							if (line == null)
 							{
-								openAiFinishReason = delta.FinishReason;
+								break;
 							}
-							if (string.IsNullOrEmpty(delta.Content) && string.IsNullOrEmpty(delta.Reasoning))
+							if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
 							{
 								continue;
 							}
-							openAiRawContent.Append(delta.Content ?? "");
-							if (!suppressOpenAiReasoning)
+							string payload = DecodeChatUiSseFieldValue(line, 5);
+							if (payload.Trim().Equals("[DONE]", StringComparison.OrdinalIgnoreCase))
 							{
-								completedReasoning.Append(delta.Reasoning ?? "");
+								openAiSawDoneMarker = true;
+								break;
 							}
-							ChatUiCompletion splitDelta = SplitThinkTags(openAiRawContent.ToString(), completedReasoning.ToString(), preserveWhitespace: true);
-							string answerDelta = ExtractUnsentNativeSuffix(splitDelta.Content, openAiEmittedContent.ToString());
-							string reasoningDelta = suppressOpenAiReasoning ? "" : ExtractUnsentNativeSuffix(splitDelta.Reasoning, openAiEmittedReasoning.ToString());
-							if (!string.IsNullOrEmpty(answerDelta) || !string.IsNullOrEmpty(reasoningDelta))
+							foreach (ChatUiCompletion delta in ExtractChatUiStreamingDeltas(payload))
 							{
-								openAiPendingContentDelta.Append(answerDelta);
-								openAiPendingReasoningDelta.Append(reasoningDelta);
-								openAiEmittedContent.Append(answerDelta);
-								openAiEmittedReasoning.Append(reasoningDelta);
-								if (!TryFlushChatUiDeltaBatch(output, streamOwnerKey, openAiPendingContentDelta, openAiPendingReasoningDelta, usageMeter, ref openAiLastDeltaFlushUtc, force: false, cancellationToken, promptSessionId))
+								if (!string.IsNullOrWhiteSpace(delta.FinishReason))
+								{
+									openAiFinishReason = delta.FinishReason;
+								}
+								if (IsChatUiErrorFinishReason(delta.FinishReason) || LooksLikeChatUiRuntimeErrorContent(delta.Content))
 								{
 									CompleteActivePromptSession(promptSessionId, "Failed");
+									string runtimeError = FirstNonEmpty(ExtractChatUiRuntimeErrorContent(delta.Content), delta.Content, runtimeDisplayName + " streaming request failed.");
+									WriteChatUiStreamEvent(output, "error", NormalizeChatUiRuntimeErrorMessage(runtimeError), "", payload ?? "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
 									return;
+								}
+								if (string.IsNullOrEmpty(delta.Content) && string.IsNullOrEmpty(delta.Reasoning))
+								{
+									continue;
+								}
+								openAiRawContent.Append(delta.Content ?? "");
+								if (!suppressOpenAiReasoning)
+								{
+									completedReasoning.Append(delta.Reasoning ?? "");
+								}
+								ChatUiCompletion splitDelta = SplitThinkTags(openAiRawContent.ToString(), completedReasoning.ToString(), preserveWhitespace: true);
+								string answerDelta = ExtractUnsentNativeSuffix(splitDelta.Content, openAiEmittedContent.ToString());
+								string reasoningDelta = suppressOpenAiReasoning ? "" : ExtractUnsentNativeSuffix(splitDelta.Reasoning, openAiEmittedReasoning.ToString());
+								if (!string.IsNullOrEmpty(answerDelta) || !string.IsNullOrEmpty(reasoningDelta))
+								{
+									openAiPendingContentDelta.Append(answerDelta);
+									openAiPendingReasoningDelta.Append(reasoningDelta);
+									openAiEmittedContent.Append(answerDelta);
+									openAiEmittedReasoning.Append(reasoningDelta);
+									if (!TryFlushChatUiDeltaBatch(output, streamOwnerKey, openAiPendingContentDelta, openAiPendingReasoningDelta, usageMeter, ref openAiLastDeltaFlushUtc, force: false, cancellationToken, promptSessionId))
+									{
+										CompleteActivePromptSession(promptSessionId, "Failed");
+										return;
+									}
 								}
 							}
 						}
 					}
-				}
-				if (!openAiSawDoneMarker && string.IsNullOrWhiteSpace(openAiFinishReason))
-				{
-					openAiFinishReason = "stream_closed";
-				}
-				if (!TryFlushChatUiDeltaBatch(output, streamOwnerKey, openAiPendingContentDelta, openAiPendingReasoningDelta, usageMeter, ref openAiLastDeltaFlushUtc, force: true, cancellationToken, promptSessionId))
-				{
-					CompleteActivePromptSession(promptSessionId, "Failed");
-					return;
-				}
-				if (openAiRawContent.Length > 0 || completedReasoning.Length > 0)
-				{
-					ChatUiCompletion finalSplit = SplitThinkTags(openAiRawContent.ToString(), completedReasoning.ToString(), preserveWhitespace: true);
-					completedContent.Clear();
-					completedContent.Append(finalSplit.Content ?? "");
-					completedReasoning.Clear();
-					completedReasoning.Append(finalSplit.Reasoning ?? "");
+					if (!openAiSawDoneMarker && string.IsNullOrWhiteSpace(openAiFinishReason))
+					{
+						openAiFinishReason = "stream_closed";
+					}
+					if (!TryFlushChatUiDeltaBatch(output, streamOwnerKey, openAiPendingContentDelta, openAiPendingReasoningDelta, usageMeter, ref openAiLastDeltaFlushUtc, force: true, cancellationToken, promptSessionId))
+					{
+						CompleteActivePromptSession(promptSessionId, "Failed");
+						return;
+					}
+					if (openAiRawContent.Length > 0 || completedReasoning.Length > 0)
+					{
+						ChatUiCompletion finalSplit = SplitThinkTags(openAiRawContent.ToString(), completedReasoning.ToString(), preserveWhitespace: true);
+						completedContent.Clear();
+						completedContent.Append(finalSplit.Content ?? "");
+						completedReasoning.Clear();
+						completedReasoning.Append(finalSplit.Reasoning ?? "");
+					}
+					string completedContentText = completedContent.ToString();
+					string completedReasoningText = completedReasoning.ToString();
+					if (ShouldAutoContinueChatUiCompletion(openAiFinishReason, completedContentText, completedReasoningText, openAiContinuationCount, openAiContinuationLastOutputLength, streamOwnerKey, usageMeter, out var openAiContinuationStopReason))
+					{
+						openAiContinuationLastOutputLength = GetChatUiContinuationOutputLength(completedContentText, completedReasoningText);
+						openAiContinuationCount++;
+						LogMessage("[Chat UI] Streaming completion hit an output limit; recursively continuing answer pass " + openAiContinuationCount.ToString(CultureInfo.InvariantCulture) + ".");
+						WriteChatUiProgressWithUsage(output, streamOwnerKey, usageMeter, null, "auto_continuation", "Continuing clipped response...", 0L, 0L);
+						currentOpenAiRequestJson = BuildChatUiAutoContinuationRequest(currentOpenAiRequestJson, completedContentText, completedReasoningText, openAiFinishReason, openAiContinuationCount);
+						continue;
+					}
+					if (!string.IsNullOrWhiteSpace(openAiContinuationStopReason))
+					{
+						LogMessage("[Chat UI] Stopped recursive continuation because " + openAiContinuationStopReason + ".");
+					}
+					break;
 				}
 				if (!HasChatUiCompletionOutput(completedContent, completedReasoning))
 				{
@@ -43547,6 +44688,11 @@ except Exception as exc:
 		await EnsureLmStudioForPromptAsync();
 		string url = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/v1/chat/completions";
 		string currentRequestJson = lmRequestJson;
+		StringBuilder autoContinuationContent = new StringBuilder();
+		StringBuilder autoContinuationReasoning = new StringBuilder();
+		string autoContinuationFinishReason = "";
+		int autoContinuationCount = 0;
+		int autoContinuationLastOutputLength = -1;
 		sessionId = EnsureChatUiSessionId(sessionId);
 		currentRequestJson = EnsureRequiredProxyFileWriteToolsEnabled(currentRequestJson, ownerKey);
 		if (ShouldPreloadExplicitProxyToolCalls() && TryBuildExplicitRequiredProxyFileWriteToolCall(currentRequestJson, out var explicitFileWriteCall))
@@ -43593,7 +44739,7 @@ except Exception as exc:
 				currentRequestJson = continuationRequest2;
 			}
 		}
-		for (int toolRound = 0; toolRound < 36; toolRound++)
+		for (int toolRound = 0; toolRound < 36 + autoContinuationCount; toolRound++)
 		{
 			currentRequestJson = ApplyPendingChatUiSteering(currentRequestJson, consumeSteering);
 			bool finalAnswerOnlyRound = IsProxyToolExecutionDisabled(currentRequestJson);
@@ -43692,6 +44838,23 @@ except Exception as exc:
 					LogMessage("[Chat UI] Blocking final answer for file-write prompt because no successful vs_write_file result was observed.");
 					return BuildRequiredProxyFileWriteBlockedCompletion(currentRequestJson, final.Content, emitLiveContent);
 				}
+				string finalAccumulatedContent = MergeChatUiContinuationText(autoContinuationContent.ToString(), final.Content ?? "");
+				string finalAccumulatedReasoning = MergeChatUiContinuationText(autoContinuationReasoning.ToString(), final.Reasoning ?? "");
+				if (ShouldAutoContinueChatUiCompletion(final.FinishReason, finalAccumulatedContent, finalAccumulatedReasoning, autoContinuationCount, autoContinuationLastOutputLength, ownerKey, null, out var finalContinuationStopReason))
+				{
+					autoContinuationLastOutputLength = GetChatUiContinuationOutputLength(finalAccumulatedContent, finalAccumulatedReasoning);
+					autoContinuationCount++;
+					autoContinuationFinishReason = final.FinishReason ?? "";
+					AppendChatUiAutoContinuationDraft(final, autoContinuationContent, autoContinuationReasoning);
+					LogMessage("[Chat UI] Final-answer pass hit an output limit; recursively continuing answer pass " + autoContinuationCount.ToString(CultureInfo.InvariantCulture) + ".");
+					currentRequestJson = BuildChatUiAutoContinuationRequest(currentRequestJson, autoContinuationContent.ToString(), autoContinuationReasoning.ToString(), final.FinishReason, autoContinuationCount);
+					continue;
+				}
+				if (!string.IsNullOrWhiteSpace(finalContinuationStopReason))
+				{
+					LogMessage("[Chat UI] Stopped final-answer recursive continuation because " + finalContinuationStopReason + ".");
+				}
+				final = MergeChatUiAutoContinuation(final, autoContinuationContent, autoContinuationReasoning, autoContinuationFinishReason);
 				return AttachProxySearchCitationsIfNeeded(final, currentRequestJson);
 			}
 			List<ToolCallData> toolCalls = ExtractProxyToolCallsFromChatCompletion(responseBody);
@@ -43820,6 +44983,23 @@ except Exception as exc:
 					continue;
 				}
 			}
+			string directAccumulatedContent = MergeChatUiContinuationText(autoContinuationContent.ToString(), direct.Content ?? "");
+			string directAccumulatedReasoning = MergeChatUiContinuationText(autoContinuationReasoning.ToString(), direct.Reasoning ?? "");
+			if (ShouldAutoContinueChatUiCompletion(direct.FinishReason, directAccumulatedContent, directAccumulatedReasoning, autoContinuationCount, autoContinuationLastOutputLength, ownerKey, null, out var directContinuationStopReason))
+			{
+				autoContinuationLastOutputLength = GetChatUiContinuationOutputLength(directAccumulatedContent, directAccumulatedReasoning);
+				autoContinuationCount++;
+				autoContinuationFinishReason = direct.FinishReason ?? "";
+				AppendChatUiAutoContinuationDraft(direct, autoContinuationContent, autoContinuationReasoning);
+				LogMessage("[Chat UI] Completion hit an output limit; recursively continuing answer pass " + autoContinuationCount.ToString(CultureInfo.InvariantCulture) + ".");
+				currentRequestJson = BuildChatUiAutoContinuationRequest(currentRequestJson, autoContinuationContent.ToString(), autoContinuationReasoning.ToString(), direct.FinishReason, autoContinuationCount);
+				continue;
+			}
+			if (!string.IsNullOrWhiteSpace(directContinuationStopReason))
+			{
+				LogMessage("[Chat UI] Stopped recursive continuation because " + directContinuationStopReason + ".");
+			}
+			direct = MergeChatUiAutoContinuation(direct, autoContinuationContent, autoContinuationReasoning, autoContinuationFinishReason);
 			return AttachProxySearchCitationsIfNeeded(direct, currentRequestJson);
 			}
 			catch (OperationCanceledException) when (timeboxFinalAnswer && !cancellationToken.IsCancellationRequested)

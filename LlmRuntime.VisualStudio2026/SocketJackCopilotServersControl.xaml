@@ -51,27 +51,71 @@
 
         <Grid Grid.Column="0">
           <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
           </Grid.RowDefinitions>
-          <ListBox Grid.Row="0"
+          <DockPanel Grid.Row="0" Margin="0,0,0,6">
+            <TextBlock DockPanel.Dock="Left"
+                       Text="Servers"
+                       FontWeight="SemiBold" />
+            <TextBlock DockPanel.Dock="Right"
+                       Text="{Binding ServerSummary}"
+                       Foreground="#BFC7D5"
+                       TextAlignment="Right" />
+          </DockPanel>
+          <ListBox Grid.Row="1"
                    MinHeight="260"
                    Background="#303030"
                    BorderBrush="#585858"
                    Foreground="#E8E8E8"
                    ItemsSource="{Binding Servers}"
                    SelectedValue="{Binding SelectedServerId, Mode=TwoWay}"
-                   SelectedValuePath="Id"
-                   DisplayMemberPath="DisplayText">
+                   SelectedValuePath="Id">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid MinHeight="54" Margin="2,4">
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Row="0"
+                             Grid.Column="0"
+                             Text="{Binding DisplayName}"
+                             FontWeight="SemiBold"
+                             TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Row="0"
+                             Grid.Column="1"
+                             Margin="8,0,0,0"
+                             Text="{Binding StatusText}"
+                             Foreground="#9CDCFE" />
+                  <StackPanel Grid.Row="1"
+                              Grid.ColumnSpan="2"
+                              Orientation="Vertical"
+                              Margin="0,3,0,0">
+                    <TextBlock Text="{Binding Endpoint}"
+                               Foreground="#CFCFCF"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding ModelSummary}"
+                               Foreground="#BFC7D5"
+                               TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
             <ListBox.ItemContainerStyle>
               <Style TargetType="{x:Type ListBoxItem}">
                 <Setter Property="Background" Value="#303030" />
                 <Setter Property="Foreground" Value="#E8E8E8" />
-                <Setter Property="Padding" Value="4,2" />
+                <Setter Property="Padding" Value="6,3" />
               </Style>
             </ListBox.ItemContainerStyle>
           </ListBox>
-          <TextBlock Grid.Row="1"
+          <TextBlock Grid.Row="2"
                      Margin="0,8,0,0"
                      Text="{Binding ServerDetails}"
                      TextWrapping="Wrap" />
@@ -80,10 +124,20 @@
         <Grid Grid.Column="2">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
           </Grid.RowDefinitions>
-          <ComboBox Grid.Row="0"
+          <DockPanel Grid.Row="0" Margin="0,0,0,6">
+            <TextBlock DockPanel.Dock="Left"
+                       Text="Models"
+                       FontWeight="SemiBold" />
+            <TextBlock DockPanel.Dock="Right"
+                       Text="{Binding ModelSummary}"
+                       Foreground="#BFC7D5"
+                       TextAlignment="Right" />
+          </DockPanel>
+          <ComboBox Grid.Row="1"
                     MinHeight="26"
                     Background="#303030"
                     BorderBrush="#585858"
@@ -92,7 +146,7 @@
                     SelectedValue="{Binding SelectedModelId, Mode=TwoWay}"
                     SelectedValuePath="Id"
                     DisplayMemberPath="DisplayText" />
-          <ListBox Grid.Row="1"
+          <ListBox Grid.Row="2"
                    Margin="0,8,0,0"
                    MinHeight="220"
                    Background="#303030"
@@ -100,17 +154,51 @@
                    Foreground="#E8E8E8"
                    ItemsSource="{Binding Models}"
                    SelectedValue="{Binding SelectedModelId, Mode=TwoWay}"
-                   SelectedValuePath="Id"
-                   DisplayMemberPath="DisplayText">
+                   SelectedValuePath="Id">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid MinHeight="58" Margin="2,4">
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Row="0"
+                             Grid.Column="0"
+                             Text="{Binding DisplayName}"
+                             FontWeight="SemiBold"
+                             TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Row="0"
+                             Grid.Column="1"
+                             Margin="8,0,0,0"
+                             Text="{Binding LoadText}"
+                             Foreground="#9CDCFE" />
+                  <TextBlock Grid.Row="1"
+                             Grid.ColumnSpan="2"
+                             Text="{Binding CapabilityText}"
+                             Foreground="#BFC7D5"
+                             TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Row="2"
+                             Grid.ColumnSpan="2"
+                             Text="{Binding StatusText}"
+                             Foreground="#CFCFCF"
+                             TextTrimming="CharacterEllipsis" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
             <ListBox.ItemContainerStyle>
               <Style TargetType="{x:Type ListBoxItem}">
                 <Setter Property="Background" Value="#303030" />
                 <Setter Property="Foreground" Value="#E8E8E8" />
-                <Setter Property="Padding" Value="4,2" />
+                <Setter Property="Padding" Value="6,3" />
               </Style>
             </ListBox.ItemContainerStyle>
           </ListBox>
-          <TextBlock Grid.Row="2"
+          <TextBlock Grid.Row="3"
                      Margin="0,8,0,0"
                      Text="{Binding ModelDetails}"
                      TextWrapping="Wrap" />

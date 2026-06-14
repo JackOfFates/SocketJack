@@ -1127,9 +1127,13 @@ def model_signal(payload):
     return " ".join(str(part) for part in parts).lower()
 
 
-def unsupported_model_note(payload):
+def is_moshi_dialogue_bundle(payload):
     signal = model_signal(payload)
-    if "moshi" in signal or "moshiko" in signal:
+    return "moshi" in signal or "moshiko" in signal
+
+
+def unsupported_model_note(payload):
+    if is_moshi_dialogue_bundle(payload):
         return " This is a Moshi/Moshiko speech-dialogue bundle; it needs a dedicated streaming Moshi adapter rather than the standard Transformers text-to-speech or Diffusers audio pipelines."
     return ""
 
@@ -1297,6 +1301,8 @@ def run_transformers_audio(payload):
 
 
 def run_audio(payload):
+    if is_moshi_dialogue_bundle(payload):
+        raise RuntimeError(unsupported_model_note(payload).strip())
     failures = []
     for runner in (run_diffusers_audio, run_transformers_audio):
         try:
@@ -1307,6 +1313,8 @@ def run_audio(payload):
 
 
 def run_speech(payload):
+    if is_moshi_dialogue_bundle(payload):
+        raise RuntimeError(unsupported_model_note(payload).strip())
     failures = []
     for runner in (run_piper_speech, run_transformers_speech):
         try:

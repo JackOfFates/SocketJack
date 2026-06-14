@@ -30,6 +30,7 @@ namespace LmVs
         public string Source { get; set; } = "";
         public string Title { get; set; } = "";
         public string OwnerKey { get; set; } = "";
+        public string StreamId { get; set; } = "";
         public string Model { get; set; } = "";
         public string Runtime { get; set; } = "";
         public string Status { get; set; } = "";

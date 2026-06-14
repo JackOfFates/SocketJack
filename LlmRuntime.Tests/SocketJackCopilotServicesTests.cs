@@ -229,6 +229,62 @@ public sealed class SocketJackCopilotServicesTests
     }
 
     [TestMethod]
+    public void BrowserCacheRoundTripsServersAndModels()
+    {
+        string temp = Path.Combine(Path.GetTempPath(), "socketjack-browser-cache-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var server = new SocketJackServerCandidate
+            {
+                Id = "sable",
+                DisplayName = "sable",
+                Endpoint = "https://socketjack.com/proxy/sable",
+                Online = true,
+                HostResponding = true,
+                ToolsAdvertised = true,
+                ToolsAllowed = "VS_tools, VS bridge",
+                Hardware = "RTX"
+            };
+            server.AvailableModels.Add("qwen-tools");
+
+            var model = new SocketJackModelCandidate
+            {
+                Id = "qwen-tools",
+                DisplayName = "Qwen Tools",
+                ChatCapable = true,
+                SupportsTools = true,
+                SupportsVision = true,
+                IsLoaded = true,
+                Enabled = true,
+                MaxInputTokens = 32768,
+                MaxOutputTokens = 4096
+            };
+
+            var cache = new SocketJackCopilotBrowserCache(temp);
+            cache.SaveServers(new[] { server });
+            cache.SaveModels(server, new SocketJackModelDiscoveryResult(new[] { model }, Array.Empty<string>()));
+
+            IReadOnlyList<SocketJackServerCandidate> cachedServers = cache.LoadServers();
+            Assert.AreEqual(1, cachedServers.Count);
+            Assert.AreEqual("sable", cachedServers[0].Id);
+            Assert.AreEqual("https://socketjack.com/proxy/sable", cachedServers[0].EffectiveEndpoint);
+            Assert.AreEqual("qwen-tools", cachedServers[0].AvailableModels.Single());
+            Assert.IsTrue(cachedServers[0].CanUseForCopilot);
+
+            Assert.IsTrue(cache.TryLoadModels(cachedServers[0], out SocketJackModelDiscoveryResult cachedModels));
+            SocketJackModelCandidate cachedModel = cachedModels.Models.Single();
+            Assert.AreEqual("qwen-tools", cachedModel.Id);
+            Assert.IsTrue(cachedModel.IsSelectable, cachedModel.EligibilityReason);
+            Assert.AreEqual(32768, cachedModel.MaxInputTokens);
+        }
+        finally
+        {
+            if (File.Exists(temp))
+                File.Delete(temp);
+        }
+    }
+
+    [TestMethod]
     public void McpWriterPreservesOtherServersAndReplacesSocketJackEntry()
     {
         string temp = Path.Combine(Path.GetTempPath(), "socketjack-mcp-" + Guid.NewGuid().ToString("N"));

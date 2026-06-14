@@ -1,3 +1,110 @@
+0.2.53
+
+- Adds Session Sync GitHub repository import with a compact Import Repo dialog, optional one-time private repo token, and inline import errors.
+- Imports default-branch GitHub ZIP archives on the JackLLM server, checks extracted size before writing, extracts into a repo-named session folder, and deletes the temporary ZIP.
+- Pulls imported JackLLM sandbox files back into the Visual Studio solution through the Auto API file-download route.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.52
+
+- Fixes Configure getting stuck on `Configuring Visual Studio Copilot for SocketJack...` when a selected SocketJack proxy server times out during direct chat or health probes.
+- Prefers the packaged local SocketJack bridge immediately for SocketJack `/proxy/{server}` selections, so BYOM is written without waiting on slow remote preflight calls.
+- Converts internal route-probe timeouts into visible status messages instead of leaving the server browser on the busy text.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.51
+
+- Converts direct OpenAI-compatible upstream 502/503/504 failures during Visual Studio tool turns into the friendly SocketJack server-offline assistant message instead of exposing raw endpoint diagnostics.
+- Keeps the Copilot Servers window auto-open behavior for offline selected servers.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.50
+
+- Adds a persistent SocketJack Copilot server-browser cache under local app data so the VS tool window can show cached servers and cached or MasterList-derived models before live refresh completes.
+- Updates the VS 2026 Copilot Servers UI with compact server/model summaries, endpoint rows, model counts, capability labels, load state, and token detail.
+- Saves refreshed server and model discovery results back to the cache after live loads.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.49
+
+- Prevents Visual Studio tool-capable empty streams from returning SocketJack no-visible diagnostic text by recovering with a VS project-discovery tool call instead.
+- Treats prior SocketJack no-visible diagnostics as recoverable conversation history so follow-up Copilot turns can continue with tools.
+- Recognizes `summary.md` project-summary requests in the same recovery path as `readme.md`.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.48
+
+- Removes the exact Visual Studio Copilot no-visible-reply placeholder from SocketJack bridge output.
+- Replaces empty-stream fallback text with a SocketJack-specific diagnostic so it is clear whether the bridge or Copilot produced a message.
+- Reuses an already healthy matching local BYOM bridge instead of walking to a higher port when `11574` is already serving the selected server and model.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.47
+
+- Sends streamed Chat Completions requests through the OpenAI-compatible model-runtime route before falling back to the web-chat stream adapter.
+- Prevents Copilot BYOM from receiving the bridge's no-visible-reply fallback from `/api/chat-stream` when the selected server can answer through model-runtime.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.46
+
+- Prefers Sable's OpenAI-compatible model-runtime route before the web-chat stream adapter for Copilot Responses requests.
+- Prevents Visual Studio Copilot BYOM turns from ending with only the bridge wait placeholder while the selected Sable model is actually generating.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.45
+
+- Keeps Copilot BYOM status focused on the packaged VSIX bridge when JackLLM is not open, instead of surfacing the optional local duplicator connection as a failure.
+- Sends Session Sync uploads with the same dataUrl payload shape as the SocketJack Auto web uploader.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.44
+
+- Starts the packaged SocketJack Copilot bridge executable from the VSIX for Copilot BYOM instead of relying on JackLLM being open or `dotnet` being discoverable on Visual Studio's PATH.
+- Restarts the saved BYOM local proxy from the extension package when Visual Studio loads the SocketJack extension and the configured loopback proxy is not already healthy.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.43
+
+- Filters bare HTTP chunk-size framing lines from SocketJack chat-stream relays before they can be forwarded as assistant text.
+- Prevents VS Copilot from receiving transport fragments such as hex length markers mixed into otherwise-visible model output.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.42
+
+- Skips remote model-catalog resolution for SocketJack `/proxy/{server}` endpoints because the VS extension already selected the exact model.
+- Lets the bridge open the local Responses stream immediately instead of blocking on remote model discovery before any visible output can reach Copilot.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.41
+
+- Moves the visible wait-status delta ahead of upstream response headers for long SocketJack chat-stream turns.
+- Prevents VS Copilot from showing its no-visible-reply placeholder while the selected server is still preparing the stream and the GPU is already working.
+- Keeps offline and upstream error handling valid after the bridge has already opened the Responses stream.
+
+0.2.40
+
+- Sends one visible wait-status delta on long direct SocketJack chat-stream turns so VS Copilot does not conclude the model finished without a visible reply while the GPU is still generating.
+- Keeps the actual streamed model answer appended after the wait status, and preserves timeout/fallback handling if no model content arrives.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.39
+
+- Fixes SocketJack proxy endpoint URL joining so direct bridge requests stay under `/proxy/{server}/...` instead of dropping the selected server segment.
+- Prevents direct `/api/chat-stream` and OpenAI-compatible fallback calls from hitting the wrong proxy route and producing empty-body server errors while the selected model is actually running.
+- Includes regression-tested SocketJack Copilot MCP bridge bits.
+
+0.2.38
+
+- Carries streamed Responses API assistant text into the terminal `response.output_text.done` and `response.completed` snapshots so VS Copilot does not discard an otherwise-visible local model answer.
+- Fixes VS Copilot turns that streamed text through the SocketJack bridge but still ended with "The model finished without a visible reply" because final Responses metadata was empty.
+- Includes regression coverage and the current SocketJack Copilot MCP bridge build.
+
+0.2.37
+
+- Fixes Responses API tool-call streams from the SocketJack Copilot MCP bridge so Visual Studio does not receive an empty assistant message before the function call.
+- Prevents VS Copilot turns from finishing with "The model finished without a visible reply" when the local model actually produced a valid tool call.
+- Includes regression coverage and the current SocketJack Copilot MCP bridge build.
+
 0.2.36
 
 - Fixes VS 2026 Insiders installation by packaging the extension with an explicit Visual Studio 18.x preview target range.

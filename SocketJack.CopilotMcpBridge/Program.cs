@@ -716,6 +716,9 @@ public sealed class SocketJackModelProxyForwarder
         Responses
     }
 
+    private static readonly object ResponseLifecycleStartedItemKey = new();
+    private static readonly object ResponseTextStartedItemKey = new();
+
     private static readonly TimeSpan DirectChatStreamHeartbeatInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DirectChatStreamIdleTimeout = ReadPositiveEnvironmentTimeSpan(
         "SOCKETJACK_COPILOT_BRIDGE_STREAM_IDLE_TIMEOUT_SECONDS",
@@ -794,8 +797,8 @@ public sealed class SocketJackModelProxyForwarder
         this.TryOpenServerBrowserForOffline();
         string message = SocketJackOpenAiChatAdapter.BuildServerOfflineAssistantText(_options.ServerName);
         StartOpenAiSseResponse(context);
-        await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
-        await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, message), cancellationToken).ConfigureAwait(false);
+        await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+        await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, message), cancellationToken).ConfigureAwait(false);
         await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, message, cancellationToken).ConfigureAwait(false);
     }
 
@@ -853,10 +856,10 @@ public sealed class SocketJackModelProxyForwarder
         byte[]? directOpenAiBody = Encoding.UTF8.GetBytes(directOpenAiRequest.ToJsonString());
 
         var availableToolNames = SocketJackOpenAiChatAdapter.ReadAvailableToolNames(chatStreamRequest);
-        bool preferDirectOpenAiForTools = directOpenAiBody != null && availableToolNames.Count > 0;
+        bool preferDirectOpenAiFirst = directOpenAiBody != null;
         string requestId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
 
-        if (preferDirectOpenAiForTools)
+        if (preferDirectOpenAiFirst)
         {
             if (await TryStreamOpenAiChatViaDirectOpenAiAsync(context, directOpenAiBody!, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
                 return true;
@@ -870,7 +873,7 @@ public sealed class SocketJackModelProxyForwarder
         if (await TryStreamOpenAiChatViaDirectChatStreamAsync(context, chatStreamBody, openAiBody, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
             return true;
 
-        if (directOpenAiBody != null && !preferDirectOpenAiForTools)
+        if (directOpenAiBody != null && !preferDirectOpenAiFirst)
         {
             if (await TryStreamOpenAiChatViaDirectOpenAiAsync(context, directOpenAiBody, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
                 return true;
@@ -946,7 +949,7 @@ public sealed class SocketJackModelProxyForwarder
 
                             StartOpenAiSseResponse(context);
                             responseStarted = true;
-                            await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+                            await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
                             roleSent = true;
                             continue;
                         }
@@ -1002,7 +1005,7 @@ public sealed class SocketJackModelProxyForwarder
 
                     if (!roleSent)
                     {
-                        await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+                        await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
                         roleSent = true;
                     }
 
@@ -1069,6 +1072,8 @@ public sealed class SocketJackModelProxyForwarder
         bool suppressedRecoverableToolTranscript = false;
         bool suppressedRecoverablePrematureClarification = false;
         bool suppressedRecoverableNoVisibleFallback = false;
+        bool wroteVisibleWaitStatus = false;
+        bool responseStarted = false;
 
         using var client = new HttpClient
         {
@@ -1088,31 +1093,71 @@ public sealed class SocketJackModelProxyForwarder
             using var upstreamCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             CancellationToken upstreamToken = upstreamCancellation.Token;
 
-            using HttpResponseMessage response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, upstreamToken).ConfigureAwait(false);
+            Task<HttpResponseMessage> sendTask = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, upstreamToken);
+            while (!sendTask.IsCompleted)
+            {
+                Task completed = await Task.WhenAny(sendTask, Task.Delay(DirectChatStreamHeartbeatInterval, cancellationToken)).ConfigureAwait(false);
+                if (completed == sendTask)
+                    break;
+
+                if (!responseStarted)
+                {
+                    StartOpenAiSseResponse(context);
+                    responseStarted = true;
+                    await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+                }
+
+                if (!wroteVisibleWaitStatus)
+                {
+                    await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, "Working on it...\n\n", cancellationToken).ConfigureAwait(false);
+                    wroteVisibleWaitStatus = true;
+                }
+                else
+                {
+                    await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, ""), cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            using HttpResponseMessage response = await sendTask.ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 string detail = await ReadHttpResponsePreviewAsync(response, cancellationToken).ConfigureAwait(false);
                 if (SocketJackOpenAiChatAdapter.LooksLikeOfflineServer((int)response.StatusCode, detail))
                 {
+                    if (responseStarted)
+                    {
+                        await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, SocketJackOpenAiChatAdapter.BuildServerOfflineAssistantText(_options.ServerName), cancellationToken).ConfigureAwait(false);
+                        await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, assistantText.VisibleText, cancellationToken).ConfigureAwait(false);
+                        return true;
+                    }
+
                     await this.WriteServerOfflineSseAsync(context, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
                     return true;
                 }
 
-                if (ShouldFallbackFromDirectChatStream((int)response.StatusCode, detail))
+                if (!responseStarted && ShouldFallbackFromDirectChatStream((int)response.StatusCode, detail))
                 {
                     return false;
                 }
 
-                StartOpenAiSseResponse(context);
-                await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+                if (!responseStarted)
+                {
+                    StartOpenAiSseResponse(context);
+                    responseStarted = true;
+                    await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+                }
                 await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model,
                     "The selected model server returned HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + (string.IsNullOrWhiteSpace(detail) ? "." : ": " + detail), cancellationToken).ConfigureAwait(false);
                 await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, assistantText.VisibleText, cancellationToken).ConfigureAwait(false);
                 return true;
             }
 
-            StartOpenAiSseResponse(context);
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+            if (!responseStarted)
+            {
+                StartOpenAiSseResponse(context);
+                responseStarted = true;
+                await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+            }
 
             await using Stream stream = await response.Content.ReadAsStreamAsync(upstreamToken).ConfigureAwait(false);
             byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
@@ -1146,7 +1191,15 @@ public sealed class SocketJackModelProxyForwarder
                             return true;
                         }
 
-                        await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, ""), cancellationToken).ConfigureAwait(false);
+                        if (!wroteContent && !wroteVisibleWaitStatus)
+                        {
+                            await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, "Working on it...\n\n", cancellationToken).ConfigureAwait(false);
+                            wroteVisibleWaitStatus = true;
+                        }
+                        else
+                        {
+                            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, ""), cancellationToken).ConfigureAwait(false);
+                        }
                         continue;
                     }
 
@@ -1160,7 +1213,7 @@ public sealed class SocketJackModelProxyForwarder
                     if (captured.Length < 1024 * 1024)
                         captured.Append(chunkText);
 
-                    if (lineBuffer.Length == 0 && !ContainsLineBreak(chunkText) && LooksLikeImmediateRawTextChunk(chunkText))
+                    if (lineBuffer.Length == 0 && !ContainsLineBreak(chunkText) && !IsHttpChunkSizeLine(chunkText) && LooksLikeImmediateRawTextChunk(chunkText))
                     {
                         if (SocketJackOpenAiChatAdapter.IsRecoverableMalformedToolAttemptText(chunkText))
                         {
@@ -1189,7 +1242,7 @@ public sealed class SocketJackModelProxyForwarder
                         string content = assistantText.AcceptDeltaOrSnapshot(chunkText);
                         if (!string.IsNullOrEmpty(content))
                         {
-                            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
+                            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
                             wroteContent = true;
                         }
 
@@ -1358,6 +1411,7 @@ public sealed class SocketJackModelProxyForwarder
         bool suppressedRecoverableToolTranscript = false;
         bool suppressedRecoverablePrematureClarification = false;
         bool suppressedRecoverableNoVisibleFallback = false;
+        int lastForwardStatusCode = 0;
         string lastForwardStatusMessage = "";
         using var upstreamCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         int effectiveTimeoutSeconds = SocketJackOpenAiChatAdapter.GetEffectiveOpenAiStreamTimeoutSeconds(openAiBody, _options.TimeoutSeconds);
@@ -1371,7 +1425,7 @@ public sealed class SocketJackModelProxyForwarder
             {
                 StartOpenAiSseResponse(context);
                 responseStarted = true;
-                await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+                await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
             }
 
             foreach (string path in OpenAiChatForwardPaths)
@@ -1385,6 +1439,7 @@ public sealed class SocketJackModelProxyForwarder
                 using HttpResponseMessage response = await SendOpenAiStreamingRequestAsync(client, request, context, responseStarted, upstreamToken, cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
+                    lastForwardStatusCode = (int)response.StatusCode;
                     lastForwardStatusMessage = "The selected model endpoint returned HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " for " + path + ".";
                     continue;
                 }
@@ -1393,7 +1448,7 @@ public sealed class SocketJackModelProxyForwarder
                 {
                     StartOpenAiSseResponse(context);
                     responseStarted = true;
-                    await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+                    await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
                 }
 
                 await using Stream stream = await response.Content.ReadAsStreamAsync(upstreamToken).ConfigureAwait(false);
@@ -1412,7 +1467,7 @@ public sealed class SocketJackModelProxyForwarder
                         if (captured.Length < 1024 * 1024)
                             captured.Append(chunkText);
 
-                        if (lineBuffer.Length == 0 && !ContainsLineBreak(chunkText) && LooksLikeImmediateRawTextChunk(chunkText))
+                        if (lineBuffer.Length == 0 && !ContainsLineBreak(chunkText) && !IsHttpChunkSizeLine(chunkText) && LooksLikeImmediateRawTextChunk(chunkText))
                         {
                             if (visualStudioToolRequest && SocketJackOpenAiChatAdapter.IsRecoverableMalformedToolAttemptText(chunkText))
                             {
@@ -1442,7 +1497,7 @@ public sealed class SocketJackModelProxyForwarder
                             string content = assistantText.AcceptDeltaOrSnapshot(chunkText);
                             if (!string.IsNullOrEmpty(content))
                             {
-                                await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
+                                await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
                                 wroteContent = true;
                             }
 
@@ -1577,7 +1632,11 @@ public sealed class SocketJackModelProxyForwarder
                 {
                     string fallbackMessage = string.IsNullOrWhiteSpace(lastForwardStatusMessage)
                         ? BuildNoVisibleAssistantTextFallback()
-                        : lastForwardStatusMessage;
+                        : SocketJackOpenAiChatAdapter.LooksLikeOfflineServer(lastForwardStatusCode, lastForwardStatusMessage)
+                            ? SocketJackOpenAiChatAdapter.BuildServerOfflineAssistantText(_options.ServerName)
+                            : lastForwardStatusMessage;
+                    if (lastForwardStatusCode != 0 && SocketJackOpenAiChatAdapter.LooksLikeOfflineServer(lastForwardStatusCode, lastForwardStatusMessage))
+                        this.TryOpenServerBrowserForOffline();
                     wroteContent = await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, fallbackMessage, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -1595,7 +1654,7 @@ public sealed class SocketJackModelProxyForwarder
                 if (!responseStarted)
                 {
                     StartOpenAiSseResponse(context);
-                    await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), CancellationToken.None).ConfigureAwait(false);
+                    await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), CancellationToken.None).ConfigureAwait(false);
                 }
 
                 if (!wroteContent)
@@ -1673,6 +1732,7 @@ public sealed class SocketJackModelProxyForwarder
             return false;
 
         await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(
+                    context,
                     shape,
                     completionId,
                     created,
@@ -1688,7 +1748,7 @@ public sealed class SocketJackModelProxyForwarder
             return false;
         }
 
-        await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(shape, completionId, created, model, toolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
+        await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(context, shape, completionId, created, model, toolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -1697,7 +1757,10 @@ public sealed class SocketJackModelProxyForwarder
         if (!SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(openAiBody, out IReadOnlyList<SocketJackOpenAiToolCall> toolCalls))
             return false;
 
-        await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(shape, completionId, created, model, toolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
+        if (!context.Response.HasStarted)
+            StartOpenAiSseResponse(context);
+
+        await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(context, shape, completionId, created, model, toolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -1726,11 +1789,18 @@ public sealed class SocketJackModelProxyForwarder
             }
 
             if (string.IsNullOrWhiteSpace(assistantText))
+            {
+                string visualStudioDefaultProjectPath = SocketJackOpenAiChatAdapter.FindLatestVisualStudioProjectPath(openAiBody);
+                bool preferVisualStudioXamlCodeBehindForVbFiles = SocketJackOpenAiChatAdapter.ShouldPreferVisualStudioXamlCodeBehindForVbFiles(openAiBody);
+                if (await TryWriteVisualStudioMalformedRecoveryToolCallAsync(context, openAiBody, shape, completionId, created, model, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles, cancellationToken).ConfigureAwait(false))
+                    return true;
+
                 assistantText = BuildNoVisibleAssistantTextFallback();
+            }
 
             StartOpenAiSseResponse(context);
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, assistantText), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamStartSse(context, shape, completionId, created, model), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, assistantText), cancellationToken).ConfigureAwait(false);
             await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, assistantText, cancellationToken).ConfigureAwait(false);
             return true;
         }
@@ -1880,7 +1950,10 @@ public sealed class SocketJackModelProxyForwarder
     private Uri SocketJackModelDiscoveryUri(string relativePath)
     {
         Uri endpoint = _options.PreferLocalWebChat ? _options.LocalWebChatEndpoint : _options.ServerEndpoint;
-        return new Uri(endpoint, relativePath);
+        string baseUri = endpoint.ToString();
+        if (!baseUri.EndsWith("/", StringComparison.Ordinal))
+            baseUri += "/";
+        return new Uri(new Uri(baseUri, UriKind.Absolute), (relativePath ?? "").TrimStart('/'));
     }
 
     private async Task TryUploadVisualStudioReferenceFilesAsync(JsonObject chatStreamRequest, CancellationToken cancellationToken)
@@ -2043,13 +2116,13 @@ public sealed class SocketJackModelProxyForwarder
             return new ChatStreamBinaryWriteResult(lineBuffer, false, false);
 
         string text = lineBuffer + Encoding.UTF8.GetString(messageBytes, 32, messageBytes.Length - 32);
-        if (!ContainsLineBreak(text) && LooksLikeImmediateRawTextChunk(text))
+        if (!ContainsLineBreak(text) && !IsHttpChunkSizeLine(text) && LooksLikeImmediateRawTextChunk(text))
         {
             string content = assistantText.AcceptDeltaOrSnapshot(text);
             if (string.IsNullOrEmpty(content))
                 return new ChatStreamBinaryWriteResult("", false, false);
 
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
             return new ChatStreamBinaryWriteResult("", true, false);
         }
 
@@ -2082,6 +2155,9 @@ public sealed class SocketJackModelProxyForwarder
         if (trimmed.Length == 0)
             return ChatStreamLineResult.Continue;
 
+        if (IsHttpChunkSizeLine(trimmed))
+            return ChatStreamLineResult.Continue;
+
         if (IsSseControlLine(trimmed))
             return ChatStreamLineResult.Continue;
 
@@ -2106,7 +2182,7 @@ public sealed class SocketJackModelProxyForwarder
             if (SocketJackOpenAiChatAdapter.IsNoAssistantTextError(error))
                 return ChatStreamLineResult.Done;
 
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, "\n\nThe model returned an error: " + SocketJackOpenAiChatAdapter.ToSafeMarkdownStatus(error)), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, "\n\nThe model returned an error: " + SocketJackOpenAiChatAdapter.ToSafeMarkdownStatus(error)), cancellationToken).ConfigureAwait(false);
             return ChatStreamLineResult.Content;
         }
 
@@ -2119,7 +2195,7 @@ public sealed class SocketJackModelProxyForwarder
             string visibleUpdate = evt == null ? "" : SocketJackOpenAiChatAdapter.BuildVisibleChatStreamUpdate(evt);
             if (!string.IsNullOrEmpty(visibleUpdate))
             {
-                await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, visibleUpdate), cancellationToken).ConfigureAwait(false);
+                await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, visibleUpdate), cancellationToken).ConfigureAwait(false);
                 return ChatStreamLineResult.Content;
             }
 
@@ -2129,7 +2205,7 @@ public sealed class SocketJackModelProxyForwarder
         if (toolCallText.TryParseNativeOpenAiToolCalls(line, out IReadOnlyList<SocketJackOpenAiToolCall> nativeToolCalls) &&
             nativeToolCalls.Count > 0)
         {
-            await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(shape, completionId, created, model, nativeToolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(context, shape, completionId, created, model, nativeToolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
             return ChatStreamLineResult.ToolCallsFinalized;
         }
 
@@ -2139,7 +2215,7 @@ public sealed class SocketJackModelProxyForwarder
             SocketJackToolCallConsumeResult toolResult = toolCallText.Accept(rawDelta, out IReadOnlyList<SocketJackOpenAiToolCall> toolCalls, out string passThrough);
             if (toolResult == SocketJackToolCallConsumeResult.ToolCalls)
             {
-                await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(shape, completionId, created, model, toolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
+                await WriteOpenAiSseAsync(context, BuildOpenAiToolCallsSse(context, shape, completionId, created, model, toolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles), cancellationToken).ConfigureAwait(false);
                 return ChatStreamLineResult.ToolCallsFinalized;
             }
 
@@ -2161,13 +2237,13 @@ public sealed class SocketJackModelProxyForwarder
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, "\n\n**Stream parse error:** " + SocketJackOpenAiChatAdapter.ToSafeMarkdownStatus(ex.Message)), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, "\n\n**Stream parse error:** " + SocketJackOpenAiChatAdapter.ToSafeMarkdownStatus(ex.Message)), cancellationToken).ConfigureAwait(false);
             return ChatStreamLineResult.Done;
         }
 
         if (!string.IsNullOrEmpty(content))
         {
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
             return ChatStreamLineResult.Content;
         }
 
@@ -2177,6 +2253,37 @@ public sealed class SocketJackModelProxyForwarder
     private static bool ContainsLineBreak(string text)
     {
         return text.IndexOf('\n') >= 0 || text.IndexOf('\r') >= 0;
+    }
+
+    private static bool IsHttpChunkSizeLine(string text)
+    {
+        string value = (text ?? "").Trim();
+        if (value.Length == 0)
+            return false;
+
+        int separator = value.IndexOf(';');
+        if (separator >= 0)
+            value = value.Substring(0, separator).Trim();
+
+        if (value.Length == 0 || value.Length > 8)
+            return false;
+
+        bool hasDigit = false;
+        bool hasHexLetter = false;
+        foreach (char ch in value)
+        {
+            hasDigit = hasDigit || (ch >= '0' && ch <= '9');
+            hasHexLetter = hasHexLetter ||
+                (ch >= 'a' && ch <= 'f') ||
+                (ch >= 'A' && ch <= 'F');
+            bool hex = (ch >= '0' && ch <= '9') ||
+                (ch >= 'a' && ch <= 'f') ||
+                (ch >= 'A' && ch <= 'F');
+            if (!hex)
+                return false;
+        }
+
+        return hasDigit && hasHexLetter;
     }
 
     private static bool IsSseControlLine(string trimmed)
@@ -2218,7 +2325,7 @@ public sealed class SocketJackModelProxyForwarder
             if (string.IsNullOrWhiteSpace(content))
                 return false;
 
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, content), cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -2226,7 +2333,7 @@ public sealed class SocketJackModelProxyForwarder
             if (SocketJackOpenAiChatAdapter.IsNoAssistantTextError(ex.Message))
                 return false;
 
-            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(shape, completionId, created, model, "\n\nThe model returned an error: " + SocketJackOpenAiChatAdapter.ToSafeMarkdownStatus(ex.Message)), cancellationToken).ConfigureAwait(false);
+            await WriteOpenAiSseAsync(context, BuildOpenAiStreamDeltaSse(context, shape, completionId, created, model, "\n\nThe model returned an error: " + SocketJackOpenAiChatAdapter.ToSafeMarkdownStatus(ex.Message)), cancellationToken).ConfigureAwait(false);
             return true;
         }
     }
@@ -2250,27 +2357,47 @@ public sealed class SocketJackModelProxyForwarder
         await context.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static string BuildOpenAiStreamStartSse(OpenAiProxyResponseShape shape, string id, long created, string model)
+    private static string BuildOpenAiStreamStartSse(HttpContext context, OpenAiProxyResponseShape shape, string id, long created, string model)
     {
-        return shape == OpenAiProxyResponseShape.Responses
-            ? SocketJackOpenAiChatAdapter.BuildResponseStreamStartSse(id, created, model)
-            : SocketJackOpenAiChatAdapter.BuildStreamingDeltaSse(id, created, model, null, true, null);
+        if (shape != OpenAiProxyResponseShape.Responses)
+            return SocketJackOpenAiChatAdapter.BuildStreamingDeltaSse(id, created, model, null, true, null);
+
+        MarkResponseLifecycleStarted(context);
+        return SocketJackOpenAiChatAdapter.BuildResponseLifecycleStartSse(id, created, model);
     }
 
-    private static string BuildOpenAiStreamDeltaSse(OpenAiProxyResponseShape shape, string id, long created, string model, string content)
+    private static string BuildOpenAiStreamDeltaSse(HttpContext context, OpenAiProxyResponseShape shape, string id, long created, string model, string content)
     {
-        return shape == OpenAiProxyResponseShape.Responses
-            ? SocketJackOpenAiChatAdapter.BuildResponseTextDeltaSse(id, content)
-            : SocketJackOpenAiChatAdapter.BuildStreamingDeltaSse(id, created, model, content, false, null);
+        if (shape != OpenAiProxyResponseShape.Responses)
+            return SocketJackOpenAiChatAdapter.BuildStreamingDeltaSse(id, created, model, content, false, null);
+
+        var builder = new StringBuilder();
+        if (!IsResponseLifecycleStarted(context))
+        {
+            MarkResponseLifecycleStarted(context);
+            builder.Append(SocketJackOpenAiChatAdapter.BuildResponseLifecycleStartSse(id, created, model));
+        }
+
+        if (!IsResponseTextStarted(context))
+        {
+            MarkResponseTextStarted(context);
+            builder.Append(SocketJackOpenAiChatAdapter.BuildResponseMessageStartSse(id));
+        }
+
+        builder.Append(SocketJackOpenAiChatAdapter.BuildResponseTextDeltaSse(id, content));
+        return builder.ToString();
     }
 
-    private static string BuildOpenAiToolCallsSse(OpenAiProxyResponseShape shape, string id, long created, string model, IReadOnlyList<SocketJackOpenAiToolCall> toolCalls, string visualStudioDefaultProjectPath = "", bool preferVisualStudioXamlCodeBehindForVbFiles = false)
+    private static string BuildOpenAiToolCallsSse(HttpContext context, OpenAiProxyResponseShape shape, string id, long created, string model, IReadOnlyList<SocketJackOpenAiToolCall> toolCalls, string visualStudioDefaultProjectPath = "", bool preferVisualStudioXamlCodeBehindForVbFiles = false)
     {
         IReadOnlyList<SocketJackOpenAiToolCall> normalizedToolCalls = SocketJackOpenAiChatAdapter.NormalizeVisualStudioToolCalls(toolCalls, visualStudioDefaultProjectPath, preferVisualStudioXamlCodeBehindForVbFiles);
         normalizedToolCalls = SocketJackOpenAiChatAdapter.AssignUniqueVisualStudioToolCallIds(normalizedToolCalls, id);
-        return shape == OpenAiProxyResponseShape.Responses
-            ? SocketJackOpenAiChatAdapter.BuildResponseToolCallsSse(id, created, model, normalizedToolCalls)
-            : SocketJackOpenAiChatAdapter.BuildStreamingToolCallsSse(id, created, model, normalizedToolCalls);
+        if (shape != OpenAiProxyResponseShape.Responses)
+            return SocketJackOpenAiChatAdapter.BuildStreamingToolCallsSse(id, created, model, normalizedToolCalls);
+
+        bool includeLifecycle = !IsResponseLifecycleStarted(context);
+        MarkResponseLifecycleStarted(context);
+        return SocketJackOpenAiChatAdapter.BuildResponseToolCallsSse(id, created, model, normalizedToolCalls, includeLifecycle);
     }
 
     private static async Task FinishOpenAiSseAsync(HttpContext context, OpenAiProxyResponseShape shape, string completionId, long created, string model, bool responseStarted, string assistantText, CancellationToken cancellationToken)
@@ -2278,11 +2405,52 @@ public sealed class SocketJackModelProxyForwarder
         if (!responseStarted)
             StartOpenAiSseResponse(context);
 
-        string finishSse = shape == OpenAiProxyResponseShape.Responses
-            ? SocketJackOpenAiChatAdapter.BuildResponseStreamFinishSse(completionId, created, model, assistantText)
-            : SocketJackOpenAiChatAdapter.BuildStreamingDeltaSse(completionId, created, model, null, false, "stop");
+        string finishSse;
+        if (shape == OpenAiProxyResponseShape.Responses)
+        {
+            var builder = new StringBuilder();
+            if (!IsResponseLifecycleStarted(context))
+            {
+                MarkResponseLifecycleStarted(context);
+                builder.Append(SocketJackOpenAiChatAdapter.BuildResponseLifecycleStartSse(completionId, created, model));
+            }
+
+            if (!IsResponseTextStarted(context))
+            {
+                MarkResponseTextStarted(context);
+                builder.Append(SocketJackOpenAiChatAdapter.BuildResponseMessageStartSse(completionId));
+            }
+
+            builder.Append(SocketJackOpenAiChatAdapter.BuildResponseStreamFinishSse(completionId, created, model, assistantText));
+            finishSse = builder.ToString();
+        }
+        else
+        {
+            finishSse = SocketJackOpenAiChatAdapter.BuildStreamingDeltaSse(completionId, created, model, null, false, "stop");
+        }
+
         await WriteOpenAiSseAsync(context, finishSse, cancellationToken).ConfigureAwait(false);
         await WriteOpenAiSseAsync(context, SocketJackOpenAiChatAdapter.DoneSse, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsResponseLifecycleStarted(HttpContext context)
+    {
+        return context.Items.ContainsKey(ResponseLifecycleStartedItemKey);
+    }
+
+    private static void MarkResponseLifecycleStarted(HttpContext context)
+    {
+        context.Items[ResponseLifecycleStartedItemKey] = true;
+    }
+
+    private static bool IsResponseTextStarted(HttpContext context)
+    {
+        return context.Items.ContainsKey(ResponseTextStartedItemKey);
+    }
+
+    private static void MarkResponseTextStarted(HttpContext context)
+    {
+        context.Items[ResponseTextStartedItemKey] = true;
     }
 
     private static JsonObject? ParseJsonObject(string text)
@@ -2333,14 +2501,37 @@ public sealed class SocketJackModelProxyForwarder
         JsonObject chatStreamRequest = SocketJackOpenAiChatAdapter.BuildChatStreamRequest(openAiRequest, _options.ModelId);
         string canonicalModel = await ResolveCanonicalModelIdAsync(ChooseSelectedServerModel(chatStreamRequest["model"]?.ToString()), cancellationToken).ConfigureAwait(false);
         chatStreamRequest["model"] = canonicalModel;
-        if (shape == OpenAiProxyResponseShape.ChatCompletions)
+        if (shape == OpenAiProxyResponseShape.ChatCompletions || shape == OpenAiProxyResponseShape.Responses)
         {
             JsonObject directOpenAiRequest = SocketJackOpenAiChatAdapter.BuildOpenAiChatCompletionsForwardRequest(openAiRequest, canonicalModel);
             byte[] directOpenAiBody = Encoding.UTF8.GetBytes(directOpenAiRequest.ToJsonString());
             ProxyResponse? direct = await TryForwardOpenAiChatViaDirectOpenAiAsync(directOpenAiBody, cancellationToken).ConfigureAwait(false);
             direct ??= await TryForwardOpenAiChatViaWebSocketOpenAiAsync(directOpenAiBody, cancellationToken).ConfigureAwait(false);
             if (direct != null)
-                return direct;
+            {
+                if (shape == OpenAiProxyResponseShape.ChatCompletions)
+                    return direct;
+
+                if (shape == OpenAiProxyResponseShape.Responses)
+                {
+                    string directAssistantText = "";
+                    try
+                    {
+                        directAssistantText = SocketJackOpenAiChatAdapter.ExtractAssistantText(Encoding.UTF8.GetString(direct.Body));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        directAssistantText = "";
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(directAssistantText))
+                    {
+                        return SocketJackOpenAiChatAdapter.WantsStreaming(openAiRequest)
+                            ? SocketJackOpenAiChatAdapter.BuildStreamingResponseResponse(openAiRequest, directAssistantText, canonicalModel)
+                            : SocketJackOpenAiChatAdapter.BuildResponseResponse(openAiRequest, directAssistantText, canonicalModel);
+                    }
+                }
+            }
         }
 
         await TryUploadVisualStudioReferenceFilesAsync(chatStreamRequest, cancellationToken).ConfigureAwait(false);
@@ -2409,6 +2600,8 @@ public sealed class SocketJackModelProxyForwarder
         requestedModel = string.IsNullOrWhiteSpace(requestedModel) ? _options.ModelId : requestedModel.Trim();
         if (string.IsNullOrWhiteSpace(requestedModel))
             return "socketjack-model";
+        if (IsSocketJackProxyEndpoint(_options.ServerEndpoint))
+            return requestedModel;
 
         foreach (string path in new[] { "api/models", "v1/models" })
         {
@@ -2448,6 +2641,13 @@ public sealed class SocketJackModelProxyForwarder
         }
 
         return requestedModel;
+    }
+
+    private static bool IsSocketJackProxyEndpoint(Uri endpoint)
+    {
+        string path = endpoint?.AbsolutePath ?? "";
+        return path.StartsWith("/proxy/", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/proxy", StringComparison.OrdinalIgnoreCase);
     }
 
     private static JsonArray? ReadModelsArray(JsonObject? root)
@@ -2670,8 +2870,8 @@ public sealed class SocketJackModelProxyForwarder
 
     private static readonly string[] OpenAiChatForwardPaths =
     {
-        "v1/chat/completions",
-        "api/model-runtime/v1/chat/completions"
+        "api/model-runtime/v1/chat/completions",
+        "v1/chat/completions"
     };
 
     private string ChooseSelectedServerModel(string? requestedModel)
@@ -3706,7 +3906,7 @@ public static class SocketJackOpenAiChatAdapter
         List<VisualStudioToolResultRecord> results = BuildVisualStudioToolResultHistory(openAiRequest);
         if (results.Count == 0)
         {
-            if ((implementationPlanRequest || readmeSummaryRequest) && canReadProjects)
+            if (canReadProjects)
             {
                 toolCalls = new[] { BuildVisualStudioGetProjectsToolCall() };
                 return true;
@@ -3715,7 +3915,7 @@ public static class SocketJackOpenAiChatAdapter
             return false;
         }
 
-        if ((implementationPlanRequest || readmeSummaryRequest) && canReadProjectFiles &&
+        if (canReadProjectFiles &&
             TryBuildVisualStudioGetFilesAfterProjectList(results, out SocketJackOpenAiToolCall projectFiles))
         {
             toolCalls = new[] { projectFiles };
@@ -4616,8 +4816,8 @@ public static class SocketJackOpenAiChatAdapter
 
         return Regex.IsMatch(text, @"\bsummariz(e|ing)|\boverview\b|\bdescribe\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
             Regex.IsMatch(text, @"\bproject\b|\bsolution\b|\bcodebase\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
-            Regex.IsMatch(text, @"\breadme(?:\.md)?\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
-            Regex.IsMatch(text, @"\bsave\b|\bwrite\b|\bcreate\b|\bupdate\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            Regex.IsMatch(text, @"\breadme(?:\.md)?\b|\bsummary(?:\.md)?\b|[A-Za-z0-9_.-]*summary[A-Za-z0-9_.-]*\.md\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
+            Regex.IsMatch(text, @"\bsave\b|\bwrite\b|\bcreate\b|\bupdate\b|\bto\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static string CollectUserFacingRequestText(JsonObject openAiRequest)
@@ -5689,8 +5889,9 @@ public static class SocketJackOpenAiChatAdapter
     public static bool IsNoVisibleAssistantFallbackText(string value)
     {
         string text = value ?? "";
-        return text.Contains("model finished without a visible reply", StringComparison.OrdinalIgnoreCase) &&
-            text.Contains("enabled chat model", StringComparison.OrdinalIgnoreCase);
+        return (text.Contains("model finished without a visible reply", StringComparison.OrdinalIgnoreCase) &&
+                text.Contains("enabled chat model", StringComparison.OrdinalIgnoreCase)) ||
+            text.Contains("SocketJack bridge did not receive visible assistant text", StringComparison.OrdinalIgnoreCase);
     }
 
     public static ProxyResponse BuildChatResponse(JsonObject openAiRequest, string assistantText, string selectedModelId)
@@ -5785,7 +5986,14 @@ public static class SocketJackOpenAiChatAdapter
 
     public static string BuildResponseStreamStartSse(string id, long created, string model)
     {
-        string messageId = ResponseMessageId(id);
+        var builder = new StringBuilder();
+        builder.Append(BuildResponseLifecycleStartSse(id, created, model));
+        builder.Append(BuildResponseMessageStartSse(id));
+        return builder.ToString();
+    }
+
+    public static string BuildResponseLifecycleStartSse(string id, long created, string model)
+    {
         var builder = new StringBuilder();
         AppendEventSse(builder, "response.created", new JsonObject
         {
@@ -5797,6 +6005,13 @@ public static class SocketJackOpenAiChatAdapter
             ["type"] = "response.in_progress",
             ["response"] = BuildResponseObject(id, created, model, "in_progress", "")
         });
+        return builder.ToString();
+    }
+
+    public static string BuildResponseMessageStartSse(string id)
+    {
+        string messageId = ResponseMessageId(id);
+        var builder = new StringBuilder();
         AppendEventSse(builder, "response.output_item.added", new JsonObject
         {
             ["type"] = "response.output_item.added",
@@ -5841,9 +6056,7 @@ public static class SocketJackOpenAiChatAdapter
 
     public static string BuildResponseStreamFinishSse(string id, long created, string model, string assistantText)
     {
-        // Visible text is streamed through response.output_text.delta. Replaying it in
-        // terminal snapshots makes VS Copilot append the same answer multiple times.
-        string text = "";
+        string text = assistantText ?? "";
         string messageId = ResponseMessageId(id);
         var contentPart = new JsonObject
         {
@@ -6654,19 +6867,22 @@ public static class SocketJackOpenAiChatAdapter
         return builder.ToString();
     }
 
-    public static string BuildResponseToolCallsSse(string id, long created, string model, IReadOnlyList<SocketJackOpenAiToolCall> toolCalls)
+    public static string BuildResponseToolCallsSse(string id, long created, string model, IReadOnlyList<SocketJackOpenAiToolCall> toolCalls, bool includeLifecycle = true)
     {
         var builder = new StringBuilder();
-        AppendEventSse(builder, "response.created", new JsonObject
+        if (includeLifecycle)
         {
-            ["type"] = "response.created",
-            ["response"] = BuildResponseObject(id, created, model, "in_progress", "", new JsonArray())
-        });
-        AppendEventSse(builder, "response.in_progress", new JsonObject
-        {
-            ["type"] = "response.in_progress",
-            ["response"] = BuildResponseObject(id, created, model, "in_progress", "", new JsonArray())
-        });
+            AppendEventSse(builder, "response.created", new JsonObject
+            {
+                ["type"] = "response.created",
+                ["response"] = BuildResponseObject(id, created, model, "in_progress", "", new JsonArray())
+            });
+            AppendEventSse(builder, "response.in_progress", new JsonObject
+            {
+                ["type"] = "response.in_progress",
+                ["response"] = BuildResponseObject(id, created, model, "in_progress", "", new JsonArray())
+            });
+        }
 
         var output = new JsonArray();
         for (int i = 0; i < toolCalls.Count; i++)
@@ -6792,7 +7008,7 @@ public static class SocketJackOpenAiChatAdapter
 
     public static string BuildNoVisibleAssistantTextFallback()
     {
-        return "The model finished without a visible reply. Please try again, or select another enabled chat model.";
+        return "SocketJack bridge did not receive visible assistant text before this stream closed. The upstream model may still be running; check the selected SocketJack server or retry after it finishes.";
     }
 
     private static string FormatServerDisplayName(string serverName)
@@ -6828,6 +7044,9 @@ public static class SocketJackOpenAiChatAdapter
                 text.Contains("actively refused", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("target machine actively refused", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("HTTP 502", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("HTTP 503", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("HTTP 504", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("Bad Gateway", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("Service Unavailable", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("Gateway Timeout", StringComparison.OrdinalIgnoreCase))

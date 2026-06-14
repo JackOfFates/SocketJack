@@ -290,7 +290,7 @@ public sealed class LlmChatRequest
 
 public sealed record LlmChatMessage(string Role, string Content);
 
-public sealed record LlmChatToken(string Text);
+public sealed record LlmChatToken(string Text, string FinishReason = "");
 
 public sealed class LlmChatResult
 {
