@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-06-14 - LlmRuntime.VisualStudio2026 0.2.53
+
+### Root cause
+
+- Marketplace validation rejects Visual Studio extension installation targets whose API-version lower bound is the experimental `18.0` lane.
+- The VS 2026 extension metadata and VSIX manifest postprocessor both forced `[18.0,19.0)`, so the built package could not satisfy the current Marketplace requirement to use the latest stable `17.14` API lower bound.
+
+### Changes made
+
+- Changed `SocketJackVisualStudioExtension` to emit `InstallationTargetVersion = "[17.14,19.0)"`.
+- Changed the VSIX manifest postprocessor defaults so generated installation targets and the CoreEditor prerequisite use `[17.14,19.0)`.
+- Updated Marketplace release notes for the stable 17.14 compatibility range.
+
+### Verification
+
+- Pending build/package verification in this work session.
+
 ## 2026-06-12 - LlmRuntime.VisualStudio2026 0.2.52
 
 ### Root cause

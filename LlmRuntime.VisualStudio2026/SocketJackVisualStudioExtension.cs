@@ -30,7 +30,7 @@ public sealed class SocketJackVisualStudioExtension : Extension
                 "Visual Studio 2026",
                 "BYOM",
             },
-            InstallationTargetVersion = "[18.0,19.0)",
+            InstallationTargetVersion = "[17.14,19.0)",
             Preview = true,
         },
     };
