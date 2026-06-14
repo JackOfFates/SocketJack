@@ -55,7 +55,7 @@
   </Target>
 
   <Target Name="RestrictVsixManifestToAmd64" BeforeTargets="GetVsixSourceItems" Condition="Exists('$(IntermediateOutputPath)extension.vsixmanifest')">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Build\RestrictVsixManifestToAmd64.ps1&quot; -ManifestPath &quot;$(IntermediateOutputPath)extension.vsixmanifest&quot;" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Build\RestrictVsixManifestToAmd64.ps1&quot; -ManifestPath &quot;$(IntermediateOutputPath)extension.vsixmanifest&quot; -InstallationTargetVersion &quot;[17.14,19.0)&quot; -PrerequisiteVersion &quot;[17.14,19.0)&quot;" />
   </Target>
 
   <Target Name="NormalizePackagedVsixManifestPaths" AfterTargets="CreateVsixContainer" Condition="Exists('$(TargetVsixContainer)')">

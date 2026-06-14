@@ -11,11 +11,14 @@
 
 - Changed `SocketJackVisualStudioExtension` to emit `InstallationTargetVersion = "[17.14,19.0)"`.
 - Changed the VSIX manifest postprocessor defaults so generated installation targets and the CoreEditor prerequisite use `[17.14,19.0)`.
+- Passed the stable `[17.14,19.0)` range explicitly from the tracked VSIX project file into the manifest postprocessor.
 - Updated Marketplace release notes for the stable 17.14 compatibility range.
 
 ### Verification
 
-- Pending build/package verification in this work session.
+- `dotnet build LlmRuntime.VisualStudio2026\LlmRuntime.VisualStudio2026.csproj -c Release --nologo -v:minimal`
+- Inspected the built VSIX `extension.vsixmanifest` and confirmed `Community`, `Pro`, and `Enterprise` installation targets all use `[17.14,19.0)` with `amd64`.
+- Confirmed the built VSIX `Microsoft.VisualStudio.Component.CoreEditor` prerequisite uses `[17.14,19.0)`.
 
 ## 2026-06-12 - LlmRuntime.VisualStudio2026 0.2.52
 
