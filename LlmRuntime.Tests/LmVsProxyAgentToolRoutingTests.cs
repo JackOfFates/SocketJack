@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Text.Json;
+using LmVs;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.Net;
 
@@ -89,6 +91,97 @@ public sealed class LmVsProxyAgentToolRoutingTests
         Assert.IsFalse(PromptRequestsProxyFileWrite("Summarize socketjack.md in chat only."));
     }
 
+    [TestMethod]
+    public void ChatUiSteeringIsAddedAsLateUserDirection()
+    {
+        const string requestBody = """
+            {"model":"qwen-tools","messages":[{"role":"system","content":"Base rules."},{"role":"user","content":"Start a long agent task."}],"tools":[]}
+            """;
+
+        string rewritten = ApplyChatUiSteeringToRequest(requestBody, "Focus the answer on the JackLLM web UI.");
+
+        using JsonDocument document = JsonDocument.Parse(rewritten);
+        JsonElement root = document.RootElement;
+        Assert.AreEqual("qwen-tools", root.GetProperty("model").GetString());
+        Assert.IsTrue(root.TryGetProperty("tools", out _));
+
+        List<JsonElement> messages = root.GetProperty("messages").EnumerateArray().ToList();
+        Assert.AreEqual(4, messages.Count);
+        Assert.AreEqual("system", messages[2].GetProperty("role").GetString());
+        StringAssert.Contains(messages[2].GetProperty("content").GetString(), "JackLLM conversation steering");
+        Assert.AreEqual("user", messages[3].GetProperty("role").GetString());
+        StringAssert.Contains(messages[3].GetProperty("content").GetString(), "Focus the answer on the JackLLM web UI.");
+    }
+
+    [TestMethod]
+    public void ChatUiSteeringBeforeStreamRegistrationIsBuffered()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        const string ownerKey = "owner-for-steering-test";
+        const string streamId = "stream_pending_steering_test";
+        const string sessionId = "session-pending-steering-test";
+        const string steering = "Use the already opened browser context.";
+
+        Assert.IsTrue(AddActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, steering));
+
+        object active = RegisterActiveChatStreamCancellation(proxy, ownerKey, streamId, sessionId);
+        Assert.AreEqual(steering, ConsumeActiveChatStreamSteering(proxy, active));
+    }
+
+    [TestMethod]
+    public void ChatUiSteeringMultipleUpdatesPreserveOrder()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        const string ownerKey = "owner-for-steering-multi-test";
+        const string streamId = "stream_multi_steering_test";
+        const string sessionId = "session-multi-steering-test";
+
+        object active = RegisterActiveChatStreamCancellation(proxy, ownerKey, streamId, sessionId);
+        Assert.IsTrue(AddActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "respond with OK_2 if you get this"));
+        Assert.IsTrue(AddActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "respond with OK_3 if you get this"));
+
+        string steering = ConsumeActiveChatStreamSteering(proxy, active);
+
+        StringAssert.Contains(steering, "[Steering update 1]");
+        StringAssert.Contains(steering, "respond with OK_2 if you get this");
+        StringAssert.Contains(steering, "[Steering update 2]");
+        StringAssert.Contains(steering, "respond with OK_3 if you get this");
+        Assert.IsTrue(steering.IndexOf("OK_2", StringComparison.Ordinal) < steering.IndexOf("OK_3", StringComparison.Ordinal), steering);
+    }
+
+    [TestMethod]
+    public void ChatUiSteeringInstructionRequiresEveryUpdate()
+    {
+        const string requestBody = """
+            {"model":"qwen-tools","messages":[{"role":"user","content":"Start a long agent task."}],"tools":[]}
+            """;
+
+        string rewritten = ApplyChatUiSteeringToRequest(requestBody, "[Steering update 1]\nrespond with OK_2\n\n[Steering update 2]\nrespond with OK_3");
+
+        using JsonDocument document = JsonDocument.Parse(rewritten);
+        List<JsonElement> messages = document.RootElement.GetProperty("messages").EnumerateArray().ToList();
+        StringAssert.Contains(messages[^2].GetProperty("content").GetString(), "apply every update in order");
+        StringAssert.Contains(messages[^1].GetProperty("content").GetString(), "respond with OK_2");
+        StringAssert.Contains(messages[^1].GetProperty("content").GetString(), "respond with OK_3");
+    }
+
+    [TestMethod]
+    public void ExtractLooseProxyToolCallsParsesAttributedBrowserOpenParameterTag()
+    {
+        const string leakedToolText = """
+            Assistant requested tool call(s):
+            <tool_call id="call_browser" name="browser_open"><parameter>{"url":"https://duckduckgo.com/?q=2001+audi+s4+black+lowered+BBS"}</parameter></tool_call>
+            """;
+
+        List<ToolCallData> calls = ExtractLooseProxyToolCalls(leakedToolText);
+
+        Assert.AreEqual(1, calls.Count);
+        Assert.AreEqual("call_browser", calls[0].Id);
+        Assert.AreEqual("browser_open", calls[0].Name);
+        Assert.AreEqual("{\"url\":\"https://duckduckgo.com/?q=2001+audi+s4+black+lowered+BBS\"}", calls[0].ArgumentsJson);
+        Assert.IsTrue(calls[0].ArgumentsWereMalformed);
+    }
+
     private static bool PromptLikelyNeedsProxyTools(string prompt)
     {
         var method = typeof(LmVsProxy).GetMethod(
@@ -130,5 +223,57 @@ public sealed class LmVsProxyAgentToolRoutingTests
         bool result = (bool)method!.Invoke(null, args)!;
         content = (string)args[1];
         return result;
+    }
+
+    private static string ApplyChatUiSteeringToRequest(string requestBody, string steering)
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        var method = typeof(LmVsProxy).GetMethod(
+            "ApplyChatUiSteeringToRequest",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.IsNotNull(method, "ApplyChatUiSteeringToRequest should remain available for steering tests.");
+        return (string)method!.Invoke(proxy, new object[] { requestBody, steering })!;
+    }
+
+    private static List<ToolCallData> ExtractLooseProxyToolCalls(string content)
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        var method = typeof(LmVsProxy).GetMethod(
+            "ExtractLooseProxyToolCalls",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.IsNotNull(method, "ExtractLooseProxyToolCalls should remain available for tool-call steering tests.");
+        return (List<ToolCallData>)method!.Invoke(proxy, new object[] { content })!;
+    }
+
+    private static bool AddActiveChatStreamSteering(LmVsProxy proxy, string ownerKey, string streamId, string sessionId, string steering)
+    {
+        var method = typeof(LmVsProxy).GetMethod(
+            "AddActiveChatStreamSteering",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.IsNotNull(method, "AddActiveChatStreamSteering should remain available for steering tests.");
+        return (bool)method!.Invoke(proxy, new object[] { ownerKey, streamId, sessionId, steering })!;
+    }
+
+    private static object RegisterActiveChatStreamCancellation(LmVsProxy proxy, string ownerKey, string streamId, string sessionId)
+    {
+        var method = typeof(LmVsProxy).GetMethod(
+            "RegisterActiveChatStreamCancellation",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.IsNotNull(method, "RegisterActiveChatStreamCancellation should remain available for steering tests.");
+        return method!.Invoke(proxy, new object[] { ownerKey, streamId, sessionId })!;
+    }
+
+    private static string ConsumeActiveChatStreamSteering(LmVsProxy proxy, object activeStreamCancellation)
+    {
+        var method = typeof(LmVsProxy).GetMethod(
+            "ConsumeActiveChatStreamSteering",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.IsNotNull(method, "ConsumeActiveChatStreamSteering should remain available for steering tests.");
+        return (string)method!.Invoke(proxy, new[] { activeStreamCancellation })!;
     }
 }

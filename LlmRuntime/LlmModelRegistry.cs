@@ -233,7 +233,7 @@ public sealed class LlmModelRegistry : IDisposable
             VideoCpuMaxMemory = (videoCpuMaxMemory ?? "").Trim(),
             VideoMemorySaving = ResolveDefaultMediaMemorySaving(info, videoMemorySaving)
         };
-        config = NormalizeLinuxCudaLoadConfig(info, config, emitProgress);
+        config = NormalizeCudaLoadConfig(info, config, emitProgress);
 
         if (!string.IsNullOrWhiteSpace(info.LoadDisabledReason))
             throw new LlmRuntimeException(info.LoadDisabledReason, "unsupported_model_metadata", "unsupported_model_metadata");
@@ -937,6 +937,12 @@ public sealed class LlmModelRegistry : IDisposable
         return fallback;
     }
 
+    private LlmLoadConfig NormalizeCudaLoadConfig(LlmModelInfo info, LlmLoadConfig config, bool emitProgress)
+    {
+        config = NormalizeLinuxCudaLoadConfig(info, config, emitProgress);
+        return NormalizeLegacyWindowsCudaLoadConfig(info, config, emitProgress);
+    }
+
     private LlmLoadConfig NormalizeLinuxCudaLoadConfig(LlmModelInfo info, LlmLoadConfig config, bool emitProgress)
     {
         if (!OperatingSystem.IsLinux())
@@ -970,6 +976,49 @@ public sealed class LlmModelRegistry : IDisposable
         return CopyLoadConfig(config, contextLength, evalBatchSize);
     }
 
+    private LlmLoadConfig NormalizeLegacyWindowsCudaLoadConfig(LlmModelInfo info, LlmLoadConfig config, bool emitProgress)
+    {
+        if (!OperatingSystem.IsWindows())
+            return config;
+
+        if (config.Backend is not LlmBackendKind.Cuda and not LlmBackendKind.Cuda12)
+            return config;
+
+        if (!LlmBackendAutoSelector.ShouldUseLegacyCudaCompatibilityProfile(config.Backend))
+            return config;
+
+        uint maxContext = ResolveLegacyWindowsCudaMaxContextLength();
+        int maxBatch = ResolveLegacyWindowsCudaMaxEvalBatchSize();
+        uint contextLength = config.ContextLength > maxContext ? maxContext : config.ContextLength;
+        int evalBatchSize = config.EvalBatchSize > maxBatch ? maxBatch : config.EvalBatchSize;
+        bool offloadKvCacheToGpu = ReadBoolEnvironment("LLMRUNTIME_LEGACY_CUDA_OFFLOAD_KV") ?? false;
+        if (contextLength == config.ContextLength &&
+            evalBatchSize == config.EvalBatchSize &&
+            offloadKvCacheToGpu == config.OffloadKvCacheToGpu)
+        {
+            return config;
+        }
+
+        if (emitProgress)
+        {
+            ReportModelLoadProgress(
+                config.ModelKey,
+                config.InstanceId,
+                5,
+                "loading",
+                "Adjusted legacy NVIDIA CUDA load settings for " + info.DisplayName + ": context " +
+                config.ContextLength.ToString(CultureInfo.InvariantCulture) + " -> " +
+                contextLength.ToString(CultureInfo.InvariantCulture) + ", eval batch " +
+                config.EvalBatchSize.ToString(CultureInfo.InvariantCulture) + " -> " +
+                evalBatchSize.ToString(CultureInfo.InvariantCulture) + ", GPU KV cache " +
+                config.OffloadKvCacheToGpu.ToString() + " -> " +
+                offloadKvCacheToGpu.ToString() + ".",
+                false);
+        }
+
+        return CopyLoadConfig(config, contextLength, evalBatchSize, offloadKvCacheToGpu);
+    }
+
     private static uint ResolveLinuxCudaMaxContextLength()
     {
         uint configured = ReadUIntEnvironment("LLMRUNTIME_LINUX_CUDA_MAX_CONTEXT_LENGTH");
@@ -981,6 +1030,40 @@ public sealed class LlmModelRegistry : IDisposable
             return 65536u;
 
         return 131072u;
+    }
+
+    private static uint ResolveLegacyWindowsCudaMaxContextLength()
+    {
+        uint configured = ReadUIntEnvironment("LLMRUNTIME_LEGACY_CUDA_MAX_CONTEXT_LENGTH");
+        return configured > 0 ? Math.Clamp(configured, 512u, 32768u) : 2048u;
+    }
+
+    private static int ResolveLegacyWindowsCudaMaxEvalBatchSize()
+    {
+        uint configured = ReadUIntEnvironment("LLMRUNTIME_LEGACY_CUDA_MAX_EVAL_BATCH_SIZE");
+        return configured > 0 ? (int)Math.Clamp(configured, 1u, 512u) : 128;
+    }
+
+    private static bool? ReadBoolEnvironment(string name)
+    {
+        string value = (Environment.GetEnvironmentVariable(name) ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        if (bool.TryParse(value, out bool parsed))
+            return parsed;
+
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("on", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("enabled", StringComparison.OrdinalIgnoreCase)
+            ? true
+            : value.Equals("0", StringComparison.OrdinalIgnoreCase) ||
+              value.Equals("no", StringComparison.OrdinalIgnoreCase) ||
+              value.Equals("off", StringComparison.OrdinalIgnoreCase) ||
+              value.Equals("disabled", StringComparison.OrdinalIgnoreCase)
+                ? false
+                : null;
     }
 
     private static uint ReadUIntEnvironment(string name)
@@ -1038,7 +1121,7 @@ public sealed class LlmModelRegistry : IDisposable
         }
     }
 
-    private static LlmLoadConfig CopyLoadConfig(LlmLoadConfig source, uint contextLength, int evalBatchSize) => new()
+    private static LlmLoadConfig CopyLoadConfig(LlmLoadConfig source, uint contextLength, int evalBatchSize, bool? offloadKvCacheToGpu = null) => new()
     {
         ModelKey = source.ModelKey,
         InstanceId = source.InstanceId,
@@ -1049,7 +1132,7 @@ public sealed class LlmModelRegistry : IDisposable
         ContextLength = contextLength,
         EvalBatchSize = Math.Max(1, evalBatchSize),
         FlashAttention = source.FlashAttention,
-        OffloadKvCacheToGpu = source.OffloadKvCacheToGpu,
+        OffloadKvCacheToGpu = offloadKvCacheToGpu ?? source.OffloadKvCacheToGpu,
         GpuLayerCount = source.GpuLayerCount,
         ParallelismMode = source.ParallelismMode,
         ParallelismPlacement = source.ParallelismPlacement,

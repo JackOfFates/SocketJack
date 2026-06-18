@@ -285,6 +285,74 @@ public sealed class SocketJackCopilotServicesTests
     }
 
     [TestMethod]
+    public async Task LocalWorkstationDiscoveryBuildsLocalServerCandidate()
+    {
+        using var client = new HttpClient(new RouteResponseHandler(request =>
+        {
+            string path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"ok":true,"modelRuntimeProvider":"LlmRuntime","chatModel":"qwen-tools"}""")
+                };
+            }
+
+            if (path.Equals("/api/master-list/ping", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"ok":true,"availableModels":["qwen-tools","local-second"]}""")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        SocketJackServerCandidate? server = await SocketJackLocalWorkstationDiscovery.TryDetectAsync(client);
+
+        Assert.IsNotNull(server);
+        Assert.AreEqual("local-jackllm-workstation", server.Id);
+        Assert.AreEqual("http://127.0.0.1:11436", server.EffectiveEndpoint);
+        Assert.AreEqual("http://127.0.0.1:11436/api/model-runtime", server.ModelApiBaseUrl);
+        Assert.IsTrue(server.CanUseForCopilot);
+        CollectionAssert.Contains(server.AvailableModels.ToList(), "qwen-tools");
+        CollectionAssert.Contains(server.AvailableModels.ToList(), "local-second");
+    }
+
+    [TestMethod]
+    public async Task MasterListClientUsesLocalWorkstationWithoutCallingSocketJackDotCom()
+    {
+        bool remoteCalled = false;
+        using var client = new HttpClient(new RouteResponseHandler(request =>
+        {
+            string host = request.RequestUri?.Host ?? "";
+            string path = request.RequestUri?.AbsolutePath ?? "";
+            if (host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+            {
+                return path.Equals("/api/health", StringComparison.OrdinalIgnoreCase)
+                    ? new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""{"ok":true,"modelRuntimeProvider":"LlmRuntime"}""")
+                    }
+                    : new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            remoteCalled = true;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"servers":[{"id":"remote","endpoint":"https://socketjack.com/proxy/remote","online":true,"hostResponding":true,"toolsAllowed":"VS_tools"}]}""")
+            };
+        }));
+
+        IReadOnlyList<SocketJackServerCandidate> servers = await new SocketJackMasterListClient(client).GetServersAsync();
+
+        Assert.IsFalse(remoteCalled);
+        Assert.AreEqual(1, servers.Count);
+        Assert.AreEqual("local-jackllm-workstation", servers[0].Id);
+    }
+
+    [TestMethod]
     public void McpWriterPreservesOtherServersAndReplacesSocketJackEntry()
     {
         string temp = Path.Combine(Path.GetTempPath(), "socketjack-mcp-" + Guid.NewGuid().ToString("N"));
@@ -457,6 +525,41 @@ public sealed class SocketJackCopilotServicesTests
     }
 
     [TestMethod]
+    public void OllamaByomReaderReturnsSelectedLocalProxyModel()
+    {
+        string temp = Path.Combine(Path.GetTempPath(), "socketjack-byom-" + Guid.NewGuid().ToString("N") + ".json");
+        File.WriteAllText(temp, """
+        [
+          {
+            "Name": "Ollama",
+            "Models": [
+              {
+                "ProviderName": "Ollama",
+                "IsSelected": false,
+                "CustomURL": "http://127.0.0.1:11575",
+                "Id": "old-model"
+              },
+              {
+                "ProviderName": "Ollama",
+                "IsSelected": true,
+                "CustomURL": "http://127.0.0.1:11574",
+                "Id": "qwen-tools",
+                "DisplayName": "Qwen Tools"
+              }
+            ]
+          }
+        ]
+        """);
+
+        OllamaByomSelectedModel? selected = new VisualStudioOllamaByomConfigWriter().ReadSelectedLocalProxyModel(temp);
+
+        Assert.IsNotNull(selected);
+        Assert.AreEqual("http://127.0.0.1:11574", selected.CustomUrl);
+        Assert.AreEqual("qwen-tools", selected.ModelId);
+        Assert.AreEqual("Qwen Tools", selected.DisplayName);
+    }
+
+    [TestMethod]
     public async Task EndpointAccessProberDoesNotTreatModelsRouteAsChatRoute()
     {
         using var client = new HttpClient(new RouteResponseHandler(request =>
@@ -474,6 +577,29 @@ public sealed class SocketJackCopilotServicesTests
         Assert.IsTrue(modelRoute.CanUseDirectEndpoint);
         Assert.IsFalse(chatRoute.CanUseDirectEndpoint);
         StringAssert.Contains(chatRoute.Message, "local WebSocket proxy");
+    }
+
+    [TestMethod]
+    public async Task EndpointAccessProberAcceptsLocalModelRuntimeBase()
+    {
+        using var client = new HttpClient(new RouteResponseHandler(request =>
+        {
+            string path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.Equals("/api/model-runtime/models", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("/api/model-runtime/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+        var prober = new SocketJackEndpointAccessProber(client);
+
+        SocketJackEndpointAccessResult modelRoute = await prober.ProbeAsync("http://127.0.0.1:11436/api/model-runtime");
+        SocketJackEndpointAccessResult chatRoute = await prober.ProbeChatAsync("http://127.0.0.1:11436/api/model-runtime", "qwen-tools");
+
+        Assert.IsTrue(modelRoute.CanUseDirectEndpoint);
+        Assert.IsTrue(chatRoute.CanUseDirectEndpoint);
     }
 
     [TestMethod]

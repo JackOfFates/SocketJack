@@ -383,6 +383,177 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
+    public async Task ResponsesEndpoint_ReturnsOpenAiResponse()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "Responses-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("response text"));
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/responses",
+                new StringContent("{\"model\":\"Responses-Q4_0\",\"instructions\":\"be brief\",\"input\":\"hello\"}", Encoding.UTF8, "application/json"));
+            response.EnsureSuccessStatusCode();
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            Assert.AreEqual("response", document.RootElement.GetProperty("object").GetString());
+            Assert.AreEqual("completed", document.RootElement.GetProperty("status").GetString());
+            Assert.AreEqual("response text", document.RootElement.GetProperty("output_text").GetString());
+            Assert.AreEqual("message", document.RootElement.GetProperty("output")[0].GetProperty("type").GetString());
+            Assert.IsTrue(document.RootElement.GetProperty("usage").GetProperty("total_tokens").GetInt32() > 0);
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ResponsesEndpoint_StreamsResponseEvents()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "ResponsesStream-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("stream response"));
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/responses",
+                new StringContent("{\"model\":\"ResponsesStream-Q4_0\",\"stream\":true,\"input\":\"hello\"}", Encoding.UTF8, "application/json"));
+            response.EnsureSuccessStatusCode();
+            string body = await response.Content.ReadAsStringAsync();
+
+            StringAssert.Contains(body, "event: response.created");
+            StringAssert.Contains(body, "event: response.output_text.delta");
+            StringAssert.Contains(body, "stream response");
+            StringAssert.Contains(body, "event: response.completed");
+            StringAssert.Contains(body, "data: [DONE]");
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task MediaEndpoints_ReturnOpenAiCapabilityErrorWhenNoCompatibleModel()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "ChatOnly-Q4_0.gguf"));
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port });
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/images/generations",
+                new StringContent("{\"prompt\":\"draw a workstation\"}", Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            Assert.AreEqual(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.AreEqual("no_compatible_model", document.RootElement.GetProperty("error").GetProperty("code").GetString());
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ImageGenerationEndpoint_RoutesToLocalMediaToolAndServesContent()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        string completeRoot = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            string modelDirectory = Path.Combine(completeRoot, "owner", "flux-test", "main");
+            Directory.CreateDirectory(modelDirectory);
+            string modelPath = Path.Combine(modelDirectory, "flux-test-Q4_K_M.gguf");
+            GgufMetadataReaderTests.WriteSyntheticGgufWithoutMetadata(modelPath);
+            CompleteModelManifestWriter.WriteManifest(
+                modelDirectory,
+                "owner/flux-test",
+                "main",
+                "image",
+                "gguf",
+                ["flux-test-Q4_K_M.gguf"]);
+
+            string artifactPath = Path.Combine(root, "generated.png");
+            byte[] artifactBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+            File.WriteAllBytes(artifactPath, artifactBytes);
+
+            var options = new LlmRuntimeOptions
+            {
+                ModelRoot = root,
+                CompleteModelRoot = completeRoot,
+                ToolRoot = Path.Combine(root, "tools"),
+                Port = port
+            };
+            using var registry = new LlmModelRegistry(options, new FakeBackendFactory("media backend"));
+            string imageModel = registry.ListModels().First(model => model.Type == "image" && LlmModelRegistry.IsRuntimeLoadableModel(model)).Key;
+            var toolRegistry = new LlmToolRegistry(options);
+            using (var schema = JsonDocument.Parse("""{"type":"object","properties":{"prompt":{"type":"string"}},"required":["prompt"]}"""))
+            {
+                toolRegistry.UpsertDefinition(new LlmToolDefinition
+                {
+                    Id = "jackonnx_image_generate",
+                    Name = "jackonnx_image_generate",
+                    Description = "Fake local media generation tool.",
+                    SourceType = LlmToolSourceType.BuiltInSocketJack,
+                    Source = "jackonnx_image_generate",
+                    InputSchema = schema.RootElement.Clone(),
+                    ApprovalMode = LlmToolApprovalMode.AlwaysAllow,
+                    Permissions = LlmToolPermissions.FileSystemWrite
+                });
+            }
+
+            var toolInvoker = new FakeMediaToolInvoker(artifactPath, "image/png");
+            using var host = new LlmRuntimeHost(options, registry, toolRegistry, toolInvoker);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/images/generations",
+                new StringContent(JsonSerializer.Serialize(new
+                {
+                    model = imageModel,
+                    prompt = "draw a local workstation",
+                    size = "128x128"
+                }), Encoding.UTF8, "application/json"));
+            response.EnsureSuccessStatusCode();
+            string body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+
+            string contentUrl = document.RootElement.GetProperty("data")[0].GetProperty("url").GetString() ?? "";
+            Assert.IsTrue(contentUrl.StartsWith("/v1/media/", StringComparison.OrdinalIgnoreCase));
+            Assert.AreEqual(imageModel, toolInvoker.LastModelId);
+            Assert.AreEqual("draw a local workstation", toolInvoker.LastPrompt);
+
+            byte[] content = await client.GetByteArrayAsync($"http://127.0.0.1:{port}{contentUrl}");
+            CollectionAssert.AreEqual(artifactBytes, content);
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+            LlmModelRegistryTests.TryDeleteDirectory(completeRoot);
+        }
+    }
+
+    [TestMethod]
     public async Task ChatCompletionsEndpoint_AppliesContextAwareAutoCompletionBudget()
     {
         string root = LlmModelRegistryTests.CreateTempDirectory();
@@ -1345,6 +1516,55 @@ public sealed class LlmRuntimeHostEndpointTests
 
         public ILlmBackend Create(string instanceId, string modelPath, LlmLoadConfig loadConfig) =>
             new FakeBackend(instanceId, modelPath, loadConfig, _texts, _fallbackText, AddSeenMaxTokens);
+    }
+
+    private sealed class FakeMediaToolInvoker : ILlmToolInvoker
+    {
+        private readonly string _artifactPath;
+        private readonly string _mediaType;
+
+        public FakeMediaToolInvoker(string artifactPath, string mediaType)
+        {
+            _artifactPath = artifactPath;
+            _mediaType = mediaType;
+        }
+
+        public string LastModelId { get; private set; } = "";
+
+        public string LastPrompt { get; private set; } = "";
+
+        public Task<LlmToolInvocationResult> InvokeAsync(LlmToolInvocationRequest request, CancellationToken cancellationToken = default)
+        {
+            LastModelId = request.Input.TryGetProperty("modelId", out var modelId) && modelId.ValueKind == JsonValueKind.String
+                ? modelId.GetString() ?? ""
+                : "";
+            LastPrompt = request.Input.TryGetProperty("prompt", out var prompt) && prompt.ValueKind == JsonValueKind.String
+                ? prompt.GetString() ?? ""
+                : "";
+
+            return Task.FromResult(new LlmToolInvocationResult
+            {
+                Success = true,
+                ToolId = request.ToolId,
+                OutputText = "Generated fake media.",
+                OutputJson = JsonSerializer.SerializeToElement(new
+                {
+                    jobId = "job_fake",
+                    success = true,
+                    message = "Generated fake media.",
+                    artifacts = new[]
+                    {
+                        new
+                        {
+                            id = "artifact_fake",
+                            mediaType = _mediaType,
+                            filePath = _artifactPath,
+                            lengthBytes = new FileInfo(_artifactPath).Length
+                        }
+                    }
+                })
+            });
+        }
     }
 
     private sealed class FakeBackend : ILlmBackend

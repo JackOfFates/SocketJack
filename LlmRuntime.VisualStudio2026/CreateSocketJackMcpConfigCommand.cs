@@ -1,5 +1,6 @@
 namespace LlmRuntime.VisualStudio2026;
 
+using LlmRuntime.VisualStudio;
 using Microsoft.VisualStudio.Extensibility;
 using Microsoft.VisualStudio.Extensibility.Commands;
 using Microsoft.VisualStudio.Extensibility.Shell;
@@ -23,9 +24,14 @@ internal sealed class CreateSocketJackMcpConfigCommand : SocketJackAuthenticated
     {
         try
         {
-            SocketJackVisualStudioAuthService authService = new();
-            SocketJackAuthState authState = await authService.ValidateAsync(authService.Load(), cancellationToken);
             var configurator = new SocketJackCopilotConfigurator(this.Extensibility, this.httpClient);
+            SocketJackAuthState authState = new();
+            if (!await SocketJackLocalWorkstationDiscovery.IsAvailableAsync(this.httpClient, cancellationToken).ConfigureAwait(false))
+            {
+                SocketJackVisualStudioAuthService authService = new();
+                authState = await authService.ValidateAsync(authService.Load(), cancellationToken);
+            }
+
             SocketJackConfigureResult result = await configurator.ConfigureFirstEligibleAsync(authState.AccessToken, authState.UserName, cancellationToken);
             await this.Extensibility.Shell().ShowPromptAsync(result.ToUserMessage(), PromptOptions.OK, cancellationToken);
         }

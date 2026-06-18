@@ -1,5 +1,6 @@
 namespace LlmRuntime.VisualStudio2026;
 
+using LlmRuntime.VisualStudio;
 using Microsoft.VisualStudio.Extensibility;
 using Microsoft.VisualStudio.Extensibility.Commands;
 
@@ -17,6 +18,13 @@ internal abstract class SocketJackAuthenticatedCommand : Command
 
     public sealed override async Task ExecuteCommandAsync(IClientContext context, CancellationToken cancellationToken)
     {
+        if (await SocketJackLocalWorkstationDiscovery.IsAvailableAsync(cancellationToken).ConfigureAwait(false))
+        {
+            this.SetEnabledState(true);
+            await this.ExecuteAuthenticatedCommandAsync(context, cancellationToken);
+            return;
+        }
+
         if (!this.authService.HasStoredToken())
         {
             this.UpdateAuthState();
@@ -48,7 +56,7 @@ internal abstract class SocketJackAuthenticatedCommand : Command
 
     private void UpdateAuthState()
     {
-        bool signedIn = this.authService.HasStoredToken();
-        this.SetEnabledState(signedIn);
+        bool canRun = this.authService.HasStoredToken() || SocketJackLocalWorkstationDiscovery.IsLikelyAvailable();
+        this.SetEnabledState(canRun);
     }
 }

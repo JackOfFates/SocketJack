@@ -34,6 +34,36 @@ public sealed class ChatUiDisplayNormalizationTests
         StringAssert.Contains(cleaned, "DSG");
     }
 
+    [TestMethod]
+    public void CleanAssistantVisibleContent_RemovesDanglingToolParameterLeak()
+    {
+        string cleaned = CleanVisibleContent("""
+        I can open that search.
+
+        <parameter>{"url":"https://duckduckgo.com/?q=2001+audi+s4+black+lowered+BBS"
+        """);
+
+        StringAssert.Contains(cleaned, "I can open that search.");
+        Assert.IsFalse(cleaned.Contains("<parameter>", StringComparison.OrdinalIgnoreCase), cleaned);
+        Assert.IsFalse(cleaned.Contains("duckduckgo.com", StringComparison.OrdinalIgnoreCase), cleaned);
+    }
+
+    [TestMethod]
+    public void CleanAssistantVisibleContent_RemovesModelMetadataAndDanglingThinkingFragment()
+    {
+        string cleaned = CleanVisibleContent("""
+        OK_1
+        <model_name>Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF</model_name>
+        <model_id>qwen3.5-9b-claude-4
+        ing
+        """);
+
+        Assert.AreEqual("OK_1", cleaned);
+        Assert.IsFalse(cleaned.Contains("model_name", StringComparison.OrdinalIgnoreCase), cleaned);
+        Assert.IsFalse(cleaned.Contains("model_id", StringComparison.OrdinalIgnoreCase), cleaned);
+        Assert.IsFalse(cleaned.EndsWith("ing", StringComparison.OrdinalIgnoreCase), cleaned);
+    }
+
     private static string CleanVisibleContent(string content)
     {
         using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);

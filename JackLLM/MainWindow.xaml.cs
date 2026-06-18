@@ -298,6 +298,17 @@ public partial class MainWindow : Window {
     private string _selectedOwnerKey = "";
     private bool _syncingSessionSelection;
     private bool _suppressWebAuthUserSelectionChanged;
+    private string _pendingWebUiUrl = "";
+    private string _webUiCurrentUrl = "";
+    private Microsoft.Web.WebView2.Wpf.WebView2? _webUiBrowser;
+    private TextBlock? _webUiFallbackStatusText;
+    private bool _webUiUsesFallbackViewer;
+    private bool _webUiBrowserReady;
+    private bool _webUiBrowserInitializing;
+    private bool _webUiBrowserEventsAttached;
+    private bool _webUiHasLoadedPage;
+    private bool _webUiNavigationInProgress;
+    private bool _webUiRecoveredRemoteNavigationFailure;
     private string _sessionLogSignature = "";
     private string _pendingSessionLogHtml = "";
     private Microsoft.Web.WebView2.Wpf.WebView2? _sessionLogBrowser;
@@ -412,6 +423,7 @@ public partial class MainWindow : Window {
     public MainWindow(bool startHiddenRequested = false) {
         _startHiddenRequested = startHiddenRequested;
         InitializeComponent();
+        ConfigureWebUiBrowser();
         ConfigureSessionLogViewer();
         ConfigureModelDownloaderControl();
         if (_startHiddenRequested) {
@@ -561,6 +573,59 @@ public partial class MainWindow : Window {
         public void Report(T value) {
             _handler(value);
         }
+    }
+
+    private void ConfigureWebUiBrowser() {
+        if (WebUiBrowserHost == null)
+            return;
+
+        if (IsWineSafeWpfMode() || IsWineEnvironment()) {
+            UseWebUiFallbackViewer("Embedded WebView2 is unavailable in this host.");
+            return;
+        }
+
+        _webUiBrowser = new Microsoft.Web.WebView2.Wpf.WebView2();
+        _webUiBrowser.Loaded += WebUiBrowser_Loaded;
+        WebUiBrowserHost.Content = _webUiBrowser;
+    }
+
+    private void UseWebUiFallbackViewer(string message) {
+        _webUiUsesFallbackViewer = true;
+        _webUiBrowserReady = false;
+        _webUiBrowserInitializing = false;
+        _webUiNavigationInProgress = false;
+        _webUiHasLoadedPage = false;
+        _webUiCurrentUrl = "";
+        _webUiBrowser = null;
+
+        var panel = new StackPanel {
+            Margin = new Thickness(18),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MaxWidth = 720
+        };
+
+        panel.Children.Add(new TextBlock {
+            Text = string.IsNullOrWhiteSpace(message) ? "Embedded browser unavailable." : message,
+            Foreground = new SolidColorBrush(Color.FromRgb(226, 232, 240)),
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        _webUiFallbackStatusText = new TextBlock {
+            Text = "Start the proxy to load the local Web UI.",
+            Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        panel.Children.Add(_webUiFallbackStatusText);
+
+        WebUiBrowserHost.Content = panel;
     }
 
     private void ConfigureSessionLogViewer() {
@@ -1204,6 +1269,8 @@ public partial class MainWindow : Window {
             RefreshWebAuthUsersPanel(true);
             RefreshWorkspaceExplorer(true);
         }
+        if (WebUiTabItem?.IsSelected == true)
+            _ = OpenWebUiTabAsync(false, false);
         SyncModelsManagerRootHost();
     }
 
@@ -1788,19 +1855,60 @@ public partial class MainWindow : Window {
     }
 
     private void OpenChatButton_Click(object sender, RoutedEventArgs e) {
+        _ = OpenWebUiTabAsync(true, false);
+    }
+
+    private void WebUiReloadButton_Click(object sender, RoutedEventArgs e) {
+        ReloadWebUiPage();
+    }
+
+    private void WebUiOpenExternalButton_Click(object sender, RoutedEventArgs e) {
         if (!_proxy.IsChatServerCreated || !_proxy.ChatServer.IsListening) {
-            SetStatus("Chat UI is not running.");
+            SetWebUiStatus("Web UI is not running.");
+            SetStatus("Web UI is not running.");
             return;
         }
 
-        Process.Start(new ProcessStartInfo(BuildAuthenticatedChatServerUrl()) {
-            UseShellExecute = true
-        });
+        OpenServiceUrl(BuildAuthenticatedChatServerUrl());
+    }
+
+    private async Task OpenWebUiTabAsync(bool focusTab, bool forceNavigate) {
+        if (focusTab && WebUiTabItem != null && MainTabs != null)
+            MainTabs.SelectedItem = WebUiTabItem;
+
+        if (!_proxy.IsChatServerCreated || !_proxy.ChatServer.IsListening) {
+            SetWebUiStatus("Start the proxy to load the local Web UI.");
+            SetStatus("Web UI is not running.");
+            return;
+        }
+
+        _pendingWebUiUrl = BuildAuthenticatedChatServerUrl();
+        _webUiRecoveredRemoteNavigationFailure = false;
+        string displayUrl = BuildWebUiDisplayUrl(_pendingWebUiUrl);
+        if (!forceNavigate && IsWebUiPageAlreadyLoaded()) {
+            SetWebUiStatus("Web UI: " + BuildWebUiDisplayUrl(GetCurrentWebUiUrl()));
+            return;
+        }
+
+        if (!forceNavigate && _webUiNavigationInProgress) {
+            SetWebUiStatus("Loading " + BuildWebUiDisplayUrl(FirstNonEmpty(_webUiCurrentUrl, _pendingWebUiUrl)));
+            return;
+        }
+
+        SetWebUiStatus("Loading " + displayUrl);
+        UpdateWebUiFallbackStatus(displayUrl);
+
+        if (_webUiUsesFallbackViewer) {
+            SetStatus("Web UI URL: " + displayUrl);
+            return;
+        }
+
+        await EnsureWebUiBrowserReadyAsync().ConfigureAwait(true);
+        NavigateWebUiBrowserToPendingUrl(forceNavigate);
     }
 
     private string BuildAuthenticatedChatServerUrl() {
-        string url = _proxy.ChatServerUrl ?? "";
-        return AddSocketJackAuthTokenToUrl(url);
+        return BuildAuthenticatedChatServerEndpoint("/");
     }
 
     private string BuildAuthenticatedChatServerEndpoint(string path) {
@@ -1823,6 +1931,220 @@ public partial class MainWindow : Window {
         } catch {
             string separator = url.Contains("?") ? "&" : "?";
             return url + separator + "AuthTOKEN=" + Uri.EscapeDataString(token.Trim());
+        }
+    }
+
+    private async Task EnsureWebUiBrowserReadyAsync() {
+        if (_webUiUsesFallbackViewer || _webUiBrowser == null || _webUiBrowserReady || _webUiBrowserInitializing)
+            return;
+
+        if (!_webUiBrowser.IsLoaded) {
+            _webUiBrowser.Loaded -= WebUiBrowser_Loaded;
+            _webUiBrowser.Loaded += WebUiBrowser_Loaded;
+            SetWebUiStatus("Web UI browser is waiting for the tab to load...");
+            return;
+        }
+
+        _webUiBrowserInitializing = true;
+        try {
+            SetWebUiStatus("Starting Web UI browser...");
+            await _webUiBrowser.EnsureCoreWebView2Async().ConfigureAwait(true);
+            if (_webUiBrowser.CoreWebView2 == null)
+                throw new InvalidOperationException("WebView2 core was not created.");
+
+            _webUiBrowserReady = true;
+            _webUiBrowser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
+            _webUiBrowser.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            if (!_webUiBrowserEventsAttached) {
+                _webUiBrowser.CoreWebView2.NewWindowRequested += WebUiBrowser_NewWindowRequested;
+                _webUiBrowser.CoreWebView2.NavigationCompleted += WebUiBrowser_NavigationCompleted;
+                _webUiBrowserEventsAttached = true;
+            }
+        } catch (Exception ex) {
+            string message = "Embedded Web UI browser failed: " + TrimForDisplay(ex.GetBaseException().Message, 160);
+            UseWebUiFallbackViewer(message);
+            UpdateWebUiFallbackStatus(BuildWebUiDisplayUrl(_pendingWebUiUrl));
+            SetWebUiStatus(message);
+            SetStatus(message);
+        } finally {
+            _webUiBrowserInitializing = false;
+        }
+    }
+
+    private void ReloadWebUiPage() {
+        if (!_proxy.IsChatServerCreated || !_proxy.ChatServer.IsListening) {
+            SetWebUiStatus("Web UI is not running.");
+            SetStatus("Web UI is not running.");
+            return;
+        }
+
+        if (_webUiBrowserReady && _webUiBrowser?.CoreWebView2 != null && IsWebUiPageAlreadyLoaded()) {
+            string currentUrl = GetCurrentWebUiUrl();
+            _webUiNavigationInProgress = true;
+            SetWebUiStatus("Reloading " + BuildWebUiDisplayUrl(currentUrl));
+            _webUiBrowser.CoreWebView2.Reload();
+            return;
+        }
+
+        _ = OpenWebUiTabAsync(false, true);
+    }
+
+    private void NavigateWebUiBrowserToPendingUrl(bool forceNavigate = false) {
+        if (!_webUiBrowserReady || _webUiBrowser?.CoreWebView2 == null || string.IsNullOrWhiteSpace(_pendingWebUiUrl))
+            return;
+
+        if (!forceNavigate && IsWebUiPageAlreadyLoaded())
+            return;
+
+        NavigateWebUiBrowserCore(_pendingWebUiUrl);
+    }
+
+    private void NavigateWebUiBrowserCore(string url) {
+        if (_webUiBrowser?.CoreWebView2 == null || string.IsNullOrWhiteSpace(url))
+            return;
+
+        try {
+            _webUiNavigationInProgress = true;
+            _webUiBrowser.CoreWebView2.Navigate(url);
+            SetWebUiStatus("Loading " + BuildWebUiDisplayUrl(url));
+        } catch (Exception ex) {
+            _webUiNavigationInProgress = false;
+            string message = "Web UI navigation failed: " + TrimForDisplay(ex.GetBaseException().Message, 160);
+            SetWebUiStatus(message);
+            SetStatus(message);
+        }
+    }
+
+    private async void WebUiBrowser_Loaded(object sender, RoutedEventArgs e) {
+        if (_webUiBrowser != null)
+            _webUiBrowser.Loaded -= WebUiBrowser_Loaded;
+
+        await EnsureWebUiBrowserReadyAsync().ConfigureAwait(true);
+        NavigateWebUiBrowserToPendingUrl(false);
+    }
+
+    private void WebUiBrowser_NewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e) {
+        e.Handled = true;
+        string uri = e.Uri ?? "";
+        if (string.IsNullOrWhiteSpace(uri))
+            return;
+
+        try {
+            if (IsLocalChatServerUrl(uri)) {
+                _pendingWebUiUrl = AddSocketJackAuthTokenToUrl(uri);
+                NavigateWebUiBrowserCore(_pendingWebUiUrl);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        } catch (Exception ex) {
+            SetWebUiStatus("Open failed: " + TrimForDisplay(ex.GetBaseException().Message, 160));
+        }
+    }
+
+    private void WebUiBrowser_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e) {
+        _webUiNavigationInProgress = false;
+        if (e.IsSuccess) {
+            _webUiCurrentUrl = GetCurrentWebUiUrl();
+            if (IsLocalChatServerUrl(_webUiCurrentUrl))
+                _webUiHasLoadedPage = true;
+            SetWebUiStatus("Web UI: " + BuildWebUiDisplayUrl(FirstNonEmpty(_webUiCurrentUrl, _pendingWebUiUrl)));
+            SetStatus("Web UI loaded in tab.");
+            return;
+        }
+
+        string failedUrl = GetCurrentWebUiUrl();
+        if (!_webUiRecoveredRemoteNavigationFailure &&
+            !string.IsNullOrWhiteSpace(failedUrl) &&
+            !IsLocalChatServerUrl(failedUrl) &&
+            _proxy.IsChatServerCreated &&
+            _proxy.ChatServer.IsListening) {
+            _webUiRecoveredRemoteNavigationFailure = true;
+            _pendingWebUiUrl = BuildAuthenticatedChatServerUrl();
+            NavigateWebUiBrowserCore(_pendingWebUiUrl);
+            return;
+        }
+
+        SetWebUiStatus("Web UI navigation failed: " + e.WebErrorStatus);
+    }
+
+    private bool IsLocalChatServerUrl(string url) {
+        try {
+            var target = new Uri(url, UriKind.Absolute);
+            var local = new Uri(BuildChatServerEndpoint("/"), UriKind.Absolute);
+            return target.Port == local.Port &&
+                   IsSameLocalHostAlias(target.Host, local.Host);
+        } catch {
+            return false;
+        }
+    }
+
+    private bool IsWebUiPageAlreadyLoaded() {
+        if (!_webUiHasLoadedPage || _webUiBrowser == null)
+            return false;
+
+        string currentUrl = GetCurrentWebUiUrl();
+        return !string.IsNullOrWhiteSpace(currentUrl) && IsLocalChatServerUrl(currentUrl);
+    }
+
+    private string GetCurrentWebUiUrl() {
+        return FirstNonEmpty(
+            _webUiBrowser?.CoreWebView2?.Source,
+            _webUiBrowser?.Source?.ToString(),
+            _webUiCurrentUrl,
+            _pendingWebUiUrl);
+    }
+
+    private static bool IsSameLocalHostAlias(string left, string right) {
+        if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return IsLoopbackHostAlias(left) && IsLoopbackHostAlias(right);
+    }
+
+    private static bool IsLoopbackHostAlias(string host) {
+        host = (host ?? "").Trim();
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (IPAddress.TryParse(host, out IPAddress? address))
+            return IPAddress.IsLoopback(address);
+        return false;
+    }
+
+    private void SetWebUiStatus(string text) {
+        string status = string.IsNullOrWhiteSpace(text) ? "Web UI" : text.Trim();
+        if (WebUiStatusText != null)
+            WebUiStatusText.Text = status;
+        if (_webUiFallbackStatusText != null)
+            _webUiFallbackStatusText.Text = status;
+    }
+
+    private void UpdateWebUiFallbackStatus(string displayUrl) {
+        if (_webUiFallbackStatusText == null)
+            return;
+
+        _webUiFallbackStatusText.Text = string.IsNullOrWhiteSpace(displayUrl)
+            ? "Start the proxy to load the local Web UI."
+            : "Local URL: " + displayUrl;
+    }
+
+    private static string BuildWebUiDisplayUrl(string url) {
+        if (string.IsNullOrWhiteSpace(url))
+            return "";
+
+        try {
+            var builder = new UriBuilder(url);
+            string query = builder.Query;
+            query = string.IsNullOrWhiteSpace(query) ? "" : query.TrimStart('?');
+            string[] visibleParts = query
+                .Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Where(part => !part.StartsWith("AuthTOKEN=", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            builder.Query = visibleParts.Length == 0 ? "" : string.Join("&", visibleParts);
+            return builder.Uri.ToString();
+        } catch {
+            string redacted = Regex.Replace(url, @"([?&])AuthTOKEN=[^&]*&?", "$1", RegexOptions.IgnoreCase);
+            return redacted.TrimEnd('?', '&');
         }
     }
 
@@ -6761,7 +7083,7 @@ public partial class MainWindow : Window {
             new CoachmarkStep(StartStopButton, "Start the proxy", "Starts the local HTTP, chat, FTP, and SocketJack surfaces."),
             new CoachmarkStep(SocketJackUserTextBox, "Sign in once", "Uploads, listings, storage, and paid usage are tied to this SocketJack.com username."),
             new CoachmarkStep(ModelsTabItem, "Models tab", "Browse, download, enable, and load local models here. If no models are installed yet, this is where you can download more."),
-            new CoachmarkStep(OpenChatButton, "Open Chat UI", "Launches the browser chat for shared sessions, uploads, downloads, and agent tools."),
+            new CoachmarkStep(OpenChatButton, "Web UI", "Opens the local web interface for shared sessions, uploads, downloads, and agent tools."),
             new CoachmarkStep(WpfChatAttachFileButton, "Attach session files", "Files are uploaded only after sign-in and count against the user's storage cap."),
             new CoachmarkStep(PublishedToggleButton, "Publish when ready", "Controls whether this PC appears on the master list for other users.")
         };
@@ -8320,6 +8642,13 @@ public partial class MainWindow : Window {
         return _settings.MasterServerOwnerToken;
     }
 
+    private static string HashMasterServerOwnerToken(string token) {
+        token = (token ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            return "";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+    }
+
     private static LmVsProxyServerProfile BuildServerProfileFromEntry(ServerBrowserEntry entry) {
         var profile = new LmVsProxyServerProfile {
             ServerId = entry.Id,
@@ -9035,7 +9364,7 @@ public partial class MainWindow : Window {
         menu.Items.Add(CreateWpfTrayInfoItem(BuildTrayPublishStatusText()));
         menu.Items.Add(new System.Windows.Controls.Separator());
         menu.Items.Add(CreateWpfTrayMenuItem("Show Dashboard", ShowFromTray));
-        menu.Items.Add(CreateWpfTrayMenuItem("Open Chat UI", () => OpenChatButton_Click(this, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
+        menu.Items.Add(CreateWpfTrayMenuItem("Open Web UI", () => OpenChatButton_Click(this, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
         menu.Items.Add(CreateWpfTrayMenuItem(_proxy.IsListening ? "Stop Proxy" : "Start Proxy", () => {
             if (_proxy.IsListening)
                 _ = StopProxyAsync();
@@ -9090,7 +9419,7 @@ public partial class MainWindow : Window {
         menu.Items.Add(new Forms.ToolStripSeparator());
         var showItem = CreateTrayMenuItem("Show Dashboard", ShowFromTray);
         menu.Items.Add(showItem);
-        var openChatItem = CreateTrayMenuItem("Open Chat UI", () => OpenChatButton_Click(this, new RoutedEventArgs()));
+        var openChatItem = CreateTrayMenuItem("Open Web UI", () => OpenChatButton_Click(this, new RoutedEventArgs()));
         openChatItem.Enabled = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
         menu.Items.Add(openChatItem);
         var startStopItem = CreateTrayMenuItem(_proxy.IsListening ? "Stop Proxy" : "Start Proxy", () => {
@@ -9756,9 +10085,11 @@ public partial class MainWindow : Window {
             ShellProxyRequestResult proxy = await RequestShellProxyAsync(poolSize);
             string masterHost = ResolveShellMasterHost();
             var started = new List<ShellRelay>();
+            string shellWebSocketTunnelUrl = ResolveShellWebSocketTunnelUrl(proxy.Instance);
             bool webSocketTunnelEnabled = IsShellWebSocketTunnelEnabled() &&
-                                          proxy.Instance.SupportsWebSocketTunnel &&
-                                          !string.IsNullOrWhiteSpace(ResolveShellWebSocketTunnelUrl(proxy.Instance));
+                                          !string.IsNullOrWhiteSpace(shellWebSocketTunnelUrl) &&
+                                          (proxy.Instance.SupportsWebSocketTunnel ||
+                                           proxy.Instance.TransportMode.Equals("websocketPreferred", StringComparison.OrdinalIgnoreCase));
             if (webSocketTunnelEnabled)
                 StartShellWebSocketTunnel(started, proxy.Instance, masterHost, poolSize);
             else
@@ -9870,6 +10201,7 @@ public partial class MainWindow : Window {
             lastStatus = "Shell proxy online",
             transportMode = IsShellWebSocketTunnelEnabled() ? "websocketPreferred" : "tcp",
             fallbackTcpEnabled = true,
+            ownerTokenHash = HashMasterServerOwnerToken(GetMasterServerOwnerToken()),
             internetLatencyMs,
             latencyMs = internetLatencyMs,
             startedUtc = entry.StartedUtc,
@@ -9936,6 +10268,13 @@ public partial class MainWindow : Window {
             ShellRelayItem instance = ShellRelayItem.FromJson(instanceElement);
             instance.Endpoint = GetJsonString(root, "endpoint", instance.Endpoint);
             instance.ProxyPath = GetJsonString(root, "proxyPath", instance.ProxyPath);
+            string topLevelTunnelUrl = GetJsonString(root, "webSocketTunnelUrl", "");
+            if (!string.IsNullOrWhiteSpace(topLevelTunnelUrl))
+                instance.WebSocketTunnelUrl = topLevelTunnelUrl;
+            if (GetJsonBool(root, "supportsWebSocketTunnel", instance.SupportsWebSocketTunnel) ||
+                !string.IsNullOrWhiteSpace(instance.WebSocketTunnelUrl))
+                instance.SupportsWebSocketTunnel = true;
+            instance.TransportMode = FirstNonEmpty(GetJsonString(root, "transportMode", ""), instance.TransportMode, "websocketPreferred");
             ApplyShellRelayItem(instance, true);
 
             string endpoint = FirstNonEmpty(
@@ -10084,28 +10423,55 @@ public partial class MainWindow : Window {
             return;
         }
 
-        var client = new ShellWebSocketTunnelClient(
-            item.Id,
-            item.Name,
-            tunnelUrl,
-            localShellHost,
-            localShellPort,
-            GetMasterServerOwnerToken());
+        string ownerToken = GetMasterServerOwnerToken();
+        string[] tunnelRoles = GetShellWebSocketTunnelRoles();
+        var clients = new List<ShellWebSocketTunnelClient>();
+        foreach (string role in tunnelRoles) {
+            var client = new ShellWebSocketTunnelClient(
+                item.Id,
+                string.IsNullOrWhiteSpace(role) ? item.Name : item.Name + " " + role,
+                tunnelUrl,
+                localShellHost,
+                localShellPort,
+                ownerToken,
+                role);
+            clients.Add(client);
+        }
 
-        var relay = new ShellRelay(item.Id, item.Name, masterHost, item.PublicPort, item.AgentPort, localShellHost, localShellPort, poolSize, null, client, ShellRelayClient_Log);
-        client.StatusChanged += (_, args) => TryBeginOnUi(() => {
-            item.AppendDebug(args.TimestampUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture) + " [WebSocket] " + args.Message);
-            item.ClientStatus = args.Connected ? "WebSocket" : "WebSocket reconnecting";
-            UpdateSelectedShellDebugText();
-            if (args.Connected)
-                relay.StopTcpFallback();
-            else if (args.FallbackRecommended)
-                relay.EnsureTcpFallbackStarted();
-        }, "Shell WebSocket status update");
-        client.Start();
+        var tunnelStates = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var relay = new ShellRelay(item.Id, item.Name, masterHost, item.PublicPort, item.AgentPort, localShellHost, localShellPort, poolSize, null, clients.FirstOrDefault(), ShellRelayClient_Log);
+        foreach (ShellWebSocketTunnelClient extraClient in clients.Skip(1))
+            relay.AddAdditionalWebSocketTunnel(extraClient);
+
+        foreach (ShellWebSocketTunnelClient client in clients) {
+            string role = client.ChannelRole;
+            tunnelStates[role] = false;
+            client.StatusChanged += (_, args) => TryBeginOnUi(() => {
+                tunnelStates[role] = args.Connected;
+                int connectedTunnels = tunnelStates.Count(pair => pair.Value);
+                string rolePrefix = string.IsNullOrWhiteSpace(role) ? "[WebSocket]" : "[WebSocket " + role + "]";
+                item.AppendDebug(args.TimestampUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture) + " " + rolePrefix + " " + args.Message);
+                item.ClientStatus = connectedTunnels > 0
+                    ? "WebSocket " + connectedTunnels.ToString(CultureInfo.InvariantCulture)
+                    : "WebSocket reconnecting";
+                UpdateSelectedShellDebugText();
+                if (connectedTunnels > 0)
+                    relay.StopTcpFallback();
+                else if (args.FallbackRecommended)
+                    relay.EnsureTcpFallbackStarted();
+            }, "Shell WebSocket status update");
+        }
+
+        foreach (ShellWebSocketTunnelClient client in clients)
+            client.Start();
+
         item.ClientStatus = "WebSocket connecting";
         item.AppendDebug("Routing public proxy through WebSocket tunnel " + tunnelUrl + " -> local LmVsProxy " + localShellHost + ":" + localShellPort.ToString(CultureInfo.InvariantCulture) + ".");
         started.Add(relay);
+    }
+
+    private static string[] GetShellWebSocketTunnelRoles() {
+        return new[] { "api", "chat", "browser" };
     }
 
     private string ResolveShellWebSocketTunnelUrl(ShellRelayItem item) {
@@ -14295,8 +14661,16 @@ public partial class MainWindow : Window {
         bool running = proxyRunning;
         StartStopButton.Content = proxyRunning ? "Stop Proxy" : "Start Proxy";
         StartStopButton.Background = running ? new SolidColorBrush(Color.FromRgb(137, 52, 66)) : new SolidColorBrush(Color.FromRgb(31, 122, 104));
-        OpenChatButton.IsEnabled = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
         bool chatRunning = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
+        OpenChatButton.IsEnabled = chatRunning;
+        if (WebUiReloadButton != null)
+            WebUiReloadButton.IsEnabled = chatRunning;
+        if (WebUiOpenExternalButton != null)
+            WebUiOpenExternalButton.IsEnabled = chatRunning;
+        if (!chatRunning && WebUiTabItem?.IsSelected == true)
+            SetWebUiStatus("Start the proxy to load the local Web UI.");
+        if (chatRunning && string.IsNullOrWhiteSpace(_pendingWebUiUrl))
+            SetWebUiStatus("Web UI: " + BuildWebUiDisplayUrl(BuildChatServerEndpoint("/")));
         if (OpenMagicWorkflowButton != null)
             OpenMagicWorkflowButton.IsEnabled = chatRunning;
         if (RefreshMagicWorkflowButton != null)
@@ -16129,7 +16503,7 @@ public partial class MainWindow : Window {
         AddServiceConfigRow("Traffic", FormatChatServerByteText(bytesIn, bytesOut, bytesAvailable));
         AddServiceConfigRow("Chat service", GetSelectedWpfChatService());
         AddServiceActionRow(
-            CreateServiceActionButton("Open chat UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), chatRunning),
+            CreateServiceActionButton("Open Web UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), chatRunning),
             CreateServiceActionButton(_proxy.IsListening ? "Stop proxy" : "Start proxy", () => StartStopButton_Click(null, new RoutedEventArgs())),
             CreateServiceActionButton("Open FTP config", () => OpenServiceUrl(BuildChatServerEndpoint("/FTP")), chatRunning));
     }
@@ -16146,7 +16520,7 @@ public partial class MainWindow : Window {
         AddServiceActionRow(
             CreateServiceActionButton(_proxy.IsListening ? "Stop proxy" : "Start proxy", () => StartStopButton_Click(null, new RoutedEventArgs())),
             CreateServiceAsyncActionButton("Probe runtime", async () => await ProbeLmStudioAsync()),
-            CreateServiceActionButton("Open chat UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
+            CreateServiceActionButton("Open Web UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
     }
 
     private void RenderModelRuntimeServiceOptions(string serviceName) {
@@ -16248,7 +16622,7 @@ public partial class MainWindow : Window {
         });
         AddServiceActionRow(
             CreateServiceActionButton("Refresh users", () => RefreshWebAuthUsersPanel(true)),
-            CreateServiceActionButton("Open chat UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
+            CreateServiceActionButton("Open Web UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
     }
 
     private void RenderCompanionServiceOptions() {
@@ -16274,7 +16648,7 @@ public partial class MainWindow : Window {
         AddServiceConfigRow("Events", _promptIntellisenseEventCount.ToString("N0", CultureInfo.CurrentCulture));
         AddServiceConfigRow("Route", "/api/prompt-intellisense");
         AddServiceConfigRow("Client", "HTTP");
-        AddServiceActionRow(CreateServiceActionButton("Open chat UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
+        AddServiceActionRow(CreateServiceActionButton("Open Web UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
     }
 
     private void RenderSessionFilesServiceOptions() {
@@ -16558,9 +16932,7 @@ public partial class MainWindow : Window {
     }
 
     private string BuildChatServerEndpoint(string path) {
-        string baseUrl = _proxy.ChatServerUrl ?? "";
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            baseUrl = "http://localhost:" + ChatServerPort.ToString(CultureInfo.InvariantCulture) + "/";
+        string baseUrl = BuildLocalChatServerBaseUrl();
 
         string normalizedPath = (path ?? "").Trim();
         if (string.IsNullOrWhiteSpace(normalizedPath))
@@ -16568,6 +16940,38 @@ public partial class MainWindow : Window {
         if (!normalizedPath.StartsWith("/", StringComparison.Ordinal))
             normalizedPath = "/" + normalizedPath;
         return baseUrl.TrimEnd('/') + normalizedPath;
+    }
+
+    private string BuildLocalChatServerBaseUrl() {
+        string configured = (_proxy.ChatServerUrl ?? "").Trim();
+        if (TryBuildLocalChatServerBaseUrl(configured, out string localBaseUrl))
+            return localBaseUrl;
+
+        return "http://127.0.0.1:" + ChatServerPort.ToString(CultureInfo.InvariantCulture) + "/";
+    }
+
+    private static bool TryBuildLocalChatServerBaseUrl(string candidate, out string baseUrl) {
+        baseUrl = "";
+        if (string.IsNullOrWhiteSpace(candidate))
+            return false;
+
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri))
+            return false;
+
+        if (!IsLoopbackHostAlias(uri.Host))
+            return false;
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var builder = new UriBuilder(uri) {
+            Path = "",
+            Query = "",
+            Fragment = ""
+        };
+        baseUrl = builder.Uri.ToString();
+        return true;
     }
 
     private void OpenServiceUrl(string urlOrPath) {
@@ -18307,7 +18711,7 @@ public partial class MainWindow : Window {
     private void InitializeStaticText() {
         _lmEndpointText = "Endpoint: http://localhost:" + LocalLmStudioProxyPort + "/v1/chat/completions";
         _proxyEndpointText = "Proxy: http://localhost:" + ServerPort + "/v1/chat/completions";
-        _chatUiEndpointText = "Chat UI: http://localhost:" + ChatServerPort + "/";
+        _chatUiEndpointText = "Web UI: http://localhost:" + ChatServerPort + "/";
         _vsEndpointText = "Endpoint: http://localhost:" + ServerPort + "/v1/responses";
     }
 
@@ -20312,6 +20716,7 @@ public partial class MainWindow : Window {
         private readonly string _localHost;
         private readonly int _localPort;
         private readonly string _ownerToken;
+        private readonly string _channelRole;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _pending = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, ProxyWebSocketSession> _webSockets = new(StringComparer.OrdinalIgnoreCase);
@@ -20322,16 +20727,19 @@ public partial class MainWindow : Window {
             string.Equals(Environment.GetEnvironmentVariable("SOCKETJACK_TUNNEL_DEBUG"), "1", StringComparison.OrdinalIgnoreCase);
         private static readonly object DebugLogLock = new();
 
-        public ShellWebSocketTunnelClient(string relayId, string name, string tunnelUrl, string localHost, int localPort, string ownerToken) {
+        public ShellWebSocketTunnelClient(string relayId, string name, string tunnelUrl, string localHost, int localPort, string ownerToken, string channelRole = "") {
             _relayId = relayId ?? "";
             _name = string.IsNullOrWhiteSpace(name) ? "Shell WebSocket tunnel" : name;
             _tunnelUri = new Uri(tunnelUrl);
             _localHost = string.IsNullOrWhiteSpace(localHost) ? "127.0.0.1" : localHost.Trim();
             _localPort = localPort;
             _ownerToken = ownerToken ?? "";
+            _channelRole = NormalizeShellWebSocketTunnelRole(channelRole);
         }
 
         public event EventHandler<ShellTunnelStatusEventArgs>? StatusChanged;
+
+        public string ChannelRole => _channelRole;
 
         public void Start() {
             if (_disposed || _runTask != null)
@@ -20356,7 +20764,9 @@ public partial class MainWindow : Window {
                         type = "hello",
                         relayId = _relayId,
                         ownerToken = _ownerToken,
+                        ownerTokenHash = HashMasterServerOwnerToken(_ownerToken),
                         client = "JackLLM Workstation",
+                        channelRole = _channelRole,
                         tunnelVersion = 1,
                         sentUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
                     }, cancellationToken).ConfigureAwait(false);
@@ -20872,6 +21282,15 @@ public partial class MainWindow : Window {
             }
         }
 
+        private static string NormalizeShellWebSocketTunnelRole(string value) {
+            value = (value ?? "").Trim().ToLowerInvariant();
+            if (value.Equals("chat", StringComparison.Ordinal) ||
+                value.Equals("browser", StringComparison.Ordinal) ||
+                value.Equals("api", StringComparison.Ordinal))
+                return value;
+            return "api";
+        }
+
         private static bool ShouldSkipTunnelForwardHeader(string name) {
             return string.IsNullOrWhiteSpace(name) ||
                    name.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
@@ -20983,6 +21402,7 @@ public partial class MainWindow : Window {
     private sealed class ShellRelay : IDisposable {
         private readonly EventHandler<ReverseTcpRelayLogEventArgs> _tcpLogHandler;
         private readonly object _sync = new();
+        private readonly List<ShellWebSocketTunnelClient> _additionalWebSocketTunnels = new();
         private bool _disposed;
 
         public ShellRelay(
@@ -21021,6 +21441,18 @@ public partial class MainWindow : Window {
         public ReverseTcpRelayClient? Client { get; private set; }
         public ShellWebSocketTunnelClient? WebSocketTunnel { get; }
 
+        public void AddAdditionalWebSocketTunnel(ShellWebSocketTunnelClient? client) {
+            if (client == null)
+                return;
+            lock (_sync) {
+                if (_disposed) {
+                    try { client.Dispose(); } catch { }
+                    return;
+                }
+                _additionalWebSocketTunnels.Add(client);
+            }
+        }
+
         public void EnsureTcpFallbackStarted() {
             lock (_sync) {
                 if (_disposed || Client != null)
@@ -21046,6 +21478,10 @@ public partial class MainWindow : Window {
             lock (_sync) {
                 _disposed = true;
                 try { WebSocketTunnel?.Dispose(); } catch { }
+                foreach (ShellWebSocketTunnelClient tunnel in _additionalWebSocketTunnels) {
+                    try { tunnel.Dispose(); } catch { }
+                }
+                _additionalWebSocketTunnels.Clear();
                 if (Client != null) {
                     try { Client.Log -= _tcpLogHandler; } catch { }
                     try { Client.Dispose(); } catch { }

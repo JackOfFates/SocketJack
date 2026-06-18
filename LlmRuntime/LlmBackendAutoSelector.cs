@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace LlmRuntime;
@@ -6,6 +7,7 @@ namespace LlmRuntime;
 internal static class LlmBackendAutoSelector
 {
     public const string EnvironmentVariable = "LLMRUNTIME_AUTO_BACKEND";
+    private const double MinimumCuda12AutoComputeCapability = 6.0d;
 
     public static LlmBackendKind Resolve(LlmBackendKind requested, bool requireGpu = true)
     {
@@ -22,16 +24,37 @@ internal static class LlmBackendAutoSelector
             return forcedBackend;
         }
 
-        if (HasNvidiaCudaDriver() && HasBackendAsset(LlmBackendKind.Cuda12))
+        bool hasCudaAsset = HasBackendAsset(LlmBackendKind.Cuda12);
+        bool hasVulkanBackend = HasVulkanLoader() && HasBackendAsset(LlmBackendKind.Vulkan);
+        return ResolveAutoBackend(ProbeCudaForAutoBackend(), hasCudaAsset, hasVulkanBackend, requireGpu);
+    }
+
+    internal static LlmBackendKind ResolveAutoBackend(CudaAutoBackendProbe cuda, bool hasCudaAsset, bool hasVulkanBackend, bool requireGpu)
+    {
+        if (cuda.DriverAvailable && hasCudaAsset)
             return LlmBackendKind.Cuda12;
 
-        if (HasVulkanLoader() && HasBackendAsset(LlmBackendKind.Vulkan))
+        if (hasVulkanBackend)
             return LlmBackendKind.Vulkan;
 
         if (requireGpu)
-            throw BuildGpuRequiredException("No CUDA or Vulkan LLamaSharp GPU backend asset is available.");
+        {
+            string reason = cuda.DriverAvailable && !cuda.SupportedForAuto
+                ? cuda.UnsupportedReason
+                : "No CUDA or Vulkan LLamaSharp GPU backend asset is available.";
+            throw BuildGpuRequiredException(reason);
+        }
 
         return LlmBackendKind.Cpu;
+    }
+
+    public static bool ShouldUseLegacyCudaCompatibilityProfile(LlmBackendKind backend)
+    {
+        if (backend is not LlmBackendKind.Cuda and not LlmBackendKind.Cuda12)
+            return false;
+
+        CudaAutoBackendProbe probe = ProbeCudaForAutoBackend();
+        return probe.DriverAvailable && !probe.SupportedForAuto;
     }
 
     private static LlmRuntimeException BuildGpuRequiredException(string reason) =>
@@ -59,11 +82,105 @@ internal static class LlmBackendAutoSelector
         return backend != LlmBackendKind.Auto;
     }
 
-    private static bool HasNvidiaCudaDriver() =>
-        TryLoadNativeLibrary(GetCudaDriverLibraryNames()) || NvidiaSmiReportsGpu();
-
     private static bool HasVulkanLoader() =>
         TryLoadNativeLibrary(GetVulkanLoaderLibraryNames());
+
+    private static CudaAutoBackendProbe ProbeCudaForAutoBackend()
+    {
+        CudaAutoBackendProbe nvidiaSmiProbe = ProbeCudaWithNvidiaSmi();
+        if (nvidiaSmiProbe.DriverAvailable)
+            return nvidiaSmiProbe;
+
+        bool driverAvailable = TryLoadNativeLibrary(GetCudaDriverLibraryNames()) || NvidiaSmiReportsGpu();
+        return new CudaAutoBackendProbe(driverAvailable, driverAvailable, "");
+    }
+
+    private static CudaAutoBackendProbe ProbeCudaWithNvidiaSmi()
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "nvidia-smi",
+                    Arguments = "--query-gpu=name,compute_cap --format=csv,noheader",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            if (!process.Start())
+                return CudaAutoBackendProbe.Unavailable;
+
+            if (!process.WaitForExit(1500))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return CudaAutoBackendProbe.Unavailable;
+            }
+
+            string output = process.StandardOutput.ReadToEnd();
+            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
+                return CudaAutoBackendProbe.Unavailable;
+
+            return BuildCudaProbeFromNvidiaSmiOutput(output);
+        }
+        catch
+        {
+            return CudaAutoBackendProbe.Unavailable;
+        }
+    }
+
+    internal static CudaAutoBackendProbe BuildCudaProbeFromNvidiaSmiOutput(string output)
+    {
+        IReadOnlyList<NvidiaCudaDeviceInfo> devices = ParseNvidiaSmiComputeCapabilityOutput(output);
+        if (devices.Count == 0)
+            return CudaAutoBackendProbe.Unavailable;
+
+        if (devices.Any(device => !device.ComputeCapability.HasValue || device.ComputeCapability.Value >= MinimumCuda12AutoComputeCapability))
+            return new CudaAutoBackendProbe(true, true, "");
+
+        string summary = string.Join(
+            ", ",
+            devices.Select(device => string.IsNullOrWhiteSpace(device.Name)
+                ? device.ComputeCapability!.Value.ToString("0.0", CultureInfo.InvariantCulture)
+                : device.Name + " compute " + device.ComputeCapability!.Value.ToString("0.0", CultureInfo.InvariantCulture)));
+        return new CudaAutoBackendProbe(
+            true,
+            false,
+            "NVIDIA CUDA GPU(s) were detected, but their compute capability is below the CUDA12 auto minimum " +
+            MinimumCuda12AutoComputeCapability.ToString("0.0", CultureInfo.InvariantCulture) +
+            ": " + summary + ".");
+    }
+
+    internal static IReadOnlyList<NvidiaCudaDeviceInfo> ParseNvidiaSmiComputeCapabilityOutput(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return [];
+
+        var devices = new List<NvidiaCudaDeviceInfo>();
+        foreach (string rawLine in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            string line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            int separator = line.LastIndexOf(',');
+            if (separator < 0)
+                continue;
+
+            string name = line[..separator].Trim();
+            string capabilityText = line[(separator + 1)..].Trim();
+            double? computeCapability = double.TryParse(capabilityText, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double parsed)
+                ? parsed
+                : null;
+            devices.Add(new NvidiaCudaDeviceInfo(name, computeCapability));
+        }
+
+        return devices;
+    }
 
     private static bool TryLoadNativeLibrary(IEnumerable<string> libraryNames)
     {
@@ -189,4 +306,10 @@ internal static class LlmBackendAutoSelector
         return [];
     }
 
+    internal sealed record CudaAutoBackendProbe(bool DriverAvailable, bool SupportedForAuto, string UnsupportedReason)
+    {
+        public static CudaAutoBackendProbe Unavailable { get; } = new(false, false, "");
+    }
+
+    internal sealed record NvidiaCudaDeviceInfo(string Name, double? ComputeCapability);
 }

@@ -1,6 +1,8 @@
-0.2.53
+0.2.54
 
+- Detects a local JackLLM Workstation at http://127.0.0.1:11436 and allows local Copilot/MCP configuration without SocketJack.com sign-in.
 - Retargets the VSIX installation and prerequisite lower bounds to the Marketplace-supported stable Visual Studio 17.14 API range while remaining installable on VS 2026.
+- Starts the packaged local BYOM bridge from the actual selected Visual Studio Ollama BYOM URL/model when that differs from SocketJack's cached selection.
 - Adds Session Sync GitHub repository import with a compact Import Repo dialog, optional one-time private repo token, and inline import errors.
 - Imports default-branch GitHub ZIP archives on the JackLLM server, checks extracted size before writing, extracts into a repo-named session folder, and deletes the temporary ZIP.
 - Pulls imported JackLLM sandbox files back into the Visual Studio solution through the Auto API file-download route.

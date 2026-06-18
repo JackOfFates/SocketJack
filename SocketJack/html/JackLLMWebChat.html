@@ -230,7 +230,7 @@ body:not(.portrait-layout).chat-mode-fading::after {
         conic-gradient(from 20deg at 50% 50%, rgba(0, 255, 140, 0.26), rgba(14, 165, 233, 0.28), rgba(168, 85, 247, 0.24), rgba(244, 63, 94, 0.18), rgba(250, 204, 21, 0.18), rgba(0, 255, 140, 0.26));
     opacity: var(--bg-detail-opacity);
     transform-origin: 50% 50%;
-    animation: swirl-spin 180s linear infinite;
+    transform: rotate(0deg) translate3d(-1.6vmax, 1.2vmax, 0) scale(1.02);
 }
 .bg-swirl::after {
     inset: -22vmax;
@@ -240,12 +240,18 @@ body:not(.portrait-layout).chat-mode-fading::after {
         radial-gradient(ellipse at 30% 68%, rgba(34, 211, 238, 0.34), transparent 26vmax),
         radial-gradient(ellipse at 82% 72%, rgba(217, 70, 239, 0.24), transparent 22vmax),
         conic-gradient(from 210deg at 48% 52%, rgba(250, 204, 21, 0.20), rgba(0, 255, 140, 0.19), rgba(14, 165, 233, 0.24), rgba(236, 72, 153, 0.18), rgba(250, 204, 21, 0.20));
+    transform: rotate(10deg) translate3d(-3.2vmax, 1.8vmax, 0) scale(1.025);
+}
+body.bg-motion-active .bg-swirl::before {
+    animation: swirl-spin 180s linear infinite;
+}
+body.bg-motion-active .bg-swirl::after {
     animation: swirl-drift 140s ease-in-out infinite alternate;
 }
-body.prompt-active .bg-swirl::before {
+body.bg-motion-active.prompt-active .bg-swirl::before {
     animation-duration: 120s;
 }
-body.prompt-active .bg-swirl::after {
+body.bg-motion-active.prompt-active .bg-swirl::after {
     animation-duration: 96s;
 }
 .glass-parallax {
@@ -456,10 +462,10 @@ body.heartbeat-offline .bg-swirl::after {
         radial-gradient(ellipse at 74% 82%, rgba(30, 41, 59, 0.34), transparent 28vmax),
         conic-gradient(from 20deg at 50% 50%, rgba(71, 85, 105, 0.24), rgba(148, 163, 184, 0.16), rgba(30, 41, 59, 0.24), rgba(71, 85, 105, 0.24));
 }
-body.heartbeat-offline .bg-swirl::before {
+body.bg-motion-active.heartbeat-offline .bg-swirl::before {
     animation-duration: 420s;
 }
-body.heartbeat-offline .bg-swirl::after {
+body.bg-motion-active.heartbeat-offline .bg-swirl::after {
     animation-duration: 340s;
 }
 body.heartbeat-offline .glass-parallax {
@@ -660,7 +666,7 @@ body:not(.app-loading) .startup-loader {
     inset: 12%;
     background: radial-gradient(circle, rgba(125, 211, 252, 0.26), rgba(64, 201, 162, 0.10) 42%, transparent 68%);
     filter: blur(12px);
-    animation: startup-glow 2100ms var(--sine-ease-in-out) infinite;
+    animation: startup-glow 2100ms var(--sine-ease-in-out) 1 both;
 }
 .startup-throbber::after {
     inset: 28%;
@@ -679,17 +685,20 @@ body:not(.app-loading) .startup-loader {
     inset: 0;
     border-width: clamp(3px, 0.52vmin, 6px);
     box-shadow: 0 0 26px rgba(64, 201, 162, 0.24);
-    animation: throbber-spin 1150ms var(--circ-ease-in-out) infinite;
+    --startup-ring-start: 0deg;
+    animation: startup-ring-spin 1150ms var(--circ-ease-in-out) 1 both;
 }
 .startup-throbber span:nth-child(2) {
     inset: 15%;
     border-top-color: rgba(244, 114, 182, 0.82);
+    --startup-ring-start: 140deg;
     animation-duration: 1450ms;
     animation-direction: reverse;
 }
 .startup-throbber span:nth-child(3) {
     inset: 32%;
     border-top-color: rgba(250, 204, 21, 0.86);
+    --startup-ring-start: 260deg;
     animation-duration: 950ms;
 }
 .startup-loader-progress {
@@ -725,7 +734,7 @@ body:not(.app-loading) .startup-loader {
         conic-gradient(from 80deg, rgba(255, 45, 26, 0.30), rgba(255, 197, 64, 0.22), rgba(34, 211, 238, 0.18), rgba(255, 79, 216, 0.24), rgba(255, 45, 26, 0.30));
     filter: blur(10px);
     opacity: 0.62;
-    animation: startup-track-aura 6200ms linear infinite;
+    animation: startup-track-aura 6200ms linear 1 both;
 }
 .startup-loader-progress::after {
     inset: 2px;
@@ -761,7 +770,7 @@ body:not(.app-loading) .startup-loader {
         radial-gradient(circle at 72% 45%, rgba(255, 95, 43, 0.68) 0 2px, transparent 7px),
         linear-gradient(90deg, #ff321c 0%, #ff8a12 12%, #ffd84a 24%, #42f58d 39%, #22d3ee 56%, #6577ff 72%, #ff4fd8 87%, #ff321c 100%);
     background-size: 230px 100%, 300px 100%, 340px 100%, 380px 100%;
-    animation: startup-lava-rainbow 5200ms linear infinite;
+    animation: startup-lava-rainbow 5200ms linear 1 both;
 }
 .startup-loader-progress-fill::after {
     background:
@@ -772,7 +781,7 @@ body:not(.app-loading) .startup-loader {
     background-size: 180px 100%, 220px 100%, 270px 100%, 310px 100%;
     mix-blend-mode: screen;
     opacity: 0.88;
-    animation: startup-progress-sheen 3200ms var(--sine-ease-in-out) infinite;
+    animation: startup-progress-sheen 3200ms var(--sine-ease-in-out) 1 both;
 }
 .startup-loader-text {
     color: rgba(255, 255, 255, 0.78);
@@ -798,6 +807,17 @@ body:not(.app-loading) .startup-loader {
     50% {
         opacity: 1;
         transform: translate3d(0.55vmin, -0.35vmin, 0) scale(1.025);
+    }
+}
+@keyframes startup-ring-spin {
+    0% {
+        transform: rotate(var(--startup-ring-start, 0deg)) scale(0.96);
+    }
+    50% {
+        transform: rotate(calc(var(--startup-ring-start, 0deg) + 180deg)) scale(1.04);
+    }
+    100% {
+        transform: rotate(calc(var(--startup-ring-start, 0deg) + 360deg)) scale(0.96);
     }
 }
 @keyframes startup-progress-sheen {
@@ -966,7 +986,7 @@ body.auth-required .remote-admin-sticker {
     height: 18px;
     vertical-align: -4px;
     margin-right: 8px;
-    animation: throbber-spin 950ms var(--circ-ease-in-out) infinite;
+    animation: throbber-spin 900ms var(--circ-ease-in-out) 1 both;
 }
 .loading-empty,
 .loading-row {
@@ -987,7 +1007,7 @@ body.auth-required .remote-admin-sticker {
     border-radius: 999px;
     background: conic-gradient(from 0deg, #ff321c, #ffd84a, #42f58d, #22d3ee, #6577ff, #ff4fd8, #ff321c);
     box-shadow: 0 0 12px rgba(255, 82, 32, 0.32), 0 0 20px rgba(34, 211, 238, 0.22);
-    animation: rgb-panel-spin 950ms var(--circ-ease-in-out) infinite, rgb-panel-glow 1700ms var(--sine-ease-in-out) infinite;
+    animation: rgb-panel-spin 950ms var(--circ-ease-in-out) 1 both, rgb-panel-glow 1700ms var(--sine-ease-in-out) 1 both;
 }
 .rgb-panel-throbber::after {
     content: "";
@@ -1006,7 +1026,7 @@ body.auth-required .remote-admin-sticker {
 }
 .panel-refresh.loading {
     cursor: wait;
-    animation: rgb-refresh-pulse 1300ms var(--sine-ease-in-out) infinite;
+    animation: rgb-refresh-pulse 1300ms var(--sine-ease-in-out) 1 both;
 }
 .panel-refresh.loading::after {
     content: "";
@@ -1016,7 +1036,7 @@ body.auth-required .remote-admin-sticker {
     background: linear-gradient(115deg, transparent 0 20%, rgba(255, 50, 28, 0.70), rgba(255, 216, 74, 0.62), rgba(34, 211, 238, 0.68), rgba(255, 79, 216, 0.58), transparent 82% 100%);
     opacity: 0.72;
     transform: translateX(-115%);
-    animation: rgb-refresh-sweep 950ms linear infinite;
+    animation: rgb-refresh-sweep 950ms linear 1 both;
     mix-blend-mode: screen;
     pointer-events: none;
 }
@@ -5601,7 +5621,7 @@ body.agent-mode .message.assistant {
     border-radius: inherit;
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
     box-shadow: 0 0 18px rgba(125, 211, 252, 0.52);
-    animation: prompt-processing-sweep 1300ms var(--surface-ease) infinite;
+    animation: prompt-processing-sweep 1300ms var(--surface-ease) 1 both;
     transform: translateX(0);
     transform-origin: left center;
     transition: width 180ms var(--surface-ease), transform 180ms var(--surface-ease);
@@ -5818,7 +5838,7 @@ body.agent-mode .prompt-processing-speed.active {
 .tool-call-row.status-progress .tool-call-indicator {
     border-color: rgba(96, 165, 250, 0.74);
     border-top-color: transparent;
-    animation: throbber-spin 850ms linear infinite;
+    animation: throbber-spin 850ms linear 1 both;
 }
 .tool-call-row.status-completed .tool-call-indicator {
     border-color: rgba(34, 197, 94, 0.72);
@@ -6885,7 +6905,6 @@ body.agent-mode #prompt:focus {
 }
 .composer.llmruntime-ready #prompt,
 .composer.llmruntime-ready #prompt:focus {
-    animation: llmruntime-ready-glow 2.8s ease-in-out infinite;
     box-shadow:
         0 0 0 2px rgba(59, 130, 246, 0.28),
         0 0 16px rgba(34, 211, 238, 0.18),
@@ -11903,7 +11922,6 @@ body.comments-panel-open:not(.portrait-layout) .comments-panel-toggle:focus-visi
         linear-gradient(var(--gradient-angle), var(--adaptive-panel-a), var(--adaptive-panel-b), var(--adaptive-panel-c)) !important;
     background-size: 160% 160%, 220% 220%, 260% 260% !important;
     background-position: var(--flow-a-x) var(--flow-a-y), var(--flow-b-x) var(--flow-b-y), var(--flow-c-x) var(--flow-c-y) !important;
-    animation: adaptive-surface-flow 34s var(--sine-ease-in-out) infinite alternate;
     box-shadow: 0 22px 80px rgba(0, 0, 0, 0.30), 0 0 46px color-mix(in srgb, var(--adaptive-button-shadow) 76%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
     backdrop-filter: blur(22px) saturate(1.18);
 }
@@ -11913,7 +11931,6 @@ body.comments-panel-open:not(.portrait-layout) .comments-panel-toggle:focus-visi
     color: var(--adaptive-button-text) !important;
     background: linear-gradient(115deg, var(--adaptive-button-a), var(--adaptive-button-b) 52%, var(--adaptive-button-c)) !important;
     background-size: 220% 220% !important;
-    animation: adaptive-button-flow 18s var(--sine-ease-in-out) infinite;
     box-shadow: 0 14px 36px color-mix(in srgb, var(--adaptive-button-shadow) 78%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
 }
 
@@ -15314,6 +15331,7 @@ let chatBrowserUrl = '';
 let chatBrowserInternalUrl = '';
 let chatBrowserWidth = 440;
 let chatBrowserResizeState = null;
+let chatBrowserAutoRestoreBlocked = false;
 let browserMiniChatMinimized = false;
 let browserMiniChatDragState = null;
 const browserSkillServiceId = 'browser';
@@ -15831,7 +15849,39 @@ function isSocketJackFilePage() {
 }
 
 function canUseSocketJackLoginRedirect() {
-    return isSocketJackProxyPage() || isSocketJackLocalPage() || isSocketJackFilePage();
+    return isSocketJackProxyPage();
+}
+
+function shouldUseLocalAuthFallback() {
+    return isSocketJackLocalPage() || isSocketJackFilePage();
+}
+
+function buildLocalAuthFallbackSession(reason) {
+    return {
+        ok: true,
+        authenticated: true,
+        username: 'Local Workstation',
+        authType: 'Localhost',
+        accountType: 'local',
+        isPublicAccount: false,
+        clientIp: '127.0.0.1',
+        ownerKey: 'local-workstation',
+        isAdministrator: true,
+        isOwner: true,
+        isServerOwner: true,
+        localFallback: true,
+        localFallbackReason: reason || '',
+        usage: {
+            ownerKey: 'local-workstation',
+            username: 'Local Workstation',
+            authenticated: true,
+            unlimited: true,
+            tokensRequired: false,
+            tokensUsed: 0,
+            tokenLimit: -1,
+            tokensRemaining: Number.MAX_SAFE_INTEGER
+        }
+    };
 }
 
 function socketJackLoginRedirectUrl() {
@@ -16488,6 +16538,10 @@ function isSocketJackAuthenticated(session) {
 }
 
 function isJackSqlAdminUser() {
+    if (authSession && authSession.authType === 'Localhost')
+        return true;
+    if (isDatabaseAdmin || isServerOwner)
+        return true;
     const username = String(authSession && authSession.username || '').trim();
     return username.toUpperCase() === 'JACK';
 }
@@ -16582,10 +16636,22 @@ async function loadAuthSession(options) {
     consumeSocketJackUrlToken();
     if (isSocketJackProxyPage() && (!readSocketJackToken() || options.forceInherit))
         await inheritSocketJackRedirectSession(!!options.forceInherit).catch(() => null);
-    let response = await fetchWithTimeout('/api/web-auth/session', { credentials: 'same-origin' }, 8000);
-    let data = await readJsonResponse(response, {}, 8000);
-    if (!response.ok)
-        throw new Error(data.error || ('Could not check login. HTTP ' + response.status + ' ' + response.statusText));
+    let response = null;
+    let data = null;
+    try {
+        response = await fetchWithTimeout('/api/web-auth/session', { credentials: 'same-origin' }, 8000);
+        data = await readJsonResponse(response, {}, 8000);
+    } catch (error) {
+        if (!shouldUseLocalAuthFallback())
+            throw error;
+        data = buildLocalAuthFallbackSession(error && error.message ? error.message : String(error));
+    }
+    if (response && !response.ok) {
+        if (shouldUseLocalAuthFallback())
+            data = buildLocalAuthFallbackSession(data.error || ('Could not check login. HTTP ' + response.status + ' ' + response.statusText));
+        else
+            throw new Error(data.error || ('Could not check login. HTTP ' + response.status + ' ' + response.statusText));
+    }
     if (!isSocketJackAuthenticated(data) && isSocketJackProxyPage()) {
         const inherited = await inheritSocketJackRedirectSession(true).catch(() => null);
         if (inherited && (inherited.accessToken || inherited.access_token || inherited.token)) {
@@ -16595,7 +16661,12 @@ async function loadAuthSession(options) {
                 throw new Error(data.error || ('Could not check login. HTTP ' + response.status + ' ' + response.statusText));
         }
     }
-    if (!data.ok) throw new Error(data.error || 'Could not check login.');
+    if (!data.ok) {
+        if (shouldUseLocalAuthFallback())
+            data = buildLocalAuthFallbackSession(data.error || 'Could not check login.');
+        else
+            throw new Error(data.error || 'Could not check login.');
+    }
     if (isSocketJackAuthenticated(data))
         clearSocketJackUrlTokenFromUrl();
     authSession = data;
@@ -17363,10 +17434,13 @@ function setServersOpen(open) {
     const allowed = !!open;
     document.body.classList.toggle('servers-open', allowed);
     if (serversToggle) serversToggle.classList.toggle('active', allowed);
-    if (allowed)
+    if (allowed) {
+        recordPageActivity(0.56);
         startServerBrowserUpdates(true);
-    else
+    } else {
+        syncBackgroundMotionForState();
         stopServerBrowserUpdates();
+    }
 }
 
 function scheduleServerBrowserRender() {
@@ -17600,7 +17674,15 @@ function buildServerApiEndpointRows(server) {
     rows.push(...endpointRowsForBase(openAiBase, [
         { standard: 'OpenAI compatible', method: 'GET', path: '/v1/models', notes: 'Model discovery.' },
         { standard: 'OpenAI compatible', method: 'POST', path: '/v1/chat/completions', notes: 'Chat completions with optional SSE streaming.' },
-        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/responses', notes: 'Responses API compatibility bridge when available.' }
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/responses', notes: 'Responses API compatibility bridge with optional SSE streaming.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/embeddings', notes: 'Embedding requests routed to embedding-capable local models.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/images/generations', notes: 'Image generation routed to local media models.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/images/edits', notes: 'Image edits routed to local media models.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/audio/speech', notes: 'Speech generation routed to local audio models.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/audio/transcriptions', notes: 'Transcription routed to local audio-capable tools when available.' },
+        { standard: 'OpenAI compatible', method: 'POST', path: '/v1/videos', notes: 'Video generation job creation with local media storage.' },
+        { standard: 'OpenAI compatible', method: 'GET', path: '/v1/videos/{id}', notes: 'Video job status.' },
+        { standard: 'OpenAI compatible', method: 'GET', path: '/v1/videos/{id}/content', notes: 'Generated video bytes.' }
     ]));
     rows.push(...endpointRowsForBase(chatBase, [
         { standard: 'JackLLM web chat', method: 'GET', path: '/api/models', notes: 'Models exposed to the Workstation chat UI.' },
@@ -18916,6 +18998,7 @@ window.addEventListener('scroll', updateActiveParamHint, true);
 const bgMotionScale = reduceMotion ? 0.35 : 1;
 const bgActiveFrameMs = reduceMotion ? 700 : 120;
 const bgIdleFrameMs = reduceMotion ? 1500 : 650;
+const bgMotionTailMs = reduceMotion ? 900 : 2600;
 const clampPercent = value => Math.max(-18, Math.min(118, value)).toFixed(2) + '%';
 let bgAngle = 115;
 let bgLastFrame = 0;
@@ -18923,10 +19006,81 @@ let bgLastPaintUtc = 0;
 let bgActivityLevel = 0;
 let bgLastActivityUtc = performance.now();
 let bgLastPointerActivityUtc = 0;
+let bgAnimationFrame = 0;
+let bgAnimationTimer = 0;
+
+function backgroundMotionAllowed() {
+    return !!(window.requestAnimationFrame &&
+        document.body &&
+        !reduceMotion &&
+        !document.hidden &&
+        !document.body.classList.contains('portrait-layout'));
+}
+
+function setBackgroundMotionActive(active) {
+    if (!document.body) return;
+    document.body.classList.toggle('bg-motion-active', !!active && backgroundMotionAllowed());
+}
+
+function clearBackgroundMotionSchedule() {
+    if (bgAnimationFrame) {
+        window.cancelAnimationFrame(bgAnimationFrame);
+        bgAnimationFrame = 0;
+    }
+    if (bgAnimationTimer) {
+        window.clearTimeout(bgAnimationTimer);
+        bgAnimationTimer = 0;
+    }
+}
+
+function stopBackgroundMotion() {
+    clearBackgroundMotionSchedule();
+    bgLastFrame = 0;
+    bgLastPaintUtc = 0;
+    setBackgroundMotionActive(false);
+}
+
+function queueBackgroundMotion(delayMs) {
+    if (!backgroundMotionAllowed()) {
+        stopBackgroundMotion();
+        return;
+    }
+    setBackgroundMotionActive(true);
+    if (bgAnimationFrame || bgAnimationTimer) return;
+    const delay = Math.max(0, Number(delayMs || 0));
+    const requestFrame = () => {
+        bgAnimationTimer = 0;
+        if (!backgroundMotionAllowed()) {
+            stopBackgroundMotion();
+            return;
+        }
+        bgAnimationFrame = window.requestAnimationFrame(animateBackground);
+    };
+    if (delay > 16)
+        bgAnimationTimer = window.setTimeout(requestFrame, Math.min(delay, bgIdleFrameMs));
+    else
+        requestFrame();
+}
+
+function syncBackgroundMotionForState() {
+    if (!backgroundMotionAllowed()) {
+        stopBackgroundMotion();
+        return;
+    }
+    const now = performance.now();
+    const promptActive = document.body.classList.contains('prompt-active');
+    const serversOpen = document.body.classList.contains('servers-open');
+    const recentlyActive = now - bgLastActivityUtc < bgMotionTailMs;
+    if (promptActive || serversOpen || bgActivityLevel > 0.02 || recentlyActive)
+        queueBackgroundMotion(0);
+    else
+        setBackgroundMotionActive(false);
+}
 
 function recordPageActivity(amount) {
     bgActivityLevel = Math.min(1, Math.max(bgActivityLevel, amount || 0.24));
     bgLastActivityUtc = performance.now();
+    queueBackgroundMotion(0);
 }
 
 function updateServersGlassFromPointer(event) {
@@ -18960,14 +19114,16 @@ document.addEventListener('pointerdown', () => recordPageActivity(0.72), { passi
 document.addEventListener('keydown', () => recordPageActivity(0.68), { passive: true });
 document.addEventListener('wheel', () => recordPageActivity(0.54), { passive: true });
 document.addEventListener('input', () => recordPageActivity(0.74), true);
+document.addEventListener('visibilitychange', syncBackgroundMotionForState);
+window.addEventListener('runtimeviewportmodechange', syncBackgroundMotionForState);
 if (serversDashboard) {
     serversDashboard.addEventListener('pointerleave', settleServersGlass, { passive: true });
 }
 
 function animateBackground(now) {
-    if (document.hidden) {
-        bgLastFrame = now;
-        requestAnimationFrame(animateBackground);
+    bgAnimationFrame = 0;
+    if (!backgroundMotionAllowed()) {
+        stopBackgroundMotion();
         return;
     }
     const promptActive = document.body.classList.contains('prompt-active');
@@ -18982,11 +19138,18 @@ function animateBackground(now) {
     const targetFrameMs = portraitGpuLimited
         ? Math.max(baseTargetFrameMs, activity > 0.04 || idleSeconds < 2 ? 360 : 1400)
         : baseTargetFrameMs;
-    if (bgLastPaintUtc && now - bgLastPaintUtc < targetFrameMs) {
-        bgLastFrame = now;
-        requestAnimationFrame(animateBackground);
+    const shouldContinue = promptActive || serversOpen || bgActivityLevel > 0.02 || now - bgLastActivityUtc < bgMotionTailMs;
+    if (!shouldContinue) {
+        bgLastFrame = 0;
+        setBackgroundMotionActive(false);
         return;
     }
+    if (bgLastPaintUtc && now - bgLastPaintUtc < targetFrameMs) {
+        bgLastFrame = now;
+        queueBackgroundMotion(targetFrameMs - (now - bgLastPaintUtc));
+        return;
+    }
+    setBackgroundMotionActive(true);
     bgLastPaintUtc = now;
     const speedScale = (reduceMotion ? 0.5 : 1) * (portraitGpuLimited ? 0.45 : 1);
     const motionScale = bgMotionScale * (portraitGpuLimited ? 0.32 : 1);
@@ -19039,9 +19202,8 @@ function animateBackground(now) {
     document.body.style.setProperty('--glass-beam-opacity', (0.42 + charge * 0.52).toFixed(3));
     document.body.style.setProperty('--glass-core-opacity', (0.30 + charge * 0.52).toFixed(3));
 
-    requestAnimationFrame(animateBackground);
+    queueBackgroundMotion(activity > 0.04 || idleSeconds < 2 ? bgActiveFrameMs : bgIdleFrameMs);
 }
-requestAnimationFrame(animateBackground);
 
 function hasDraftPromptContent() {
     return !!((prompt && prompt.value.trim()) || pendingImages.length || pendingFiles.length);
@@ -19417,6 +19579,10 @@ function setSendButtonStreaming(isStreaming) {
     send.disabled = !!sharedPromptDisabledReason();
     const currentPromptActivity = currentSessionHasPromptActivity();
     document.body.classList.toggle('prompt-active', currentPromptActivity);
+    if (currentPromptActivity)
+        recordPageActivity(0.88);
+    else
+        syncBackgroundMotionForState();
     const canQueueDraft = hasDraftPromptContent();
     const currentStreamActive = !!currentSessionStreamState();
     const currentRemoteActive = !currentStreamActive && !!activeSessionForCurrentSession();
@@ -26901,10 +27067,31 @@ function repairRuntimeSpacingArtifacts(text) {
     return value;
 }
 
+function stripInternalModelMetadataForDisplay(text) {
+    let value = normalizeDisplayText(text || '');
+    if (!value) return '';
+    value = value
+        .replace(/<\s*(?:model_name|model_id|model_info|backend_model|runtime_model|system_fingerprint)\b[^>]*>[\s\S]*?(?:<\s*\/\s*(?:model_name|model_id|model_info|backend_model|runtime_model|system_fingerprint)\s*>|$)/gi, '')
+        .replace(/^\s*(?:model_name|model_id|model_info|backend_model|runtime_model|system_fingerprint)\s*[:=].*$/gim, '');
+    return value.replace(/\n{3,}/g, '\n\n');
+}
+
+function stripTrailingPartialReasoningOpenTagForDisplay(text) {
+    return normalizeDisplayText(text || '')
+        .replace(/<\s*(?:t|th|thi|thin|think|thinki|thinkin|thinking|tho|thou|thoug|though|thought|a|an|ana|anal|analy|analys|analysi|analysis)\s*$/i, '');
+}
+
+function stripDanglingReasoningTagFragmentsForDisplay(text) {
+    return normalizeDisplayText(text || '')
+        .replace(/^\s*(?:ing|king|nking|hinking|thinking)\s*$/gim, '')
+        .replace(/^\s*<\/?\s*(?:think|thinking|thought|analysis)\s*>?\s*$/gim, '')
+        .replace(/\n{3,}/g, '\n\n');
+}
+
 function sanitizeToolTranscriptForDisplay(text) {
-    let value = stripLooseToolJsonForDisplay(removeSerializedChatStreamControlEvents(text || ''));
+    let value = stripInternalModelMetadataForDisplay(stripLooseToolJsonForDisplay(removeSerializedChatStreamControlEvents(text || '')));
     if (!hasToolTranscriptMarkup(value))
-        return trimRunawayUnpunctuatedTail(repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(value))));
+        return trimRunawayUnpunctuatedTail(stripDanglingReasoningTagFragmentsForDisplay(repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(value)))));
 
     const resultClose = value.toLowerCase().lastIndexOf('</tool_result>');
     if (resultClose >= 0) {
@@ -26922,15 +27109,20 @@ function sanitizeToolTranscriptForDisplay(text) {
         value = next;
     }
 
-    return trimRunawayUnpunctuatedTail(repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(stripToolPlanningMarkupForDisplay(value
-        .replace(/<\/?(?:tool_call|tool_result|function_call|function_result|arguments|argument|result)\b[^>]*>/gi, ''))
+    value = stripToolPlanningMarkupForDisplay(value
+        .replace(/<\/?(?:tool_call|tool_result|function_call|function_result|arguments|argument|parameters?|result)\b[^>]*>/gi, ''))
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
-        .trim()))));
+        .trim();
+    value = stripReasoningMarkupForDisplay(value);
+    value = sanitizeFinalAnswerMarkupForDisplay(value);
+    value = repairRuntimeSpacingArtifacts(value);
+    value = stripDanglingReasoningTagFragmentsForDisplay(value);
+    return trimRunawayUnpunctuatedTail(value);
 }
 
 function hasToolTranscriptMarkup(text) {
-    return /<\/?(?:tool_call|tool_result|function_call|function_result|arguments|argument|result|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|query)\b/i.test(text || '') ||
+    return /<\/?(?:tool_call|tool_result|function_call|function_result|arguments|argument|parameters?|result|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|query)\b/i.test(text || '') ||
         /^\s*(?:search|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|tool_call|function_call)\s*$/im.test(text || '');
 }
 
@@ -26946,7 +27138,7 @@ function stripLooseToolJsonForDisplay(text) {
 function stripToolPlanningMarkupForDisplay(text) {
     let value = normalizeDisplayText(text || '');
     if (!value) return '';
-    const names = 'search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|tool_call|tool_result|function_call|function_result|arguments|argument|result|query';
+    const names = 'search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|browser_skill|tool_call|tool_result|function_call|function_result|arguments|argument|parameters?|result|query';
     const block = new RegExp('<\\s*(?:' + names + ')\\b[^>]*>[\\s\\S]*?(?:<\\s*\\/\\s*(?:' + names + ')\\s*>|<\\s*\\/\\s*>|<\\s*\\/\\s*)', 'gi');
     let previous = '';
     for (let i = 0; i < 8 && previous !== value; i++) {
@@ -26961,7 +27153,7 @@ function stripToolPlanningMarkupForDisplay(text) {
 }
 
 function stripReasoningMarkupForDisplay(text) {
-    let value = normalizeDisplayText(text || '');
+    let value = stripTrailingPartialReasoningOpenTagForDisplay(stripInternalModelMetadataForDisplay(text || ''));
     if (!value) return '';
 
     const tags = ['think', 'thinking', 'thought', 'analysis'];
@@ -26985,11 +27177,11 @@ function stripReasoningMarkupForDisplay(text) {
     }
 
     value = splitPlainReasoningHeadings(value, '').content;
-    return value
+    return stripDanglingReasoningTagFragmentsForDisplay(value
         .replace(/<\/?(?:think|thinking|thought|analysis)\b[^>\n]*>?/gi, '')
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
-        .trim();
+        .trim());
 }
 
 function splitPlainReasoningHeadings(content, reasoning) {
@@ -27964,6 +28156,7 @@ function saveCurrentArtifact() {
 }
 
 function splitThinkTags(text) {
+    text = stripTrailingPartialReasoningOpenTagForDisplay(text || '');
     let answer = '';
     let reasoning = '';
     let cursor = 0;
@@ -28812,8 +29005,7 @@ function refreshQueuedPromptBaseForSession(sessionContext) {
 
 function queuePromptTurn(turn) {
     const sessionId = ensureSessionId();
-    clearQueueStopForSession(sessionId);
-    clearLocalStopForSession(sessionId);
+    const queuedAfterStop = isQueueStopRequestedForSession(sessionId) || isSessionLocallyStopped(sessionId);
     const baseMessages = queuedSessionMessagesFor(sessionId, messages);
     const baseFiles = sessionFiles.slice();
     const queuedTurn = Object.assign({}, turn, {
@@ -28823,7 +29015,8 @@ function queuePromptTurn(turn) {
         sessionFiles: baseFiles,
         model: modelForSelectedService(),
         userItem: turn && turn.userItem ? turn.userItem : null,
-        retryUntilSuccess: retryUntilSuccessEnabled()
+        retryUntilSuccess: retryUntilSuccessEnabled(),
+        queuedAfterStop
     });
     queuedPrompts.push(queuedTurn);
     renderQueuedPromptAction(queuedTurn);
@@ -29160,15 +29353,26 @@ async function sendMessage() {
     queuePromptTurn(turn);
 }
 
-function sessionHasRecentBrowserSkillTool(sessionContext) {
+function latestAssistantTurnHasBrowserSkillTool(sessionContext) {
     const source = sessionContext && Array.isArray(sessionContext.messages) ? sessionContext.messages : messages;
-    for (let i = source.length - 1; i >= 0 && i >= source.length - 4; i--) {
+    for (let i = source.length - 1; i >= 0; i--) {
         const message = source[i];
-        if (!message || message.role !== 'assistant' || !Array.isArray(message.toolCalls)) continue;
-        if (message.toolCalls.some(call => call && String(call.name || '').toLowerCase().startsWith('browser_')))
-            return true;
+        if (!message || message.role !== 'assistant') continue;
+        return normalizeToolCallEvents(message.toolCalls || []).some(call =>
+            call &&
+            browserSkillToolName(call.name) &&
+            normalizeToolCallStatus(call.status) !== 'failed');
     }
     return false;
+}
+
+function browserSkillFinalContentIsOnlyTurnStatus(content) {
+    const text = normalizeDisplayText(stripBrowserSkillMarkers(content)).trim().toLowerCase();
+    return !text ||
+        text.startsWith('agent turn finished with no final text') ||
+        text.startsWith('the model returned no message content') ||
+        text.startsWith('the model produced reasoning but no final answer') ||
+        text === 'browser skill is continuing with another observation.';
 }
 
 async function maybeContinueBrowserSkillLoop(next, sessionContext, finalContent, assistantItem) {
@@ -29178,8 +29382,7 @@ async function maybeContinueBrowserSkillLoop(next, sessionContext, finalContent,
     const loop = Number(next.browserSkillLoop || 0);
     if (loop >= browserSkillMaxAutoTurns - 1) return false;
     const shouldContinue = browserSkillMarkerText(finalContent).includes('BROWSER_SKILL_OBSERVE') ||
-        sessionHasRecentBrowserSkillTool(sessionContext) ||
-        !browserSkillIsDone(finalContent);
+        latestAssistantTurnHasBrowserSkillTool(sessionContext) && browserSkillFinalContentIsOnlyTurnStatus(finalContent);
     if (!shouldContinue) return false;
 
     const nextLoop = loop + 1;
@@ -29210,9 +29413,13 @@ async function processPromptQueue() {
             const next = queuedPrompts.shift();
             clearQueuedPromptAction(next, '');
             const sessionId = next.sessionId || ensureSessionId();
-            if (isQueueStopRequestedForSession(sessionId)) {
+            if (isQueueStopRequestedForSession(sessionId) && !(next && next.queuedAfterStop)) {
                 clearQueueStopForSession(sessionId);
                 continue;
+            }
+            if (next && next.queuedAfterStop) {
+                clearQueueStopForSession(sessionId);
+                clearLocalStopForSession(sessionId);
             }
             const contextMessages = appendQueuedUserMessageIfMissing(
                 Array.isArray(next.baseMessages) ? next.baseMessages.slice() : messages.slice(),
@@ -30649,6 +30856,23 @@ function isInternalChatBrowserUrl(url) {
     return /^(?:blob|data):/i.test(String(url || '')) || String(url || '').toLowerCase() === 'about:srcdoc';
 }
 
+function isLoopbackChatBrowserHost(host) {
+    const value = String(host || '').trim().toLowerCase();
+    if (!value) return false;
+    if (value === 'localhost' || value === '[::1]' || value === '::1') return true;
+    return /^127(?:\.\d{1,3}){3}$/.test(value);
+}
+
+function shouldAutoRestoreChatBrowserUrl(url) {
+    try {
+        const target = new URL(url, window.location.href);
+        const current = new URL(window.location.href);
+        return target.origin === current.origin || isLoopbackChatBrowserHost(target.hostname);
+    } catch {
+        return false;
+    }
+}
+
 function chatBrowserProxyPath() {
     return apiPath(chatBrowserProxyRoute);
 }
@@ -31005,17 +31229,34 @@ function initializeChatBrowserPanel() {
     setChatBrowserFrameSandbox(false);
     if (chatBrowserFrame)
         chatBrowserFrame.addEventListener('load', syncChatBrowserUrlFromFrame);
+    const savedOpen = !!saved.open && !sharedSessionKey;
+    let restoredFrame = false;
+    let blockedAutoRestore = false;
     if (saved.url) {
         try {
             chatBrowserUrl = normalizeChatBrowserUrl(saved.url);
             if (chatBrowserAddress) chatBrowserAddress.value = chatBrowserUrl;
-            if (chatBrowserFrame) chatBrowserFrame.src = buildChatBrowserProxyUrl(chatBrowserUrl);
+            if (savedOpen && shouldAutoRestoreChatBrowserUrl(chatBrowserUrl) && chatBrowserFrame) {
+                chatBrowserFrame.src = buildChatBrowserProxyUrl(chatBrowserUrl);
+                restoredFrame = true;
+            } else if (savedOpen) {
+                blockedAutoRestore = true;
+            }
         } catch {
             chatBrowserUrl = '';
         }
     }
-    setChatBrowserMessage(chatBrowserUrl ? 'Loading ' + chatBrowserUrl : 'Nothing here yet', false);
-    setChatBrowserOpen(!!saved.open && !sharedSessionKey);
+    if (restoredFrame)
+        setChatBrowserMessage('Loading ' + chatBrowserUrl, false);
+    else if (blockedAutoRestore)
+        setChatBrowserMessage('Saved external page not loaded automatically. Press Go to open ' + chatBrowserUrl, false);
+    else
+        setChatBrowserMessage(chatBrowserUrl ? 'Saved page: ' + chatBrowserUrl : 'Nothing here yet', false);
+    setChatBrowserOpen(savedOpen);
+    if (blockedAutoRestore) {
+        chatBrowserAutoRestoreBlocked = true;
+        setBrowserExpanded(false, { save: false });
+    }
 }
 
 function chatBrowserShouldHandleLink(event, link) {
@@ -35868,7 +36109,7 @@ personaPlexDeviceConfig = readPersonaPlexDeviceConfig();
 refreshPersonaPlexDevices().catch(() => { });
 applyPersonaPlexConfig({ ...personaPlexDefaultConfig, ...personaPlexLocalOverrides() });
 updatePersonaPlexControls();
-if (initialWebUiLayoutState.browserExpanded)
+if (initialWebUiLayoutState.browserExpanded && !chatBrowserAutoRestoreBlocked)
     setBrowserExpanded(true, { save: false });
 updateShareUi();
 updateRuntimeSummaries();

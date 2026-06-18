@@ -46,6 +46,52 @@ public sealed class LmVsProxyPersistenceTests
         }
     }
 
+    [TestMethod]
+    public void LocalhostChatOwnerGetsAdminPermissionsByDefault()
+    {
+        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-proxy-local-permissions-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            using var proxy = CreateProxy(dataRoot);
+            ChatClientPermissionSnapshot disabled = proxy.GetChatClientPermissionsDiagnostics("ip:127.0.0.1");
+            disabled.InternetSearch = false;
+            disabled.FileDownloads = false;
+            disabled.FtpServer = false;
+            disabled.SqlAdmin = false;
+            disabled.TerminalCommands = false;
+            disabled.TerminalForeverApproved = false;
+            disabled.AgentAccess = false;
+            disabled.FileUploads = false;
+            disabled.ImageUploads = false;
+            disabled.MuteUntilEnabled = true;
+            disabled.BanUntilEnabled = true;
+            disabled.MutedUntilUtc = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
+            disabled.BannedUntilUtc = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
+            proxy.SaveChatClientPermissionsDiagnostics(disabled);
+
+            ChatClientPermissionSnapshot local = proxy.GetChatClientPermissionsDiagnostics("ip:127.0.0.1");
+            Assert.IsTrue(local.InternetSearch);
+            Assert.IsTrue(local.FileDownloads);
+            Assert.IsTrue(local.FtpServer);
+            Assert.IsTrue(local.SqlAdmin);
+            Assert.IsTrue(local.TerminalCommands);
+            Assert.IsTrue(local.TerminalForeverApproved);
+            Assert.IsTrue(local.AgentAccess);
+            Assert.IsTrue(local.FileUploads);
+            Assert.IsTrue(local.ImageUploads);
+            Assert.IsFalse(local.MuteUntilEnabled);
+            Assert.IsFalse(local.BanUntilEnabled);
+            Assert.AreEqual("", local.MutedUntilUtc);
+            Assert.AreEqual("", local.BannedUntilUtc);
+        }
+        finally
+        {
+            if (Directory.Exists(dataRoot))
+                Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
     private static LmVsProxy CreateProxy(string dataRoot)
     {
         return new LmVsProxy("127.0.0.1", 11434, 11435, 0, dataRoot);

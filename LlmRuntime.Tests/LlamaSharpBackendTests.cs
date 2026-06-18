@@ -45,4 +45,33 @@ public class LlamaSharpBackendTests
 
         Assert.AreEqual(ContextOverflowStrategy.ThrowException, parameters.OverflowStrategy);
     }
+
+    [TestMethod]
+    public void CreateSamplingPipeline_UsesGreedyForZeroTemperature()
+    {
+        var request = new LlmChatRequest
+        {
+            Temperature = 0
+        };
+
+        Assert.IsInstanceOfType(LlamaSharpBackend.CreateSamplingPipeline(request), typeof(LLama.Sampling.GreedySamplingPipeline));
+    }
+
+    [TestMethod]
+    public void ShouldSuppressReasoningByDefault_DetectsQwenReasoningDistilledModels()
+    {
+        var backend = new LlamaSharpBackend(
+            "Qwen3.5-2B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
+            "C:\\Models\\Qwen3.5-2B.Q5_K_S.gguf",
+            new LlmLoadConfig());
+
+        Assert.IsTrue(backend.ShouldSuppressReasoningByDefault());
+    }
+
+    [TestMethod]
+    public void ContainsNoThinkControl_DetectsSlashNoThink()
+    {
+        Assert.IsTrue(LlamaSharpBackend.ContainsNoThinkControl("Answer briefly. /no_think"));
+        Assert.IsTrue(LlamaSharpBackend.ContainsNoThinkControl("Answer briefly. /no-think"));
+    }
 }

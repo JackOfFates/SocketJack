@@ -169,7 +169,7 @@ public sealed class LlamaSharpBackend : ILlmBackend
             using var context = _weights!.CreateContext(_parameters!);
             var executor = new InteractiveExecutor(context);
             var parameters = CreateInferenceParams(request);
-            string prompt = BuildPrompt(_weights!, request.Messages);
+            string prompt = BuildPrompt(_weights!, BuildInferenceMessages(request.Messages));
             var repetitionGuard = new LlmRuntimeRepetitionGuard();
             var output = new StringBuilder();
             int generatedTokens = 0;
@@ -242,15 +242,23 @@ public sealed class LlamaSharpBackend : ILlmBackend
         {
             MaxTokens = request.MaxTokens,
             AntiPrompts = request.Stop.ToList(),
-            SamplingPipeline = new DefaultSamplingPipeline
-            {
-                Temperature = request.Temperature,
-                TopP = request.TopP,
-                RepeatPenalty = 1.12f,
-                FrequencyPenalty = 0.08f,
-                PresencePenalty = 0.02f,
-                PenaltyCount = 256
-            }
+            SamplingPipeline = CreateSamplingPipeline(request)
+        };
+    }
+
+    internal static ISamplingPipeline CreateSamplingPipeline(LlmChatRequest request)
+    {
+        if (request.Temperature <= 0)
+            return new GreedySamplingPipeline();
+
+        return new DefaultSamplingPipeline
+        {
+            Temperature = request.Temperature,
+            TopP = request.TopP,
+            RepeatPenalty = 1.12f,
+            FrequencyPenalty = 0.08f,
+            PresencePenalty = 0.02f,
+            PenaltyCount = 256
         };
     }
 
@@ -373,6 +381,39 @@ public sealed class LlamaSharpBackend : ILlmBackend
         {
             return BuildPlainPrompt(messages);
         }
+    }
+
+    private IReadOnlyList<LlmChatMessage> BuildInferenceMessages(IReadOnlyList<LlmChatMessage> messages)
+    {
+        messages ??= [];
+        if (!ShouldSuppressReasoningByDefault())
+            return messages;
+
+        if (messages.Any(message => ContainsNoThinkControl(message.Content)))
+            return messages;
+
+        return
+        [
+            new LlmChatMessage("system", "Do not write a thought process, analysis, reasoning, or <think> block. Start with the final answer immediately. Answer once, and do not repeat the same sentence or line. /no_think"),
+            .. messages
+        ];
+    }
+
+    internal bool ShouldSuppressReasoningByDefault()
+    {
+        string identity = (InstanceId + " " + ModelPath).ToLowerInvariant();
+        return identity.Contains("qwen", StringComparison.Ordinal) &&
+               (identity.Contains("reasoning", StringComparison.Ordinal) ||
+                identity.Contains("reasoner", StringComparison.Ordinal) ||
+                identity.Contains("think", StringComparison.Ordinal));
+    }
+
+    internal static bool ContainsNoThinkControl(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        return Regex.IsMatch(text, @"(?:^|\s)/(?:no[_-]?think)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static int GetEffectiveGpuLayerCount(LlmLoadConfig loadConfig) =>

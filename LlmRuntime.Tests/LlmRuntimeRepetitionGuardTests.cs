@@ -66,6 +66,28 @@ public sealed class LlmRuntimeRepetitionGuardTests
         Assert.IsTrue(CountOccurrences(trimmed, "GTX 1660 Super") < 16);
     }
 
+    [TestMethod]
+    public void Accept_StopsShortLineLoop()
+    {
+        var guard = new LlmRuntimeRepetitionGuard();
+        var output = new StringBuilder();
+        bool stopped = false;
+
+        for (int i = 0; i < 20; i++)
+        {
+            LlmRuntimeRepetitionGuardDecision decision = guard.Accept("hello" + Environment.NewLine);
+            output.Append(decision.Text);
+            if (decision.ShouldStop)
+            {
+                stopped = true;
+                break;
+            }
+        }
+
+        Assert.IsTrue(stopped);
+        Assert.AreEqual(1, CountOccurrences(output.ToString(), "hello"));
+    }
+
     private static IEnumerable<string> Chunk(string text, int size)
     {
         for (int index = 0; index < text.Length; index += size)

@@ -260,6 +260,15 @@ namespace LmVs
         public List<string> SteeringMessages { get; } = new List<string>();
     }
 
+    internal sealed class PendingChatStreamSteering
+    {
+        public string OwnerKey { get; set; }
+        public string StreamId { get; set; }
+        public string SessionId { get; set; }
+        public DateTimeOffset UpdatedUtc { get; set; }
+        public List<string> Messages { get; } = new List<string>();
+    }
+
     internal sealed class ChatSessionFile
     {
         public string id { get; set; }

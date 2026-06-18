@@ -1,12 +1,19 @@
-# How To Use SocketJack Copilot Servers In Visual Studio
+# How To Use Local JackLLM Workstation In Visual Studio
 
 ## Requirements
 
 - Visual Studio 2022 with Copilot MCP support, or Visual Studio 2026 Insiders.
 - GitHub Copilot installed and signed in.
-- For Visual Studio 2026 Insiders, install `LlmRuntime.VisualStudio2026\bin\Release\net8.0-windows8.0\LlmRuntime.VisualStudio2026.vsix` version `0.2.13` or later.
+- For Visual Studio 2026 Insiders, install `LlmRuntime.VisualStudio2026\bin\Release\net8.0-windows8.0\LlmRuntime.VisualStudio2026.vsix` version `0.2.54` or later.
 - The SocketJack VSIX installed, then Visual Studio restarted or reloaded.
+- JackLLM Workstation running locally at `http://127.0.0.1:11436`.
 - A solution open in Visual Studio. The extension writes solution-local MCP config to `.vs/mcp.json`.
+
+You do not need a SocketJack.com account, SocketJack.com sign-in, hosted SocketJack.com server, or public login token for local JackLLM Workstation configuration.
+
+JackLLM Workstation does not currently have a standalone download for this flow. Build and run it from the GitHub project:
+
+[JackLLM Workstation project](https://github.com/JackOfFates/SocketJack/tree/master/JackLLM)
 
 ## Open The Server Picker
 
@@ -14,6 +21,8 @@
 2. Open the solution you want to configure.
 3. Select `Extensions > SocketJack > SocketJack Copilot Servers`.
 4. The `SocketJack Copilot Servers` tool window opens docked in Visual Studio.
+
+When JackLLM Workstation answers `http://127.0.0.1:11436/api/health`, the extension enters local mode and does not show the SocketJack.com sign-in flow.
 
 ## Create MCP Config From The Tools Menu
 
@@ -29,7 +38,7 @@ The command creates:
 <solution>\.vs\mcp.json
 ```
 
-It tries to discover the first online tools-capable SocketJack server and the first enabled tools-capable chat model, then writes a working SocketJack MCP entry.
+It tries to discover the local JackLLM Workstation first. If the local workstation is running and has an enabled tools-capable chat model, the command writes a working local SocketJack MCP entry without SocketJack.com authentication.
 
 If server/model discovery fails, it still creates a valid empty MCP file:
 
@@ -39,20 +48,19 @@ If server/model discovery fails, it still creates a valid empty MCP file:
 }
 ```
 
-After that, open `Extensions > SocketJack > SocketJack Copilot Servers`, choose a server/model, and click `Configure Copilot`.
+After that, open `Extensions > SocketJack > SocketJack Copilot Servers`, choose the local workstation/model, and click `Configure Copilot`.
 
-## Pick A SocketJack Server
+## Pick The Local Workstation
 
 1. Click `Refresh`.
-2. Use the filter box if you want to search by server name, id, or endpoint.
-3. Select an online server that advertises tools support.
-4. The right side of the tool window shows the server endpoint, tools status, eligibility, and hardware summary.
+2. Select `Local JackLLM Workstation`.
+3. The right side of the tool window shows the local endpoint, tools status, eligibility, and hardware summary.
 
-Servers are selectable for Copilot only when they:
+The local workstation is selectable for Copilot when it:
 
-- Are online or responding.
-- Have a usable endpoint.
-- Advertise tools support through MasterList metadata.
+- Is online or responding.
+- Has a usable endpoint.
+- Advertises tools support through the local JackLLM model/runtime metadata.
 
 ## Pick A Model
 
@@ -72,23 +80,24 @@ Models are eligible when they:
 
 Click `Test Connection` before configuring.
 
-The extension checks whether the selected SocketJack endpoint exposes an OpenAI-compatible chat route that Visual Studio Copilot can call:
+The extension checks whether the selected endpoint exposes an OpenAI-compatible chat route that Visual Studio Copilot can call:
 
 - `/chat/completions`
 - `/v1/chat/completions`
+- `/api/model-runtime/v1/chat/completions` for local JackLLM Workstation.
 
 Model list routes like `/api/models` and `/api/model-runtime/models` are used for discovery, but they are not enough by themselves for Copilot chat.
 
-If the direct chat route works, Visual Studio Ollama BYOM is configured to use the selected SocketJack endpoint directly, for example:
+If the direct local chat route works, Visual Studio Ollama BYOM is configured to use the local JackLLM model-runtime endpoint directly:
 
 ```text
-https://socketjack.com/proxy/TitanX
+http://127.0.0.1:11436/api/model-runtime
 ```
 
-If the direct model routes do not work, the extension can start a local loopback proxy and configure Ollama BYOM to that local address instead. The local proxy forwards requests through:
+If Visual Studio needs a loopback OpenAI-compatible bridge, the extension starts the packaged local bridge and configures Ollama BYOM to that local address instead. The local bridge routes through JackLLM Workstation at:
 
 ```text
-wss://socketjack.com/proxy/<SERVERNAME>/api/web-chat/ws
+http://127.0.0.1:11436
 ```
 
 ## Configure Copilot
@@ -98,8 +107,8 @@ Click `Configure Copilot`.
 The extension does three things:
 
 1. Writes or updates the solution-local MCP config at `.vs/mcp.json`.
-2. Updates the Visual Studio Ollama BYOM configuration to use the selected SocketJack server/model.
-3. Tries to notify local JackLLM through `/api/copilot-duplicator` when JackLLM is running.
+2. Updates the Visual Studio Ollama BYOM configuration to use the local JackLLM workstation/model.
+3. Tries to notify local JackLLM through `/api/copilot-duplicator`.
 
 The MCP config preserves existing non-SocketJack entries. SocketJack entries use the key format:
 
@@ -151,7 +160,7 @@ Example bridge entry:
 ```json
 {
   "servers": {
-    "socketjack-titanx": {
+    "socketjack-local-jackllm-workstation": {
       "type": "stdio",
       "transport": "stdio",
       "command": "dotnet",
@@ -159,16 +168,16 @@ Example bridge entry:
         "C:\\Path\\To\\Extension\\Bridge\\SocketJack.CopilotMcpBridge.dll",
         "--stdio",
         "--server-endpoint",
-        "https://socketjack.com/proxy/TitanX",
+        "http://127.0.0.1:11436",
         "--server-id",
-        "TitanX",
+        "local-jackllm-workstation",
         "--server-name",
-        "TitanX",
+        "Local JackLLM Workstation",
         "--model",
         "selected-model-id"
       ],
       "env": {
-        "SOCKETJACK_COPILOT_SERVER_ID": "TitanX",
+        "SOCKETJACK_COPILOT_SERVER_ID": "local-jackllm-workstation",
         "SOCKETJACK_COPILOT_MODEL_ID": "selected-model-id"
       }
     }
@@ -186,8 +195,8 @@ The extension updates:
 
 It updates or creates the `Ollama` provider entry and points the selected model at either:
 
-- The direct SocketJack endpoint, when available.
-- A local loopback proxy, when WebSocket fallback is required.
+- The direct local JackLLM model-runtime endpoint, when available.
+- A local loopback proxy, when Visual Studio needs the packaged bridge.
 
 This is the supported fallback when Visual Studio or GitHub Copilot does not expose a public API for directly replacing Copilot's own selected chat model.
 
@@ -201,12 +210,12 @@ Tools > Options > SocketJack LlmRuntime > Copilot Servers
 
 Useful settings:
 
-- `MasterList URLs`: SocketJack server list endpoints.
+- `MasterList URLs`: optional remote SocketJack server list endpoints. Local JackLLM Workstation detection runs first.
 - `Update Ollama BYOM`: enables or disables Visual Studio Ollama config updates.
-- `Use local WebSocket proxy fallback`: starts a loopback proxy when direct model access fails.
+- `Use local WebSocket proxy fallback`: starts a loopback proxy when direct local model access needs the packaged bridge.
 - `Preferred local proxy port`: preferred port for the local proxy.
-- `Local JackLLM URL`: optional local JackLLM endpoint for copilot duplicator notification.
-- `SocketJack auth token`: optional token passed to the bridge.
+- `Local JackLLM URL`: local JackLLM endpoint for copilot duplicator notification.
+- `SocketJack auth token`: optional token for remote SocketJack.com workflows. Local JackLLM Workstation configuration does not require it.
 
 ## After Configuring
 
@@ -222,7 +231,7 @@ Useful settings:
 - Restart Visual Studio after installing the VSIX.
 - Check `Extensions > SocketJack > SocketJack Copilot Servers`.
 - Confirm the VSIX is installed under `Extensions > Manage Extensions`.
-- In Visual Studio 2026 Insiders, confirm `SocketJack for Visual Studio 2026` version `0.2.13` or later is installed.
+- In Visual Studio 2026 Insiders, confirm `SocketJack for Visual Studio 2026` version `0.2.54` or later is installed.
 
 ### Tool Window Shows A XAML Frame Exception
 
@@ -235,8 +244,10 @@ Install `SocketJack for Visual Studio 2026` version `0.2.2` or later. Earlier VS
 ### No Servers Load
 
 - Click `Refresh`.
-- Check internet access to `https://socketjack.com/api/lmvsproxy/servers`.
-- Open the options page and confirm the MasterList URL list.
+- Confirm JackLLM Workstation is running.
+- Open `http://127.0.0.1:11436/api/health` locally and confirm it responds.
+- If you are using optional remote servers instead of the local workstation, check internet access to `https://socketjack.com/api/lmvsproxy/servers`.
+- Open the options page and confirm the MasterList URL list for optional remote workflows.
 
 ### Server Is Disabled
 
@@ -253,11 +264,13 @@ The model must support chat and tools, and it must be loaded or dynamically load
 - Confirm GitHub Copilot MCP support is enabled in your Visual Studio version.
 - Reopen `Extensions > SocketJack > SocketJack Copilot Servers` and click `Configure Copilot` again.
 
-### Direct SocketJack Address Fails
+### Direct Local Address Fails
 
-If Copilot reports an OpenAI `404 (Not Found)` after configuring `https://socketjack.com/proxy/<SERVERNAME>`, install version `0.2.8` or later and configure the same server/model again.
+For local JackLLM Workstation, confirm `http://127.0.0.1:11436/api/model-runtime/v1/chat/completions` is reachable through the workstation and that the selected model is loaded or loadable.
 
-Version `0.2.8` checks the actual OpenAI chat paths and SocketJack fallback API before writing BYOM. If `https://socketjack.com/proxy/<SERVERNAME>` cannot expose chat completions directly, keep `Use local WebSocket proxy fallback` enabled. The extension will write BYOM to a local address like `http://127.0.0.1:11574`, stream Visual Studio's OpenAI chat-completions requests through SocketJack `/api/chat-stream`, and route model access through:
+If Copilot reports an OpenAI `404 (Not Found)` after configuring an optional remote URL such as `https://socketjack.com/proxy/<SERVERNAME>`, install version `0.2.54` or later and configure the same server/model again.
+
+For optional remote servers, the extension checks the actual OpenAI chat paths and SocketJack fallback API before writing BYOM. If `https://socketjack.com/proxy/<SERVERNAME>` cannot expose chat completions directly, keep `Use local WebSocket proxy fallback` enabled. The extension will write BYOM to a local address like `http://127.0.0.1:11574`, stream Visual Studio's OpenAI chat-completions requests through SocketJack `/api/chat-stream`, and route model access through:
 
 ```text
 wss://socketjack.com/proxy/<SERVERNAME>/api/web-chat/ws

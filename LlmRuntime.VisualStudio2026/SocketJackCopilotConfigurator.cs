@@ -485,28 +485,59 @@ internal static class SocketJackCopilotSelectionStore
 
     public static SocketJackStoredCopilotSelection Load()
     {
+        SocketJackStoredCopilotSelection storedSelection;
         string path = DefaultPath;
         if (!File.Exists(path))
         {
-            return new SocketJackStoredCopilotSelection();
+            storedSelection = new SocketJackStoredCopilotSelection();
+        }
+        else
+        {
+            try
+            {
+                JsonObject root = JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? new JsonObject();
+                storedSelection = new SocketJackStoredCopilotSelection
+                {
+                    ServerEndpoint = FirstString(root, "serverEndpoint"),
+                    ServerId = FirstString(root, "serverId"),
+                    ServerName = FirstString(root, "serverName"),
+                    ModelId = FirstString(root, "modelId"),
+                    ModelDisplayName = FirstString(root, "modelDisplayName"),
+                    ModelAccessUrl = FirstString(root, "modelAccessUrl"),
+                };
+            }
+            catch (Exception)
+            {
+                storedSelection = new SocketJackStoredCopilotSelection();
+            }
         }
 
+        return MergeVisualStudioByomSelection(storedSelection);
+    }
+
+    private static SocketJackStoredCopilotSelection MergeVisualStudioByomSelection(SocketJackStoredCopilotSelection storedSelection)
+    {
         try
         {
-            JsonObject root = JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? new JsonObject();
+            OllamaByomSelectedModel? byomSelection = new VisualStudioOllamaByomConfigWriter().ReadSelectedLocalProxyModel();
+            if (byomSelection == null)
+            {
+                return storedSelection;
+            }
+
             return new SocketJackStoredCopilotSelection
             {
-                ServerEndpoint = FirstString(root, "serverEndpoint"),
-                ServerId = FirstString(root, "serverId"),
-                ServerName = FirstString(root, "serverName"),
-                ModelId = FirstString(root, "modelId"),
-                ModelDisplayName = FirstString(root, "modelDisplayName"),
-                ModelAccessUrl = FirstString(root, "modelAccessUrl"),
+                ServerEndpoint = storedSelection.ServerEndpoint,
+                ServerId = storedSelection.ServerId,
+                ServerName = storedSelection.ServerName,
+                ModelId = string.IsNullOrWhiteSpace(byomSelection.ModelId) ? storedSelection.ModelId : byomSelection.ModelId,
+                ModelDisplayName = string.IsNullOrWhiteSpace(byomSelection.DisplayName) ? storedSelection.ModelDisplayName : byomSelection.DisplayName,
+                ModelAccessUrl = byomSelection.CustomUrl,
             };
         }
         catch (Exception)
         {
-            return new SocketJackStoredCopilotSelection();
+            return storedSelection;
         }
     }
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -29,6 +30,7 @@ public sealed class LlmRuntimeHost : IDisposable
     private readonly ModelConversionService _conversionService;
     private readonly Dictionary<int, GpuProcessCpuSample> _gpuProcessCpuSamples = new();
     private readonly object _gpuProcessCpuSamplesLock = new();
+    private readonly ConcurrentDictionary<string, OpenAiMediaJob> _openAiMediaJobs = new(StringComparer.OrdinalIgnoreCase);
     private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
     private CancellationTokenSource? _startupModelLoadCancellation;
     private Task? _startupModelLoadTask;
@@ -341,9 +343,19 @@ public sealed class LlmRuntimeHost : IDisposable
         server.Map("GET", "/api/v1/production/golden-path", (_, _, _) => ToJson(ProductionReadiness.BuildGoldenPathDemo()));
 
         server.MapStream("POST", "/v1/chat/completions", (_, request, stream, cancellationToken) => HandleChatCompletion(request, stream, cancellationToken));
-        server.Map("POST", "/v1/responses", (_, request, _) => InferenceScaffold(request, "response"));
+        server.MapStream("POST", "/v1/responses", (_, request, stream, cancellationToken) => HandleResponses(request, stream, cancellationToken));
         server.Map("POST", "/v1/completions", (_, request, _) => InferenceScaffold(request, "text_completion"));
-        server.Map("POST", "/v1/embeddings", (_, request, _) => InferenceScaffold(request, "embedding"));
+        server.Map("POST", "/v1/embeddings", (_, request, cancellationToken) => HandleEmbeddings(request, cancellationToken));
+        server.Map("POST", "/v1/images/generations", (_, request, cancellationToken) => HandleImageGeneration(request, edit: false, cancellationToken).GetAwaiter().GetResult());
+        server.Map("POST", "/v1/images/edits", (_, request, cancellationToken) => HandleImageGeneration(request, edit: true, cancellationToken).GetAwaiter().GetResult());
+        server.Map("POST", "/v1/audio/speech", (_, request, cancellationToken) => HandleAudioSpeech(request, cancellationToken).GetAwaiter().GetResult());
+        server.Map("POST", "/v1/audio/transcriptions", (_, request, cancellationToken) => HandleAudioTranscription(request, cancellationToken));
+        server.Map("POST", "/v1/videos", (_, request, cancellationToken) => HandleVideoGeneration(request, "video_generation", cancellationToken).GetAwaiter().GetResult());
+        server.Map("POST", "/v1/videos/edits", (_, request, cancellationToken) => HandleVideoGeneration(request, "video_edit", cancellationToken).GetAwaiter().GetResult());
+        server.Map("POST", "/v1/videos/extensions", (_, request, cancellationToken) => HandleVideoGeneration(request, "video_extension", cancellationToken).GetAwaiter().GetResult());
+        server.Map("GET", "/v1/videos", (_, _, _) => ToJson(new { @object = "list", data = _openAiMediaJobs.Values.Where(job => job.Capability.StartsWith("video", StringComparison.OrdinalIgnoreCase)).OrderByDescending(job => job.CreatedAt).Select(ToOpenAiVideoJob).ToArray() }));
+        server.Map("GET", "/v1/videos/*", (_, request, _) => HandleVideoGet(request));
+        server.Map("GET", "/v1/media/*", (_, request, _) => ServeOpenAiMediaContent(request, FirstPathVariable(request)));
         server.MapStream("POST", "/api/v1/chat", (_, request, stream, cancellationToken) => HandleChatCompletion(request, stream, cancellationToken));
     }
 
@@ -3394,16 +3406,25 @@ public sealed class LlmRuntimeHost : IDisposable
             WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", "assistant", null, null)));
 
             string streamFinishReason = "stop";
+            var hiddenReasoningFilter = new LlmHiddenReasoningStreamFilter();
             await foreach (var token in Registry.StreamChatAsync(request, cancellationToken).ConfigureAwait(false))
             {
                 if (!string.IsNullOrWhiteSpace(token.FinishReason))
                     streamFinishReason = token.FinishReason;
 
-                if (!string.IsNullOrEmpty(token.Text))
+                string visibleTokenText = hiddenReasoningFilter.Accept(token.Text);
+                if (!string.IsNullOrEmpty(visibleTokenText))
                 {
-                    completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
-                    WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, token.Text, null, null, null)));
+                    completionTokens += LlmInferenceMetrics.EstimateTokens(visibleTokenText);
+                    WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, visibleTokenText, null, null, null)));
                 }
+            }
+
+            string trailingVisibleText = hiddenReasoningFilter.Flush();
+            if (!string.IsNullOrEmpty(trailingVisibleText))
+            {
+                completionTokens += LlmInferenceMetrics.EstimateTokens(trailingVisibleText);
+                WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, trailingVisibleText, null, null, null)));
             }
 
             stopwatch.Stop();
@@ -3486,6 +3507,912 @@ public sealed class LlmRuntimeHost : IDisposable
     {
         stream.Write("data: " + (payload ?? "") + "\n\n");
     }
+
+    private static void WriteSseEvent(ChunkedStream stream, string eventName, object payload)
+    {
+        stream.Write("event: " + eventName + "\n");
+        WriteSseData(stream, ToJson(payload));
+    }
+
+    private async Task HandleResponses(HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken)
+    {
+        LlmChatRequest chatRequest;
+        string previousResponseId;
+        try
+        {
+            using var document = ParseBody(request);
+            previousResponseId = GetString(document.RootElement, "previous_response_id") ?? "";
+            chatRequest = ResponsesRequestToChatRequest(document.RootElement);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(request, (400, "Bad Request"));
+            stream.ContentType = "application/json";
+            stream.Write(Error($"Invalid JSON request body: {ex.Message}", "invalid_request_error", "invalid_json"));
+            return;
+        }
+
+        if (RejectGenerationModelChatRequest(chatRequest, request, stream))
+            return;
+
+        if (!TryResolveCompatibleModel(chatRequest.Model, "chat_completion", cancellationToken, out _, out string resolvedModel, out string errorMessage, out string errorType, out string errorCode))
+        {
+            SetStatus(request, HttpStatusForError(errorCode));
+            stream.ContentType = "application/json";
+            stream.Write(Error(errorMessage, errorType, errorCode));
+            return;
+        }
+
+        chatRequest.Model = resolvedModel;
+        if (string.IsNullOrWhiteSpace(chatRequest.SessionId) && !string.IsNullOrWhiteSpace(previousResponseId))
+            chatRequest.SessionId = previousResponseId;
+        ApplyPromptContextBudget(chatRequest);
+
+        if (chatRequest.Stream)
+        {
+            await StreamResponse(chatRequest, request, stream, previousResponseId, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await CompleteResponse(chatRequest, request, stream, previousResponseId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task CompleteResponse(LlmChatRequest request, HttpRequest httpRequest, ChunkedStream stream, string previousResponseId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await CompleteChatWithToolsAsync(request, cancellationToken).ConfigureAwait(false);
+            stream.ContentType = "application/json";
+            stream.Write(ToJson(ToOpenAiResponse(result, request, NewCompletionId("resp"), previousResponseId)));
+        }
+        catch (LlmRuntimeException ex)
+        {
+            SetStatus(httpRequest, HttpStatusForError(ex.Code));
+            stream.ContentType = "application/json";
+            stream.Write(Error(ex.Message, ex.Type, ex.Code));
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus(httpRequest, (499, "Client Closed Request"));
+            stream.ContentType = "application/json";
+            stream.Write(Error("The inference request was canceled.", "request_canceled", "request_canceled"));
+        }
+        catch (Exception ex)
+        {
+            SetStatus(httpRequest, (500, "Internal Server Error"));
+            stream.ContentType = "application/json";
+            stream.Write(Error(ex.Message, "inference_error", "inference_failed"));
+        }
+    }
+
+    private async Task StreamResponse(LlmChatRequest request, HttpRequest httpRequest, ChunkedStream stream, string previousResponseId, CancellationToken cancellationToken)
+    {
+        string id = NewCompletionId("resp");
+        long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var output = new StringBuilder();
+        int completionTokens = 0;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        bool sseStarted = false;
+
+        try
+        {
+            stream.LowLatencyMode = true;
+            stream.SetHeader("X-SocketJack-Low-Latency", "1");
+            stream.ContentType = "text/event-stream";
+            sseStarted = true;
+            WriteSseEvent(stream, "response.created", new
+            {
+                type = "response.created",
+                response = new
+                {
+                    id,
+                    @object = "response",
+                    created_at = created,
+                    status = "in_progress",
+                    model = request.Model,
+                    previous_response_id = string.IsNullOrWhiteSpace(previousResponseId) ? null : previousResponseId
+                }
+            });
+
+            if (request.Tools.Count > 0 && !ShouldBypassToolSelection(request))
+            {
+                var toolResult = await CompleteChatWithToolsAsync(request, cancellationToken).ConfigureAwait(false);
+                var response = ToOpenAiResponse(toolResult, request, id, previousResponseId);
+                WriteSseEvent(stream, "response.completed", new { type = "response.completed", response });
+                WriteSseData(stream, "[DONE]");
+                return;
+            }
+
+            string finishReason = "stop";
+            var hiddenReasoningFilter = new LlmHiddenReasoningStreamFilter();
+            await foreach (var token in Registry.StreamChatAsync(request, cancellationToken).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrWhiteSpace(token.FinishReason))
+                    finishReason = token.FinishReason;
+
+                string visibleTokenText = hiddenReasoningFilter.Accept(token.Text);
+                if (string.IsNullOrEmpty(visibleTokenText))
+                    continue;
+
+                output.Append(visibleTokenText);
+                completionTokens += LlmInferenceMetrics.EstimateTokens(visibleTokenText);
+                WriteSseEvent(stream, "response.output_text.delta", new
+                {
+                    type = "response.output_text.delta",
+                    response_id = id,
+                    output_index = 0,
+                    content_index = 0,
+                    delta = visibleTokenText
+                });
+            }
+
+            string trailingVisibleText = hiddenReasoningFilter.Flush();
+            if (!string.IsNullOrEmpty(trailingVisibleText))
+            {
+                output.Append(trailingVisibleText);
+                completionTokens += LlmInferenceMetrics.EstimateTokens(trailingVisibleText);
+                WriteSseEvent(stream, "response.output_text.delta", new
+                {
+                    type = "response.output_text.delta",
+                    response_id = id,
+                    output_index = 0,
+                    content_index = 0,
+                    delta = trailingVisibleText
+                });
+            }
+
+            stopwatch.Stop();
+            var result = new LlmChatResult
+            {
+                Model = request.Model,
+                Content = output.ToString(),
+                FinishReason = NormalizeFinishReasonForBudget(finishReason, request.MaxTokens, completionTokens),
+                Metrics = LlmInferenceMetrics.FromText(request, output.ToString(), stopwatch.Elapsed)
+            };
+            WriteSseEvent(stream, "response.completed", new
+            {
+                type = "response.completed",
+                response = ToOpenAiResponse(result, request, id, previousResponseId)
+            });
+            WriteSseData(stream, "[DONE]");
+        }
+        catch (LlmRuntimeException ex)
+        {
+            if (sseStarted)
+                WriteSseEvent(stream, "response.failed", new { type = "response.failed", response = ToOpenAiFailedResponse(id, request.Model, created, previousResponseId, ex.Message, ex.Type, ex.Code) });
+            else
+            {
+                SetStatus(httpRequest, HttpStatusForError(ex.Code));
+                stream.ContentType = "application/json";
+                stream.Write(Error(ex.Message, ex.Type, ex.Code));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (sseStarted)
+                WriteSseEvent(stream, "response.failed", new { type = "response.failed", response = ToOpenAiFailedResponse(id, request.Model, created, previousResponseId, "The inference request was canceled.", "request_canceled", "request_canceled") });
+            else
+            {
+                SetStatus(httpRequest, (499, "Client Closed Request"));
+                stream.ContentType = "application/json";
+                stream.Write(Error("The inference request was canceled.", "request_canceled", "request_canceled"));
+            }
+        }
+        catch (Exception ex)
+        {
+            if (sseStarted)
+                WriteSseEvent(stream, "response.failed", new { type = "response.failed", response = ToOpenAiFailedResponse(id, request.Model, created, previousResponseId, ex.Message, "inference_error", "inference_failed") });
+            else
+            {
+                SetStatus(httpRequest, (500, "Internal Server Error"));
+                stream.ContentType = "application/json";
+                stream.Write(Error(ex.Message, "inference_error", "inference_failed"));
+            }
+        }
+    }
+
+    private static LlmChatRequest ResponsesRequestToChatRequest(JsonElement root)
+    {
+        if (root.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array)
+            return LlmChatRequest.FromJson(root);
+
+        var request = LlmChatRequest.FromJson(root);
+        var chatMessages = new List<LlmChatMessage>();
+        string instructions = GetString(root, "instructions") ?? "";
+        if (!string.IsNullOrWhiteSpace(instructions))
+            chatMessages.Add(new LlmChatMessage("system", instructions));
+
+        if (root.TryGetProperty("input", out var input))
+            chatMessages.AddRange(ReadResponsesInput(input));
+
+        if (chatMessages.Count == 0)
+            chatMessages.Add(new LlmChatMessage("user", ""));
+
+        request.Messages = chatMessages.Where(message => !string.IsNullOrWhiteSpace(message.Content)).ToArray();
+        if (request.Messages.Count == 0)
+            request.Messages = [new LlmChatMessage("user", "")];
+        return request;
+    }
+
+    private static IEnumerable<LlmChatMessage> ReadResponsesInput(JsonElement input)
+    {
+        if (input.ValueKind == JsonValueKind.String)
+        {
+            yield return new LlmChatMessage("user", input.GetString() ?? "");
+            yield break;
+        }
+
+        if (input.ValueKind == JsonValueKind.Object)
+        {
+            LlmChatMessage? message = ReadResponsesInputObject(input);
+            if (message != null)
+                yield return message;
+            yield break;
+        }
+
+        if (input.ValueKind != JsonValueKind.Array)
+            yield break;
+
+        var looseParts = new List<string>();
+        foreach (JsonElement item in input.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                looseParts.Add(item.GetString() ?? "");
+                continue;
+            }
+
+            if (item.ValueKind != JsonValueKind.Object)
+                continue;
+
+            LlmChatMessage? message = ReadResponsesInputObject(item);
+            if (message != null)
+            {
+                if (looseParts.Count > 0)
+                {
+                    yield return new LlmChatMessage("user", string.Join(Environment.NewLine, looseParts.Where(part => !string.IsNullOrWhiteSpace(part))));
+                    looseParts.Clear();
+                }
+                yield return message;
+                continue;
+            }
+
+            string partText = ReadResponsesContentPart(item);
+            if (!string.IsNullOrWhiteSpace(partText))
+                looseParts.Add(partText);
+        }
+
+        if (looseParts.Count > 0)
+            yield return new LlmChatMessage("user", string.Join(Environment.NewLine, looseParts.Where(part => !string.IsNullOrWhiteSpace(part))));
+    }
+
+    private static LlmChatMessage? ReadResponsesInputObject(JsonElement item)
+    {
+        string type = GetString(item, "type") ?? "";
+        string role = GetString(item, "role") ?? (type.Equals("message", StringComparison.OrdinalIgnoreCase) ? "user" : "");
+        if (type.Equals("function_call_output", StringComparison.OrdinalIgnoreCase))
+        {
+            string callId = GetString(item, "call_id") ?? GetString(item, "id") ?? "";
+            string output = ReadResponsesContent(item.TryGetProperty("output", out var outputElement) ? outputElement : item);
+            return new LlmChatMessage("tool", "Tool result" + (string.IsNullOrWhiteSpace(callId) ? "" : " (" + callId + ")") + ":" + Environment.NewLine + output);
+        }
+
+        if (string.IsNullOrWhiteSpace(role) && !item.TryGetProperty("content", out _))
+            return null;
+
+        string content = item.TryGetProperty("content", out var contentElement)
+            ? ReadResponsesContent(contentElement)
+            : ReadResponsesContentPart(item);
+        if (string.IsNullOrWhiteSpace(content))
+            return null;
+
+        return new LlmChatMessage(string.IsNullOrWhiteSpace(role) ? "user" : role, content);
+    }
+
+    private static string ReadResponsesContent(JsonElement content)
+    {
+        if (content.ValueKind == JsonValueKind.String)
+            return content.GetString() ?? "";
+
+        if (content.ValueKind == JsonValueKind.Array)
+            return string.Join(Environment.NewLine, content.EnumerateArray().Select(ReadResponsesContentPart).Where(part => !string.IsNullOrWhiteSpace(part)));
+
+        if (content.ValueKind == JsonValueKind.Object)
+            return ReadResponsesContentPart(content);
+
+        return content.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? "" : content.GetRawText();
+    }
+
+    private static string ReadResponsesContentPart(JsonElement part)
+    {
+        if (part.ValueKind == JsonValueKind.String)
+            return part.GetString() ?? "";
+        if (part.ValueKind != JsonValueKind.Object)
+            return part.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? "" : part.GetRawText();
+
+        string type = GetString(part, "type") ?? "";
+        if ((type.Equals("input_text", StringComparison.OrdinalIgnoreCase) ||
+             type.Equals("output_text", StringComparison.OrdinalIgnoreCase) ||
+             type.Equals("text", StringComparison.OrdinalIgnoreCase)) &&
+            part.TryGetProperty("text", out var text) &&
+            text.ValueKind == JsonValueKind.String)
+        {
+            return text.GetString() ?? "";
+        }
+
+        if (part.TryGetProperty("text", out text) && text.ValueKind == JsonValueKind.String)
+            return text.GetString() ?? "";
+        if (part.TryGetProperty("image_url", out var imageUrl))
+            return "[image] " + ReadResponsesContent(imageUrl);
+        if (type.Equals("input_image", StringComparison.OrdinalIgnoreCase) ||
+            type.Equals("input_audio", StringComparison.OrdinalIgnoreCase) ||
+            type.Equals("input_video", StringComparison.OrdinalIgnoreCase))
+        {
+            return "[" + type + "] " + part.GetRawText();
+        }
+
+        return "";
+    }
+
+    private string HandleEmbeddings(HttpRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = ParseBody(request);
+            string model = GetString(document.RootElement, "model") ?? "";
+            if (!TryResolveCompatibleModel(model, "embedding", cancellationToken, out _, out string resolvedModel, out string errorMessage, out string errorType, out string errorCode))
+            {
+                SetStatus(request, HttpStatusForError(errorCode));
+                return Error(errorMessage, errorType, errorCode);
+            }
+
+            SetStatus(request, HttpStatusForError("unsupported_capability"));
+            return Error(
+                $"Model '{resolvedModel}' is embedding-capable, but this local runtime does not expose an embedding backend yet.",
+                "unsupported_capability",
+                "embedding_backend_unavailable");
+        }
+        catch (Exception ex)
+        {
+            SetStatus(request, (400, "Bad Request"));
+            return Error($"Invalid embeddings request: {ex.Message}", "invalid_request_error", "invalid_json");
+        }
+    }
+
+    private async Task<object> HandleImageGeneration(HttpRequest request, bool edit, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = ParseBody(request);
+            if (!TryResolveCompatibleModel(GetString(document.RootElement, "model"), "image_generation", cancellationToken, out _, out string resolvedModel, out string errorMessage, out string errorType, out string errorCode))
+            {
+                SetStatus(request, HttpStatusForError(errorCode));
+                return Error(errorMessage, errorType, errorCode);
+            }
+
+            var result = await InvokeMediaToolAsync("jackonnx_image_generate", BuildMediaToolInput(document.RootElement, resolvedModel, "image_generation", edit), "image_generation", cancellationToken).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                SetStatus(request, HttpStatusForError(result.ApprovalRequired ? "approval_required" : "media_generation_failed"));
+                return Error(string.IsNullOrWhiteSpace(result.Error) ? result.OutputText : result.Error, result.ApprovalRequired ? "approval_required" : "media_generation_error", result.ApprovalRequired ? "approval_required" : "media_generation_failed");
+            }
+
+            OpenAiMediaJob job = StoreOpenAiMediaJob("image", "image_generation", resolvedModel, result);
+            return ToJson(ToOpenAiImageGeneration(job, document.RootElement));
+        }
+        catch (Exception ex)
+        {
+            SetStatus(request, (400, "Bad Request"));
+            return Error($"Invalid image generation request: {ex.Message}", "invalid_request_error", "invalid_json");
+        }
+    }
+
+    private async Task<object> HandleAudioSpeech(HttpRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = ParseBody(request);
+            if (!TryResolveCompatibleModel(GetString(document.RootElement, "model"), "audio_generation", cancellationToken, out _, out string resolvedModel, out string errorMessage, out string errorType, out string errorCode))
+            {
+                SetStatus(request, HttpStatusForError(errorCode));
+                return Error(errorMessage, errorType, errorCode);
+            }
+
+            var result = await InvokeMediaToolAsync("jackonnx_audio_speech", BuildMediaToolInput(document.RootElement, resolvedModel, "audio_speech", edit: false), "audio_speech", cancellationToken).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                SetStatus(request, HttpStatusForError(result.ApprovalRequired ? "approval_required" : "media_generation_failed"));
+                return Error(string.IsNullOrWhiteSpace(result.Error) ? result.OutputText : result.Error, result.ApprovalRequired ? "approval_required" : "media_generation_error", result.ApprovalRequired ? "approval_required" : "media_generation_failed");
+            }
+
+            OpenAiMediaJob job = StoreOpenAiMediaJob("audio", "audio_speech", resolvedModel, result);
+            return File.Exists(job.ContentPath)
+                ? new FileResponse(File.ReadAllBytes(job.ContentPath), string.IsNullOrWhiteSpace(job.ContentType) ? "audio/wav" : job.ContentType, Path.GetFileName(job.ContentPath))
+                : Error("The speech tool completed without a readable audio artifact.", "media_generation_error", "media_artifact_missing");
+        }
+        catch (Exception ex)
+        {
+            SetStatus(request, (400, "Bad Request"));
+            return Error($"Invalid audio speech request: {ex.Message}", "invalid_request_error", "invalid_json");
+        }
+    }
+
+    private string HandleAudioTranscription(HttpRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = ParseBody(request);
+            if (!TryResolveCompatibleModel(GetString(document.RootElement, "model"), "audio_generation", cancellationToken, out _, out string resolvedModel, out string errorMessage, out string errorType, out string errorCode))
+            {
+                SetStatus(request, HttpStatusForError(errorCode));
+                return Error(errorMessage, errorType, errorCode);
+            }
+
+            SetStatus(request, HttpStatusForError("unsupported_capability"));
+            return Error(
+                $"Model '{resolvedModel}' is audio-capable, but no local transcription tool is registered yet.",
+                "unsupported_capability",
+                "audio_transcription_unavailable");
+        }
+        catch (Exception ex)
+        {
+            SetStatus(request, (400, "Bad Request"));
+            return Error($"Invalid audio transcription request: {ex.Message}", "invalid_request_error", "invalid_json");
+        }
+    }
+
+    private async Task<object> HandleVideoGeneration(HttpRequest request, string mode, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = ParseBody(request);
+            if (!TryResolveCompatibleModel(GetString(document.RootElement, "model"), "video_generation", cancellationToken, out _, out string resolvedModel, out string errorMessage, out string errorType, out string errorCode))
+            {
+                SetStatus(request, HttpStatusForError(errorCode));
+                return Error(errorMessage, errorType, errorCode);
+            }
+
+            var job = new OpenAiMediaJob
+            {
+                Id = NewCompletionId("video"),
+                Object = "video",
+                Capability = mode,
+                Model = resolvedModel,
+                Status = "queued",
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+            _openAiMediaJobs[job.Id] = job;
+
+            var result = await InvokeMediaToolAsync("jackonnx_video_generate", BuildMediaToolInput(document.RootElement, resolvedModel, mode, edit: !mode.Equals("video_generation", StringComparison.OrdinalIgnoreCase)), mode, cancellationToken).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                job.Status = "failed";
+                job.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                job.Error = string.IsNullOrWhiteSpace(result.Error) ? result.OutputText : result.Error;
+                SetStatus(request, HttpStatusForError(result.ApprovalRequired ? "approval_required" : "media_generation_failed"));
+                return ToJson(ToOpenAiVideoJob(job));
+            }
+
+            UpdateOpenAiMediaJobFromResult(job, result);
+            return ToJson(ToOpenAiVideoJob(job));
+        }
+        catch (Exception ex)
+        {
+            SetStatus(request, (400, "Bad Request"));
+            return Error($"Invalid video generation request: {ex.Message}", "invalid_request_error", "invalid_json");
+        }
+    }
+
+    private object HandleVideoGet(HttpRequest request)
+    {
+        string value = FirstPathVariable(request);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            SetStatus(request, (404, "Not Found"));
+            return Error("Video id is required.", "invalid_request_error", "missing_video_id");
+        }
+
+        string[] parts = value.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string id = parts.Length == 0 ? value : parts[0];
+        bool content = parts.Length > 1 && parts[1].Equals("content", StringComparison.OrdinalIgnoreCase);
+        if (content)
+            return ServeOpenAiMediaContent(request, id);
+
+        if (!_openAiMediaJobs.TryGetValue(id, out var job) || !job.Capability.StartsWith("video", StringComparison.OrdinalIgnoreCase))
+        {
+            SetStatus(request, (404, "Not Found"));
+            return Error("Video job was not found: " + id, "not_found_error", "video_not_found");
+        }
+
+        return ToJson(ToOpenAiVideoJob(job));
+    }
+
+    private object ServeOpenAiMediaContent(HttpRequest request, string idOrPath)
+    {
+        string id = (idOrPath ?? "").Trim();
+        if (id.EndsWith("/content", StringComparison.OrdinalIgnoreCase))
+            id = id[..^"/content".Length].Trim('/');
+        if (id.Contains('/', StringComparison.Ordinal))
+            id = id.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "";
+
+        if (string.IsNullOrWhiteSpace(id) || !_openAiMediaJobs.TryGetValue(id, out var job))
+        {
+            SetStatus(request, (404, "Not Found"));
+            return Error("Media job was not found: " + id, "not_found_error", "media_not_found");
+        }
+
+        if (string.IsNullOrWhiteSpace(job.ContentPath) || !File.Exists(job.ContentPath))
+        {
+            SetStatus(request, (404, "Not Found"));
+            return Error("Media content is not available for job: " + id, "not_found_error", "media_content_not_found");
+        }
+
+        return new FileResponse(File.ReadAllBytes(job.ContentPath), string.IsNullOrWhiteSpace(job.ContentType) ? "application/octet-stream" : job.ContentType, Path.GetFileName(job.ContentPath));
+    }
+
+    private async Task<LlmToolInvocationResult> InvokeMediaToolAsync(string toolId, JsonElement input, string capability, CancellationToken cancellationToken)
+    {
+        if (ToolRegistry.GetDefinition(toolId) == null)
+            return new LlmToolInvocationResult
+            {
+                Success = false,
+                ToolId = toolId,
+                Error = $"No local media tool is registered for {capability}. Enable JackONNX media tools in Workstation.",
+                OutputText = $"No local media tool is registered for {capability}. Enable JackONNX media tools in Workstation."
+            };
+
+        return await ToolInvoker.InvokeAsync(new LlmToolInvocationRequest
+        {
+            ToolId = toolId,
+            ToolCallId = NewCompletionId("call"),
+            Input = input,
+            Approved = true,
+            ProjectPath = _options.DefaultWorkspaceRoot
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static JsonElement BuildMediaToolInput(JsonElement root, string resolvedModel, string mode, bool edit)
+    {
+        var input = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["modelId"] = resolvedModel,
+            ["model"] = resolvedModel,
+            ["generationMode"] = mode
+        };
+
+        string prompt = GetString(root, "prompt") ?? GetString(root, "input") ?? GetString(root, "text") ?? "";
+        if (!string.IsNullOrWhiteSpace(prompt))
+        {
+            input["prompt"] = prompt;
+            input["text"] = prompt;
+        }
+
+        CopyJsonScalar(root, input, "negative_prompt", "negativePrompt");
+        CopyJsonScalar(root, input, "negativePrompt", "negativePrompt");
+        CopyJsonScalar(root, input, "voice", "voice");
+        CopyJsonScalar(root, input, "speed", "speed");
+        CopyJsonScalar(root, input, "width", "width");
+        CopyJsonScalar(root, input, "height", "height");
+        CopyJsonScalar(root, input, "steps", "steps");
+        CopyJsonScalar(root, input, "seed", "seed");
+        CopyJsonScalar(root, input, "seconds", "seconds");
+        CopyJsonScalar(root, input, "duration", "duration");
+        CopyJsonScalar(root, input, "fps", "fps");
+        CopyJsonScalar(root, input, "frames", "frames");
+        CopyJsonScalar(root, input, "sample_rate", "sampleRate");
+        CopyJsonScalar(root, input, "sampleRate", "sampleRate");
+        CopyJsonScalar(root, input, "guidance_scale", "guidanceScale");
+        CopyJsonScalar(root, input, "guidanceScale", "guidanceScale");
+        CopyJsonScalar(root, input, "device", "deviceId");
+        CopyJsonScalar(root, input, "device_id", "deviceId");
+        CopyJsonScalar(root, input, "deviceId", "deviceId");
+        CopyJsonScalar(root, input, "device_map", "deviceMap");
+        CopyJsonScalar(root, input, "deviceMap", "deviceMap");
+        CopyJsonScalar(root, input, "video_device_map", "videoDeviceMap");
+        CopyJsonScalar(root, input, "videoDeviceMap", "videoDeviceMap");
+        CopyJsonScalar(root, input, "source_path", "sourcePath");
+        CopyJsonScalar(root, input, "sourcePath", "sourcePath");
+        CopyJsonScalar(root, input, "source_data_url", "sourceDataUrl");
+        CopyJsonScalar(root, input, "sourceDataUrl", "sourceDataUrl");
+        CopyJsonScalar(root, input, "source_media_type", "sourceMediaType");
+        CopyJsonScalar(root, input, "sourceMediaType", "sourceMediaType");
+
+        if (edit)
+        {
+            CopyJsonScalar(root, input, "image", "sourcePath");
+            CopyJsonScalar(root, input, "video", "sourcePath");
+            CopyJsonScalar(root, input, "audio", "sourcePath");
+            CopyJsonScalar(root, input, "file", "sourcePath");
+            CopyJsonScalar(root, input, "input_image", "sourceDataUrl");
+            CopyJsonScalar(root, input, "input_video", "sourceDataUrl");
+        }
+
+        if (root.TryGetProperty("size", out var size) && size.ValueKind == JsonValueKind.String)
+        {
+            string rawSize = size.GetString() ?? "";
+            var match = Regex.Match(rawSize, @"^(?<w>\d{2,5})x(?<h>\d{2,5})$", RegexOptions.CultureInvariant);
+            if (match.Success)
+            {
+                input["width"] = int.Parse(match.Groups["w"].Value, CultureInfo.InvariantCulture);
+                input["height"] = int.Parse(match.Groups["h"].Value, CultureInfo.InvariantCulture);
+            }
+        }
+
+        return JsonSerializer.SerializeToElement(input, JsonOptions);
+    }
+
+    private static void CopyJsonScalar(JsonElement root, IDictionary<string, object?> target, string sourceName, string targetName)
+    {
+        if (!root.TryGetProperty(sourceName, out var value))
+            return;
+
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                string? text = value.GetString();
+                if (!string.IsNullOrWhiteSpace(text))
+                    target[targetName] = text;
+                break;
+            case JsonValueKind.Number:
+                if (value.TryGetInt32(out int integer))
+                    target[targetName] = integer;
+                else if (value.TryGetDouble(out double number))
+                    target[targetName] = number;
+                break;
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                target[targetName] = value.GetBoolean();
+                break;
+        }
+    }
+
+    private OpenAiMediaJob StoreOpenAiMediaJob(string objectName, string capability, string model, LlmToolInvocationResult result)
+    {
+        var job = new OpenAiMediaJob
+        {
+            Id = NewCompletionId(objectName),
+            Object = objectName,
+            Capability = capability,
+            Model = model,
+            Status = result.Success ? "completed" : "failed",
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Error = result.Success ? "" : (string.IsNullOrWhiteSpace(result.Error) ? result.OutputText : result.Error)
+        };
+        UpdateOpenAiMediaJobFromResult(job, result);
+        _openAiMediaJobs[job.Id] = job;
+        return job;
+    }
+
+    private static void UpdateOpenAiMediaJobFromResult(OpenAiMediaJob job, LlmToolInvocationResult result)
+    {
+        job.Status = result.Success ? "completed" : "failed";
+        job.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        job.OutputText = result.OutputText ?? "";
+        job.Error = result.Success ? "" : (string.IsNullOrWhiteSpace(result.Error) ? result.OutputText ?? "" : result.Error);
+        if (result.OutputJson.HasValue)
+        {
+            job.ResultJson = result.OutputJson.Value.Clone();
+            if (TryReadFirstArtifact(result.OutputJson.Value, out string artifactId, out string filePath, out string mediaType))
+            {
+                job.ArtifactId = artifactId;
+                job.ContentPath = filePath;
+                job.ContentType = mediaType;
+            }
+        }
+    }
+
+    private static bool TryReadFirstArtifact(JsonElement root, out string artifactId, out string filePath, out string mediaType)
+    {
+        artifactId = "";
+        filePath = "";
+        mediaType = "";
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("artifacts", out var artifacts) ||
+            artifacts.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        JsonElement? fallback = null;
+        foreach (JsonElement artifact in artifacts.EnumerateArray())
+        {
+            if (artifact.ValueKind != JsonValueKind.Object)
+                continue;
+
+            fallback ??= artifact;
+            string type = GetString(artifact, "mediaType") ?? GetString(artifact, "media_type") ?? "";
+            if (type.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
+                type.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                type.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            {
+                fallback = artifact;
+                if (type.Equals("video/mp4", StringComparison.OrdinalIgnoreCase))
+                    break;
+            }
+        }
+
+        if (!fallback.HasValue)
+            return false;
+
+        JsonElement selected = fallback.Value;
+        artifactId = GetString(selected, "id") ?? "";
+        filePath = GetString(selected, "filePath") ?? GetString(selected, "file_path") ?? "";
+        mediaType = GetString(selected, "mediaType") ?? GetString(selected, "media_type") ?? "application/octet-stream";
+        return !string.IsNullOrWhiteSpace(filePath);
+    }
+
+    private static object ToOpenAiImageGeneration(OpenAiMediaJob job, JsonElement request)
+    {
+        string prompt = GetString(request, "prompt") ?? "";
+        return new
+        {
+            created = job.CreatedAt,
+            model = job.Model,
+            data = new[]
+            {
+                new
+                {
+                    url = "/v1/media/" + job.Id + "/content",
+                    revised_prompt = prompt,
+                    artifact_id = job.ArtifactId,
+                    media_type = job.ContentType
+                }
+            }
+        };
+    }
+
+    private static object ToOpenAiVideoJob(OpenAiMediaJob job) => new
+    {
+        id = job.Id,
+        @object = "video",
+        status = job.Status,
+        model = job.Model,
+        created_at = job.CreatedAt,
+        completed_at = job.CompletedAt,
+        error = string.IsNullOrWhiteSpace(job.Error) ? null : new
+        {
+            message = job.Error,
+            type = "media_generation_error",
+            code = "media_generation_failed"
+        },
+        content_url = string.IsNullOrWhiteSpace(job.ContentPath) ? null : "/v1/videos/" + job.Id + "/content",
+        artifact_id = job.ArtifactId,
+        media_type = job.ContentType
+    };
+
+    private bool TryResolveCompatibleModel(
+        string? requestedModel,
+        string capability,
+        CancellationToken cancellationToken,
+        out LlmModelInfo? model,
+        out string resolvedModel,
+        out string errorMessage,
+        out string errorType,
+        out string errorCode)
+    {
+        model = null;
+        resolvedModel = "";
+        errorMessage = "";
+        errorType = "";
+        errorCode = "";
+
+        requestedModel = (requestedModel ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(requestedModel))
+        {
+            model = Registry.FindModel(requestedModel);
+            if (model == null)
+            {
+                errorMessage = $"Model '{requestedModel}' was not found.";
+                errorType = "invalid_request_error";
+                errorCode = "model_not_found";
+                return false;
+            }
+
+            if (!IsModelCompatibleWithCapability(model, capability))
+            {
+                errorMessage = $"Model '{model.DisplayName}' is not compatible with {capability}.";
+                errorType = "unsupported_capability";
+                errorCode = "incompatible_model_capability";
+                return false;
+            }
+
+            return TryLoadCompatibleModel(model, capability, cancellationToken, out model, out resolvedModel, out errorMessage, out errorType, out errorCode);
+        }
+
+        var models = Registry.ListModels()
+            .Where(candidate => IsModelCompatibleWithCapability(candidate, capability))
+            .ToArray();
+        model = models.FirstOrDefault(candidate => candidate.IsLoaded);
+        if (model != null)
+        {
+            resolvedModel = model.Key;
+            return true;
+        }
+
+        model = models.FirstOrDefault(LlmModelRegistry.IsRuntimeLoadableModel);
+        if (model != null)
+            return TryLoadCompatibleModel(model, capability, cancellationToken, out model, out resolvedModel, out errorMessage, out errorType, out errorCode);
+
+        errorMessage = $"No loaded or dynamically loadable local model supports {capability}.";
+        errorType = "unsupported_capability";
+        errorCode = "no_compatible_model";
+        return false;
+    }
+
+    private bool TryLoadCompatibleModel(
+        LlmModelInfo candidate,
+        string capability,
+        CancellationToken cancellationToken,
+        out LlmModelInfo? model,
+        out string resolvedModel,
+        out string errorMessage,
+        out string errorType,
+        out string errorCode)
+    {
+        model = candidate;
+        resolvedModel = candidate.Key;
+        errorMessage = "";
+        errorType = "";
+        errorCode = "";
+
+        if (candidate.IsLoaded)
+            return true;
+
+        if (!LlmModelRegistry.IsRuntimeLoadableModel(candidate))
+        {
+            errorMessage = $"Model '{candidate.DisplayName}' supports {capability}, but is not dynamically loadable: {LlmModelRegistry.GetRuntimeLoadDisabledReason(candidate)}";
+            errorType = "unsupported_capability";
+            errorCode = "model_not_loadable";
+            return false;
+        }
+
+        try
+        {
+            Registry.Load(candidate.Key, cancellationToken: cancellationToken);
+            model = Registry.FindModel(candidate.Key) ?? candidate;
+            resolvedModel = model.Key;
+            return true;
+        }
+        catch (LlmRuntimeException ex)
+        {
+            errorMessage = ex.Message;
+            errorType = ex.Type;
+            errorCode = ex.Code;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            errorType = "model_load_error";
+            errorCode = "load_failed";
+            return false;
+        }
+    }
+
+    private static bool IsModelCompatibleWithCapability(LlmModelInfo model, string capability)
+    {
+        if (model == null)
+            return false;
+
+        string normalized = NormalizeCapability(capability);
+        string service = NormalizeCapability(LlmModelRegistry.GetRuntimeServiceForModel(model));
+        return normalized switch
+        {
+            "chat_completion" or "responses" or "text" => service == "chat_completion" || LlmModelRegistry.IsChatLoadableModel(model),
+            "embedding" or "embeddings" => ModelHasCapabilityTag(model, "embedding") || model.Type.Equals("embedding", StringComparison.OrdinalIgnoreCase),
+            "image_generation" or "image" => service == "image_generation" || model.Type.Equals("image", StringComparison.OrdinalIgnoreCase) || ModelHasCapabilityTag(model, "image"),
+            "audio_generation" or "audio" or "audio_speech" => service == "audio_generation" || model.Type.Equals("audio", StringComparison.OrdinalIgnoreCase) || ModelHasCapabilityTag(model, "audio"),
+            "video_generation" or "video" or "video_edit" or "video_extension" => service == "video_generation" || model.Type.Equals("video", StringComparison.OrdinalIgnoreCase) || ModelHasCapabilityTag(model, "video"),
+            _ => false
+        };
+    }
+
+    private static string NormalizeCapability(string value) =>
+        (value ?? "").Trim().ToLowerInvariant().Replace("-", "_", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ModelHasCapabilityTag(LlmModelInfo model, string tag) =>
+        model.Tags.Any(value => value.Equals(tag, StringComparison.OrdinalIgnoreCase));
 
     private string InferenceScaffold(HttpRequest request, string objectName)
     {
@@ -4141,6 +5068,108 @@ public sealed class LlmRuntimeHost : IDisposable
         };
     }
 
+    private static object ToOpenAiResponse(LlmChatResult result, LlmChatRequest request, string id, string previousResponseId)
+    {
+        long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        string finishReason = NormalizeFinishReasonForBudget(result.FinishReason, request.MaxTokens, result.Metrics.CompletionTokens);
+        string visibleContent = StripHiddenReasoningTags(result.Content);
+        var output = new List<object>();
+
+        if (!string.IsNullOrEmpty(visibleContent) || result.ToolCalls.Count == 0)
+        {
+            output.Add(new
+            {
+                id = NewCompletionId("msg"),
+                type = "message",
+                status = "completed",
+                role = "assistant",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "output_text",
+                        text = visibleContent
+                    }
+                }
+            });
+        }
+
+        foreach (LlmToolCall call in result.ToolCalls)
+        {
+            output.Add(new
+            {
+                id = call.Id,
+                type = "function_call",
+                status = "completed",
+                call_id = call.Id,
+                name = call.Name,
+                arguments = call.Arguments.GetRawText()
+            });
+        }
+
+        return new
+        {
+            id,
+            @object = "response",
+            created_at = created,
+            status = string.Equals(finishReason, "error", StringComparison.OrdinalIgnoreCase) ? "failed" : "completed",
+            model = string.IsNullOrWhiteSpace(result.Model) ? request.Model : result.Model,
+            previous_response_id = string.IsNullOrWhiteSpace(previousResponseId) ? null : previousResponseId,
+            output,
+            output_text = visibleContent,
+            finish_reason = finishReason,
+            usage = new
+            {
+                input_tokens = result.Metrics.PromptTokens,
+                output_tokens = result.Metrics.CompletionTokens,
+                total_tokens = result.Metrics.TotalTokens,
+                prompt_tokens = result.Metrics.PromptTokens,
+                completion_tokens = result.Metrics.CompletionTokens
+            },
+            stats = new
+            {
+                elapsed_seconds = result.Metrics.ElapsedSeconds,
+                tokens_per_second = result.Metrics.TokensPerSecond,
+                managed_memory_bytes = result.Metrics.ManagedMemoryBytes
+            },
+            session = ToSessionCompatibilityPayload(request, result.Metrics.PromptTokens, result.Metrics.CompletionTokens),
+            runtime = result.ToolResults.Count == 0 ? null : new
+            {
+                tool_results = result.ToolResults.Select(toolResult => new
+                {
+                    id = toolResult.Id,
+                    name = toolResult.Name,
+                    success = toolResult.Success,
+                    content = toolResult.Content,
+                    error = toolResult.Error,
+                    output_json = toolResult.OutputJson,
+                    approval_required = toolResult.ApprovalRequired
+                }).ToArray()
+            }
+        };
+    }
+
+    private static object ToOpenAiFailedResponse(string id, string model, long created, string previousResponseId, string message, string type, string code)
+    {
+        return new
+        {
+            id,
+            @object = "response",
+            created_at = created,
+            status = "failed",
+            model,
+            previous_response_id = string.IsNullOrWhiteSpace(previousResponseId) ? null : previousResponseId,
+            output = Array.Empty<object>(),
+            output_text = "",
+            error = new
+            {
+                message,
+                type,
+                code
+            }
+        };
+    }
+
     private static object ToOpenAiChatCompletion(LlmChatResult result, LlmChatRequest? request = null)
     {
         string id = NewCompletionId("chatcmpl");
@@ -4318,11 +5347,19 @@ public sealed class LlmRuntimeHost : IDisposable
         code switch
         {
             "model_not_loaded" => (404, "Not Found"),
+            "model_not_found" => (404, "Not Found"),
+            "no_compatible_model" => (404, "Not Found"),
+            "approval_required" => (403, "Forbidden"),
             "invalid_json" => (400, "Bad Request"),
             "unsupported_model_format" => (400, "Bad Request"),
             "unsupported_model_metadata" => (400, "Bad Request"),
             "unsupported_model_type" => (400, "Bad Request"),
+            "unsupported_capability" => (400, "Bad Request"),
+            "incompatible_model_capability" => (400, "Bad Request"),
+            "model_not_loadable" => (400, "Bad Request"),
             "missing_model" => (400, "Bad Request"),
+            "load_failed" => (500, "Internal Server Error"),
+            "media_generation_failed" => (500, "Internal Server Error"),
             _ => (400, "Bad Request")
         };
 
@@ -5103,6 +6140,13 @@ public sealed class LlmRuntimeHost : IDisposable
 
     private static string? GetWorkspace(JsonElement root) => GetString(root, "workspace_root") ?? GetString(root, "workspaceRoot");
 
+    private static string FirstPathVariable(HttpRequest request)
+    {
+        return request?.PathVariables != null && request.PathVariables.Count > 0
+            ? request.PathVariables[0]
+            : "";
+    }
+
     private static string ToBackendName(LlmBackendKind backend) =>
         backend switch
         {
@@ -5250,6 +6294,35 @@ public sealed class LlmRuntimeHost : IDisposable
     }
 
     private sealed record GpuProcessCpuSample(TimeSpan TotalProcessorTime, DateTimeOffset CapturedUtc);
+
+    private sealed class OpenAiMediaJob
+    {
+        public string Id { get; init; } = "";
+
+        public string Object { get; init; } = "media";
+
+        public string Capability { get; init; } = "";
+
+        public string Model { get; init; } = "";
+
+        public string Status { get; set; } = "queued";
+
+        public long CreatedAt { get; init; }
+
+        public long? CompletedAt { get; set; }
+
+        public string Error { get; set; } = "";
+
+        public string ArtifactId { get; set; } = "";
+
+        public string ContentPath { get; set; } = "";
+
+        public string ContentType { get; set; } = "application/octet-stream";
+
+        public JsonElement? ResultJson { get; set; }
+
+        public string OutputText { get; set; } = "";
+    }
 
     private static string Error(string message, string type, string code) => ToJson(new
     {

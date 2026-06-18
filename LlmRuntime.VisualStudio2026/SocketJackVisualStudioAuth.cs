@@ -12,6 +12,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using LlmRuntime.VisualStudio;
 using Microsoft.Win32;
 using Microsoft.VisualStudio.Extensibility.UI;
 
@@ -29,6 +30,7 @@ internal abstract class SocketJackAuthenticatedViewModel : NotifyPropertyChanged
     private bool isSignInOverlayVisible = true;
     private bool isSigningIn;
     private bool isInlineSignInVisible;
+    private bool isLocalWorkstationMode;
 
     protected SocketJackAuthenticatedViewModel(SocketJackVisualStudioAuthService authService)
     {
@@ -117,12 +119,25 @@ internal abstract class SocketJackAuthenticatedViewModel : NotifyPropertyChanged
         set => this.SetProperty(ref this.isInlineSignInVisible, value);
     }
 
-    protected string AuthToken => this.authState.AccessToken;
+    [DataMember]
+    public bool IsLocalWorkstationMode
+    {
+        get => this.isLocalWorkstationMode;
+        set => this.SetProperty(ref this.isLocalWorkstationMode, value);
+    }
 
-    protected string AuthUserName => this.authState.UserName;
+    protected string AuthToken => this.IsLocalWorkstationMode ? "" : this.authState.AccessToken;
+
+    protected string AuthUserName => this.IsLocalWorkstationMode ? "" : this.authState.UserName;
 
     protected async Task EnsureSignedInAsync(CancellationToken cancellationToken)
     {
+        if (await SocketJackLocalWorkstationDiscovery.IsAvailableAsync(cancellationToken).ConfigureAwait(false))
+        {
+            this.ApplyLocalWorkstationMode();
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(this.authState.AccessToken))
         {
             this.ShowSignIn("Sign in to SocketJack.com before using this extension.");
@@ -238,7 +253,11 @@ internal abstract class SocketJackAuthenticatedViewModel : NotifyPropertyChanged
 
         this.authService.Clear();
         this.authState = new SocketJackAuthState();
-        this.ShowSignIn("Signed out.");
+        this.ApplyAuthState(new SocketJackAuthState(), showOverlayWhenMissing: true);
+        if (!this.IsLocalWorkstationMode)
+        {
+            this.ShowSignIn("Signed out.");
+        }
     }
 
     private Task ShowInlineSignInAsync(object? commandParameter, CancellationToken cancellationToken)
@@ -276,8 +295,15 @@ internal abstract class SocketJackAuthenticatedViewModel : NotifyPropertyChanged
 
     private void ApplyAuthState(SocketJackAuthState state, bool showOverlayWhenMissing)
     {
+        if (SocketJackLocalWorkstationDiscovery.IsLikelyAvailable())
+        {
+            this.ApplyLocalWorkstationMode();
+            return;
+        }
+
         this.authState = state ?? new SocketJackAuthState();
         this.SignInUserName = this.authState.UserName;
+        this.IsLocalWorkstationMode = false;
         this.IsSignedIn = !string.IsNullOrWhiteSpace(this.authState.AccessToken);
         this.IsSignInOverlayVisible = showOverlayWhenMissing && !this.IsSignedIn;
         this.AuthStatus = this.IsSignedIn
@@ -292,10 +318,23 @@ internal abstract class SocketJackAuthenticatedViewModel : NotifyPropertyChanged
 
     private void ShowSignIn(string message)
     {
+        this.IsLocalWorkstationMode = false;
         this.IsSignedIn = false;
         this.IsSignInOverlayVisible = true;
         this.AuthStatus = "Sign in to SocketJack.com.";
         this.SignInError = message;
+    }
+
+    private void ApplyLocalWorkstationMode()
+    {
+        this.authState = new SocketJackAuthState();
+        this.SignInUserName = "";
+        this.IsLocalWorkstationMode = true;
+        this.IsSignedIn = true;
+        this.IsSignInOverlayVisible = false;
+        this.IsInlineSignInVisible = false;
+        this.SignInError = "";
+        this.AuthStatus = "Local JackLLM Workstation detected at " + SocketJackLocalWorkstationDiscovery.DefaultEndpoint + ". SocketJack.com sign-in is not required for local configuration.";
     }
 
     private void ClearSignInPassword()

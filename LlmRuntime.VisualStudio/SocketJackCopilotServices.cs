@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -449,6 +450,229 @@ public sealed class SocketJackCopilotBrowserCache
     }
 }
 
+public static class SocketJackLocalWorkstationDiscovery
+{
+    public const string DefaultEndpoint = "http://127.0.0.1:11436";
+
+    private static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromMilliseconds(900);
+
+    public static bool IsLikelyAvailable(string endpoint = DefaultEndpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) ||
+            !IsLoopbackHost(uri.Host) ||
+            uri.Port <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using TcpClient client = new();
+            IAsyncResult pending = client.BeginConnect(IPAddress.Loopback, uri.Port, null, null);
+            bool connected = pending.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(150));
+            if (!connected)
+            {
+                return false;
+            }
+
+            client.EndConnect(pending);
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    public static async Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
+    {
+        using var client = new HttpClient();
+        return await TryDetectAsync(client, cancellationToken).ConfigureAwait(false) != null;
+    }
+
+    public static async Task<bool> IsAvailableAsync(HttpClient httpClient, CancellationToken cancellationToken = default)
+    {
+        return await TryDetectAsync(httpClient, cancellationToken).ConfigureAwait(false) != null;
+    }
+
+    public static async Task<SocketJackServerCandidate?> TryDetectAsync(HttpClient httpClient, CancellationToken cancellationToken = default)
+    {
+        return await TryDetectAsync(httpClient, DefaultEndpoint, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<SocketJackServerCandidate?> TryDetectAsync(HttpClient httpClient, string endpoint, CancellationToken cancellationToken = default)
+    {
+        if (httpClient == null)
+            throw new ArgumentNullException(nameof(httpClient));
+
+        string normalizedEndpoint = SocketJackMasterListClient.NormalizeEndpoint(endpoint);
+        if (string.IsNullOrWhiteSpace(normalizedEndpoint) ||
+            !Uri.TryCreate(normalizedEndpoint, UriKind.Absolute, out Uri? uri) ||
+            !IsLoopbackHost(uri.Host))
+        {
+            return null;
+        }
+
+        try
+        {
+            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(DefaultProbeTimeout);
+            using HttpResponseMessage response = await httpClient.GetAsync(
+                SocketJackModelDiscoveryService.BuildUri(normalizedEndpoint, "/api/health"),
+                timeout.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            JsonObject? health = ParseHealthObject(json);
+            if (SocketJackMasterListClient.FirstBool(health ?? new JsonObject(), "ok", "healthy", "isListening") != true)
+            {
+                return null;
+            }
+
+            SocketJackServerCandidate candidate = CreateCandidate(normalizedEndpoint, health ?? new JsonObject());
+            await EnrichFromMasterListPingAsync(httpClient, candidate, cancellationToken).ConfigureAwait(false);
+            return candidate;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    private static SocketJackServerCandidate CreateCandidate(string endpoint, JsonObject health)
+    {
+        string provider = SocketJackMasterListClient.FirstString(health, "modelRuntimeProvider", "provider", "runtimeProvider");
+        string chatModel = SocketJackMasterListClient.FirstString(health, "chatModel", "model", "selectedModel");
+        string hardware = string.IsNullOrWhiteSpace(provider) ? "local workstation" : provider + " on local workstation";
+        var candidate = new SocketJackServerCandidate
+        {
+            Id = "local-jackllm-workstation",
+            DisplayName = "Local JackLLM Workstation",
+            Endpoint = endpoint,
+            OpenAiBaseUrl = endpoint.TrimEnd('/') + "/api/model-runtime",
+            Online = true,
+            HostResponding = true,
+            ToolsAdvertised = true,
+            ToolsAllowed = "VS_tools, VS bridge, local Workstation",
+            Hardware = hardware,
+            Raw = SocketJackMasterListClient.CloneObject(health)
+        };
+
+        if (!string.IsNullOrWhiteSpace(chatModel))
+        {
+            candidate.AvailableModels.Add(chatModel);
+        }
+
+        return candidate;
+    }
+
+    private static async Task EnrichFromMasterListPingAsync(HttpClient httpClient, SocketJackServerCandidate candidate, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(DefaultProbeTimeout);
+            using HttpResponseMessage response = await httpClient.GetAsync(
+                SocketJackModelDiscoveryService.BuildUri(candidate.EffectiveEndpoint, "/api/master-list/ping"),
+                timeout.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            JsonObject? ping = ParseHealthObject(json);
+            if (ping == null)
+            {
+                return;
+            }
+
+            JsonArray? capabilitiesArray = SocketJackMasterListClient.CloneArray(SocketJackMasterListClient.FirstArray(ping, "models", "modelCapabilities", "modelCapabilitiesJson"));
+            if (capabilitiesArray != null)
+            {
+                candidate.ModelCapabilitiesArray = capabilitiesArray;
+            }
+
+            JsonObject? capabilitiesObject = SocketJackMasterListClient.CloneObject(SocketJackMasterListClient.FirstObject(ping, "modelCapabilities", "modelCapabilitiesJson", "capabilitiesByModel"));
+            if (capabilitiesObject != null)
+            {
+                candidate.ModelCapabilitiesJson = capabilitiesObject;
+            }
+
+            foreach (string modelId in ReadAvailableModels(ping))
+            {
+                if (!candidate.AvailableModels.Any(existing => string.Equals(existing, modelId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    candidate.AvailableModels.Add(modelId);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private static IEnumerable<string> ReadAvailableModels(JsonObject ping)
+    {
+        foreach (string name in new[] { "availableModels", "loadedModels", "enabledModels" })
+        {
+            if (ping[name] is JsonArray array)
+            {
+                foreach (JsonNode? item in array)
+                {
+                    string value = item is JsonObject obj
+                        ? SocketJackMasterListClient.FirstString(obj, "id", "key", "model", "name", "displayName")
+                        : item?.ToString() ?? "";
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        yield return value.Trim();
+                    }
+                }
+            }
+        }
+    }
+
+    private static JsonObject? ParseHealthObject(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        string normalized = (host ?? "").Trim().Trim('[', ']').Trim('.');
+        if (normalized.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("::1", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("0:0:0:0:0:0:0:1", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("127.", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IPAddress.TryParse(normalized, out IPAddress? address) && IPAddress.IsLoopback(address);
+    }
+}
+
 public sealed class SocketJackMasterListClient
 {
     public static readonly string[] DefaultMasterListUrls =
@@ -472,6 +696,12 @@ public sealed class SocketJackMasterListClient
 
     public async Task<IReadOnlyList<SocketJackServerCandidate>> GetServersAsync(CancellationToken cancellationToken = default)
     {
+        SocketJackServerCandidate? localWorkstation = await SocketJackLocalWorkstationDiscovery.TryDetectAsync(_httpClient, cancellationToken).ConfigureAwait(false);
+        if (localWorkstation != null)
+        {
+            return new[] { localWorkstation };
+        }
+
         var errors = new List<string>();
         foreach (Uri uri in _masterListUris)
         {
@@ -1285,6 +1515,43 @@ public sealed class VisualStudioOllamaByomConfigWriter
         return new OllamaByomWriteResult(path, customUrl.TrimEnd('/'), model.Id);
     }
 
+    public OllamaByomSelectedModel? ReadSelectedLocalProxyModel(string? configPath = null)
+    {
+        string path = configPath ?? DefaultConfigPath;
+        JsonArray providers = ReadProviderArray(path);
+        foreach (JsonNode? providerNode in providers)
+        {
+            if (providerNode is not JsonObject provider)
+                continue;
+
+            string providerName = SocketJackMasterListClient.FirstString(provider, "Name", "name", "ProviderName", "providerName");
+            if (!string.Equals(providerName, "Ollama", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (provider["Models"] is not JsonArray models)
+                continue;
+
+            foreach (JsonNode? modelNode in models)
+            {
+                if (modelNode is not JsonObject model ||
+                    SocketJackMasterListClient.FirstBool(model, "IsSelected", "isSelected") != true)
+                {
+                    continue;
+                }
+
+                string customUrl = SocketJackMasterListClient.FirstString(model, "CustomURL", "customUrl", "CustomUrl", "url");
+                if (!IsLocalProxyUrl(customUrl))
+                    return null;
+
+                string modelId = SocketJackMasterListClient.FirstString(model, "Id", "id", "ModelId", "modelId");
+                string displayName = SocketJackMasterListClient.FirstString(model, "DisplayName", "displayName", "Name", "name");
+                return new OllamaByomSelectedModel(path, customUrl.TrimEnd('/'), modelId, displayName);
+            }
+        }
+
+        return null;
+    }
+
     private static JsonArray ReadProviderArray(string path)
     {
         if (!File.Exists(path))
@@ -1352,6 +1619,35 @@ public sealed class VisualStudioOllamaByomConfigWriter
         root[name] = array;
         return array;
     }
+
+    private static bool IsLocalProxyUrl(string customUrl)
+    {
+        if (string.IsNullOrWhiteSpace(customUrl) ||
+            !Uri.TryCreate(customUrl, UriKind.Absolute, out Uri? uri))
+        {
+            return false;
+        }
+
+        return (string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)) &&
+            uri.Port > 0;
+    }
+}
+
+public sealed class OllamaByomSelectedModel
+{
+    public OllamaByomSelectedModel(string path, string customUrl, string modelId, string displayName)
+    {
+        Path = path;
+        CustomUrl = customUrl;
+        ModelId = modelId;
+        DisplayName = displayName;
+    }
+
+    public string Path { get; }
+    public string CustomUrl { get; }
+    public string ModelId { get; }
+    public string DisplayName { get; }
 }
 
 public sealed class OllamaByomWriteResult
@@ -1382,7 +1678,7 @@ public sealed class SocketJackEndpointAccessProber
         if (string.IsNullOrWhiteSpace(endpoint))
             return new SocketJackEndpointAccessResult(false, "Endpoint is empty.", "");
 
-        foreach (string path in new[] { "/api/models", "/api/model-runtime/models", "/v1/models", "/api/tags" })
+        foreach (string path in new[] { "/models", "/api/models", "/api/model-runtime/models", "/v1/models", "/api/tags" })
         {
             try
             {

@@ -1,10 +1,10 @@
 {
-  "id": "jackonnx_audio_speech",
-  "name": "jackonnx_audio_speech",
-  "description": "Generate speech audio with JackONNX and return the artifact to the LlmRuntime session.",
+  "id": "jackonnx_audio_generate",
+  "name": "jackonnx_audio_generate",
+  "description": "Generate audio with JackONNX and return the artifact to the LlmRuntime session. Optional source media enables audio-from-audio generation when implemented by the selected pipeline.",
   "visibility": "proprietary",
   "sourceType": "builtInSocketJack",
-  "source": "jackonnx.audio.speech",
+  "source": "jackonnx.audio.generate",
   "httpHeaders": {},
   "environmentVariables": {},
   "version": "0.1.0",
@@ -20,16 +20,19 @@
   "inputSchema": {
     "type": "object",
     "properties": {
+      "prompt": {
+        "type": "string"
+      },
       "text": {
         "type": "string"
       },
-      "voice": {
+      "negativePrompt": {
         "type": "string"
       },
       "modelId": {
         "type": "string"
       },
-      "speed": {
+      "seconds": {
         "type": "number"
       },
       "sampleRate": {
@@ -63,16 +66,13 @@
       "generationMode": {
         "type": "string"
       }
-    },
-    "required": [
-      "text"
-    ]
+    }
   },
   "resultSchema": null,
   "approvalMode": "askEveryTime",
   "permissions": "fileSystemWrite",
   "timeoutSeconds": 3600,
   "allowedProjects": [],
-  "createdAtUtc": "2026-05-18T03:30:06.317722+00:00",
-  "updatedAtUtc": "2026-06-18T03:01:49.7416364+00:00"
+  "createdAtUtc": "2026-06-18T02:52:09.2300283+00:00",
+  "updatedAtUtc": "2026-06-18T03:01:49.738893+00:00"
 }

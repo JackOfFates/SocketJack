@@ -6,12 +6,15 @@
 
 - Marketplace validation rejects Visual Studio extension installation targets whose API-version lower bound is the experimental `18.0` lane.
 - The VS 2026 extension metadata and VSIX manifest postprocessor both forced `[18.0,19.0)`, so the built package could not satisfy the current Marketplace requirement to use the latest stable `17.14` API lower bound.
+- Installing or updating the VSIX does not itself leave a local BYOM bridge running, and the extension startup path only read SocketJack's cached selection. Visual Studio Copilot can still be selected on a different local BYOM URL/model in `ConfiguredBringYourOwnModel_v1.json`, which left Copilot retrying a dead `127.0.0.1:11574` port while another bridge was alive on `11575`.
 
 ### Changes made
 
 - Changed `SocketJackVisualStudioExtension` to emit `InstallationTargetVersion = "[17.14,19.0)"`.
 - Changed the VSIX manifest postprocessor defaults so generated installation targets and the CoreEditor prerequisite use `[17.14,19.0)`.
 - Passed the stable `[17.14,19.0)` range explicitly from the tracked VSIX project file into the manifest postprocessor.
+- Made bridge startup merge the selected Visual Studio Ollama BYOM local URL/model into the SocketJack selection cache before launching the packaged bridge.
+- Added BYOM config reader coverage for selected local proxy models.
 - Updated Marketplace release notes for the stable 17.14 compatibility range.
 
 ### Verification
@@ -19,6 +22,8 @@
 - `dotnet build LlmRuntime.VisualStudio2026\LlmRuntime.VisualStudio2026.csproj -c Release --nologo -v:minimal`
 - Inspected the built VSIX `extension.vsixmanifest` and confirmed `Community`, `Pro`, and `Enterprise` installation targets all use `[17.14,19.0)` with `amd64`.
 - Confirmed the built VSIX `Microsoft.VisualStudio.Component.CoreEditor` prerequisite uses `[17.14,19.0)`.
+- `dotnet test LlmRuntime.Tests\LlmRuntime.Tests.csproj --filter "FullyQualifiedName~SocketJackCopilotServicesTests" --no-restore -v:minimal`
+- Started the packaged bridge on Visual Studio's configured `http://127.0.0.1:11574` BYOM port and verified `/socketjack-proxy-health` reports TitanX and `Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF`.
 
 ## 2026-06-12 - LlmRuntime.VisualStudio2026 0.2.52
 

@@ -5,9 +5,11 @@ namespace LlmRuntime;
 internal sealed class LlmRuntimeRepetitionGuard
 {
     private const int RepeatThreshold = 4;
+    private const int ShortRepeatThreshold = 2;
     private const int MinimumSegmentLength = 48;
     private const int MinimumSegmentWords = 6;
     private const int MinimumCharactersBeforeStop = 256;
+    private const int MinimumCharactersBeforeShortStop = 0;
 
     private readonly StringBuilder _accepted = new();
 
@@ -44,7 +46,7 @@ internal sealed class LlmRuntimeRepetitionGuard
         stopIndex = -1;
         reason = null;
 
-        if (string.IsNullOrEmpty(text) || text.Length < MinimumCharactersBeforeStop)
+        if (string.IsNullOrEmpty(text) || text.Length < MinimumCharactersBeforeShortStop)
             return false;
 
         if (TryFindRepeatedSegment(text, EnumerateLineSegments, "line", out stopIndex, out reason))
@@ -66,14 +68,17 @@ internal sealed class LlmRuntimeRepetitionGuard
 
         foreach (LlmRuntimeTextSegment segment in enumerateSegments(text))
         {
-            if (!IsRepeatedCandidate(segment.Normalized))
+            bool shortCandidate = IsShortRepeatedCandidate(segment.Normalized);
+            if (!shortCandidate && !IsRepeatedCandidate(segment.Normalized))
                 continue;
 
             counts.TryGetValue(segment.Normalized, out int count);
             count++;
             counts[segment.Normalized] = count;
 
-            if (count >= RepeatThreshold && segment.Start >= MinimumCharactersBeforeStop)
+            int repeatThreshold = shortCandidate ? ShortRepeatThreshold : RepeatThreshold;
+            int minimumCharactersBeforeStop = shortCandidate ? MinimumCharactersBeforeShortStop : MinimumCharactersBeforeStop;
+            if (count >= repeatThreshold && segment.Start >= minimumCharactersBeforeStop)
             {
                 stopIndex = segment.Start;
                 reason = "repeated_" + segmentKind;
@@ -169,6 +174,25 @@ internal sealed class LlmRuntimeRepetitionGuard
         }
 
         return words >= MinimumSegmentWords && uniqueWords.Count >= 4;
+    }
+
+    private static bool IsShortRepeatedCandidate(string normalized)
+    {
+        if (string.IsNullOrWhiteSpace(normalized) ||
+            normalized.Length < 3 ||
+            normalized.Length >= MinimumSegmentLength)
+        {
+            return false;
+        }
+
+        int lettersOrDigits = normalized.Count(char.IsLetterOrDigit);
+        if (lettersOrDigits < 2)
+            return false;
+
+        int words = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(TrimWord)
+            .Count(word => word.Length > 0);
+        return words is >= 1 and <= 8;
     }
 
     private static string TrimWord(string word)

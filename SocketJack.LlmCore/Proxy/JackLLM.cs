@@ -792,6 +792,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private readonly Dictionary<string, DateTimeOffset> _pendingChatStreamStops = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
 
+	private readonly Dictionary<string, PendingChatStreamSteering> _pendingChatStreamSteering = new Dictionary<string, PendingChatStreamSteering>(StringComparer.Ordinal);
+
 	private readonly object _chatFileUndoLock = new object();
 
 	private readonly Dictionary<string, ChatFileUndoTransaction> _chatFileUndoTransactions = new Dictionary<string, ChatFileUndoTransaction>(StringComparer.Ordinal);
@@ -5062,8 +5064,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		RegisterSockJackDmlRoutes(server);
 		RegisterDocumentationRoutes(server);
 		server.Robots = "User-agent: *\nAllow: /\n";
-		server.Map("GET", "/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/health", "health", BuildChatHealthPayload));
-		server.Map("GET", "/api/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/health", "health", BuildChatHealthPayload));
+		server.Map("GET", "/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/health", "health", () => BuildChatHealthPayload(connection, request), () => GetChatSessionOwnerKey(connection, request)));
+		server.Map("GET", "/api/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/health", "health", () => BuildChatHealthPayload(connection, request), () => GetChatSessionOwnerKey(connection, request)));
 		server.Map("OPTIONS", "/api/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("GET", "/api/master-list/ping", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/master-list/ping", "marketplace", () => JsonSerializer.Serialize(BuildMasterListPingPayload())));
 		server.Map("GET", "/api/lmvsproxy/ping", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/lmvsproxy/ping", "marketplace", () => JsonSerializer.Serialize(BuildMasterListPingPayload())));
@@ -5283,8 +5285,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		TryAutoStartChatFtpServer(chatPermissions);
 		LogMessage("[Chat UI] Created shared MutableTcpServer at " + ChatServerUrl + " for LM Studio, SocketJack database sessions, and SQL admin at " + ChatServerUrl.TrimEnd('/') + "/sql.");
 		return server;
-		string BuildChatHealthPayload()
+		string BuildChatHealthPayload(NetworkConnection connection, HttpRequest request)
 		{
+			ChatPermissionState permissions = GetChatPermissions(GetChatSessionOwnerKey(connection, request));
 			return JsonSerializer.Serialize(new
 			{
 				ok = true,
@@ -5302,7 +5305,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					hosted = true,
 					sharedChatServerPort = _chatServerPort,
 					defaultDatabase = _chatSessionData.DefaultDatabase,
-					sqlAdminEnabled = GetChatPermissions().sqlAdmin,
+					sqlAdminEnabled = permissions.sqlAdmin,
 					sqlAdminUrl = ChatServerUrl.TrimEnd('/') + "/sql"
 				},
 				ftp = GetChatFtpServerStatus()
@@ -13847,7 +13850,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					}
 					if (root.TryGetProperty("sqlAdminEnabled", out var sqlAdminElement))
 					{
-						sqlAdminEnabled = ReadJsonBool(sqlAdminElement, GetChatPermissions().sqlAdmin);
+						sqlAdminEnabled = ReadJsonBool(sqlAdminElement, GetChatPermissions(GetChatSessionOwnerKey(connection, request)).sqlAdmin);
 					}
 				}
 			}
@@ -13906,7 +13909,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private object BuildChatSqlAdminStatus(NetworkConnection connection, HttpRequest request)
 	{
 		bool isAdmin = IsDatabaseAdministrator(connection, request);
-		ChatPermissionState permissions = GetChatPermissions();
+		string ownerKey = GetChatSessionOwnerKey(connection, request);
+		ChatPermissionState permissions = GetChatPermissions(ownerKey);
 		bool mutableListening = false;
 		bool tdsRegistered = false;
 		bool standaloneListening = false;
@@ -15106,6 +15110,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				string ownerKey = GetChatSessionOwnerKey(connection, request);
 				string localUserName = GetLocalChatPromptUserName();
+				string serverOwnerUserName = GetConfiguredServerOwnerUserName();
 				return JsonSerializer.Serialize(new
 				{
 					ok = true,
@@ -15117,10 +15122,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					expiresUtc = "",
 					ownerKey = ownerKey,
 					clientIp = clientIp,
-					isAdministrator = false,
-					isOwner = false,
-					isServerOwner = false,
-					serverOwnerUserName = GetConfiguredServerOwnerUserName(),
+					isAdministrator = true,
+					isOwner = true,
+					isServerOwner = true,
+					serverOwnerUserName = string.IsNullOrWhiteSpace(serverOwnerUserName) ? "localhost" : serverOwnerUserName,
 					canRegisterOpen = AllowOpenRegistration,
 					usage = GetChatUsageSnapshot(ownerKey),
 					table = "Auth.Users"
@@ -17633,6 +17638,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				active.Cancellation.Cancel();
 			}
+			if (_pendingChatStreamSteering.TryGetValue(key, out var pendingSteering) &&
+				(string.IsNullOrWhiteSpace(pendingSteering.SessionId) || string.Equals(pendingSteering.SessionId, sessionId, StringComparison.Ordinal)))
+			{
+				lock (active.SteeringMessages)
+				{
+					active.SteeringMessages.AddRange(pendingSteering.Messages);
+				}
+				_pendingChatStreamSteering.Remove(key);
+			}
 		}
 		return active;
 	}
@@ -17779,7 +17793,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			if (!TryFindActiveChatStreamCancellationLocked(ownerKey, streamId, sessionId, out var active))
 			{
-				return false;
+				AddPendingChatStreamSteeringLocked(ownerKey, streamId, sessionId, steering);
+				return true;
 			}
 			lock (active.SteeringMessages)
 			{
@@ -17787,6 +17802,27 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			return true;
 		}
+	}
+
+	private void AddPendingChatStreamSteeringLocked(string ownerKey, string streamId, string sessionId, string steering)
+	{
+		string key = BuildActiveChatStreamCancellationKey(ownerKey, streamId);
+		if (!_pendingChatStreamSteering.TryGetValue(key, out var pending) || pending == null)
+		{
+			pending = new PendingChatStreamSteering
+			{
+				OwnerKey = ownerKey,
+				StreamId = streamId,
+				SessionId = sessionId
+			};
+			_pendingChatStreamSteering[key] = pending;
+		}
+		if (string.IsNullOrWhiteSpace(pending.SessionId) && !string.IsNullOrWhiteSpace(sessionId))
+		{
+			pending.SessionId = sessionId;
+		}
+		pending.UpdatedUtc = DateTimeOffset.UtcNow;
+		pending.Messages.Add(steering);
 	}
 
 	private string ConsumeActiveChatStreamSteering(ActiveChatStreamCancellation active)
@@ -17801,7 +17837,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return "";
 			}
-			string steering = string.Join(Environment.NewLine + Environment.NewLine, active.SteeringMessages);
+			string steering = active.SteeringMessages.Count == 1
+				? active.SteeringMessages[0]
+				: string.Join(Environment.NewLine + Environment.NewLine, active.SteeringMessages.Select((message, index) => "[Steering update " + (index + 1).ToString(CultureInfo.InvariantCulture) + "]" + Environment.NewLine + message));
 			active.SteeringMessages.Clear();
 			return steering;
 		}
@@ -17870,6 +17908,18 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		foreach (string key2 in remove)
 		{
 			_pendingChatStreamStops.Remove(key2);
+		}
+		remove.Clear();
+		foreach (KeyValuePair<string, PendingChatStreamSteering> pair3 in _pendingChatStreamSteering)
+		{
+			if (pair3.Value == null || pair3.Value.UpdatedUtc < pendingCutoff)
+			{
+				remove.Add(pair3.Key);
+			}
+		}
+		foreach (string key3 in remove)
+		{
+			_pendingChatStreamSteering.Remove(key3);
 		}
 	}
 
@@ -26713,7 +26763,56 @@ except Exception as exc:
 	{
 		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
 		ChatPermissionState ownerPermissions = GetStoredChatPermissions(ownerKey, createIfMissing: false);
-		return ownerPermissions ?? GetChatPermissions();
+		ChatPermissionState permissions = ownerPermissions ?? GetChatPermissions();
+		return IsLoopbackChatOwnerKey(ownerKey) ? ApplyLocalAdminChatPermissions(permissions) : permissions;
+	}
+
+	private bool IsLoopbackChatOwnerKey(string ownerKey)
+	{
+		return IsLoopbackClientIp(ExtractIpFromOwnerKey(NormalizeChatFilesystemOwnerKey(ownerKey)));
+	}
+
+	private ChatPermissionState ApplyLocalAdminChatPermissions(ChatPermissionState permissions)
+	{
+		permissions = CopyChatPermissions(permissions ?? new ChatPermissionState());
+		permissions.internetSearch = true;
+		permissions.vsCopilotTools = true;
+		permissions.fileDownloads = true;
+		permissions.ftpServer = true;
+		permissions.sqlAdmin = true;
+		permissions.terminalCommands = true;
+		permissions.terminalForeverApproved = true;
+		permissions.agentAccess = true;
+		permissions.fileUploads = true;
+		permissions.imageUploads = true;
+		permissions.muteUntilEnabled = false;
+		permissions.banUntilEnabled = false;
+		permissions.mutedUntilUtc = "";
+		permissions.bannedUntilUtc = "";
+		return permissions;
+	}
+
+	private static ChatPermissionState CopyChatPermissions(ChatPermissionState source)
+	{
+		source = source ?? new ChatPermissionState();
+		return new ChatPermissionState
+		{
+			internetSearch = source.internetSearch,
+			vsCopilotTools = source.vsCopilotTools,
+			fileDownloads = source.fileDownloads,
+			ftpServer = source.ftpServer,
+			sqlAdmin = source.sqlAdmin,
+			terminalCommands = source.terminalCommands,
+			terminalForeverApproved = source.terminalForeverApproved,
+			agentAccess = source.agentAccess,
+			fileUploads = source.fileUploads,
+			imageUploads = source.imageUploads,
+			mutedUntilUtc = source.mutedUntilUtc ?? "",
+			bannedUntilUtc = source.bannedUntilUtc ?? "",
+			muteUntilEnabled = source.muteUntilEnabled,
+			banUntilEnabled = source.banUntilEnabled,
+			updatedUtc = source.updatedUtc ?? ""
+		};
 	}
 
 	private ChatPermissionState GetStoredChatPermissions(string ownerKey, bool createIfMissing)
@@ -29940,6 +30039,29 @@ except Exception as exc:
 	private bool TryAuthorizeDatabaseAdministrator(NetworkConnection connection, HttpRequest request, out WebAuthPrincipal principal, out string error)
 	{
 		principal = null;
+		if (IsLocalAdmin(connection, request))
+		{
+			principal = new WebAuthPrincipal
+			{
+				UserName = GetLocalChatPromptUserName(),
+				AuthType = "Localhost",
+				AccountType = "local",
+				IsAdministrator = true,
+				IsServerOwner = true,
+				IsPublicAccount = false,
+				ServerOwnerUserName = GetConfiguredServerOwnerUserName()
+			};
+			if (string.IsNullOrWhiteSpace(principal.UserName))
+			{
+				principal.UserName = "localhost";
+			}
+			if (string.IsNullOrWhiteSpace(principal.ServerOwnerUserName))
+			{
+				principal.ServerOwnerUserName = principal.UserName;
+			}
+			error = "";
+			return true;
+		}
 		if (!TryAuthenticateWebAuthRequest(request, out var authenticated, out error))
 		{
 			return false;
@@ -41234,6 +41356,23 @@ except Exception as exc:
 						liveContent.Append(text2);
 						return WriteChatUiDeltaWithUsage(output, streamOwnerKey, text2, "", "", usageMeter, cancellationToken, promptSessionId);
 					}, lmRequestJson: toolRequestJson, ownerKey: streamOwnerKey, sessionId: sessionId, cancellationToken: cancellationToken, consumeSteering: () => ConsumeActiveChatStreamSteering(activeStreamCancellation), emitToolCall: emitToolCall), output, promptSessionId, "prompt_processing", agentStatus, cancellationToken, streamOwnerKey, usageMeter), toolRequestJson);
+					completion = await ContinueChatUiCompletionForLateSteeringAsync(completion, toolRequestJson, activeStreamCancellation, streamOwnerKey, sessionId, cancellationToken, delegate(string reasoning)
+					{
+						if (string.IsNullOrEmpty(reasoning))
+						{
+							return true;
+						}
+						liveReasoning.Append(reasoning);
+						return WriteChatUiDeltaWithUsage(output, streamOwnerKey, "", reasoning, "", usageMeter, cancellationToken, promptSessionId);
+					}, delegate(string text2)
+					{
+						if (string.IsNullOrEmpty(text2))
+						{
+							return true;
+						}
+						liveContent.Append(text2);
+						return WriteChatUiDeltaWithUsage(output, streamOwnerKey, text2, "", "", usageMeter, cancellationToken, promptSessionId);
+					}, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
 					if (!HasChatUiCompletionOutput(completion))
 					{
 						CompleteActivePromptSession(promptSessionId, "Failed");
@@ -46908,8 +47047,7 @@ except Exception as exc:
 		{
 			return;
 		}
-		ChatUiCompletion split = SplitThinkTags(content, explicitReasoning ?? "", preserveWhitespace: true);
-		string visibleContent = split.Content ?? "";
+		string visibleContent = CleanAssistantVisibleStreamContent(content, explicitReasoning);
 		string delta = ExtractUnsentNativeSuffix(visibleContent, emittedVisibleContent);
 		if (!string.IsNullOrEmpty(delta))
 		{
@@ -47045,16 +47183,57 @@ except Exception as exc:
 		{
 			return requestBody;
 		}
-		string instruction = "[LmVsProxy conversation steering] The user added steering while this agent turn was running. Do not treat it as a separate queued prompt and do not restart from scratch. Incorporate this direction at the next natural break, tool call, or final answer: " + steering;
+		string instruction = "[JackLLM conversation steering] The user added steering while this agent turn was running. Do not treat it as a separate queued prompt and do not restart from scratch. Incorporate the next user message at the next natural break, tool call, or final answer. If multiple steering updates are included, apply every update in order; later updates are not optional.";
+		string userDirection = "[Steering update for the current running turn]\n" + steering;
 		try
 		{
-			return AppendSystemMessage(requestBody, instruction);
+			return AppendSystemAndUserMessages(requestBody, instruction, userDirection);
 		}
 		catch (Exception ex)
 		{
 			LogMessage("[Chat UI] Could not apply steering: " + ex.Message);
 			return requestBody;
 		}
+	}
+
+	private async Task<ChatUiCompletion> ContinueChatUiCompletionForLateSteeringAsync(ChatUiCompletion completion, string requestBody, ActiveChatStreamCancellation activeStream, string ownerKey, string sessionId, CancellationToken cancellationToken, Func<string, bool> emitLiveReasoning, Func<string, bool> emitLiveContent, Action<ChatUiToolCallStreamEvent> emitToolCall)
+	{
+		if (activeStream == null)
+		{
+			return completion;
+		}
+		ChatUiCompletion accumulated = completion ?? new ChatUiCompletion();
+		string continuationRequest = requestBody;
+		for (int pass = 0; pass < 3; pass++)
+		{
+			string lateSteering = NormalizeChatStreamSteeringText(ConsumeActiveChatStreamSteering(activeStream));
+			if (string.IsNullOrWhiteSpace(lateSteering))
+			{
+				break;
+			}
+			string previousAnswer = CleanAssistantVisibleContent(accumulated.Content ?? "");
+			string instruction = "[JackLLM late steering continuation] A steering update arrived after the previous draft was ready but before the stream closed. Continue this same visible assistant turn by satisfying the steering update now. Do not repeat earlier text, do not mention this instruction, and apply every steering update in order.";
+			continuationRequest = ApplyChatUiSteeringToRequest(AppendAssistantAndSystemMessage(continuationRequest, previousAnswer, instruction), lateSteering);
+			ChatUiCompletion next = await ExecuteChatUiCompletionWithProxyToolsAsync(
+				continuationRequest,
+				ownerKey,
+				sessionId,
+				cancellationToken,
+				consumeSteering: () => ConsumeActiveChatStreamSteering(activeStream),
+				emitLiveReasoning: emitLiveReasoning,
+				emitLiveContent: emitLiveContent,
+				emitToolCall: emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+			next = NormalizeChatUiCompletionForDisplay(next, continuationRequest);
+			accumulated.Content = MergeChatUiContinuationText(accumulated.Content ?? "", next?.Content ?? "");
+			accumulated.Reasoning = MergeChatUiContinuationText(accumulated.Reasoning ?? "", next?.Reasoning ?? "");
+			accumulated.Raw = next?.Raw ?? accumulated.Raw;
+			accumulated.FinishReason = next?.FinishReason ?? accumulated.FinishReason;
+			if (!HasChatUiCompletionOutput(next))
+			{
+				break;
+			}
+		}
+		return accumulated;
 	}
 
 	private string DisableProxyToolsForFinalAnswer(string requestBody)
@@ -50201,16 +50380,82 @@ except Exception as exc:
 		string unusedReasoning = "";
 		cleaned = SplitThinkTags(cleaned, unusedReasoning).Content ?? "";
 		cleaned = RemoveSerializedChatUiControlEvents(cleaned);
+		cleaned = RemoveChatUiInternalMetadataTags(cleaned);
+		if (LooksLikeToolPlanningMarkup(cleaned))
+		{
+			cleaned = StripPseudoToolTags(cleaned);
+		}
 		cleaned = RemoveTaggedBlocks(cleaned, "think");
 		cleaned = RemoveTaggedBlocks(cleaned, "thinking");
 		cleaned = RemoveTaggedBlocks(cleaned, "thought");
 		cleaned = RemoveTaggedBlocks(cleaned, "analysis");
 		cleaned = RemoveResidualReasoningTags(cleaned);
+		cleaned = RemoveDanglingReasoningTagFragments(cleaned);
 		cleaned = SplitPlainReasoningHeadings(cleaned, "").Content ?? "";
 		cleaned = CleanAssistantFinalAnswerMarkup(cleaned);
 		cleaned = RepairRuntimeSpacingArtifacts(cleaned);
 		cleaned = TrimRunawayUnpunctuatedTail(cleaned);
 		return CollapseRepeatedText(cleaned).Trim();
+	}
+
+	private string CleanAssistantVisibleStreamContent(string content, string explicitReasoning)
+	{
+		if (string.IsNullOrEmpty(content))
+		{
+			return "";
+		}
+		content = RemoveTrailingPartialReasoningOpenTag(content);
+		ChatUiCompletion split = SplitThinkTags(content, explicitReasoning ?? "", preserveWhitespace: true);
+		string visible = split.Content ?? "";
+		visible = RemoveChatUiInternalMetadataTags(visible);
+		if (LooksLikeToolPlanningMarkup(visible))
+		{
+			visible = StripPseudoToolTags(visible);
+		}
+		visible = RemoveResidualReasoningTags(visible);
+		visible = RemoveDanglingReasoningTagFragments(visible);
+		return visible;
+	}
+
+	private string RemoveTrailingPartialReasoningOpenTag(string content)
+	{
+		if (string.IsNullOrEmpty(content))
+		{
+			return content ?? "";
+		}
+		return Regex.Replace(content, "(?is)<\\s*(?:t|th|thi|thin|think|thinki|thinkin|thinking|tho|thou|thoug|though|thought|a|an|ana|anal|analy|analys|analysi|analysis)\\s*$", "", RegexOptions.CultureInvariant);
+	}
+
+	private string RemoveChatUiInternalMetadataTags(string content)
+	{
+		if (string.IsNullOrEmpty(content))
+		{
+			return content ?? "";
+		}
+		string cleaned = Regex.Replace(content, "(?is)<\\s*(?:model_name|model_id|model_info|backend_model|runtime_model|system_fingerprint)\\b[^>]*>[\\s\\S]*?(?:<\\s*/\\s*(?:model_name|model_id|model_info|backend_model|runtime_model|system_fingerprint)\\s*>|$)", "", RegexOptions.CultureInvariant);
+		cleaned = Regex.Replace(cleaned, "(?im)^\\s*(?:model_name|model_id|model_info|backend_model|runtime_model|system_fingerprint)\\s*[:=].*$", "", RegexOptions.CultureInvariant);
+		return Regex.Replace(cleaned, "\\n{3,}", "\n\n", RegexOptions.CultureInvariant);
+	}
+
+	private string RemoveDanglingReasoningTagFragments(string content)
+	{
+		if (string.IsNullOrWhiteSpace(content))
+		{
+			return content ?? "";
+		}
+		string cleaned = Regex.Replace(content, "(?im)^\\s*(?:ing|king|nking|hinking|thinking)\\s*$", "", RegexOptions.CultureInvariant);
+		cleaned = Regex.Replace(cleaned, "(?im)^\\s*</?\\s*(?:think|thinking|thought|analysis)\\s*>?\\s*$", "", RegexOptions.CultureInvariant);
+		return Regex.Replace(cleaned, "\\n{3,}", "\n\n", RegexOptions.CultureInvariant);
+	}
+
+	private bool LooksLikeToolPlanningMarkup(string content)
+	{
+		if (string.IsNullOrWhiteSpace(content))
+		{
+			return false;
+		}
+		return Regex.IsMatch(content, "(?is)<\\s*(?:tool_call|search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\\b", RegexOptions.CultureInvariant) ||
+			Regex.IsMatch(content, "(?is)<\\s*(?:arguments?|parameters?)\\b[^>]*>\\s*\\{", RegexOptions.CultureInvariant);
 	}
 
 	private string RemoveSerializedChatUiControlEvents(string content)
@@ -51105,7 +51350,11 @@ except Exception as exc:
 		AddCopilotLeaseHeaders(originalRequest, forwardRequest);
 		if (!string.IsNullOrEmpty(requestBody) && !string.Equals(originalRequest.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) && !string.Equals(originalRequest.HttpMethod, "HEAD", StringComparison.OrdinalIgnoreCase))
 		{
-			forwardRequest.Content = new StringContent(mediaType: string.IsNullOrWhiteSpace(originalRequest.ContentType) ? "application/json" : originalRequest.ContentType, content: requestBody, encoding: originalRequest.ContentEncoding ?? Encoding.UTF8);
+			string contentType = originalRequest.ContentType;
+			string mediaType = string.IsNullOrWhiteSpace(contentType)
+				? "application/json"
+				: contentType.Split(new[] { ';' }, 2)[0].Trim();
+			forwardRequest.Content = new StringContent(mediaType: string.IsNullOrWhiteSpace(mediaType) ? "application/json" : mediaType, content: requestBody, encoding: originalRequest.ContentEncoding ?? Encoding.UTF8);
 		}
 		string[] allKeys = originalRequest.Headers.AllKeys;
 		foreach (string headerName in allKeys)
@@ -51400,7 +51649,7 @@ except Exception as exc:
 			string responseModel = ExtractJsonStringProperty(chatRequestBody, "model");
 			if (string.IsNullOrWhiteSpace(responseModel))
 			{
-				responseModel = "lm-studio";
+				responseModel = "auto";
 			}
 			DateTimeOffset promptStartedUtc = DateTimeOffset.UtcNow;
 			CancellationTokenSource upstreamCts = null;
@@ -51514,8 +51763,11 @@ except Exception as exc:
 		using Utf8JsonWriter writer = new Utf8JsonWriter(stream);
 		writer.WriteStartObject();
 		JsonElement modelElement;
-		string model = ((root.TryGetProperty("model", out modelElement) && modelElement.ValueKind == JsonValueKind.String) ? modelElement.GetString() : "lm-studio");
-		writer.WriteString("model", model);
+		string model = ((root.TryGetProperty("model", out modelElement) && modelElement.ValueKind == JsonValueKind.String) ? modelElement.GetString() : null);
+		if (!string.IsNullOrWhiteSpace(model))
+		{
+			writer.WriteString("model", model);
+		}
 		writer.WriteBoolean("stream", value: true);
 		if (root.TryGetProperty("temperature", out var temperature))
 		{
@@ -52748,7 +53000,7 @@ except Exception as exc:
 			qwenToolText.Append(content);
 			return "";
 		}
-		int toolStart = content.IndexOf("<tool_call>", StringComparison.OrdinalIgnoreCase);
+		int toolStart = FindQwenToolCallOpenTag(content, 0, out var _, out var _);
 		if (toolStart < 0)
 		{
 			return content;
@@ -52756,6 +53008,31 @@ except Exception as exc:
 		sawQwenToolCalls = true;
 		qwenToolText.Append(content.Substring(toolStart));
 		return content.Substring(0, toolStart);
+	}
+
+	private bool ContainsQwenToolCallOpenTag(string content)
+	{
+		return FindQwenToolCallOpenTag(content, 0, out var _, out var _) >= 0;
+	}
+
+	private int FindQwenToolCallOpenTag(string content, int searchStart, out int openTagEnd, out string openTag)
+	{
+		openTagEnd = -1;
+		openTag = "";
+		if (string.IsNullOrEmpty(content) || searchStart >= content.Length)
+		{
+			return -1;
+		}
+		int safeStart = Math.Max(0, searchStart);
+		Match match = Regex.Match(content.Substring(safeStart), "<\\s*tool_call\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+		if (!match.Success)
+		{
+			return -1;
+		}
+		openTag = match.Value;
+		int index = safeStart + match.Index;
+		openTagEnd = index + match.Length;
+		return index;
 	}
 
 	private bool QwenToolCallTextReady(string text)
@@ -53211,7 +53488,7 @@ except Exception as exc:
 
 	private string AdaptNativeOpenAiToolCallStream(string upstreamBody, string requestBody)
 	{
-		if (string.IsNullOrWhiteSpace(upstreamBody) || upstreamBody.Contains("<tool_call>"))
+		if (string.IsNullOrWhiteSpace(upstreamBody) || ContainsQwenToolCallOpenTag(upstreamBody))
 		{
 			return upstreamBody;
 		}
@@ -53357,12 +53634,12 @@ except Exception as exc:
 
 	private string AdaptQwenToolCallStream(string upstreamBody, string requestBody)
 	{
-		if (string.IsNullOrEmpty(upstreamBody) || !upstreamBody.Contains("<tool_call>"))
+		if (string.IsNullOrEmpty(upstreamBody) || !ContainsQwenToolCallOpenTag(upstreamBody))
 		{
 			return upstreamBody;
 		}
 		string content = ExtractStreamedAssistantContent(upstreamBody);
-		if (string.IsNullOrWhiteSpace(content) || !content.Contains("<tool_call>"))
+		if (string.IsNullOrWhiteSpace(content) || !ContainsQwenToolCallOpenTag(content))
 		{
 			return upstreamBody;
 		}
@@ -60113,24 +60390,31 @@ except Exception as exc:
 		int searchStart = 0;
 		while (searchStart < content.Length)
 		{
-			int start = content.IndexOf("<tool_call>", searchStart, StringComparison.OrdinalIgnoreCase);
+			int start = FindQwenToolCallOpenTag(content, searchStart, out var openTagEnd, out var openTag);
 			if (start < 0)
 			{
 				break;
 			}
-			start += "<tool_call>".Length;
-			int end = content.IndexOf("</tool_call>", start, StringComparison.OrdinalIgnoreCase);
+			int bodyStart = openTagEnd;
+			int end = content.IndexOf("</tool_call>", bodyStart, StringComparison.OrdinalIgnoreCase);
 			if (end < 0)
 			{
-				ToolCallData rescued = TryRescueTruncatedQwenToolCall(content.Substring(start));
+				string trailingBody = content.Substring(bodyStart);
+				ToolCallData parsedTrailing = ParseQwenToolCallBlock(openTag, trailingBody);
+				if (parsedTrailing != null)
+				{
+					result.Add(parsedTrailing);
+					break;
+				}
+				ToolCallData rescued = TryRescueTruncatedQwenToolCall(trailingBody);
 				if (rescued != null)
 				{
 					result.Add(rescued);
 				}
 				break;
 			}
-			string json = content.Substring(start, end - start).Trim();
-			ToolCallData parsed = ParseQwenToolCall(json);
+			string body = content.Substring(bodyStart, end - bodyStart).Trim();
+			ToolCallData parsed = ParseQwenToolCallBlock(openTag, body);
 			if (parsed != null)
 			{
 				result.Add(parsed);
@@ -60138,6 +60422,97 @@ except Exception as exc:
 			searchStart = end + "</tool_call>".Length;
 		}
 		return result;
+	}
+
+	private ToolCallData ParseQwenToolCallBlock(string openTag, string body)
+	{
+		string cleanedBody = (body ?? "").Trim();
+		ToolCallData parsed = ParseQwenToolCall(cleanedBody);
+		string id = ExtractToolCallTagAttribute(openTag, "id") ?? "";
+		string nameFromTag = NormalizeLooseToolName(ExtractToolCallTagAttribute(openTag, "name") ?? ExtractToolCallTagAttribute(openTag, "tool") ?? ExtractToolCallTagAttribute(openTag, "function"));
+		if (parsed != null)
+		{
+			if (string.IsNullOrWhiteSpace(parsed.Id) && !string.IsNullOrWhiteSpace(id))
+			{
+				parsed.Id = id;
+			}
+			if (string.IsNullOrWhiteSpace(parsed.Name) && !string.IsNullOrWhiteSpace(nameFromTag))
+			{
+				parsed.Name = nameFromTag;
+			}
+			return parsed;
+		}
+		string name = nameFromTag;
+		if (string.IsNullOrWhiteSpace(name))
+		{
+			return null;
+		}
+		string arguments = ExtractQwenParameterTagBody(cleanedBody);
+		if (string.IsNullOrWhiteSpace(arguments))
+		{
+			arguments = ExtractFirstJsonObject(cleanedBody);
+		}
+		if (string.IsNullOrWhiteSpace(arguments))
+		{
+			arguments = cleanedBody;
+		}
+		string argumentsJson = IsValidJsonObject(arguments)
+			? NormalizeLooseToolArgumentsJson(name, arguments, default(JsonElement))
+			: BuildPseudoToolArguments(name, CleanPseudoToolTagBody(arguments));
+		if (string.IsNullOrWhiteSpace(argumentsJson))
+		{
+			argumentsJson = "{}";
+		}
+		return new ToolCallData
+		{
+			Id = string.IsNullOrWhiteSpace(id) ? ("call_" + Guid.NewGuid().ToString("N").Substring(0, 16)) : id,
+			Name = name,
+			ArgumentsJson = RepairKnownToolArguments(name, argumentsJson),
+			ArgumentsWereMalformed = true
+		};
+	}
+
+	private string ExtractToolCallTagAttribute(string openTag, string attributeName)
+	{
+		if (string.IsNullOrWhiteSpace(openTag) || string.IsNullOrWhiteSpace(attributeName))
+		{
+			return null;
+		}
+		Match match = Regex.Match(openTag, "\\b" + Regex.Escape(attributeName) + "\\s*=\\s*(?:\"(?<value>[^\"]*)\"|'(?<value>[^']*)'|(?<value>[^\\s>]+))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+		if (!match.Success)
+		{
+			return null;
+		}
+		return WebUtility.HtmlDecode(match.Groups["value"].Value ?? "").Trim();
+	}
+
+	private string ExtractQwenParameterTagBody(string body)
+	{
+		if (string.IsNullOrWhiteSpace(body))
+		{
+			return "";
+		}
+		Match match = Regex.Match(body, "(?is)<\\s*(?:arguments?|parameters?)\\b[^>]*>(?<body>[\\s\\S]*?)(?:<\\s*/\\s*(?:arguments?|parameters?)\\s*>|$)", RegexOptions.CultureInvariant);
+		return match.Success ? match.Groups["body"].Value.Trim() : "";
+	}
+
+	private string ExtractFirstJsonObject(string text)
+	{
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			return "";
+		}
+		int start = text.IndexOf('{');
+		while (start >= 0)
+		{
+			int end = FindMatchingJsonObjectEnd(text, start);
+			if (end > start)
+			{
+				return text.Substring(start, end - start + 1);
+			}
+			start = text.IndexOf('{', start + 1);
+		}
+		return "";
 	}
 
 	private IEnumerable<string> ExtractAssistantToolCandidateTexts(JsonElement message)
@@ -60177,6 +60552,22 @@ except Exception as exc:
 			return result;
 		}
 		HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+		foreach (ToolCallData qwenToolCall in ExtractQwenToolCalls(content))
+		{
+			if (qwenToolCall == null || string.IsNullOrWhiteSpace(qwenToolCall.Name) || !IsProxyOwnedResearchTool(qwenToolCall.Name))
+			{
+				continue;
+			}
+			string key = qwenToolCall.Name + "\n" + (qwenToolCall.ArgumentsJson ?? "");
+			if (seen.Add(key))
+			{
+				result.Add(qwenToolCall);
+			}
+		}
+		if (result.Count > 0)
+		{
+			return result;
+		}
 		TryParsePseudoToolTags(content, result, seen);
 		if (result.Count > 0)
 		{
@@ -60264,7 +60655,7 @@ except Exception as exc:
 				return false;
 			}
 			string arguments = "{}";
-			if (element.TryGetProperty("arguments", out var argumentsElement) || element.TryGetProperty("args", out argumentsElement) || element.TryGetProperty("parameters", out argumentsElement))
+			if (element.TryGetProperty("arguments", out var argumentsElement) || element.TryGetProperty("args", out argumentsElement) || element.TryGetProperty("parameters", out argumentsElement) || element.TryGetProperty("parameter", out argumentsElement))
 			{
 				arguments = argumentsElement.ValueKind == JsonValueKind.String ? (argumentsElement.GetString() ?? "{}") : argumentsElement.GetRawText();
 			}
@@ -62601,7 +62992,7 @@ except Exception as exc:
 		int searchStart = 0;
 		while (searchStart < content.Length)
 		{
-			int start = content.IndexOf("<tool_call>", searchStart, StringComparison.OrdinalIgnoreCase);
+			int start = FindQwenToolCallOpenTag(content, searchStart, out var _, out var _);
 			if (start < 0)
 			{
 				sb.Append(content.Substring(searchStart));
@@ -62634,7 +63025,7 @@ except Exception as exc:
 		{
 			return "";
 		}
-		return Regex.Replace(content, "(?is)<\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\\b[^>]*>[\\s\\S]*?(?:<\\s*/\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text)\\s*>|<\\s*/\\s*>|<\\s*/\\s*|$)", "", RegexOptions.CultureInvariant);
+		return Regex.Replace(content, "(?is)<\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|arguments?|parameters?)\\b[^>]*>[\\s\\S]*?(?:<\\s*/\\s*(?:search_query|internet_search|browser_open|browser_read_page|browser_click_link|browser_click|browser_type|browser_select|browser_press|browser_find_text|arguments?|parameters?)\\s*>|<\\s*/\\s*>|<\\s*/\\s*|$)", "", RegexOptions.CultureInvariant);
 	}
 
 	private string SanitizeAssistantText(string content)
@@ -62791,9 +63182,10 @@ except Exception as exc:
 		{
 			using JsonDocument document = JsonDocument.Parse(json);
 			JsonElement nameElement;
-			string name = ((document.RootElement.TryGetProperty("name", out nameElement) && nameElement.ValueKind == JsonValueKind.String) ? nameElement.GetString() : "");
+			string name = NormalizeLooseToolName((document.RootElement.TryGetProperty("name", out nameElement) && nameElement.ValueKind == JsonValueKind.String) ? nameElement.GetString() : "");
+			string id = ExtractStringProperty(document.RootElement, "id") ?? "";
 			string arguments = "{}";
-			if (document.RootElement.TryGetProperty("arguments", out var argumentsElement))
+			if (document.RootElement.TryGetProperty("arguments", out var argumentsElement) || document.RootElement.TryGetProperty("args", out argumentsElement) || document.RootElement.TryGetProperty("parameters", out argumentsElement) || document.RootElement.TryGetProperty("parameter", out argumentsElement))
 			{
 				arguments = ((argumentsElement.ValueKind == JsonValueKind.String) ? argumentsElement.GetString() : argumentsElement.GetRawText());
 			}
@@ -62808,6 +63200,7 @@ except Exception as exc:
 			}
 			return new ToolCallData
 			{
+				Id = id,
 				Name = name,
 				ArgumentsJson = repairedArguments
 			};
@@ -65970,6 +66363,44 @@ except Exception as exc:
 		return Encoding.UTF8.GetString(stream.ToArray());
 	}
 
+	private string AppendSystemAndUserMessages(string requestBody, string systemContent, string userContent)
+	{
+		using JsonDocument document = JsonDocument.Parse(requestBody);
+		using MemoryStream stream = new MemoryStream();
+		using Utf8JsonWriter writer = new Utf8JsonWriter(stream);
+		bool wroteMessages = false;
+		writer.WriteStartObject();
+		foreach (JsonProperty property in document.RootElement.EnumerateObject())
+		{
+			if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array)
+			{
+				wroteMessages = true;
+				writer.WritePropertyName("messages");
+				writer.WriteStartArray();
+				foreach (JsonElement item in property.Value.EnumerateArray())
+				{
+					item.WriteTo(writer);
+				}
+				WriteSystemAndUserMessages(writer, systemContent, userContent);
+				writer.WriteEndArray();
+			}
+			else
+			{
+				property.WriteTo(writer);
+			}
+		}
+		if (!wroteMessages)
+		{
+			writer.WritePropertyName("messages");
+			writer.WriteStartArray();
+			WriteSystemAndUserMessages(writer, systemContent, userContent);
+			writer.WriteEndArray();
+		}
+		writer.WriteEndObject();
+		writer.Flush();
+		return Encoding.UTF8.GetString(stream.ToArray());
+	}
+
 	private string AppendAssistantAndSystemMessage(string requestBody, string assistantContent, string systemContent)
 	{
 		using JsonDocument document = JsonDocument.Parse(requestBody);
@@ -66021,6 +66452,18 @@ except Exception as exc:
 		writer.WriteStartObject();
 		writer.WriteString("role", "system");
 		writer.WriteString("content", systemContent ?? "");
+		writer.WriteEndObject();
+	}
+
+	private static void WriteSystemAndUserMessages(Utf8JsonWriter writer, string systemContent, string userContent)
+	{
+		writer.WriteStartObject();
+		writer.WriteString("role", "system");
+		writer.WriteString("content", systemContent ?? "");
+		writer.WriteEndObject();
+		writer.WriteStartObject();
+		writer.WriteString("role", "user");
+		writer.WriteString("content", userContent ?? "");
 		writer.WriteEndObject();
 	}
 

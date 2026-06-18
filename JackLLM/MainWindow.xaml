@@ -223,7 +223,7 @@
                                 </Button.Effect>
                             </Button>
                             <Button x:Name="ProbeButton" Content="Probe Provider" Click="ProbeButton_Click" Margin="0,0,8,0" Visibility="Collapsed"/>
-                            <Button x:Name="OpenChatButton" Content="Open Chat UI" Click="OpenChatButton_Click" Margin="0,0,8,0" IsEnabled="False"/>
+                            <Button x:Name="OpenChatButton" Content="Web UI" Click="OpenChatButton_Click" Margin="0,0,8,0" IsEnabled="False"/>
                             <Button x:Name="OpenMagicWorkflowButton" Content="Magic Workflow" Click="OpenMagicWorkflowButton_Click" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
                             <Button x:Name="RefreshMagicWorkflowButton" Content="Workflow Status" Click="RefreshMagicWorkflowButton_Click" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
                             <ComboBox x:Name="MagicWorkflowControlComboBox" Width="132" Height="28" Margin="0,0,8,0" SelectedIndex="0" IsEnabled="False" Visibility="Collapsed">
@@ -1626,6 +1626,64 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+                    </Grid>
+                </TabItem>
+
+                <TabItem x:Name="WebUiTabItem" Header="Web UI">
+                    <Grid Margin="14,12,14,14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0"
+                                Background="{StaticResource PanelBrush}"
+                                BorderBrush="{StaticResource PanelBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12"
+                                Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Web UI"
+                                               FontSize="20"
+                                               FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="WebUiStatusText"
+                                               Text="Start the proxy to load the local Web UI."
+                                               Foreground="{StaticResource SubtleTextBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,4,0,0"/>
+                                </StackPanel>
+                                <WrapPanel Grid.Column="1"
+                                           VerticalAlignment="Center"
+                                           Margin="12,0,0,0">
+                                    <Button x:Name="WebUiReloadButton"
+                                            Content="Reload"
+                                            Click="WebUiReloadButton_Click"
+                                            Padding="10,4"
+                                            Margin="0,0,8,0"
+                                            IsEnabled="False"/>
+                                    <Button x:Name="WebUiOpenExternalButton"
+                                            Content="Open External"
+                                            Click="WebUiOpenExternalButton_Click"
+                                            Padding="10,4"
+                                            IsEnabled="False"/>
+                                </WrapPanel>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="1"
+                                Background="#070A10"
+                                BorderBrush="{StaticResource PanelBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                ClipToBounds="True">
+                            <ContentControl x:Name="WebUiBrowserHost"/>
+                        </Border>
                     </Grid>
                 </TabItem>
 

@@ -1,5 +1,6 @@
 namespace LlmRuntime.VisualStudio2026;
 
+using LlmRuntime.VisualStudio;
 using Microsoft.VisualStudio.Extensibility;
 using Microsoft.VisualStudio.Extensibility.Commands;
 
@@ -32,7 +33,7 @@ internal sealed class SocketJackSignInCommand : Command
 
     private void UpdateAuthState()
     {
-        bool signedIn = this.authService.HasStoredToken();
+        bool signedIn = this.authService.HasStoredToken() || SocketJackLocalWorkstationDiscovery.IsLikelyAvailable();
         this.SetEnabledState(true);
         this.SetVisibilityState(!signedIn);
     }
