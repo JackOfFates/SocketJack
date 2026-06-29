@@ -10,6 +10,8 @@ internal sealed class LlmHiddenReasoningStreamFilter
     private readonly StringBuilder _pending = new();
     private bool _insideHiddenReasoning;
 
+    public bool SuppressedAny { get; private set; }
+
     public string Accept(string text)
     {
         if (string.IsNullOrEmpty(text))
@@ -31,6 +33,7 @@ internal sealed class LlmHiddenReasoningStreamFilter
                 int closeIndex = FindEarliestTag(_pending, CloseTags, out int closeLength);
                 if (closeIndex >= 0)
                 {
+                    SuppressedAny = true;
                     _pending.Remove(0, closeIndex + closeLength);
                     _insideHiddenReasoning = false;
                     continue;
@@ -38,6 +41,7 @@ internal sealed class LlmHiddenReasoningStreamFilter
 
                 if (final)
                 {
+                    SuppressedAny = true;
                     _pending.Clear();
                     break;
                 }
@@ -58,6 +62,7 @@ internal sealed class LlmHiddenReasoningStreamFilter
                 }
 
                 _pending.Remove(0, openLength);
+                SuppressedAny = true;
                 _insideHiddenReasoning = true;
                 continue;
             }

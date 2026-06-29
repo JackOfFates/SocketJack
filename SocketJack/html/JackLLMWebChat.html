@@ -5516,10 +5516,6 @@ body.agent-mode .message.assistant {
     gap: 4px;
     padding-top: 1px;
 }
-.prompt-processing.compact .prompt-processing-skip,
-.prompt-processing.compact .prompt-processing-speed {
-    display: none;
-}
 .prompt-processing-control {
     min-height: 24px;
     border: 1px solid rgba(125, 211, 252, 0.28);
@@ -5540,18 +5536,6 @@ body.agent-mode .message.assistant {
 }
 .prompt-processing-control:active {
     transform: translateY(1px);
-}
-.prompt-processing-speed {
-    min-width: 34px;
-    padding-inline: 7px;
-}
-.prompt-processing-speed.active {
-    border-color: rgba(167, 243, 208, 0.82);
-    background: rgba(6, 95, 70, 0.52);
-    color: #ecfdf5;
-}
-.prompt-processing-skip {
-    flex: 0 1 auto;
 }
 .prompt-processing-action[hidden] {
     display: none;
@@ -5592,10 +5576,6 @@ body.agent-mode .message.assistant {
         scrollbar-width: none;
     }
     .prompt-processing-controls::-webkit-scrollbar {
-        display: none;
-    }
-    .prompt-processing-skip,
-    .prompt-processing-speed {
         display: none;
     }
     .prompt-processing-control {
@@ -5672,10 +5652,6 @@ body.agent-mode .prompt-processing-control:hover,
 body.agent-mode .prompt-processing-control:focus-visible {
     border-color: rgba(252, 165, 165, 0.74);
     background: rgba(127, 29, 29, 0.58);
-}
-body.agent-mode .prompt-processing-speed.active {
-    border-color: rgba(254, 202, 202, 0.84);
-    background: rgba(153, 27, 27, 0.72);
 }
 @keyframes prompt-processing-sweep {
     0% {
@@ -15856,6 +15832,10 @@ function shouldUseLocalAuthFallback() {
     return isSocketJackLocalPage() || isSocketJackFilePage();
 }
 
+function shouldHideLocalLoginUi() {
+    return !sharedView && shouldUseLocalAuthFallback();
+}
+
 function buildLocalAuthFallbackSession(reason) {
     return {
         ok: true,
@@ -16515,6 +16495,8 @@ function finishStartupLoading() {
 function setLoginGateVisible(visible, options) {
     options = options || {};
     if (!loginGate) return;
+    if (visible && shouldHideLocalLoginUi())
+        visible = false;
     loginGateOptional = !!(visible && options.optional);
     loginGate.hidden = !visible;
     document.body.classList.toggle('auth-required', !!visible);
@@ -16551,11 +16533,11 @@ function isPublicSocketJackAccount(session) {
     return !!(session && (session.isPublicAccount || type === 'public' || type === 'guest' || type === 'viewer'));
 }
 function canUseChatWithoutLogin(session) {
-    return !!(session && session.usage && session.usage.tokensRequired === false);
+    return !!(shouldHideLocalLoginUi() && session && session.usage && session.usage.tokensRequired === false);
 }
 
 function updatePremiumTokenHint() {
-    const show = !!(!sharedView && !isSocketJackAuthenticated(authSession) && usageState && usageState.tokensRequired === false);
+    const show = !!(!shouldHideLocalLoginUi() && !sharedView && !isSocketJackAuthenticated(authSession) && usageState && usageState.tokensRequired === false);
     if (premiumTokenText) {
         const ip = authSession && authSession.clientIp ? String(authSession.clientIp).trim() : '';
         const freeSession = ip && ip.toLowerCase() !== 'unknown'
@@ -16573,6 +16555,7 @@ function updatePremiumTokenHint() {
 }
 
 function showOptionalLoginGate() {
+    if (shouldHideLocalLoginUi()) return;
     if (redirectToSocketJackLogin()) return;
     setLoginGateVisible(true, { optional: true });
 }
@@ -17197,7 +17180,7 @@ function updateUsagePanel(tokenDelta) {
     if (totalCostText) totalCostText.textContent = formatUsd5(usage.totalCostUsd);
     if (taxCostText) taxCostText.textContent = formatUsd5(usage.serviceTaxCostUsd);
     usagePanel.title = buildUsageCostTooltip(usage);
-    if (logoutButton) logoutButton.hidden = !isSocketJackAuthenticated(authSession);
+    if (logoutButton) logoutButton.hidden = shouldHideLocalLoginUi() || !isSocketJackAuthenticated(authSession);
     updatePremiumTokenHint();
     if (tokenDelta > 0 && tokensRequired) showUsageToast(tokenDelta);
     updateRuntimeSummaries();
@@ -17229,7 +17212,7 @@ function updateTokenRateUi() {
     const max = Math.max(min, Number(policy.maxTokenRate || min));
     const advertised = Math.max(0, Number(policy.advertisedTokenRate || 0));
     const pending = policy.pendingRequest;
-    const authenticatedUser = !!(authSession && authSession.authenticated && authSession.authType !== 'Localhost');
+    const authenticatedUser = !!(!shouldHideLocalLoginUi() && authSession && authSession.authenticated && authSession.authType !== 'Localhost');
     const tokensRequired = !usageState || usageState.tokensRequired !== false;
     const enabled = !!policy.enabled;
 
@@ -24645,23 +24628,6 @@ function createAssistantParts(item) {
     promptUsage.className = 'prompt-processing-usage';
     const promptControls = document.createElement('div');
     promptControls.className = 'prompt-processing-controls';
-    const promptSkipButton = document.createElement('button');
-    promptSkipButton.type = 'button';
-    promptSkipButton.className = 'prompt-processing-control prompt-processing-skip';
-    promptSkipButton.textContent = 'Skip loading prompt';
-    promptSkipButton.title = 'Hide prompt-loading progress for this response without stopping generation';
-    promptControls.appendChild(promptSkipButton);
-    const promptSpeedButtons = [];
-    [2, 5, 10].forEach(speed => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'prompt-processing-control prompt-processing-speed';
-        button.textContent = speed + 'x';
-        button.dataset.promptSpeed = String(speed);
-        button.title = 'Speed up the visible prompt-loading progress to ' + speed + 'x';
-        promptSpeedButtons.push(button);
-        promptControls.appendChild(button);
-    });
     const promptStopButton = document.createElement('button');
     promptStopButton.type = 'button';
     promptStopButton.className = 'prompt-processing-control prompt-processing-action prompt-processing-stop';
@@ -24736,8 +24702,6 @@ function createAssistantParts(item) {
         promptTrackLabel,
         promptUsage,
         promptControls,
-        promptSkipButton,
-        promptSpeedButtons,
         promptStopButton,
         promptSteerButton,
         promptInterruptButton,
@@ -24792,7 +24756,8 @@ function normalizeToolCallEvent(raw) {
         argumentsPreview: coerceString(raw.argumentsPreview || raw.arguments || raw.args || '', ''),
         resultPreview: coerceString(raw.resultPreview || raw.result || raw.body || '', ''),
         sourceCount: Number(raw.sourceCount || raw.sources || 0) || 0,
-        error: coerceString(raw.error || '', '')
+        error: coerceString(raw.error || '', ''),
+        progressPercent: Number.isFinite(Number(raw.progressPercent)) ? Math.max(0, Math.min(100, Math.round(Number(raw.progressPercent)))) : -1
     };
     return normalized;
 }
@@ -25205,6 +25170,25 @@ function toolCallPrimaryDescriptor(call) {
     return cleanToolDescriptorValue(value, 120);
 }
 
+function buildPromptStatusFromToolCall(call) {
+    const normalized = normalizeToolCallEvent(call);
+    if (!normalized) return '';
+    const status = normalizeToolCallStatus(normalized.status);
+    const label = coerceString(normalized.label || normalized.name || 'tool', 'tool').trim();
+    const descriptor = toolCallPrimaryDescriptor(normalized);
+    const progress = Number(normalized.progressPercent);
+    const progressText = Number.isFinite(progress) && progress >= 0 ? ' ' + Math.round(progress) + '%' : '';
+    let prefix = 'Running ';
+    if (status === 'started')
+        prefix = 'Starting ';
+    else if (status === 'completed')
+        prefix = 'Completed ';
+    else if (status === 'failed')
+        prefix = 'Tool failed: ';
+    const text = prefix + label + progressText + (descriptor ? ': ' + descriptor : '');
+    return truncateToolPreviewText(text, 180);
+}
+
 function summarizeToolCallArguments(call) {
     const args = parseToolArgumentsPreview(call && call.argumentsPreview);
     const lines = descriptorLinesFromObject(args, 8, { includeCommandPlaceholder: true });
@@ -25486,6 +25470,12 @@ function applyToolCallEvent(streamState, event) {
     handleBrowserSkillToolEvent(event);
     streamState.toolCalls = mergeToolCallEvent(streamState.toolCalls, event);
     sessionToolCalls = mergeToolCallEvent(sessionToolCalls, event);
+    const activityStatus = buildPromptStatusFromToolCall(event);
+    const activityProgress = event && Number.isFinite(Number(event.progressPercent))
+        ? Math.max(0, Math.min(1, Number(event.progressPercent) / 100))
+        : null;
+    if (activityStatus)
+        setActiveStreamProcessing(streamState, activityProgress, activityStatus);
     const changeSessionId = streamState.sessionId || currentSessionId || '';
     const toolFileChanges = normalizeFileChangesPayload(event, changeSessionId);
     if (toolFileChanges && Array.isArray(toolFileChanges.files) && toolFileChanges.files.length) {
@@ -26014,22 +26004,6 @@ function refreshActivePromptProcessingActions() {
 function wirePromptProcessingControls(parts) {
     if (!parts || !parts.promptControls || parts.promptControlsBound) return;
     parts.promptControlsBound = true;
-    parts.promptLoadingSpeed = 1;
-    if (parts.promptSkipButton) {
-        parts.promptSkipButton.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            skipPromptLoadingDisplay(parts);
-        });
-    }
-    (parts.promptSpeedButtons || []).forEach(button => {
-        button.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            const speed = Math.max(1, Number(button.dataset.promptSpeed || 1));
-            setPromptLoadingDisplaySpeed(parts, speed);
-        });
-    });
     if (parts.promptStopButton) {
         parts.promptStopButton.addEventListener('click', event => {
             event.preventDefault();
@@ -26052,54 +26026,15 @@ function wirePromptProcessingControls(parts) {
             interruptCurrentGenerationWithDraft();
         });
     }
-    updatePromptLoadingSpeedControls(parts);
     updatePromptProcessingActions(parts);
-}
-
-function setPromptLoadingDisplaySpeed(parts, speed) {
-    if (!parts || !parts.promptStatus) return;
-    parts.promptLoadingSpeed = Math.max(1, Math.min(10, Number(speed || 1)));
-    updatePromptLoadingSpeedControls(parts);
-    if (typeof parts.promptProgress === 'number')
-        setPromptProcessing(parts, parts.promptProgress, parts.promptLastStatus || '', {
-            loaded: parts.promptTokensLoaded,
-            total: parts.promptTokensTotal
-        });
-}
-
-function updatePromptLoadingSpeedControls(parts) {
-    if (!parts || !parts.promptStatus) return;
-    const speed = Math.max(1, Math.min(10, Number(parts.promptLoadingSpeed || 1)));
-    parts.promptStatus.dataset.promptSpeed = String(speed);
-    if (parts.promptFill)
-        parts.promptFill.style.animationDuration = Math.max(130, Math.round(1300 / speed)) + 'ms';
-    (parts.promptSpeedButtons || []).forEach(button => {
-        const active = Number(button.dataset.promptSpeed || 1) === speed;
-        button.classList.toggle('active', active);
-        button.setAttribute('aria-pressed', active ? 'true' : 'false');
-    });
-}
-
-function skipPromptLoadingDisplay(parts) {
-    if (!parts || !parts.promptStatus) return;
-    parts.promptLoadingSkipped = true;
-    parts.promptStatus.classList.add('prompt-loading-skipped');
-    parts.promptStatus.hidden = true;
-    window.clearTimeout(parts.promptProcessingHideTimer);
-    window.clearTimeout(parts.promptProcessingFadeTimer);
 }
 
 function showPromptProcessing(parts) {
     if (!parts || !parts.promptStatus || parts.promptProcessingRetired) return;
-    if (parts.promptLoadingSkipped) {
-        parts.promptStatus.hidden = true;
-        return;
-    }
     window.clearTimeout(parts.promptProcessingHideTimer);
     window.clearTimeout(parts.promptProcessingFadeTimer);
     parts.promptStatus.hidden = false;
     parts.promptStatus.classList.remove('fading-out');
-    updatePromptLoadingSpeedControls(parts);
     updatePromptProcessingActions(parts);
 }
 
@@ -26179,16 +26114,11 @@ function renderAssistantPlainTextFallback(container, text) {
 function setPromptProcessing(parts, progress, status, tokenProgress) {
     if (!parts || !parts.promptStatus) return;
     if (parts.promptProcessingRetired) return;
-    if (parts.promptLoadingSkipped) {
-        parts.promptStatus.hidden = true;
-        return;
-    }
     const shouldScroll = isMessagesNearEnd();
     window.clearTimeout(parts.promptProcessingHideTimer);
     window.clearTimeout(parts.promptProcessingFadeTimer);
     parts.promptStatus.hidden = false;
     parts.promptStatus.classList.remove('fading-out');
-    updatePromptLoadingSpeedControls(parts);
     parts.promptLastStatus = status || '';
     updatePromptTokenProgress(parts, tokenProgress);
     let numeric = normalizeProgressValue(progress);
@@ -26198,7 +26128,7 @@ function setPromptProcessing(parts, progress, status, tokenProgress) {
         numeric = parts.promptProgress;
     else if (numeric !== null)
         parts.promptProgress = numeric;
-    const displayNumeric = acceleratePromptLoadingProgressForDisplay(parts, numeric);
+    const displayNumeric = numeric;
     parts.promptStatus.classList.toggle('compact', !!parts.hasOutputStarted);
     parts.promptStatus.classList.toggle('has-progress', displayNumeric !== null);
     const statusParts = splitProgressStatus(status);
@@ -26226,16 +26156,13 @@ function setPromptProcessing(parts, progress, status, tokenProgress) {
 
 function compactPromptProcessing(parts) {
     if (!parts || !parts.promptStatus || parts.promptProcessingRetired) return;
-    if (parts.promptLoadingSkipped) {
-        parts.promptStatus.hidden = true;
-        return;
-    }
     parts.hasOutputStarted = true;
     parts.promptStatus.hidden = false;
     parts.promptStatus.classList.add('compact');
+    const progress = normalizeProgressValue(typeof parts.promptProgress === 'number' ? parts.promptProgress : null);
     if (parts.promptStatusText)
-        parts.promptStatusText.textContent = buildPromptProgressStatusText(parts, 'Receiving response...', acceleratePromptLoadingProgressForDisplay(parts, typeof parts.promptProgress === 'number' ? parts.promptProgress : null));
-    updatePromptProcessingTrackLabel(parts, acceleratePromptLoadingProgressForDisplay(parts, typeof parts.promptProgress === 'number' ? parts.promptProgress : null));
+        parts.promptStatusText.textContent = buildPromptProgressStatusText(parts, 'Receiving response...', progress);
+    updatePromptProcessingTrackLabel(parts, progress);
     updatePromptProcessingActions(parts);
 }
 
@@ -26245,11 +26172,6 @@ function hidePromptProcessing(parts) {
     updatePromptProcessingActions(parts);
     window.clearTimeout(parts.promptProcessingHideTimer);
     window.clearTimeout(parts.promptProcessingFadeTimer);
-    if (parts.promptLoadingSkipped) {
-        parts.promptStatus.hidden = true;
-        parts.promptStatus.classList.remove('fading-out');
-        return;
-    }
     parts.promptStatus.hidden = false;
     parts.promptStatus.classList.remove('fading-out');
     parts.promptProcessingHideTimer = window.setTimeout(() => {
@@ -26294,15 +26216,6 @@ function normalizeProgressValue(progress) {
     if (value > 1 && value <= 100)
         value /= 100;
     return Math.max(0, Math.min(1, value));
-}
-
-function acceleratePromptLoadingProgressForDisplay(parts, progress) {
-    const numeric = normalizeProgressValue(progress);
-    if (numeric === null) return null;
-    const speed = parts ? Math.max(1, Math.min(10, Number(parts.promptLoadingSpeed || 1))) : 1;
-    if (speed <= 1 || numeric >= 1)
-        return numeric;
-    return Math.min(0.99, numeric * speed);
 }
 
 function updatePromptTokenProgress(parts, tokenProgress) {
@@ -26378,9 +26291,6 @@ function updatePromptProcessingTrackLabel(parts, progress) {
     const pieces = [];
     if (typeof progress === 'number' && Number.isFinite(progress))
         pieces.push(formatProgressPercent(progress));
-    const speed = Math.max(1, Math.min(10, Number(parts.promptLoadingSpeed || 1)));
-    if (speed > 1 && !parts.hasOutputStarted)
-        pieces.push(speed + 'x');
     const total = Math.max(0, Math.round(Number(parts.promptTokensTotal || 0)));
     const loaded = Math.max(0, Math.round(Number(parts.promptTokensLoaded || 0)));
     if (total > 0)

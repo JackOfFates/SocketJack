@@ -33,7 +33,7 @@ When the local workstation is detected, the extension hides the SocketJack.com s
 ## What Gets Configured
 
 - Solution-local MCP config at `.vs/mcp.json`.
-- Visual Studio Ollama BYOM routing to the local JackLLM model-runtime endpoint or the packaged loopback bridge when needed.
+- Visual Studio Ollama BYOM routing to `http://127.0.0.1:11436`, which JackLLM serves through `/v1/models` and `/v1/chat/completions`, or the packaged loopback bridge when needed.
 - Local JackLLM copilot duplicator state through `http://127.0.0.1:11436/api/copilot-duplicator` when available.
 
 SocketJack.com account features are only for optional remote/server workflows. They are not required for local JackLLM Workstation configuration.

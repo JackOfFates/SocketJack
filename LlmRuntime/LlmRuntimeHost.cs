@@ -3407,27 +3407,36 @@ public sealed class LlmRuntimeHost : IDisposable
 
             string streamFinishReason = "stop";
             var hiddenReasoningFilter = new LlmHiddenReasoningStreamFilter();
+            bool wroteVisibleText = false;
             await foreach (var token in Registry.StreamChatAsync(request, cancellationToken).ConfigureAwait(false))
             {
                 if (!string.IsNullOrWhiteSpace(token.FinishReason))
                     streamFinishReason = token.FinishReason;
 
+                completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
                 string visibleTokenText = hiddenReasoningFilter.Accept(token.Text);
-                if (!string.IsNullOrEmpty(visibleTokenText))
+                if (ShouldEmitVisibleAssistantText(visibleTokenText, wroteVisibleText))
                 {
-                    completionTokens += LlmInferenceMetrics.EstimateTokens(visibleTokenText);
+                    wroteVisibleText = true;
                     WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, visibleTokenText, null, null, null)));
                 }
             }
 
             string trailingVisibleText = hiddenReasoningFilter.Flush();
-            if (!string.IsNullOrEmpty(trailingVisibleText))
+            if (ShouldEmitVisibleAssistantText(trailingVisibleText, wroteVisibleText))
             {
-                completionTokens += LlmInferenceMetrics.EstimateTokens(trailingVisibleText);
+                wroteVisibleText = true;
                 WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, trailingVisibleText, null, null, null)));
             }
 
             stopwatch.Stop();
+            string finalStreamFinishReason = NormalizeFinishReasonForBudget(streamFinishReason, request.MaxTokens, completionTokens);
+            if (!wroteVisibleText && hiddenReasoningFilter.SuppressedAny && completionTokens > 0)
+            {
+                string fallbackText = BuildNoVisibleAssistantTextMessage(finalStreamFinishReason);
+                WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, fallbackText, null, null, null)));
+            }
+
             var usage = new
             {
                 prompt_tokens = LlmInferenceMetrics.EstimateTokens(string.Join(Environment.NewLine, request.Messages.Select(message => message.Content))),
@@ -3441,7 +3450,6 @@ public sealed class LlmRuntimeHost : IDisposable
                 managed_memory_bytes = GC.GetTotalMemory(false)
             };
 
-            string finalStreamFinishReason = NormalizeFinishReasonForBudget(streamFinishReason, request.MaxTokens, completionTokens);
             WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", null, finalStreamFinishReason, new { usage, stats, session = ToSessionCompatibilityPayload(request, usage.prompt_tokens, completionTokens) })));
             WriteSseData(stream, "[DONE]");
         }
@@ -3630,12 +3638,12 @@ public sealed class LlmRuntimeHost : IDisposable
                 if (!string.IsNullOrWhiteSpace(token.FinishReason))
                     finishReason = token.FinishReason;
 
+                completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
                 string visibleTokenText = hiddenReasoningFilter.Accept(token.Text);
-                if (string.IsNullOrEmpty(visibleTokenText))
+                if (!ShouldEmitVisibleAssistantText(visibleTokenText, output.Length > 0))
                     continue;
 
                 output.Append(visibleTokenText);
-                completionTokens += LlmInferenceMetrics.EstimateTokens(visibleTokenText);
                 WriteSseEvent(stream, "response.output_text.delta", new
                 {
                     type = "response.output_text.delta",
@@ -3647,10 +3655,9 @@ public sealed class LlmRuntimeHost : IDisposable
             }
 
             string trailingVisibleText = hiddenReasoningFilter.Flush();
-            if (!string.IsNullOrEmpty(trailingVisibleText))
+            if (ShouldEmitVisibleAssistantText(trailingVisibleText, output.Length > 0))
             {
                 output.Append(trailingVisibleText);
-                completionTokens += LlmInferenceMetrics.EstimateTokens(trailingVisibleText);
                 WriteSseEvent(stream, "response.output_text.delta", new
                 {
                     type = "response.output_text.delta",
@@ -3662,12 +3669,27 @@ public sealed class LlmRuntimeHost : IDisposable
             }
 
             stopwatch.Stop();
+            string finalFinishReason = NormalizeFinishReasonForBudget(finishReason, request.MaxTokens, completionTokens);
+            if (output.Length == 0 && hiddenReasoningFilter.SuppressedAny && completionTokens > 0)
+            {
+                string fallbackText = BuildNoVisibleAssistantTextMessage(finalFinishReason);
+                output.Append(fallbackText);
+                WriteSseEvent(stream, "response.output_text.delta", new
+                {
+                    type = "response.output_text.delta",
+                    response_id = id,
+                    output_index = 0,
+                    content_index = 0,
+                    delta = fallbackText
+                });
+            }
+
             var result = new LlmChatResult
             {
                 Model = request.Model,
                 Content = output.ToString(),
-                FinishReason = NormalizeFinishReasonForBudget(finishReason, request.MaxTokens, completionTokens),
-                Metrics = LlmInferenceMetrics.FromText(request, output.ToString(), stopwatch.Elapsed)
+                FinishReason = finalFinishReason,
+                Metrics = BuildInferenceMetrics(request, completionTokens, stopwatch.Elapsed)
             };
             WriteSseEvent(stream, "response.completed", new
             {
@@ -5073,6 +5095,7 @@ public sealed class LlmRuntimeHost : IDisposable
         long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         string finishReason = NormalizeFinishReasonForBudget(result.FinishReason, request.MaxTokens, result.Metrics.CompletionTokens);
         string visibleContent = StripHiddenReasoningTags(result.Content);
+        visibleContent = EnsureVisibleAssistantText(visibleContent, finishReason, result.Metrics.CompletionTokens, result.ToolCalls.Count);
         var output = new List<object>();
 
         if (!string.IsNullOrEmpty(visibleContent) || result.ToolCalls.Count == 0)
@@ -5178,6 +5201,7 @@ public sealed class LlmRuntimeHost : IDisposable
             ? result.FinishReason
             : NormalizeFinishReasonForBudget(result.FinishReason, request.MaxTokens, result.Metrics.CompletionTokens);
         string visibleContent = StripHiddenReasoningTags(result.Content);
+        visibleContent = EnsureVisibleAssistantText(visibleContent, finishReason, result.Metrics.CompletionTokens, result.ToolCalls.Count);
         object message = result.ToolCalls.Count == 0
             ? new
             {
@@ -5261,6 +5285,35 @@ public sealed class LlmRuntimeHost : IDisposable
             "",
             RegexOptions.CultureInvariant);
         return string.IsNullOrWhiteSpace(cleaned) ? "" : cleaned;
+    }
+
+    private static string EnsureVisibleAssistantText(string visibleContent, string finishReason, int completionTokens, int toolCallCount)
+    {
+        if (!string.IsNullOrWhiteSpace(visibleContent) || toolCallCount > 0 || completionTokens <= 0)
+            return visibleContent;
+
+        return BuildNoVisibleAssistantTextMessage(finishReason);
+    }
+
+    private static string BuildNoVisibleAssistantTextMessage(string finishReason) =>
+        "The model used the response budget without producing visible assistant text. Retry with a higher `max_tokens` value or choose a non-reasoning model." +
+        (string.IsNullOrWhiteSpace(finishReason) ? "" : " (`finish_reason: " + finishReason + "`)");
+
+    private static bool ShouldEmitVisibleAssistantText(string text, bool alreadyWroteVisibleText) =>
+        !string.IsNullOrEmpty(text) && (alreadyWroteVisibleText || !string.IsNullOrWhiteSpace(text));
+
+    private static LlmInferenceMetrics BuildInferenceMetrics(LlmChatRequest request, int completionTokens, TimeSpan elapsed)
+    {
+        int promptTokens = LlmInferenceMetrics.EstimateTokens(string.Join(Environment.NewLine, request.Messages.Select(message => message.Content)));
+        double elapsedSeconds = Math.Max(elapsed.TotalSeconds, 0.001d);
+        return new LlmInferenceMetrics
+        {
+            PromptTokens = promptTokens,
+            CompletionTokens = Math.Max(0, completionTokens),
+            ElapsedSeconds = elapsed.TotalSeconds,
+            TokensPerSecond = Math.Max(0, completionTokens) / elapsedSeconds,
+            ManagedMemoryBytes = GC.GetTotalMemory(false)
+        };
     }
 
     private static string NormalizeFinishReasonForBudget(string? finishReason, int maxTokens, int completionTokens)

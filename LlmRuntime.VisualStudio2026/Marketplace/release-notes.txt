@@ -1,11 +1,29 @@
-0.2.54
+0.2.57
 
+- Fixes local JackLLM Workstation BYOM when Visual Studio normalizes the Ollama URL to `http://127.0.0.1:11436/v1`.
+- Adds direct Workstation `/v1/models`, `/v1/chat/completions`, and `/v1/responses` routes so local mode does not need socketjack.com login or proxy routing.
+- Configures local Workstation selections as the root `http://127.0.0.1:11436` endpoint while preserving friendly model names such as Qwen3.5 instead of generated `Unsloth_Gguf_*` labels.
+
+0.2.56
+
+- Fixes local JackLLM BYOM routing by using the OpenAI-compatible `/api/model-runtime/v1` base URL, preventing Visual Studio Copilot `404 Not Found` chat failures.
+- Updates the local JackLLM model-runtime bridge to tolerate Visual Studio URL composition variants such as `/api/model-runtime/v1/v1/chat/completions`.
+- Shows real model ids for generated Unsloth GGUF loader labels, so model names display as entries such as Qwen3.5 instead of `Unsloth_Gguf_*`.
 - Detects a local JackLLM Workstation at http://127.0.0.1:11436 and allows local Copilot/MCP configuration without SocketJack.com sign-in.
 - Retargets the VSIX installation and prerequisite lower bounds to the Marketplace-supported stable Visual Studio 17.14 API range while remaining installable on VS 2026.
 - Starts the packaged local BYOM bridge from the actual selected Visual Studio Ollama BYOM URL/model when that differs from SocketJack's cached selection.
 - Adds Session Sync GitHub repository import with a compact Import Repo dialog, optional one-time private repo token, and inline import errors.
 - Imports default-branch GitHub ZIP archives on the JackLLM server, checks extracted size before writing, extracts into a repo-named session folder, and deletes the temporary ZIP.
 - Pulls imported JackLLM sandbox files back into the Visual Studio solution through the Auto API file-download route.
+- Includes the current SocketJack Copilot MCP bridge build.
+
+0.2.55
+
+- Fixes local JackLLM BYOM routing by using the OpenAI-compatible `/api/model-runtime/v1` base URL, preventing Visual Studio Copilot `404 Not Found` chat failures.
+- Shows real model ids for generated Unsloth GGUF loader labels, so model names display as entries such as Qwen3.5 instead of `Unsloth_Gguf_*`.
+- Detects a local JackLLM Workstation at http://127.0.0.1:11436 and allows local Copilot/MCP configuration without SocketJack.com sign-in.
+- Retargets the VSIX installation and prerequisite lower bounds to the Marketplace-supported stable Visual Studio 17.14 API range while remaining installable on VS 2026.
+- Starts the packaged local BYOM bridge from the actual selected Visual Studio Ollama BYOM URL/model when that differs from SocketJack's cached selection.
 - Includes the current SocketJack Copilot MCP bridge build.
 
 0.2.52

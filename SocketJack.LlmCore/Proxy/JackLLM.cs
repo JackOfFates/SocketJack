@@ -5091,7 +5091,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("POST", "/api/model-runtime/models/convert", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/models/convert", request.Body, cancellationToken));
 		server.Map("GET", "/api/model-runtime/models/convert/status", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/models/convert/status" + (string.IsNullOrWhiteSpace(request.QueryString) ? "" : ("?" + request.QueryString)), null, cancellationToken));
 		server.Map("POST", "/api/model-runtime/models/convert/cancel", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/models/convert/cancel" + (string.IsNullOrWhiteSpace(request.QueryString) ? "" : ("?" + request.QueryString)), request.Body, cancellationToken));
-		server.Map("POST", "/api/model-runtime/v1/chat/completions", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/v1/chat/completions", request.Body, cancellationToken));
+		foreach (string openAiModelsAlias in new[] { "/models", "/v1/models", "/api/model-runtime/v1/models", "/api/model-runtime/v1/v1/models", "/api/model-runtime/openai/v1/models", "/api/model-runtime/v1/openai/v1/models" })
+			server.Map("GET", openAiModelsAlias, (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/v1/models", null, cancellationToken));
+		foreach (string chatCompletionsAlias in new[] { "/chat/completions", "/v1/chat/completions", "/api/model-runtime/v1/chat/completions", "/api/model-runtime/chat/completions", "/api/model-runtime/v1/v1/chat/completions", "/api/model-runtime/openai/v1/chat/completions", "/api/model-runtime/v1/openai/v1/chat/completions" })
+			server.MapStream("POST", chatCompletionsAlias, async (NetworkConnection connection, HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken) => await ForwardLocalModelRuntimeStreamRequestAsync("POST", "/v1/chat/completions", request, stream, cancellationToken));
+		foreach (string responsesAlias in new[] { "/v1/responses", "/api/model-runtime/v1/responses", "/api/model-runtime/v1/v1/responses", "/api/model-runtime/openai/v1/responses", "/api/model-runtime/v1/openai/v1/responses" })
+			server.MapStream("POST", responsesAlias, async (NetworkConnection connection, HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken) => await ForwardLocalModelRuntimeStreamRequestAsync("POST", "/v1/responses", request, stream, cancellationToken));
 		server.Map("GET", "/api/model-runtime/compatibility", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/runtime/compatibility" + (string.IsNullOrWhiteSpace(request.QueryString) ? "" : ("?" + request.QueryString)), null, cancellationToken));
 		server.Map("POST", "/api/model-runtime/compatibility/config", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/runtime/compatibility/config", request.Body, cancellationToken));
 		server.Map("POST", "/api/model-runtime/compatibility/reset", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/runtime/compatibility/reset", request.Body, cancellationToken));
@@ -5262,6 +5267,22 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("GET", "/api/chat-session-comments", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionCommentsGetRequest(connection, request));
 		server.Map("POST", "/api/chat-session-comments", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionCommentSaveRequest(connection, request));
 		server.Map("POST", "/api/chat-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatFileUploadRequest(connection, request));
+		server.Map("GET", "/api/session-sync/files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFilesRequest(request));
+		server.Map("POST", "/api/session-sync/files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFileUploadRequest(request));
+		server.Map("OPTIONS", "/api/session-sync/files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("GET", "/api/session-sync/file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFileDownloadRequest(request));
+		server.Map("DELETE", "/api/session-sync/file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFileDeleteRequest(request));
+		server.Map("OPTIONS", "/api/session-sync/file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("POST", "/api/session-sync/github-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionGitHubImportRequestAsync(request, cancellationToken).GetAwaiter().GetResult());
+		server.Map("OPTIONS", "/api/session-sync/github-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("GET", "/auto/session-files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFilesRequest(request));
+		server.Map("POST", "/auto/session-files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFileUploadRequest(request));
+		server.Map("OPTIONS", "/auto/session-files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("GET", "/auto/session-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFileDownloadRequest(request));
+		server.Map("DELETE", "/auto/session-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFileDeleteRequest(request));
+		server.Map("OPTIONS", "/auto/session-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
+		server.Map("POST", "/auto/session-github-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionGitHubImportRequestAsync(request, cancellationToken).GetAwaiter().GetResult());
+		server.Map("OPTIONS", "/auto/session-github-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("POST", "/api/chat-github-repo-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatGitHubRepoImportRequestAsync(connection, request, cancellationToken).GetAwaiter().GetResult());
 		server.Map("OPTIONS", "/api/chat-github-repo-import", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("POST", "/api/chat-file-undo", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatUiFileUndoRequest(connection, request));
@@ -5771,6 +5792,96 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				}
 			});
 		}
+	}
+
+	private async Task ForwardLocalModelRuntimeStreamRequestAsync(string method, string pathAndQuery, HttpRequest originalRequest, ChunkedStream output, CancellationToken cancellationToken)
+	{
+		string normalizedMethod = string.IsNullOrWhiteSpace(method) ? "GET" : method.Trim().ToUpperInvariant();
+		string routeLabel = normalizedMethod + " " + TruncateForLog(pathAndQuery ?? "", 160);
+		output.ContentType = "text/event-stream; charset=utf-8";
+		output.LowLatencyMode = true;
+		output.SetHeader("Cache-Control", "no-cache, no-store, no-transform");
+		output.SetHeader("X-Accel-Buffering", "no");
+		try
+		{
+			EnsureLmStudioForPromptAsync().GetAwaiter().GetResult();
+			ILmVsProxyModelRuntime runtime = GetEffectiveLocalModelRuntime();
+			string runtimeDisplayName = GetModelRuntimeDisplayName(runtime);
+			string runtimeBaseUrl = BuildLocalModelRuntimeBaseUrl();
+			string url = CombineOpenAiUpstreamUrl(runtimeBaseUrl, pathAndQuery);
+			string requestBody = PrepareModelRuntimeForwardBody(pathAndQuery, originalRequest?.Body ?? "", runtimeDisplayName);
+			LogMessage("[Model Runtime] " + runtimeDisplayName + " streaming " + routeLabel + " requested.");
+			using HttpRequestMessage request = new HttpRequestMessage(new HttpMethod(normalizedMethod), url);
+			if (!string.Equals(normalizedMethod, "GET", StringComparison.OrdinalIgnoreCase))
+			{
+				request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+			}
+			using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+			timeout.CancelAfter(GetModelRuntimeStreamForwardTimeout(pathAndQuery));
+			using HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+			string contentType = response.Content?.Headers?.ContentType?.ToString() ?? "";
+			if (!string.IsNullOrWhiteSpace(contentType))
+			{
+				output.ContentType = contentType;
+			}
+			if (!response.IsSuccessStatusCode)
+			{
+				string responseBody = response.Content == null ? "" : await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+				LogMessage("[Model Runtime] " + runtimeDisplayName + " streaming " + routeLabel + " returned HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " " + TruncateForLog(responseBody, 500));
+				output.ContentType = "text/event-stream; charset=utf-8";
+				output.Write("data: " + JsonSerializer.Serialize(new
+				{
+					error = new
+					{
+						message = string.IsNullOrWhiteSpace(responseBody) ? runtimeDisplayName + " returned HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) : responseBody,
+						type = "model_runtime_error",
+						code = "model_runtime_http_error"
+					}
+				}) + "\n\n");
+				return;
+			}
+			if (response.Content == null)
+			{
+				output.Write("data: [DONE]\n\n");
+				return;
+			}
+			using Stream responseStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+			byte[] buffer = new byte[8192];
+			while (true)
+			{
+				int read = await responseStream.ReadAsync(buffer, 0, buffer.Length, timeout.Token).ConfigureAwait(false);
+				if (read <= 0)
+				{
+					break;
+				}
+				output.Write(buffer, 0, read);
+			}
+			LogMessage("[Model Runtime] " + runtimeDisplayName + " streaming " + routeLabel + " completed.");
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Model Runtime] streaming " + routeLabel + " failed: " + ex.Message);
+			output.ContentType = "text/event-stream; charset=utf-8";
+			output.Write("data: " + JsonSerializer.Serialize(new
+			{
+				error = new
+				{
+					message = ex.Message,
+					type = "model_runtime_error",
+					code = "model_runtime_unavailable"
+				}
+			}) + "\n\n");
+		}
+	}
+
+	private TimeSpan GetModelRuntimeStreamForwardTimeout(string pathAndQuery)
+	{
+		string path = (pathAndQuery ?? "").ToLowerInvariant();
+		if (path.Contains("/chat/completions") || path.Contains("/responses"))
+		{
+			return _promptTimeout;
+		}
+		return GetModelRuntimeForwardTimeout(pathAndQuery);
 	}
 
 	private string HandleWorkstationStateRequest(NetworkConnection connection, HttpRequest request)
@@ -25708,6 +25819,448 @@ except Exception as exc:
 		return file;
 	}
 
+	private string HandleLocalAutoSessionFilesRequest(HttpRequest request)
+	{
+		AddWebAuthCorsHeaders(request);
+		try
+		{
+			string sessionId = SanitizeFileName(GetQueryParameter(request, "sessionId"));
+			if (string.IsNullOrWhiteSpace(sessionId))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "sessionId is required.");
+			}
+
+			List<object> files = ListLocalAutoSessionFileEntries(sessionId).Cast<object>().ToList();
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				authenticated = true,
+				username = "local-workstation",
+				sessionId = sessionId,
+				count = files.Count,
+				files = files
+			});
+		}
+		catch (Exception ex)
+		{
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandleLocalAutoSessionFileUploadRequest(HttpRequest request)
+	{
+		AddWebAuthCorsHeaders(request);
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
+			JsonElement root = document.RootElement;
+			string sessionId = SanitizeFileName(ExtractStringProperty(root, "sessionId") ?? "");
+			string relativePath = SanitizeLocalAutoSessionRelativeFilePath(FirstNonEmpty(
+				ExtractStringProperty(root, "fileName"),
+				ExtractStringProperty(root, "relativePath"),
+				ExtractStringProperty(root, "path"),
+				"upload.bin"));
+			string dataUrl = ExtractStringProperty(root, "dataUrl") ?? ExtractStringProperty(root, "dataURL") ?? "";
+			string mimeType = FirstNonEmpty(ExtractStringProperty(root, "mimeType"), ExtractStringProperty(root, "type"), "application/octet-stream");
+			if (string.IsNullOrWhiteSpace(sessionId))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "sessionId is required.");
+			}
+			if (string.IsNullOrWhiteSpace(relativePath))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "fileName is required.");
+			}
+
+			byte[] bytes = DecodeLocalAutoSessionUploadBytes(root, dataUrl, ref mimeType);
+			if (bytes.LongLength > 52_428_800L)
+			{
+				return BuildJsonError(request, 413, "Payload Too Large", "Auto session uploads are limited to 50 MB.");
+			}
+
+			string sessionRoot = GetLocalAutoSessionFilesDirectory(sessionId);
+			string targetPath = Path.GetFullPath(Path.Combine(sessionRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+			if (!IsPathInsideRoot(targetPath, sessionRoot))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "Upload target is outside the current session files.");
+			}
+
+			Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? sessionRoot);
+			if (File.Exists(targetPath))
+			{
+				targetPath = BuildUniqueLocalAutoSessionFilePath(sessionRoot, targetPath);
+			}
+
+			File.WriteAllBytes(targetPath, bytes);
+			DateTime utcNow = DateTime.UtcNow;
+			File.SetLastWriteTimeUtc(targetPath, utcNow);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				sessionId = sessionId,
+				file = BuildLocalAutoSessionFileEntry(sessionRoot, targetPath)
+			});
+		}
+		catch (JsonException ex)
+		{
+			return BuildJsonError(request, 400, "Bad Request", "Invalid session file upload JSON: " + ex.Message);
+		}
+		catch (FormatException ex)
+		{
+			return BuildJsonError(request, 400, "Bad Request", "Invalid base64 upload data: " + ex.Message);
+		}
+		catch (Exception ex)
+		{
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private object HandleLocalAutoSessionFileDownloadRequest(HttpRequest request)
+	{
+		AddWebAuthCorsHeaders(request);
+		try
+		{
+			string sessionId = SanitizeFileName(GetQueryParameter(request, "sessionId"));
+			string relativePath = SanitizeLocalAutoSessionRelativeFilePath(FirstNonEmpty(GetQueryParameter(request, "name"), GetQueryParameter(request, "path")));
+			if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(relativePath))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "sessionId and name are required.");
+			}
+
+			string sessionRoot = GetLocalAutoSessionFilesDirectory(sessionId);
+			string fullPath = Path.GetFullPath(Path.Combine(sessionRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+			if (!IsPathInsideRoot(fullPath, sessionRoot))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "Requested file is outside the current session files.");
+			}
+			if (!File.Exists(fullPath))
+			{
+				return BuildJsonError(request, 404, "Not Found", "Session file was not found.");
+			}
+
+			return FileResponse.FromFile(fullPath);
+		}
+		catch (Exception ex)
+		{
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandleLocalAutoSessionFileDeleteRequest(HttpRequest request)
+	{
+		AddWebAuthCorsHeaders(request);
+		try
+		{
+			string sessionId = SanitizeFileName(GetQueryParameter(request, "sessionId"));
+			string relativePath = SanitizeLocalAutoSessionRelativeFilePath(FirstNonEmpty(GetQueryParameter(request, "name"), GetQueryParameter(request, "path")));
+			if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(relativePath))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "sessionId and name are required.");
+			}
+
+			string sessionRoot = GetLocalAutoSessionFilesDirectory(sessionId);
+			string fullPath = Path.GetFullPath(Path.Combine(sessionRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+			if (!IsPathInsideRoot(fullPath, sessionRoot))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "Requested file is outside the current session files.");
+			}
+			if (File.Exists(fullPath))
+			{
+				File.Delete(fullPath);
+				RemoveEmptyLocalAutoSessionDirectories(sessionRoot, Path.GetDirectoryName(fullPath));
+			}
+
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				sessionId = sessionId,
+				deleted = relativePath
+			});
+		}
+		catch (Exception ex)
+		{
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private async Task<string> HandleLocalAutoSessionGitHubImportRequestAsync(HttpRequest request, CancellationToken cancellationToken)
+	{
+		AddWebAuthCorsHeaders(request);
+		string tempZipPath = "";
+		long zipSizeBytes = 0L;
+		long extractedSizeBytes = 0L;
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
+			JsonElement root = document.RootElement;
+			string sessionId = SanitizeFileName(ExtractStringProperty(root, "sessionId") ?? "");
+			string repositoryInput = FirstNonEmpty(ExtractStringProperty(root, "repository"), ExtractStringProperty(root, "repo"));
+			string githubToken = FirstNonEmpty(ExtractStringProperty(root, "githubToken"), ExtractStringProperty(root, "token"));
+			if (string.IsNullOrWhiteSpace(sessionId))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "sessionId is required.");
+			}
+			if (!TryNormalizeGitHubRepositoryInput(repositoryInput, out string owner, out string repoName, out string repositoryError))
+			{
+				return BuildJsonError(request, 400, "Bad Request", repositoryError);
+			}
+
+			using HttpClientHandler handler = new HttpClientHandler
+			{
+				AllowAutoRedirect = false
+			};
+			using System.Net.Http.HttpClient githubClient = new System.Net.Http.HttpClient(handler)
+			{
+				Timeout = TimeSpan.FromMinutes(10)
+			};
+
+			ChatGitHubRepositoryMetadata repository = await FetchGitHubRepositoryMetadataAsync(githubClient, owner, repoName, githubToken, cancellationToken);
+			tempZipPath = Path.Combine(Path.GetTempPath(), "jackllm-auto-session-github-" + Guid.NewGuid().ToString("N") + ".zip");
+			zipSizeBytes = await DownloadGitHubArchiveToTempFileAsync(githubClient, repository.ZipballUri, githubToken, tempZipPath, cancellationToken);
+
+			string sessionRoot = GetLocalAutoSessionFilesDirectory(sessionId);
+			string targetFolder = BuildUniqueLocalAutoSessionFolder(sessionRoot, repoName);
+			List<object> importedFiles = new List<object>();
+			using (FileStream zipStream = File.OpenRead(tempZipPath))
+			using (ZipArchive archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false))
+			{
+				string archiveRoot = FindGitHubArchiveWrapperRoot(archive);
+				List<ChatGitHubImportEntry> entries = BuildGitHubImportEntries(archive, archiveRoot, targetFolder, out extractedSizeBytes);
+				if (entries.Count == 0)
+				{
+					return BuildJsonError(request, 400, "Bad Request", "The GitHub archive did not contain any importable files.");
+				}
+
+				foreach (ChatGitHubImportEntry entry in entries)
+				{
+					cancellationToken.ThrowIfCancellationRequested();
+					if (entry.Length > 52_428_800L)
+					{
+						return BuildJsonError(request, 413, "Payload Too Large", "Repository file is too large to import: " + entry.RelativePath);
+					}
+
+					string targetPath = Path.GetFullPath(Path.Combine(sessionRoot, entry.TargetRelativePath));
+					if (!IsPathInsideRoot(targetPath, sessionRoot))
+					{
+						return BuildJsonError(request, 400, "Bad Request", "Repository archive contains an invalid file path.");
+					}
+
+					Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? sessionRoot);
+					using (Stream input = entry.Entry.Open())
+					using (FileStream output = File.Create(targetPath))
+					{
+						await input.CopyToAsync(output, 81920, cancellationToken);
+					}
+
+					importedFiles.Add(BuildLocalAutoSessionFileEntry(sessionRoot, targetPath));
+				}
+			}
+
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				sessionId = sessionId,
+				repository = repository.FullName,
+				branch = repository.DefaultBranch,
+				targetFolder = targetFolder.Replace('\\', '/'),
+				zipSizeBytes = zipSizeBytes,
+				extractedSizeBytes = extractedSizeBytes,
+				fileCount = importedFiles.Count,
+				files = importedFiles
+			});
+		}
+		catch (ChatGitHubImportException ex)
+		{
+			SetHttpStatus(request, ex.StatusCode, ex.ReasonPhrase);
+			return JsonSerializer.Serialize(new { ok = false, error = ex.Message, errorCode = ex.ErrorCode, zipSizeBytes = zipSizeBytes, extractedSizeBytes = extractedSizeBytes });
+		}
+		catch (JsonException ex)
+		{
+			return BuildJsonError(request, 400, "Bad Request", "Invalid GitHub import JSON: " + ex.Message);
+		}
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			return BuildJsonError(request, 500, "Internal Server Error", "GitHub repository import failed: " + ex.Message);
+		}
+		finally
+		{
+			if (!string.IsNullOrWhiteSpace(tempZipPath))
+			{
+				try
+				{
+					if (File.Exists(tempZipPath))
+					{
+						File.Delete(tempZipPath);
+					}
+				}
+				catch
+				{
+				}
+			}
+		}
+	}
+
+	private string GetLocalAutoSessionFilesRootDirectory()
+	{
+		string root = Path.Combine(_chatSessionRoot, "AutoSessionFiles");
+		Directory.CreateDirectory(root);
+		return root;
+	}
+
+	private string GetLocalAutoSessionFilesDirectory(string sessionId)
+	{
+		string root = GetLocalAutoSessionFilesRootDirectory();
+		string safeSessionId = SanitizeFileName(string.IsNullOrWhiteSpace(sessionId) ? "default-session" : sessionId.Trim());
+		string directory = Path.GetFullPath(Path.Combine(root, safeSessionId));
+		if (!IsPathInsideRoot(directory, root))
+		{
+			throw new InvalidOperationException("Session file directory is outside the local session root.");
+		}
+		Directory.CreateDirectory(directory);
+		return directory;
+	}
+
+	private List<object> ListLocalAutoSessionFileEntries(string sessionId)
+	{
+		string sessionRoot = GetLocalAutoSessionFilesDirectory(sessionId);
+		if (!Directory.Exists(sessionRoot))
+		{
+			return new List<object>();
+		}
+
+		return SafeEnumerateFiles(sessionRoot, "*", SearchOption.AllDirectories)
+			.Where(path => File.Exists(path))
+			.Select(path => BuildLocalAutoSessionFileEntry(sessionRoot, path))
+			.OrderBy(entry => GetLocalAutoSessionEntryPath(entry), StringComparer.OrdinalIgnoreCase)
+			.Cast<object>()
+			.ToList();
+	}
+
+	private object BuildLocalAutoSessionFileEntry(string sessionRoot, string fullPath)
+	{
+		FileInfo info = new FileInfo(fullPath);
+		string relativePath = SanitizeLocalAutoSessionRelativeFilePath(Path.GetRelativePath(sessionRoot, fullPath));
+		return new
+		{
+			name = relativePath,
+			relativePath = relativePath,
+			path = relativePath,
+			fileName = Path.GetFileName(relativePath),
+			sizeBytes = info.Exists ? info.Length : 0L,
+			size = info.Exists ? info.Length : 0L,
+			lastWriteUtc = info.Exists ? new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero) : DateTimeOffset.MinValue,
+			updatedUtc = info.Exists ? new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero) : DateTimeOffset.MinValue,
+			sha256 = info.Exists ? ComputeFileSha256(fullPath) : "",
+			mimeType = GetChatFileDownloadMimeType(Path.GetExtension(fullPath))
+		};
+	}
+
+	private static string GetLocalAutoSessionEntryPath(object entry)
+	{
+		return entry?.GetType().GetProperty("relativePath")?.GetValue(entry)?.ToString() ?? "";
+	}
+
+	private byte[] DecodeLocalAutoSessionUploadBytes(JsonElement root, string dataUrl, ref string mimeType)
+	{
+		if (!string.IsNullOrWhiteSpace(dataUrl))
+		{
+			int comma = dataUrl.IndexOf(',');
+			string header = comma >= 0 ? dataUrl.Substring(0, comma) : "";
+			string encoded = comma >= 0 ? dataUrl.Substring(comma + 1) : dataUrl;
+			if (header.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+			{
+				int separator = header.IndexOf(';');
+				string headerMime = separator > 5 ? header.Substring(5, separator - 5) : header.Substring(5);
+				if (!string.IsNullOrWhiteSpace(headerMime))
+				{
+					mimeType = headerMime;
+				}
+			}
+			return Convert.FromBase64String(encoded);
+		}
+
+		string base64 = FirstNonEmpty(ExtractStringProperty(root, "base64"), ExtractStringProperty(root, "data"));
+		if (!string.IsNullOrWhiteSpace(base64))
+		{
+			return Convert.FromBase64String(base64);
+		}
+
+		return Encoding.UTF8.GetBytes(FirstNonEmpty(ExtractStringProperty(root, "content"), ExtractStringProperty(root, "text")));
+	}
+
+	private string BuildUniqueLocalAutoSessionFilePath(string sessionRoot, string targetPath)
+	{
+		string directory = Path.GetDirectoryName(targetPath) ?? sessionRoot;
+		string name = Path.GetFileNameWithoutExtension(targetPath);
+		string extension = Path.GetExtension(targetPath);
+		for (int i = 2; i < 1000; i++)
+		{
+			string candidate = Path.GetFullPath(Path.Combine(directory, name + "-" + i.ToString(CultureInfo.InvariantCulture) + extension));
+			if (IsPathInsideRoot(candidate, sessionRoot) && !File.Exists(candidate))
+			{
+				return candidate;
+			}
+		}
+		throw new InvalidOperationException("Could not allocate a unique session file path.");
+	}
+
+	private string BuildUniqueLocalAutoSessionFolder(string sessionRoot, string folderName)
+	{
+		string baseName = SanitizeFileName(string.IsNullOrWhiteSpace(folderName) ? "repository" : folderName);
+		if (string.IsNullOrWhiteSpace(baseName))
+		{
+			baseName = "repository";
+		}
+		for (int i = 1; i < 1000; i++)
+		{
+			string candidate = i == 1 ? baseName : baseName + "-" + i.ToString(CultureInfo.InvariantCulture);
+			string candidatePath = Path.GetFullPath(Path.Combine(sessionRoot, candidate));
+			if (IsPathInsideRoot(candidatePath, sessionRoot) && !Directory.Exists(candidatePath) && !File.Exists(candidatePath))
+			{
+				return candidate;
+			}
+		}
+		throw new InvalidOperationException("Could not allocate a unique repository import folder.");
+	}
+
+	private void RemoveEmptyLocalAutoSessionDirectories(string sessionRoot, string directory)
+	{
+		while (!string.IsNullOrWhiteSpace(directory) && IsPathInsideRoot(directory, sessionRoot) && !PathsEqual(directory, sessionRoot))
+		{
+			try
+			{
+				if (Directory.EnumerateFileSystemEntries(directory).Any())
+				{
+					return;
+				}
+				Directory.Delete(directory);
+				directory = Path.GetDirectoryName(directory);
+			}
+			catch
+			{
+				return;
+			}
+		}
+	}
+
+	private string SanitizeLocalAutoSessionRelativeFilePath(string value)
+	{
+		List<string> parts = new List<string>();
+		foreach (string rawPart in (value ?? "").Replace('\\', '/').Split(new char[1] { '/' }, StringSplitOptions.RemoveEmptyEntries))
+		{
+			string part = rawPart.Trim();
+			if (part.Length == 0 || part == "." || part == "..")
+			{
+				continue;
+			}
+			parts.Add(SanitizeFileName(part));
+		}
+		return string.Join("/", parts);
+	}
+
 	private async Task<object> HandleChatGitHubRepoImportRequestAsync(NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken)
 	{
 		string tempZipPath = "";
@@ -41309,6 +41862,7 @@ except Exception as exc:
 				}
 				Action<ChatUiToolCallStreamEvent> emitToolCall = delegate(ChatUiToolCallStreamEvent toolEvent)
 				{
+					UpdateActivePromptSessionPhase(promptSessionId, BuildChatUiToolActivityStatus(toolEvent));
 					WriteChatUiToolCallStreamEvent(output, toolEvent);
 				};
 				bool flag = agentMode && permissions.fileDownloads;
@@ -41335,7 +41889,13 @@ except Exception as exc:
 					string toolRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, streamOwnerKey);
 					toolRequestJson = AddProxyResearchTools(toolRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, streamOwnerKey);
 					promptSessionId = promptSessionId ?? BeginActivePromptSession(agentMode ? "Web UI Agent" : (browserMode ? "Web UI Browser Skill" : "Web UI Terminal"), streamOwnerKey, toolRequestJson, sessionId, sharedParticipantKey);
-					string agentStatus = (imageRequest ? ("Processing image in " + selectedRuntimeDisplayName + "...") : "Processing prompt...");
+					string agentStatus = imageRequest
+						? ("Processing image in " + selectedRuntimeDisplayName + "...")
+						: (agentMode
+							? ("Running agent prompt on " + selectedRuntimeDisplayName + "...")
+							: (browserMode
+								? ("Running Browser Skill prompt on " + selectedRuntimeDisplayName + "...")
+								: ("Running terminal prompt on " + selectedRuntimeDisplayName + "...")));
 					WriteChatUiProgressWithUsage(output, streamOwnerKey, usageMeter, null, "prompt_processing", agentStatus, 0L, 0L);
 					StringBuilder liveContent = new StringBuilder();
 					StringBuilder liveReasoning = new StringBuilder();
@@ -43397,6 +43957,39 @@ except Exception as exc:
 		{
 			emitToolCall(toolEvent);
 		}
+	}
+
+	private string BuildChatUiToolActivityStatus(ChatUiToolCallStreamEvent toolEvent)
+	{
+		if (toolEvent == null)
+		{
+			return "";
+		}
+		string label = FirstNonEmpty(toolEvent.Label, toolEvent.Name, "tool").Trim();
+		string status = (toolEvent.Status ?? "").Trim().ToLowerInvariant();
+		string prefix;
+		switch (status)
+		{
+		case "started":
+			prefix = "Starting ";
+			break;
+		case "completed":
+		case "complete":
+		case "done":
+		case "success":
+			prefix = "Completed ";
+			break;
+		case "failed":
+		case "error":
+		case "blocked":
+			prefix = "Tool failed: ";
+			break;
+		default:
+			prefix = "Running ";
+			break;
+		}
+		string progress = toolEvent.ProgressPercent >= 0 ? (" " + Math.Max(0, Math.Min(100, toolEvent.ProgressPercent)).ToString(CultureInfo.InvariantCulture) + "%") : "";
+		return TruncateForLog(prefix + label + progress + ".", 180);
 	}
 
 	private static bool IsProxyOwnedMutatingVsTool(string toolName)

@@ -560,7 +560,7 @@ public static class SocketJackLocalWorkstationDiscovery
             Id = "local-jackllm-workstation",
             DisplayName = "Local JackLLM Workstation",
             Endpoint = endpoint,
-            OpenAiBaseUrl = endpoint.TrimEnd('/') + "/api/model-runtime",
+            OpenAiBaseUrl = endpoint.TrimEnd('/'),
             Online = true,
             HostResponding = true,
             ToolsAdvertised = true,
@@ -1245,10 +1245,11 @@ public sealed class SocketJackModelDiscoveryService
             if (!disabled && (isLoaded || webChatDynamicLoadable))
                 enabled = true;
 
+            string displayName = ChooseDisplayName(Id, DisplayName);
             return new SocketJackModelCandidate
             {
                 Id = Id,
-                DisplayName = string.IsNullOrWhiteSpace(DisplayName) ? Id : DisplayName,
+                DisplayName = displayName,
                 Type = Type,
                 ChatCapable = chatCapable,
                 SupportsTools = supportsTools,
@@ -1266,6 +1267,22 @@ public sealed class SocketJackModelDiscoveryService
         }
 
         private static string FirstNonEmpty(string current, string next) => string.IsNullOrWhiteSpace(current) ? next : current;
+
+        private static string ChooseDisplayName(string id, string displayName)
+        {
+            if (string.IsNullOrWhiteSpace(displayName) || IsGeneratedLoaderDisplayName(displayName))
+            {
+                return id;
+            }
+
+            return displayName;
+        }
+
+        private static bool IsGeneratedLoaderDisplayName(string displayName)
+        {
+            string normalized = (displayName ?? "").Trim().Replace('-', '_');
+            return normalized.StartsWith("Unsloth_Gguf_", StringComparison.OrdinalIgnoreCase);
+        }
 
         private void MergeDisabledFlag(bool? disabled)
         {
@@ -1678,7 +1695,7 @@ public sealed class SocketJackEndpointAccessProber
         if (string.IsNullOrWhiteSpace(endpoint))
             return new SocketJackEndpointAccessResult(false, "Endpoint is empty.", "");
 
-        foreach (string path in new[] { "/models", "/api/models", "/api/model-runtime/models", "/v1/models", "/api/tags" })
+        foreach (string path in new[] { "../models", "/models", "/api/models", "/api/model-runtime/models", "/v1/models", "/api/tags" })
         {
             try
             {

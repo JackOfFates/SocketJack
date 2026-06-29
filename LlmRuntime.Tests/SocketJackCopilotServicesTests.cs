@@ -229,6 +229,31 @@ public sealed class SocketJackCopilotServicesTests
     }
 
     [TestMethod]
+    public void ModelDiscoveryUsesModelIdInsteadOfGeneratedUnslothGgufDisplayName()
+    {
+        string compact = """
+        {
+          "models": [
+            {
+              "id": "Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF",
+              "displayName": "Unsloth_Gguf_7Xj9Wwh",
+              "supportsTools": true,
+              "supportsVision": true,
+              "isLoaded": true,
+              "enabled": true
+            }
+          ]
+        }
+        """;
+
+        IReadOnlyList<SocketJackModelCandidate> models = SocketJackModelDiscoveryService.ParseAndMergeModels(compact, null);
+
+        SocketJackModelCandidate qwen = models.Single();
+        Assert.AreEqual("Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF", qwen.DisplayName);
+        Assert.IsTrue(qwen.IsSelectable, qwen.EligibilityReason);
+    }
+
+    [TestMethod]
     public void BrowserCacheRoundTripsServersAndModels()
     {
         string temp = Path.Combine(Path.GetTempPath(), "socketjack-browser-cache-" + Guid.NewGuid().ToString("N") + ".json");
@@ -314,7 +339,7 @@ public sealed class SocketJackCopilotServicesTests
         Assert.IsNotNull(server);
         Assert.AreEqual("local-jackllm-workstation", server.Id);
         Assert.AreEqual("http://127.0.0.1:11436", server.EffectiveEndpoint);
-        Assert.AreEqual("http://127.0.0.1:11436/api/model-runtime", server.ModelApiBaseUrl);
+        Assert.AreEqual("http://127.0.0.1:11436", server.ModelApiBaseUrl);
         Assert.IsTrue(server.CanUseForCopilot);
         CollectionAssert.Contains(server.AvailableModels.ToList(), "qwen-tools");
         CollectionAssert.Contains(server.AvailableModels.ToList(), "local-second");
@@ -585,8 +610,8 @@ public sealed class SocketJackCopilotServicesTests
         using var client = new HttpClient(new RouteResponseHandler(request =>
         {
             string path = request.RequestUri?.AbsolutePath ?? "";
-            if (path.Equals("/api/model-runtime/models", StringComparison.OrdinalIgnoreCase) ||
-                path.Equals("/api/model-runtime/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+            if (path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("/chat/completions", StringComparison.OrdinalIgnoreCase))
             {
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
@@ -595,11 +620,37 @@ public sealed class SocketJackCopilotServicesTests
         }));
         var prober = new SocketJackEndpointAccessProber(client);
 
-        SocketJackEndpointAccessResult modelRoute = await prober.ProbeAsync("http://127.0.0.1:11436/api/model-runtime");
-        SocketJackEndpointAccessResult chatRoute = await prober.ProbeChatAsync("http://127.0.0.1:11436/api/model-runtime", "qwen-tools");
+        SocketJackEndpointAccessResult modelRoute = await prober.ProbeAsync("http://127.0.0.1:11436");
+        SocketJackEndpointAccessResult chatRoute = await prober.ProbeChatAsync("http://127.0.0.1:11436", "qwen-tools");
 
         Assert.IsTrue(modelRoute.CanUseDirectEndpoint);
         Assert.IsTrue(chatRoute.CanUseDirectEndpoint);
+        Assert.AreEqual("/v1/models", modelRoute.MatchedPath);
+        Assert.AreEqual("/chat/completions", chatRoute.MatchedPath);
+    }
+
+    [TestMethod]
+    public async Task EndpointAccessProberAcceptsDuplicatedV1LocalModelRuntimeChatPath()
+    {
+        using var client = new HttpClient(new RouteResponseHandler(request =>
+        {
+            string path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.Equals("/api/model-runtime/models", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("/api/model-runtime/v1/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+        var prober = new SocketJackEndpointAccessProber(client);
+
+        SocketJackEndpointAccessResult modelRoute = await prober.ProbeAsync("http://127.0.0.1:11436/api/model-runtime/v1");
+        SocketJackEndpointAccessResult chatRoute = await prober.ProbeChatAsync("http://127.0.0.1:11436/api/model-runtime/v1", "qwen-tools");
+
+        Assert.IsTrue(modelRoute.CanUseDirectEndpoint);
+        Assert.IsTrue(chatRoute.CanUseDirectEndpoint);
+        Assert.AreEqual("/v1/chat/completions", chatRoute.MatchedPath);
     }
 
     [TestMethod]

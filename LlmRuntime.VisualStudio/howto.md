@@ -4,7 +4,7 @@
 
 - Visual Studio 2022 with Copilot MCP support, or Visual Studio 2026 Insiders.
 - GitHub Copilot installed and signed in.
-- For Visual Studio 2026 Insiders, install `LlmRuntime.VisualStudio2026\bin\Release\net8.0-windows8.0\LlmRuntime.VisualStudio2026.vsix` version `0.2.54` or later.
+- For Visual Studio 2026 Insiders, install `LlmRuntime.VisualStudio2026\bin\Release\net8.0-windows8.0\LlmRuntime.VisualStudio2026.vsix` version `0.2.57` or later.
 - The SocketJack VSIX installed, then Visual Studio restarted or reloaded.
 - JackLLM Workstation running locally at `http://127.0.0.1:11436`.
 - A solution open in Visual Studio. The extension writes solution-local MCP config to `.vs/mcp.json`.
@@ -84,15 +84,17 @@ The extension checks whether the selected endpoint exposes an OpenAI-compatible 
 
 - `/chat/completions`
 - `/v1/chat/completions`
-- `/api/model-runtime/v1/chat/completions` for local JackLLM Workstation.
+- `/api/model-runtime/v1/chat/completions` as a legacy local JackLLM Workstation alias.
 
 Model list routes like `/api/models` and `/api/model-runtime/models` are used for discovery, but they are not enough by themselves for Copilot chat.
 
 If the direct local chat route works, Visual Studio Ollama BYOM is configured to use the local JackLLM model-runtime endpoint directly:
 
 ```text
-http://127.0.0.1:11436/api/model-runtime
+http://127.0.0.1:11436
 ```
+
+Visual Studio may call that Ollama BYOM endpoint as `http://127.0.0.1:11436/v1`. JackLLM Workstation serves `/v1/models`, `/v1/chat/completions`, and the older `/api/model-runtime/v1/...` aliases directly.
 
 If Visual Studio needs a loopback OpenAI-compatible bridge, the extension starts the packaged local bridge and configures Ollama BYOM to that local address instead. The local bridge routes through JackLLM Workstation at:
 
@@ -231,7 +233,7 @@ Useful settings:
 - Restart Visual Studio after installing the VSIX.
 - Check `Extensions > SocketJack > SocketJack Copilot Servers`.
 - Confirm the VSIX is installed under `Extensions > Manage Extensions`.
-- In Visual Studio 2026 Insiders, confirm `SocketJack for Visual Studio 2026` version `0.2.54` or later is installed.
+- In Visual Studio 2026 Insiders, confirm `SocketJack for Visual Studio 2026` version `0.2.57` or later is installed.
 
 ### Tool Window Shows A XAML Frame Exception
 
@@ -266,9 +268,9 @@ The model must support chat and tools, and it must be loaded or dynamically load
 
 ### Direct Local Address Fails
 
-For local JackLLM Workstation, confirm `http://127.0.0.1:11436/api/model-runtime/v1/chat/completions` is reachable through the workstation and that the selected model is loaded or loadable.
+For local JackLLM Workstation, confirm `http://127.0.0.1:11436/v1/chat/completions` is reachable through the workstation and that the selected model is loaded or loadable.
 
-If Copilot reports an OpenAI `404 (Not Found)` after configuring an optional remote URL such as `https://socketjack.com/proxy/<SERVERNAME>`, install version `0.2.54` or later and configure the same server/model again.
+If Copilot reports an OpenAI `404 (Not Found)` after configuring local JackLLM Workstation, install version `0.2.57` or later, restart the Workstation, and configure the local server again. Visual Studio may normalize the Ollama BYOM URL to `http://127.0.0.1:11436/v1`; JackLLM Workstation now serves that route directly through `/v1/models` and `/v1/chat/completions`.
 
 For optional remote servers, the extension checks the actual OpenAI chat paths and SocketJack fallback API before writing BYOM. If `https://socketjack.com/proxy/<SERVERNAME>` cannot expose chat completions directly, keep `Use local WebSocket proxy fallback` enabled. The extension will write BYOM to a local address like `http://127.0.0.1:11574`, stream Visual Studio's OpenAI chat-completions requests through SocketJack `/api/chat-stream`, and route model access through:
 

@@ -8,7 +8,7 @@ Connect Visual Studio Copilot to a local JackLLM Workstation. The local workstat
 
 - Detect a local JackLLM Workstation at `http://127.0.0.1:11436`.
 - Configure Copilot-compatible MCP entries from local workstation models.
-- Configure Visual Studio's Ollama Bring Your Own Model route to the local JackLLM model-runtime endpoint when supported.
+- Configure Visual Studio's Ollama Bring Your Own Model route to local JackLLM at `http://127.0.0.1:11436`.
 - Fall back to the bundled SocketJack bridge for local MCP and model proxy routing when Visual Studio needs a loopback OpenAI-compatible bridge.
 - Keep local Copilot/MCP setup independent of SocketJack.com login.
 - Optional remote/server workflows can still use SocketJack.com account features when you choose to use them.

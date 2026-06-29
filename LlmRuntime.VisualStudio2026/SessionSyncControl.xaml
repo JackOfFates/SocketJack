@@ -15,11 +15,29 @@
       <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,8"
                  IsEnabled="{Binding SessionControlsEnabled}">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-          <Button Content="Import Repo"
-                  MinWidth="92"
-                  Margin="4,0,0,0"
-                  Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
-                  Command="{Binding ShowImportRepoCommand}" />
+          <Menu Margin="4,0,0,0"
+                Background="#303030"
+                Foreground="#E8E8E8">
+            <Menu.Resources>
+              <Style TargetType="{x:Type MenuItem}">
+                <Setter Property="Background" Value="#303030" />
+                <Setter Property="Foreground" Value="#E8E8E8" />
+                <Setter Property="BorderBrush" Value="#585858" />
+                <Setter Property="Padding" Value="10,4" />
+              </Style>
+              <Style TargetType="{x:Type Separator}">
+                <Setter Property="Background" Value="#585858" />
+                <Setter Property="Margin" Value="4,3" />
+              </Style>
+            </Menu.Resources>
+            <MenuItem Header="Manage">
+              <MenuItem Header="Import Repo"
+                        Command="{Binding ShowImportRepoCommand}" />
+              <Separator />
+              <MenuItem Header="Reset Session"
+                        Command="{Binding ResetSessionCommand}" />
+            </MenuItem>
+          </Menu>
           <Button Content="Refresh"
                   MinWidth="72"
                   Margin="4,0,0,0"
@@ -93,9 +111,9 @@
               </Grid.ContextMenu>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="20" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="110" />
-                <ColumnDefinition Width="120" />
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="124" />
+                <ColumnDefinition Width="132" />
                 <ColumnDefinition Width="96" />
               </Grid.ColumnDefinitions>
               <TextBlock Grid.Column="0"
@@ -128,7 +146,7 @@
                          TextTrimming="CharacterEllipsis"
                          VerticalAlignment="Center" />
               <ProgressBar Grid.Column="3"
-                           Width="104"
+                           Width="112"
                            Height="8"
                            Minimum="0"
                            Maximum="100"
@@ -253,55 +271,13 @@
                 BorderThickness="1"
                 Padding="16">
           <StackPanel>
-            <TextBlock Text="SocketJack.com Sign-in"
+            <TextBlock Text="Local Workstation Required"
                        FontSize="18"
                        FontWeight="SemiBold"
                        Margin="0,0,0,10" />
-            <TextBlock Text="Sign in to sync Visual Studio solution files with an Auto Tools session."
+            <TextBlock Text="Start JackLLM Workstation at 127.0.0.1:11436 to create and sync Visual Studio session files locally."
                        TextWrapping="Wrap"
                        Margin="0,0,0,12" />
-            <Button Content="Sign in with browser"
-                    MinWidth="144"
-                    HorizontalAlignment="Left"
-                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
-                    Command="{Binding BrowserSignInCommand}" />
-            <Button Content="That didn't work, let me log in here."
-                    MinWidth="220"
-                    HorizontalAlignment="Left"
-                    Margin="0,8,0,12"
-                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
-                    Command="{Binding ShowInlineSignInCommand}" />
-            <StackPanel>
-              <StackPanel.Style>
-                <Style TargetType="{x:Type StackPanel}">
-                  <Setter Property="Visibility" Value="Collapsed" />
-                  <Style.Triggers>
-                    <DataTrigger Binding="{Binding IsInlineSignInVisible}" Value="True">
-                      <Setter Property="Visibility" Value="Visible" />
-                    </DataTrigger>
-                  </Style.Triggers>
-                </Style>
-              </StackPanel.Style>
-              <TextBlock Text="User name" />
-              <TextBox MinHeight="26"
-                       Margin="0,4,0,10"
-                       Text="{Binding SignInUserName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                       Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
-              <TextBlock Text="Password" />
-              <TextBox MinHeight="26"
-                       Margin="0,4,0,10"
-                       Text="{Binding SignInPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                       FontFamily="Wingdings"
-                       Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
-              <CheckBox Content="Remember this sign-in"
-                        Margin="0,0,0,12"
-                        IsChecked="{Binding RememberSignIn, Mode=TwoWay}" />
-              <Button Content="Sign in here"
-                      MinWidth="96"
-                      HorizontalAlignment="Left"
-                      Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
-                      Command="{Binding SignInCommand}" />
-            </StackPanel>
             <TextBlock Text="{Binding SignInError}"
                        Foreground="#FFB4A9"
                        TextWrapping="Wrap"

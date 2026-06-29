@@ -640,7 +640,7 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
-    public async Task ChatCompletionsEndpoint_DropsWhitespaceOnlyReasoningResidue()
+    public async Task ChatCompletionsEndpoint_ReportsHiddenOnlyReasoningInsteadOfBlankContent()
     {
         string root = LlmModelRegistryTests.CreateTempDirectory();
         int port = NextPort();
@@ -659,7 +659,38 @@ public sealed class LlmRuntimeHostEndpointTests
             string body = await response.Content.ReadAsStringAsync();
             using var document = JsonDocument.Parse(body);
 
-            Assert.AreEqual("", document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString());
+            string content = document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+            StringAssert.Contains(content, "without producing visible assistant text");
+            Assert.IsFalse(content.Contains("hidden reasoning", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ChatCompletionsEndpoint_StreamsHiddenOnlyReasoningFallback()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "HideWhitespaceStream-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(new LlmRuntimeOptions { ModelRoot = root }, new FakeBackendFactory("\n<think>hidden reasoning"));
+            registry.Load("HideWhitespaceStream-Q4_0");
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/chat/completions",
+                new StringContent("{\"model\":\"HideWhitespaceStream-Q4_0\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}", Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+
+            StringAssert.Contains(body, "without producing visible assistant text");
+            Assert.IsFalse(body.Contains("hidden reasoning", StringComparison.OrdinalIgnoreCase));
+            StringAssert.Contains(body, "data: [DONE]");
         }
         finally
         {
