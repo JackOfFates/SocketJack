@@ -1,0 +1,171 @@
+{
+  "name": "jackllm-workstation",
+  "displayName": "JackLLM Workstation",
+  "description": "Use local JackLLM Workstation models in VS Code Chat and agent mode.",
+  "version": "0.1.0",
+  "publisher": "SocketJack",
+  "license": "MIT",
+  "icon": "assets/socketjack.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SocketJack/SocketJack"
+  },
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "jackllm",
+    "socketjack",
+    "local llm",
+    "language model provider",
+    "copilot"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "jackllm",
+        "displayName": "JackLLM Workstation",
+        "managementCommand": "jackllm.manage"
+      }
+    ],
+    "commands": [
+      {
+        "command": "jackllm.session.refresh",
+        "title": "Refresh Session Explorer",
+        "category": "JackLLM",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "jackllm.session.ignoreSelected",
+        "title": "Ignore Selected Files",
+        "category": "JackLLM",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "jackllm.session.unignoreSelected",
+        "title": "Unignore Selected Files",
+        "category": "JackLLM"
+      },
+      {
+        "command": "jackllm.session.ignoreFileTypes",
+        "title": "Ignore File Types (*.ext)",
+        "category": "JackLLM"
+      },
+      {
+        "command": "jackllm.session.ignoreRegex",
+        "title": "Ignore Files Matching Regex",
+        "category": "JackLLM",
+        "icon": "$(regex)"
+      },
+      {
+        "command": "jackllm.manage",
+        "title": "JackLLM: Manage Workstation Provider",
+        "category": "JackLLM"
+      },
+      {
+        "command": "jackllm.refreshModels",
+        "title": "JackLLM: Refresh Models",
+        "category": "JackLLM",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "jackllm.setApiKey",
+        "title": "JackLLM: Set API Key",
+        "category": "JackLLM"
+      },
+      {
+        "command": "jackllm.openWorkstation",
+        "title": "JackLLM: Open Workstation Web UI",
+        "category": "JackLLM"
+      },
+      {
+        "command": "jackllm.showStatus",
+        "title": "JackLLM: Show Connection Status",
+        "category": "JackLLM"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "jackllm",
+          "title": "JackLLM",
+          "icon": "assets/socketjack.png"
+        }
+      ]
+    },
+    "views": {
+      "jackllm": [
+        {
+          "id": "jackllm.sessionExplorer",
+          "name": "Session Explorer"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "jackllm.session.refresh", "when": "view == jackllm.sessionExplorer", "group": "navigation" },
+        { "command": "jackllm.session.ignoreSelected", "when": "view == jackllm.sessionExplorer", "group": "navigation" },
+        { "command": "jackllm.session.ignoreRegex", "when": "view == jackllm.sessionExplorer", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "jackllm.session.ignoreSelected", "when": "view == jackllm.sessionExplorer", "group": "inline" },
+        { "command": "jackllm.session.unignoreSelected", "when": "view == jackllm.sessionExplorer && viewItem == jackllmSessionIgnoredItem", "group": "jackllm@1" },
+        { "command": "jackllm.session.ignoreFileTypes", "when": "view == jackllm.sessionExplorer", "group": "jackllm@2" },
+        { "command": "jackllm.session.ignoreRegex", "when": "view == jackllm.sessionExplorer", "group": "jackllm@3" }
+      ]
+    },
+    "configuration": {
+      "title": "JackLLM Workstation",
+      "properties": {
+        "jackllm.endpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:11436",
+          "scope": "application",
+          "description": "JackLLM Workstation HTTP endpoint. The extension uses its /api/models and /v1/chat/completions routes."
+        },
+        "jackllm.requestTimeoutSeconds": {
+          "type": "number",
+          "default": 600,
+          "minimum": 10,
+          "maximum": 3600,
+          "scope": "application",
+          "description": "Maximum duration of a model chat request."
+        },
+        "jackllm.defaultContextTokens": {
+          "type": "number",
+          "default": 32768,
+          "minimum": 1024,
+          "scope": "application",
+          "description": "Fallback context size when Workstation does not report one for a model."
+        },
+        "jackllm.defaultOutputTokens": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 256,
+          "scope": "application",
+          "description": "Maximum output token count advertised to VS Code and sent to Workstation."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "vscode:prepublish": "npm run check && npm run compile",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.104.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  }
+}

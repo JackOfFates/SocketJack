@@ -96,6 +96,8 @@ internal static class Program
                 StoreLocalWebAuthAccounts = options.StoreLocalWebAuthAccounts,
                 UseSocketJackMasterAuth = options.UseSocketJackMasterAuth,
                 PublicAccessEnabled = options.PublicAccessEnabled,
+                BrowserPrivateNetworkAccessEnabled = options.BrowserPrivateNetworkAccessEnabled,
+                AuthTokensInQueryEnabled = options.AuthTokensInQueryEnabled,
                 WebChatModelLoadApiEnabled = options.WebChatModelLoadApiEnabled,
                 ChatModel = options.ChatModel,
                 CopilotDuplicatorEnabled = options.CopilotDuplicatorEnabled,
@@ -290,7 +292,9 @@ internal static class Program
         public bool IncludeLmStudioModels { get; private set; } = ReadBool("JACKLLM_INCLUDE_LMSTUDIO_MODELS", true);
         public bool WebChatModelLoadApiEnabled { get; private set; } = ReadBool("JACKLLM_WEBCHAT_MODEL_LOAD", false);
         public bool CopilotDuplicatorEnabled { get; private set; } = ReadBool("JACKLLM_COPILOT_DUPLICATOR", true);
-        public bool PublicAccessEnabled { get; private set; } = ReadBool("JACKLLM_PUBLIC_ACCESS", true);
+        public bool PublicAccessEnabled { get; private set; } = ReadBool("JACKLLM_PUBLIC_ACCESS", false);
+        public bool BrowserPrivateNetworkAccessEnabled { get; private set; } = ReadBool("JACKLLM_BROWSER_PRIVATE_NETWORK_ACCESS", false);
+        public bool AuthTokensInQueryEnabled { get; private set; } = ReadBool("JACKLLM_AUTH_TOKENS_IN_QUERY", false);
         public bool UseSocketJackMasterAuth { get; private set; } = ReadBool("JACKLLM_SOCKETJACK_AUTH", true);
         public bool StoreLocalWebAuthAccounts { get; private set; } = ReadBool("JACKLLM_STORE_LOCAL_WEB_AUTH", false);
         public bool EnableSqlAdmin { get; private set; } = ReadBool("JACKLLM_SQL_ADMIN", false);
@@ -363,6 +367,10 @@ internal static class Program
             writer.WriteLine("  --data-root PATH                    Runtime config root. Default: ~/.jackllm");
             writer.WriteLine("  --chat-model MODEL                  Chat model id. Default: lm-studio");
             writer.WriteLine("  --webchat-model-load true|false     Allow web chat model-load API.");
+            writer.WriteLine("  --public-access true|false          Bind web console beyond loopback. Default: false.");
+            writer.WriteLine("  --browser-private-network-access true|false");
+            writer.WriteLine("                                      Allow browser tools to reach private/loopback IPs. Default: false.");
+            writer.WriteLine("  --auth-tokens-in-query true|false   Accept bearer tokens in URLs. Default: false.");
             writer.WriteLine("  --sql-admin true|false              Enable SQL Admin panel at /sql and /admin.");
             writer.WriteLine("  --no-copilot-duplicator             Disable the extra VS Copilot duplicator.");
             writer.WriteLine("  --no-start-runtime                  Do not eagerly start embedded LlmRuntime.");
@@ -472,6 +480,12 @@ internal static class Program
                     break;
                 case "public-access":
                     PublicAccessEnabled = ParseBool(value, key);
+                    break;
+                case "browser-private-network-access":
+                    BrowserPrivateNetworkAccessEnabled = ParseBool(value, key);
+                    break;
+                case "auth-tokens-in-query":
+                    AuthTokensInQueryEnabled = ParseBool(value, key);
                     break;
                 case "socketjack-auth":
                     UseSocketJackMasterAuth = ParseBool(value, key);

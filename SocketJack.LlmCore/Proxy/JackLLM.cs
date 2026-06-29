@@ -398,8 +398,7 @@ private sealed class WebChatModelManagerLoadSettings
 				AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
 				AllowAutoRedirect = false,
 				UseCookies = true,
-				CookieContainer = Cookies,
-				ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => true
+				CookieContainer = Cookies
 			})
 			{
 				Timeout = timeout
@@ -407,10 +406,9 @@ private sealed class WebChatModelManagerLoadSettings
 			ReadClient = new System.Net.Http.HttpClient(new HttpClientHandler
 			{
 				AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-				AllowAutoRedirect = true,
+				AllowAutoRedirect = false,
 				UseCookies = true,
-				CookieContainer = Cookies,
-				ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => true
+				CookieContainer = Cookies
 			})
 			{
 				Timeout = timeout
@@ -1075,6 +1073,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	public bool StoreLocalWebAuthAccounts { get; set; } = false;
 
 	public bool PublicAccessEnabled { get; set; } = true;
+
+	public bool BrowserPrivateNetworkAccessEnabled { get; set; } = true;
+
+	public bool AuthTokensInQueryEnabled { get; set; } = true;
 
 	public IJackLLMPaymentProcessor PaymentProcessor { get; set; }
 
@@ -3685,15 +3687,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			AutomaticDecompression = (DecompressionMethods.GZip | DecompressionMethods.Deflate),
 			AllowAutoRedirect = false,
 			UseCookies = true,
-			CookieContainer = _chatBrowserProxyCookieContainer,
-			ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => true
+			CookieContainer = _chatBrowserProxyCookieContainer
 		});
 		_chatBrowserProxyHttpClient.Timeout = _promptTimeout;
 		_browserSkillHttpClient = new System.Net.Http.HttpClient(new HttpClientHandler
 		{
 			AutomaticDecompression = (DecompressionMethods.GZip | DecompressionMethods.Deflate),
-			AllowAutoRedirect = true,
-			ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => true
+			AllowAutoRedirect = false
 		});
 		_browserSkillHttpClient.Timeout = _promptTimeout;
 		_upstreamAdapter = new UpstreamAdapter(ChatModel);
@@ -5019,7 +5019,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private HttpServer CreateChatServer()
 	{
-		MutableTcpServer server = new MutableTcpServer(_chatServerPort, "LmVsProxy Chat UI");
+		NetworkOptions networkOptions = NetworkOptions.NewDefault();
+		networkOptions.BindAddress = PublicAccessEnabled ? IPAddress.Any : IPAddress.Loopback;
+		MutableTcpServer server = new MutableTcpServer(networkOptions, _chatServerPort, "LmVsProxy Chat UI");
 		DisableDefaultSocketJackSecurity(server);
 		server.RegisterProtocol(new WebChatApiWebSocketProtocolHandler());
 		server.RegisterProtocol(new PersonaPlexWebSocketBridgeProtocolHandler(BuildPersonaPlexBridgeEndpoint, LogMessage));
@@ -5116,7 +5118,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			string method = browserProxyMethod;
 			server.Map(method, "/api/browser-proxy", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatBrowserProxyRequest(connection, request, cancellationToken));
 		}
-		server.Map("OPTIONS", "/api/browser-proxy", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatBrowserProxyOptionsRequest(request));
+		server.Map("OPTIONS", "/api/browser-proxy", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatBrowserProxyOptionsRequest(connection, request));
 		server.Map("GET", "/api/workstation/state", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWorkstationStateRequest(connection, request));
 		server.Map("GET", "/api/workstation/screen.json", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWorkstationScreenJsonRequest(connection, request));
 		server.Map("GET", "/api/workstation/desktop/transport", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWorkstationDesktopTransportRequest(connection, request));
@@ -23536,8 +23538,12 @@ except Exception as exc:
 		}
 	}
 
-	private object HandleChatBrowserProxyOptionsRequest(HttpRequest request)
+	private object HandleChatBrowserProxyOptionsRequest(NetworkConnection connection, HttpRequest request)
 	{
+		if (!IsTrustedBrowserProxyOrigin(connection, request))
+		{
+			return BuildJsonError(request, 403, "Forbidden", "Browser proxy requests are only accepted from the JackLLM console origin.");
+		}
 		SetHttpStatus(request, 204, "No Content");
 		AddChatBrowserProxyHeaders(request, "");
 		if (request?.Context?.Response != null)
@@ -23551,6 +23557,10 @@ except Exception as exc:
 	{
 		try
 		{
+			if (!IsTrustedBrowserProxyOrigin(connection, request))
+			{
+				return BuildJsonError(request, 403, "Forbidden", "Browser proxy requests are only accepted from the JackLLM console origin.");
+			}
 			AddChatBrowserProxyHeaders(request, "");
 			string rawUrl = (GetQueryParameter(request, "url") ?? "").Trim();
 			if (string.IsNullOrWhiteSpace(rawUrl))
@@ -23571,6 +23581,10 @@ except Exception as exc:
 			if (IsChatBrowserProxyUrlBlocked(targetUri, out var blockedReason))
 			{
 				return BuildChatBrowserProxyBlockedResponse(request, targetUri, blockedReason);
+			}
+			if (!TryValidateBrowserDestination(targetUri, BrowserPrivateNetworkAccessEnabled, out var destinationReason))
+			{
+				return BuildChatBrowserProxyBlockedResponse(request, targetUri, destinationReason);
 			}
 			string ownerKey = GetChatSessionOwnerKey(connection, request);
 			string rawSessionId = GetChatBrowserProxySessionId(request);
@@ -23661,6 +23675,10 @@ except Exception as exc:
 		if (IsChatBrowserProxyUrlBlocked(redirectUri, out var blockedReason))
 		{
 			return BuildChatBrowserProxyBlockedResponse(request, redirectUri, blockedReason);
+		}
+		if (!TryValidateBrowserDestination(redirectUri, BrowserPrivateNetworkAccessEnabled, out var destinationReason))
+		{
+			return BuildChatBrowserProxyBlockedResponse(request, redirectUri, destinationReason);
 		}
 		string proxiedLocation = BuildChatBrowserProxyClientUrl(redirectUri.AbsoluteUri, currentUri, publicProxyRoute);
 		SetHttpStatus(request, (int)statusCode, string.IsNullOrWhiteSpace(reasonPhrase) ? statusCode.ToString() : reasonPhrase);
@@ -23896,7 +23914,12 @@ except Exception as exc:
 		SetResponseHeader(request, "Cache-Control", "no-store, max-age=0");
 		SetResponseHeader(request, "Pragma", "no-cache");
 		SetResponseHeader(request, "X-Content-Type-Options", "nosniff");
-		SetResponseHeader(request, "Access-Control-Allow-Origin", "*");
+		string origin = GetChatBrowserProxyRequestHeader(request, "Origin");
+		if (!string.IsNullOrWhiteSpace(origin))
+		{
+			SetResponseHeader(request, "Access-Control-Allow-Origin", origin);
+			SetResponseHeader(request, "Vary", "Origin");
+		}
 		SetResponseHeader(request, "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS");
 		SetResponseHeader(request, "Access-Control-Allow-Headers", "Content-Type, Accept, Range, X-Requested-With");
 		if (!string.IsNullOrWhiteSpace(targetUrl))
@@ -24003,6 +24026,114 @@ except Exception as exc:
 		}
 		name = name.Trim();
 		return name.Equals("LmVsProxyAuth", StringComparison.OrdinalIgnoreCase) || name.Equals("SocketJackAuth", StringComparison.OrdinalIgnoreCase) || name.IndexOfAny(new char[5] { '\r', '\n', ';', ',', ' ' }) >= 0;
+	}
+
+	private bool IsTrustedBrowserProxyOrigin(NetworkConnection connection, HttpRequest request)
+	{
+		string origin = GetChatBrowserProxyRequestHeader(request, "Origin").Trim();
+		if (string.IsNullOrWhiteSpace(origin))
+		{
+			return true;
+		}
+		// A loopback Workstation proxy is the network stack for its embedded browser,
+		// so remote pages must be able to issue their own same-site and cross-site
+		// requests through it. Destination validation below remains the SSRF boundary.
+		if (IsLocalAdmin(connection, request))
+		{
+			return true;
+		}
+		if (origin.Equals("null", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+		if (!Uri.TryCreate(origin, UriKind.Absolute, out Uri originUri) ||
+			(originUri.Scheme != Uri.UriSchemeHttp && originUri.Scheme != Uri.UriSchemeHttps))
+		{
+			return false;
+		}
+		string requestHost = (request?.Host ?? "").Trim();
+		if (!string.IsNullOrWhiteSpace(requestHost) && originUri.Authority.Equals(requestHost, StringComparison.OrdinalIgnoreCase))
+		{
+			return true;
+		}
+		if (IsChatBrowserProxyLocalHost(originUri.Host))
+		{
+			return false;
+		}
+		return originUri.Scheme == Uri.UriSchemeHttps &&
+			(originUri.Host.Equals("socketjack.com", StringComparison.OrdinalIgnoreCase) || originUri.Host.EndsWith(".socketjack.com", StringComparison.OrdinalIgnoreCase));
+	}
+
+	internal static bool TryValidateBrowserDestination(Uri uri, bool allowPrivateNetwork, out string reason)
+	{
+		reason = "";
+		if (uri == null || !uri.IsAbsoluteUri || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) || string.IsNullOrWhiteSpace(uri.Host))
+		{
+			reason = "Only absolute HTTP and HTTPS destinations are allowed.";
+			return false;
+		}
+		if (!string.IsNullOrEmpty(uri.UserInfo))
+		{
+			reason = "URLs containing embedded credentials are blocked.";
+			return false;
+		}
+		if (allowPrivateNetwork)
+		{
+			return true;
+		}
+		try
+		{
+			IPAddress[] addresses = IPAddress.TryParse(uri.Host, out IPAddress literal)
+				? new[] { literal }
+				: Dns.GetHostAddresses(uri.IdnHost);
+			if (addresses.Length == 0)
+			{
+				reason = "The destination host did not resolve to an address.";
+				return false;
+			}
+			foreach (IPAddress address in addresses)
+			{
+				if (IsPrivateOrSpecialPurposeAddress(address))
+				{
+					reason = "Private, loopback, link-local, and special-purpose network destinations are blocked.";
+					return false;
+				}
+			}
+			return true;
+		}
+		catch
+		{
+			reason = "The destination host could not be resolved safely.";
+			return false;
+		}
+	}
+
+	private static bool IsPrivateOrSpecialPurposeAddress(IPAddress address)
+	{
+		if (address == null)
+		{
+			return true;
+		}
+		if (address.IsIPv4MappedToIPv6)
+		{
+			return IsPrivateOrSpecialPurposeAddress(address.MapToIPv4());
+		}
+		if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any) || address.Equals(IPAddress.None) || address.Equals(IPAddress.IPv6None))
+		{
+			return true;
+		}
+		byte[] bytes = address.GetAddressBytes();
+		if (address.AddressFamily == AddressFamily.InterNetwork)
+		{
+			return bytes[0] == 0 || bytes[0] == 10 || bytes[0] >= 224 ||
+				(bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127) ||
+				(bytes[0] == 127) ||
+				(bytes[0] == 169 && bytes[1] == 254) ||
+				(bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+				(bytes[0] == 192 && bytes[1] == 168) ||
+				(bytes[0] == 198 && (bytes[1] == 18 || bytes[1] == 19));
+		}
+		return address.AddressFamily != AddressFamily.InterNetworkV6 || address.IsIPv6LinkLocal || address.IsIPv6Multicast || address.IsIPv6SiteLocal || (bytes[0] & 0xFE) == 0xFC;
 	}
 
 	private static bool IsChatBrowserProxyUrlBlocked(Uri uri, out string reason)
@@ -30727,7 +30858,7 @@ except Exception as exc:
 			}
 			error = "Local LmVsProxy auth tokens are disabled. Sign in on SocketJack.com.";
 		}
-		string queryToken = GetSocketJackAuthTokenFromQuery(request);
+		string queryToken = AuthTokensInQueryEnabled ? GetSocketJackAuthTokenFromQuery(request) : "";
 		if (!string.IsNullOrWhiteSpace(queryToken))
 		{
 			return TryAuthenticateBearerToken(queryToken, out principal, out error);
@@ -59462,20 +59593,57 @@ except Exception as exc:
 		{
 			return "internet_search read blocked: " + blockedReason + "\nurl: " + uri.AbsoluteUri;
 		}
+		if (!TryValidateBrowserDestination(uri, BrowserPrivateNetworkAccessEnabled, out var destinationReason))
+		{
+			return "internet_search read blocked: " + destinationReason + "\nurl: " + uri.AbsoluteUri;
+		}
 		string selector = FirstNonEmpty(ExtractJsonStringProperty(argumentsJson, "selector"), ExtractJsonStringProperty(argumentsJson, "cssSelector"), ExtractJsonStringProperty(argumentsJson, "element"));
 		int take = Math.Max(1, Math.Min(120, ExtractIntFromToolArguments(argumentsJson, "take", 40)));
 		int maxChars = Math.Max(1000, Math.Min(100000, ExtractIntFromToolArguments(argumentsJson, "maxChars", 20000)));
 		bool includeHtml = ExtractBoolFromToolArguments(argumentsJson, "includeHtml", fallback: false);
 		ChatBrowserClientSession browserSession = GetOrCreateChatBrowserClientSession(ownerKey, sessionId);
-		using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri);
-		AddBrowserLikeHeaders(request, uri, null);
-		using HttpResponseMessage response = await browserSession.ReadClient.SendAsync(request, HttpCompletionOption.ResponseContentRead).ConfigureAwait(continueOnCapturedContext: false);
+		using HttpResponseMessage response = await SendValidatedBrowserGetAsync(browserSession.ReadClient, uri, (request, target) => AddBrowserLikeHeaders(request, target, null)).ConfigureAwait(continueOnCapturedContext: false);
 		byte[] bytes = response.Content == null ? Array.Empty<byte>() : await response.Content.ReadAsByteArrayAsync().ConfigureAwait(continueOnCapturedContext: false);
 		string contentType = response.Content?.Headers?.ContentType?.ToString() ?? "";
 		string charset = response.Content?.Headers?.ContentType?.CharSet;
 		string body = DecodeChatBrowserProxyText(bytes, charset);
 		Uri finalUri = response.RequestMessage?.RequestUri ?? uri;
 		return BuildInternetReadPageResult(uri, finalUri, response, contentType, body, selector, take, maxChars, includeHtml, ownerKey, sessionId);
+	}
+
+	private async Task<HttpResponseMessage> SendValidatedBrowserGetAsync(System.Net.Http.HttpClient client, Uri initialUri, Action<HttpRequestMessage, Uri> configureRequest)
+	{
+		Uri currentUri = initialUri;
+		for (int redirectCount = 0; redirectCount <= 5; redirectCount++)
+		{
+			if (IsChatBrowserProxyUrlBlocked(currentUri, out var blockedReason))
+			{
+				throw new InvalidOperationException(blockedReason);
+			}
+			if (!TryValidateBrowserDestination(currentUri, BrowserPrivateNetworkAccessEnabled, out var destinationReason))
+			{
+				throw new InvalidOperationException(destinationReason);
+			}
+			using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, currentUri);
+			configureRequest?.Invoke(request, currentUri);
+			HttpResponseMessage response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(continueOnCapturedContext: false);
+			if (!IsChatBrowserProxyRedirect(response.StatusCode) || response.Headers.Location == null)
+			{
+				return response;
+			}
+			Uri redirectUri = ResolveChatBrowserProxyRedirectUri(currentUri, response.Headers.Location);
+			response.Dispose();
+			if (redirectUri == null)
+			{
+				throw new InvalidOperationException("The destination returned an invalid redirect URL.");
+			}
+			if (redirectCount == 5)
+			{
+				throw new InvalidOperationException("The destination exceeded the five-redirect limit.");
+			}
+			currentUri = redirectUri;
+		}
+		throw new InvalidOperationException("The destination exceeded the redirect limit.");
 	}
 
 	private string BuildInternetReadPageResult(Uri requestedUri, Uri finalUri, HttpResponseMessage response, string contentType, string body, string selector, int take, int maxChars, bool includeHtml, string ownerKey, string sessionId)
@@ -59971,6 +60139,10 @@ except Exception as exc:
 			LogMessage("[Chat Storage] download_file rejected: only http and https URLs are allowed.");
 			return "download_file error: only http and https URLs are allowed.";
 		}
+		if (!TryValidateBrowserDestination(uri, BrowserPrivateNetworkAccessEnabled, out var destinationReason))
+		{
+			return "download_file blocked: " + destinationReason + "\nNo file was saved.\nurl: " + uri.AbsoluteUri;
+		}
 		sessionId = EnsureChatUiSessionId(sessionId);
 		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
 		string downloadsRoot = Path.Combine(sessionRoot, "Downloads");
@@ -59986,13 +60158,12 @@ except Exception as exc:
 		string targetPath = BuildDownloadTargetPath(downloadsRoot, fileName);
 		string redirectedFrom = null;
 		string readmeUrl = null;
-		HttpResponseMessage response = null;
-		using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri))
+		ChatBrowserClientSession browserSession = GetOrCreateChatBrowserClientSession(ownerKey, sessionId);
+		HttpResponseMessage response = await SendValidatedBrowserGetAsync(browserSession.ReadClient, uri, (request, target) =>
 		{
 			request.Headers.TryAddWithoutValidation("User-Agent", "SocketJack-LmVsProxy/1.0");
 			request.Headers.TryAddWithoutValidation("Accept", BuildDownloadAcceptHeader());
-			response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-		}
+		}).ConfigureAwait(continueOnCapturedContext: false);
 		bool flag = !response.IsSuccessStatusCode && response.StatusCode == HttpStatusCode.NotFound;
 		bool flag2 = flag;
 		if (flag2)
@@ -60016,10 +60187,11 @@ except Exception as exc:
 				}
 				targetPath = BuildDownloadTargetPath(downloadsRoot, fileName);
 			}
-			using HttpRequestMessage fallbackRequest = new HttpRequestMessage(HttpMethod.Get, uri);
-			fallbackRequest.Headers.TryAddWithoutValidation("User-Agent", "SocketJack-LmVsProxy/1.0");
-			fallbackRequest.Headers.TryAddWithoutValidation("Accept", BuildDownloadAcceptHeader());
-			response = await _httpClient.SendAsync(fallbackRequest, HttpCompletionOption.ResponseHeadersRead);
+			response = await SendValidatedBrowserGetAsync(browserSession.ReadClient, uri, (request, target) =>
+			{
+				request.Headers.TryAddWithoutValidation("User-Agent", "SocketJack-LmVsProxy/1.0");
+				request.Headers.TryAddWithoutValidation("Accept", BuildDownloadAcceptHeader());
+			}).ConfigureAwait(continueOnCapturedContext: false);
 		}
 		using (response)
 		{

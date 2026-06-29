@@ -39,6 +39,7 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     private string ignoreManifestPath = "";
     private string endpointSummary = "Open a solution, then Refresh.";
     private string selectedDetails = "";
+    private string ignorePattern = "";
     private string sessionId = "";
     private string status = "Ready.";
     private string createSessionButtonText = "Create Local Workstation Session";
@@ -76,6 +77,11 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         this.IgnoreRemoteCommand = new AsyncCommand(this.IgnoreRemoteAsync);
         this.PropertiesCommand = new AsyncCommand(this.PropertiesAsync);
         this.RemoveIgnoreCommand = new AsyncCommand(this.RemoveIgnoreAsync);
+        this.IgnoreSelectedCommand = new AsyncCommand(this.IgnoreSelectedAsync);
+        this.IgnoreRemoteSelectedCommand = new AsyncCommand(this.IgnoreRemoteSelectedAsync);
+        this.RemoveSelectedIgnoreCommand = new AsyncCommand(this.RemoveSelectedIgnoreAsync);
+        this.AddIgnoreGlobCommand = new AsyncCommand(this.AddIgnoreGlobAsync);
+        this.AddIgnoreRegexCommand = new AsyncCommand(this.AddIgnoreRegexAsync);
         this.UseLocalWorkstationSessionMode();
     }
 
@@ -136,6 +142,21 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     public IAsyncCommand RemoveIgnoreCommand { get; }
 
     [DataMember]
+    public IAsyncCommand IgnoreSelectedCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand IgnoreRemoteSelectedCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand RemoveSelectedIgnoreCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand AddIgnoreGlobCommand { get; }
+
+    [DataMember]
+    public IAsyncCommand AddIgnoreRegexCommand { get; }
+
+    [DataMember]
     public List<SessionSyncTreeItem> TreeItems
     {
         get => this.treeItems;
@@ -184,6 +205,13 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     {
         get => this.selectedDetails;
         set => this.SetProperty(ref this.selectedDetails, value ?? "");
+    }
+
+    [DataMember]
+    public string IgnorePattern
+    {
+        get => this.ignorePattern;
+        set => this.SetProperty(ref this.ignorePattern, value ?? "");
     }
 
     [DataMember]
@@ -718,6 +746,106 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         this.SaveIgnoreManifest();
         this.BuildTree();
         this.Status = removed ? "Removed " + item.RelativePath + " from ignore lists." : item.RelativePath + " was not ignored.";
+    }
+
+    private async Task IgnoreSelectedAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        await this.ApplyToSelectedAsync(false, false, cancellationToken);
+    }
+
+    private async Task IgnoreRemoteSelectedAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        await this.ApplyToSelectedAsync(true, false, cancellationToken);
+    }
+
+    private async Task RemoveSelectedIgnoreAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        await this.ApplyToSelectedAsync(false, true, cancellationToken);
+    }
+
+    private async Task ApplyToSelectedAsync(bool remoteOnly, bool remove, CancellationToken cancellationToken)
+    {
+        await this.EnsureSolutionStateAsync(cancellationToken);
+        List<SessionSyncTreeItem> selected = FlattenItems(this.TreeItems)
+            .Where(item => item.IsSelected && !item.IsIgnoreBranch && !string.IsNullOrWhiteSpace(item.RelativePath))
+            .GroupBy(item => item.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        if (selected.Count == 0)
+        {
+            this.Status = "Select one or more files or folders first.";
+            return;
+        }
+
+        foreach (SessionSyncTreeItem item in selected)
+        {
+            if (remove)
+                this.ignoreManifest.Remove(item.RelativePath);
+            else if (remoteOnly)
+                this.ignoreManifest.AddRemoteIgnored(item.RelativePath, item.IsFolder);
+            else
+                this.ignoreManifest.AddIgnored(item.RelativePath, item.IsFolder);
+        }
+
+        this.SaveIgnoreManifest();
+        this.BuildTree();
+        this.Status = (remove ? "Removed ignore rules for " : remoteOnly ? "Ignored remote changes for " : "Ignored ") +
+            selected.Count.ToString(CultureInfo.InvariantCulture) + " selected item(s).";
+    }
+
+    private async Task AddIgnoreGlobAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        await this.AddIgnorePatternAsync(false, cancellationToken);
+    }
+
+    private async Task AddIgnoreRegexAsync(object? commandParameter, CancellationToken cancellationToken)
+    {
+        await this.AddIgnorePatternAsync(true, cancellationToken);
+    }
+
+    private async Task AddIgnorePatternAsync(bool regex, CancellationToken cancellationToken)
+    {
+        await this.EnsureSolutionStateAsync(cancellationToken);
+        string value = (this.IgnorePattern ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            this.Status = regex ? "Enter a regex string first." : "Enter a file glob such as *.log first.";
+            return;
+        }
+
+        if (regex)
+        {
+            value = value.StartsWith("regex:", StringComparison.OrdinalIgnoreCase) ? value : "regex:" + value;
+            try
+            {
+                _ = new System.Text.RegularExpressions.Regex(value.Substring("regex:".Length), System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
+            catch (ArgumentException ex)
+            {
+                this.Status = "Invalid ignore regex: " + ex.Message;
+                return;
+            }
+        }
+        else if (!value.Contains('*') && !value.Contains('?'))
+        {
+            value = "*." + value.TrimStart('.');
+        }
+
+        this.ignoreManifest.AddPattern(value);
+        this.SaveIgnoreManifest();
+        this.IgnorePattern = "";
+        this.BuildTree();
+        this.Status = "Added ignore rule " + value + ".";
+    }
+
+    private static IEnumerable<SessionSyncTreeItem> FlattenItems(IEnumerable<SessionSyncTreeItem> items)
+    {
+        foreach (SessionSyncTreeItem item in items)
+        {
+            yield return item;
+            foreach (SessionSyncTreeItem child in FlattenItems(item.Children))
+                yield return child;
+        }
     }
 
     private async Task PropertiesAsync(object? commandParameter, CancellationToken cancellationToken)
@@ -1606,6 +1734,7 @@ internal sealed class SessionSyncTreeItem : NotifyPropertyChangedObject
     private bool isExpanded;
     private bool isIgnored;
     private bool isIgnoreBranch;
+    private bool isSelected;
     private string statusText = "";
     private string statusGlyph = "";
     private string statusColor = "#E8E8E8";
@@ -1638,6 +1767,9 @@ internal sealed class SessionSyncTreeItem : NotifyPropertyChangedObject
 
     [DataMember]
     public bool IsIgnoreBranch { get => this.isIgnoreBranch; set => this.SetProperty(ref this.isIgnoreBranch, value); }
+
+    [DataMember]
+    public bool IsSelected { get => this.isSelected; set => this.SetProperty(ref this.isSelected, value); }
 
     [DataMember]
     public string StatusText { get => this.statusText; set => this.SetProperty(ref this.statusText, value ?? ""); }
@@ -2412,11 +2544,18 @@ internal sealed class SessionSyncIgnoreManifest
         Add(this.RemoteIgnored, relativePath, isFolder);
     }
 
+    public void AddPattern(string pattern)
+    {
+        pattern = NormalizeEntry(pattern);
+        if (!string.IsNullOrWhiteSpace(pattern) && !this.Ignored.Contains(pattern, StringComparer.OrdinalIgnoreCase))
+            this.Ignored.Add(pattern);
+    }
+
     public bool Remove(string relativePath)
     {
-        relativePath = Normalize(relativePath).TrimEnd('/');
-        int removed = this.Ignored.RemoveAll(item => Normalize(item).TrimEnd('/').Equals(relativePath, StringComparison.OrdinalIgnoreCase));
-        removed += this.RemoteIgnored.RemoveAll(item => Normalize(item).TrimEnd('/').Equals(relativePath, StringComparison.OrdinalIgnoreCase));
+        relativePath = NormalizeEntry(relativePath).TrimEnd('/');
+        int removed = this.Ignored.RemoveAll(item => NormalizeEntry(item).TrimEnd('/').Equals(relativePath, StringComparison.OrdinalIgnoreCase));
+        removed += this.RemoteIgnored.RemoveAll(item => NormalizeEntry(item).TrimEnd('/').Equals(relativePath, StringComparison.OrdinalIgnoreCase));
         return removed > 0;
     }
 
@@ -2447,8 +2586,33 @@ internal sealed class SessionSyncIgnoreManifest
     private static bool Matches(IEnumerable<string> entries, string relativePath)
     {
         relativePath = Normalize(relativePath).TrimEnd('/');
-        foreach (string entry in entries.Select(Normalize))
+        foreach (string rawEntry in entries)
         {
+            string entry = NormalizeEntry(rawEntry);
+            if (entry.StartsWith("regex:", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (System.Text.RegularExpressions.Regex.IsMatch(relativePath, entry.Substring("regex:".Length), System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                        return true;
+                }
+                catch (ArgumentException)
+                {
+                    // Keep malformed hand-edited rules visible in the manifest without breaking Session Sync.
+                }
+                continue;
+            }
+
+            if (entry.Contains('*') || entry.Contains('?'))
+            {
+                string wildcard = "^" + System.Text.RegularExpressions.Regex.Escape(entry)
+                    .Replace("\\*", ".*")
+                    .Replace("\\?", ".") + "$";
+                if (System.Text.RegularExpressions.Regex.IsMatch(relativePath, wildcard, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    return true;
+                continue;
+            }
+
             string normalized = entry.TrimEnd('/');
             if (string.Equals(normalized, relativePath, StringComparison.OrdinalIgnoreCase))
             {
@@ -2468,6 +2632,12 @@ internal sealed class SessionSyncIgnoreManifest
     private static string Normalize(string value)
     {
         return (value ?? "").Replace('\\', '/').Trim();
+    }
+
+    private static string NormalizeEntry(string value)
+    {
+        value = (value ?? "").Trim();
+        return value.StartsWith("regex:", StringComparison.OrdinalIgnoreCase) ? value : Normalize(value);
     }
 }
 

@@ -113,6 +113,24 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.CopilotMcpBridge
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LlmRuntime.VisualStudio2026", "LlmRuntime.VisualStudio2026\LlmRuntime.VisualStudio2026.csproj", "{CB961432-3F09-42A4-90C3-DA3229F9E0C8}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "LlmRuntime.VisualStudioCode", "LlmRuntime.VisualStudioCode", "{5D2C67E3-C0E7-4CD2-B500-AFC6E429FE00}"
+	ProjectSection(SolutionItems) = preProject
+		LlmRuntime.VisualStudioCode\.gitignore = LlmRuntime.VisualStudioCode\.gitignore
+		LlmRuntime.VisualStudioCode\.vscodeignore = LlmRuntime.VisualStudioCode\.vscodeignore
+		LlmRuntime.VisualStudioCode\assets\socketjack.png = LlmRuntime.VisualStudioCode\assets\socketjack.png
+		LlmRuntime.VisualStudioCode\CHANGELOG.md = LlmRuntime.VisualStudioCode\CHANGELOG.md
+		LlmRuntime.VisualStudioCode\esbuild.mjs = LlmRuntime.VisualStudioCode\esbuild.mjs
+		LlmRuntime.VisualStudioCode\LICENSE = LlmRuntime.VisualStudioCode\LICENSE
+		LlmRuntime.VisualStudioCode\package-lock.json = LlmRuntime.VisualStudioCode\package-lock.json
+		LlmRuntime.VisualStudioCode\package.json = LlmRuntime.VisualStudioCode\package.json
+		LlmRuntime.VisualStudioCode\README.md = LlmRuntime.VisualStudioCode\README.md
+		LlmRuntime.VisualStudioCode\src\extension.ts = LlmRuntime.VisualStudioCode\src\extension.ts
+		LlmRuntime.VisualStudioCode\src\provider.ts = LlmRuntime.VisualStudioCode\src\provider.ts
+		LlmRuntime.VisualStudioCode\src\types.ts = LlmRuntime.VisualStudioCode\src\types.ts
+		LlmRuntime.VisualStudioCode\src\workstationClient.ts = LlmRuntime.VisualStudioCode\src\workstationClient.ts
+		LlmRuntime.VisualStudioCode\tsconfig.json = LlmRuntime.VisualStudioCode\tsconfig.json
+	EndProjectSection
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Workstation", "JackLLM.Workstation\JackLLM.Workstation.csproj", "{3B25755B-5A0F-4B5E-A0D3-71B1E42FBCAC}"
 EndProject
 Global
@@ -531,6 +549,7 @@ Global
 		{D1775831-1554-4050-92E5-C994908C7A3D} = {DADB95ED-2761-48FF-BD70-EBED4BF85F17}
 		{759E22B4-CB07-4563-8D81-B29CC03541B8} = {DADB95ED-2761-48FF-BD70-EBED4BF85F17}
 		{BA2FF034-7B76-4A22-9F67-1D73E618FA4B} = {DADB95ED-2761-48FF-BD70-EBED4BF85F17}
+		{5D2C67E3-C0E7-4CD2-B500-AFC6E429FE00} = {DADB95ED-2761-48FF-BD70-EBED4BF85F17}
 		{B24E5CFE-9DFF-4C6A-B931-F295AD7BF990} = {012DC2C3-F936-4CF4-AB3F-9BBF0A2D9DEE}
 		{18790A4C-AA95-4AAA-A923-DEDF21656C6E} = {012DC2C3-F936-4CF4-AB3F-9BBF0A2D9DEE}
 		{7ED0BA9F-CD40-4E16-9EA6-93B0FE6D312E} = {D00C6FEB-3526-4620-A496-65E3E4F41318}

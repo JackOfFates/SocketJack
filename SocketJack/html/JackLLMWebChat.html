@@ -14284,6 +14284,7 @@ body.shared-view .comments-panel-toggle {
                 <div class="solution-actions">
                     <span id="solutionLoadingThrobber" class="rgb-panel-throbber" aria-hidden="true"></span>
                     <span id="solutionExplorerStatus" class="solution-status">Loading</span>
+                    <button id="importGitHubRepository" class="ghost panel-refresh" type="button" title="Import GitHub repository into this session" aria-label="Import GitHub repository">GH</button>
                     <button id="refreshSolutionExplorer" class="ghost panel-refresh" type="button" title="Refresh session files" aria-label="Refresh session files">R</button>
                 </div>
             </div>
@@ -14441,7 +14442,7 @@ body.shared-view .comments-panel-toggle {
                     <button id="chatBrowserOpenExternal" class="ghost chat-browser-open-external" type="button" title="Open in new tab" aria-label="Open in new tab">^</button>
                 </div>
                 <div class="chat-browser-stage">
-                    <iframe id="chatBrowserFrame" class="chat-browser-frame" title="In-chat browser" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                    <iframe id="chatBrowserFrame" class="chat-browser-frame" title="In-chat browser" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin" referrerpolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; payment 'none'; usb 'none'; serial 'none'; hid 'none'; clipboard-read 'none'; clipboard-write 'none'"></iframe>
                     <div id="browserSkillCursor" class="browser-skill-cursor" aria-hidden="true"></div>
                     <div id="chatBrowserEmpty" class="chat-browser-empty">Nothing here yet</div>
                     <section id="browserMiniChat" class="browser-mini-chat" aria-label="Response chat overlay">
@@ -14835,6 +14836,7 @@ const solutionExplorerResize = document.getElementById('solutionExplorerResize')
 const solutionExplorerStatus = document.getElementById('solutionExplorerStatus');
 const solutionLoadingThrobber = document.getElementById('solutionLoadingThrobber');
 const refreshSolutionExplorer = document.getElementById('refreshSolutionExplorer');
+const importGitHubRepository = document.getElementById('importGitHubRepository');
 const solutionStorageText = document.getElementById('solutionStorageText');
 const solutionStorageFill = document.getElementById('solutionStorageFill');
 const solutionExplorerSearch = document.getElementById('solutionExplorerSearch');
@@ -23502,6 +23504,43 @@ async function loadSolutionExplorer() {
     return solutionExplorerLoadPromise;
 }
 
+async function importGitHubRepositoryIntoSession() {
+    if (sharedView)
+        throw new Error('GitHub repositories cannot be imported from a shared read-only session.');
+    if (permissionState.fileUploads === false)
+        throw new Error('File uploads are disabled for this session.');
+
+    const repository = window.prompt('GitHub repository URL or owner/repo:');
+    if (repository == null || !repository.trim()) return;
+    const githubToken = window.prompt('GitHub token for a private repository (optional):') || '';
+    if (importGitHubRepository) importGitHubRepository.disabled = true;
+    setSolutionExplorerStatus('Importing GitHub repository', false);
+    try {
+        const response = await fetch('/api/chat-github-repo-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                sessionId: currentSessionId || ensureSessionId(),
+                repository: repository.trim(),
+                githubToken: githubToken.trim()
+            })
+        });
+        const data = await readJsonResponse(response, null, 10 * 60 * 1000);
+        if (!response.ok || !data || !data.ok)
+            throw new Error((data && (data.error || data.message)) || 'GitHub import failed: HTTP ' + response.status);
+
+        const importedCount = Number(data.fileCount || data.importedCount || (Array.isArray(data.files) ? data.files.length : 0));
+        solutionExplorerLoaded = false;
+        solutionExplorerLoadKey = '';
+        solutionExplorerExpanded = new Set();
+        await loadSolutionExplorer();
+        setSolutionExplorerStatus('Imported ' + importedCount + ' file' + (importedCount === 1 ? '' : 's'), false);
+    } finally {
+        if (importGitHubRepository) importGitHubRepository.disabled = false;
+    }
+}
+
 async function loadSolutionExplorerInternal() {
     if (!solutionExplorerTree) return;
     const params = new URLSearchParams();
@@ -30824,14 +30863,22 @@ function clearChatBrowserInlineDocument() {
         chatBrowserFrame.removeAttribute('srcdoc');
 }
 
-function setChatBrowserFrameSandbox(internalPreview) {
+function setChatBrowserFrameSandbox(internalPreview, targetUrl) {
     if (!chatBrowserFrame) return;
-    if (internalPreview)
-        chatBrowserFrame.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups allow-same-origin');
-    else if (chatBrowserDefaultSandbox)
-        chatBrowserFrame.setAttribute('sandbox', chatBrowserDefaultSandbox);
-    else
-        chatBrowserFrame.removeAttribute('sandbox');
+    if (internalPreview) {
+        // Local/srcdoc previews are untrusted content. Giving them both scripts and
+        // same-origin would let them reach the Workstation chat page itself.
+        chatBrowserFrame.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
+        return;
+    }
+
+    let sandbox = chatBrowserDefaultSandbox || 'allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin';
+    try {
+        const target = new URL(targetUrl || '', window.location.href);
+        if (target.origin === window.location.origin)
+            sandbox = sandbox.replace(/(?:^|\s)allow-same-origin(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
+    } catch { }
+    chatBrowserFrame.setAttribute('sandbox', sandbox);
 }
 
 function revokeChatBrowserInternalUrl() {
@@ -30969,9 +31016,12 @@ function openChatBrowserUrl(value, title) {
     chatBrowserUrl = url;
     if (chatBrowserAddress) chatBrowserAddress.value = url;
     if (chatBrowserFrame) {
-        setChatBrowserFrameSandbox(false);
+        setChatBrowserFrameSandbox(false, url);
         chatBrowserFrame.title = title ? 'In-chat browser - ' + title : 'In-chat browser';
         clearChatBrowserInlineDocument();
+        // Keep the visible page and all of its resource/API traffic inside the
+        // isolated browser session. The proxy runtime rewrites page-initiated URLs,
+        // fetch/XHR, forms, workers, and navigation back through this same route.
         chatBrowserFrame.src = buildChatBrowserProxyUrl(url);
     }
     setChatBrowserMessage('Loading ' + url, false);
@@ -31136,7 +31186,7 @@ function syncChatBrowserUrlFromFrame() {
 function initializeChatBrowserPanel() {
     const saved = readSavedChatBrowserState();
     applyChatBrowserWidth(saved.width);
-    setChatBrowserFrameSandbox(false);
+    setChatBrowserFrameSandbox(false, saved.url || '');
     if (chatBrowserFrame)
         chatBrowserFrame.addEventListener('load', syncChatBrowserUrlFromFrame);
     const savedOpen = !!saved.open && !sharedSessionKey;
@@ -31147,7 +31197,8 @@ function initializeChatBrowserPanel() {
             chatBrowserUrl = normalizeChatBrowserUrl(saved.url);
             if (chatBrowserAddress) chatBrowserAddress.value = chatBrowserUrl;
             if (savedOpen && shouldAutoRestoreChatBrowserUrl(chatBrowserUrl) && chatBrowserFrame) {
-                chatBrowserFrame.src = buildChatBrowserProxyUrl(chatBrowserUrl);
+                setChatBrowserFrameSandbox(false, chatBrowserUrl);
+                chatBrowserFrame.src = chatBrowserUrl;
                 restoredFrame = true;
             } else if (savedOpen) {
                 blockedAutoRestore = true;
@@ -35523,6 +35574,14 @@ if (refreshSolutionExplorer) {
         solutionExplorerRetryTimer = 0;
         solutionExplorerExpanded = new Set();
         loadSolutionExplorer().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+    });
+}
+if (importGitHubRepository) {
+    importGitHubRepository.addEventListener('click', () => {
+        importGitHubRepositoryIntoSession().catch(error => {
+            setSolutionExplorerStatus('GitHub import failed', true);
+            addMessage('error', error && error.message ? error.message : String(error));
+        });
     });
 }
 if (projectWorkflowUseMirror) {

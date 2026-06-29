@@ -54,6 +54,11 @@
                   Margin="4,0,0,0"
                   Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
                   Command="{Binding PushCommand}" />
+          <Button Content="Ignore Selected"
+                  MinWidth="104"
+                  Margin="4,0,0,0"
+                  Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                  Command="{Binding IgnoreSelectedCommand}" />
         </StackPanel>
         <StackPanel Orientation="Horizontal">
           <TextBlock Text="Session"
@@ -110,19 +115,25 @@
                 </ContextMenu>
               </Grid.ContextMenu>
               <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="24" />
                 <ColumnDefinition Width="20" />
-                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="332" />
                 <ColumnDefinition Width="124" />
                 <ColumnDefinition Width="132" />
                 <ColumnDefinition Width="96" />
               </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0"
+              <CheckBox Grid.Column="0"
+                        IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                        ToolTip="Select for bulk changes"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1"
                          Text="{Binding StatusGlyph}"
                          Foreground="{Binding StatusColor}"
                          FontWeight="Bold"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center" />
-              <TextBlock Grid.Column="1"
+              <TextBlock Grid.Column="2"
                          Text="{Binding Name}"
                          Foreground="#E8E8E8"
                          TextTrimming="CharacterEllipsis"
@@ -139,13 +150,13 @@
                   </Style>
                 </TextBlock.Style>
               </TextBlock>
-              <TextBlock Grid.Column="2"
+              <TextBlock Grid.Column="3"
                          Margin="8,0,0,0"
                          Text="{Binding StatusText}"
                          Foreground="#CFCFCF"
                          TextTrimming="CharacterEllipsis"
                          VerticalAlignment="Center" />
-              <ProgressBar Grid.Column="3"
+              <ProgressBar Grid.Column="4"
                            Width="112"
                            Height="8"
                            Minimum="0"
@@ -154,7 +165,7 @@
                            Background="#202020"
                            Foreground="#5FB3FF"
                            VerticalAlignment="Center" />
-              <TextBlock Grid.Column="4"
+              <TextBlock Grid.Column="5"
                          Margin="8,0,0,0"
                          Text="{Binding MetricText}"
                          Foreground="#BDBDBD"
@@ -167,6 +178,34 @@
       </TreeView>
 
       <StackPanel Grid.Row="2" Margin="0,8,0,0">
+        <DockPanel Margin="0,0,0,6" IsEnabled="{Binding SessionControlsEnabled}">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <Button Content="Ignore Remote Selected"
+                    Margin="4,0,0,0"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding IgnoreRemoteSelectedCommand}" />
+            <Button Content="Unignore Selected"
+                    Margin="4,0,0,0"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding RemoveSelectedIgnoreCommand}" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal">
+            <TextBox Width="210"
+                     MinHeight="26"
+                     ToolTip="File type glob (*.ext) or regex string"
+                     Text="{Binding IgnorePattern, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+            <Button Content="Ignore *.ext"
+                    Margin="4,0,0,0"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding AddIgnoreGlobCommand}" />
+            <Button Content="Ignore Regex"
+                    Margin="4,0,0,0"
+                    ToolTip="Matches the regex anywhere in a relative file path"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding AddIgnoreRegexCommand}" />
+          </StackPanel>
+        </DockPanel>
         <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
         <TextBlock Margin="0,4,0,0"
                    Text="{Binding SelectedDetails}"
