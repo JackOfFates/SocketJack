@@ -224,6 +224,7 @@
                             </Button>
                             <Button x:Name="ProbeButton" Content="Probe Provider" Click="ProbeButton_Click" Margin="0,0,8,0" Visibility="Collapsed"/>
                             <Button x:Name="OpenChatButton" Content="Web UI" Click="OpenChatButton_Click" Margin="0,0,8,0" IsEnabled="False"/>
+                            <Button x:Name="SocketChatButton" Content="Chat" Click="SocketChatButton_Click" Margin="0,0,8,0" IsEnabled="False" ToolTip="Open SocketChat"/>
                             <Button x:Name="OpenMagicWorkflowButton" Content="Magic Workflow" Click="OpenMagicWorkflowButton_Click" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
                             <Button x:Name="RefreshMagicWorkflowButton" Content="Workflow Status" Click="RefreshMagicWorkflowButton_Click" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
                             <ComboBox x:Name="MagicWorkflowControlComboBox" Width="132" Height="28" Margin="0,0,8,0" SelectedIndex="0" IsEnabled="False" Visibility="Collapsed">
@@ -302,6 +303,7 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBox x:Name="ModelsLocationTextBox"
                                                      IsReadOnly="True"
@@ -316,6 +318,14 @@
                                                     Padding="8,3"
                                                     ToolTip="Choose the base folder for Models and CompleteModels."
                                                     Click="ModelsLocationBrowseButton_Click"/>
+                                            <Button x:Name="ModelsLocationMoveButton"
+                                                    Grid.Column="2"
+                                                    Content="Move"
+                                                    MinWidth="58"
+                                                    Margin="6,0,0,0"
+                                                    Padding="10,3"
+                                                    ToolTip="Move current Models and CompleteModels here and use this location for future downloads."
+                                                    Click="ModelsLocationMoveButton_Click"/>
                                         </Grid>
                                     </StackPanel>
 

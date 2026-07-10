@@ -224,6 +224,18 @@ namespace LmVs
         public string createdUtc { get; set; }
     }
 
+    internal sealed class ChatMemoryRecord
+    {
+        public string id { get; set; } = "";
+        public string ownerKey { get; set; } = "";
+        public string text { get; set; } = "";
+        public string sourceSessionId { get; set; } = "";
+        public string createdUtc { get; set; } = "";
+        public string updatedUtc { get; set; } = "";
+        public string deletedUtc { get; set; } = "";
+        public string category { get; set; } = "";
+    }
+
     internal sealed class ActivePromptSessionState
     {
         public string Id { get; set; }

@@ -6,13 +6,13 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using JackLLM.Android.Models;
+using JackLLM.Mobile.Models;
 
-namespace JackLLM.Android.Services;
+namespace JackLLM.Mobile.Services;
 
 public sealed class ServerDirectoryService
 {
-    private static readonly HttpClient HttpClient = new HttpClient();
+    private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(8) };
     private static readonly IReadOnlyList<string> MasterEndpoints = new[]
     {
         "https://socketjack.com/api/lmvsproxy/servers",
@@ -29,7 +29,10 @@ public sealed class ServerDirectoryService
         if (!string.IsNullOrWhiteSpace(server.ServerId))
             return "https://socketjack.com/proxy/" + Uri.EscapeDataString(server.LaunchKey);
 
-        if (Uri.TryCreate(server.Endpoint, UriKind.Absolute, out Uri endpointUri) &&
+        if (server.IsSaved && Uri.TryCreate(server.Endpoint, UriKind.Absolute, out Uri? savedEndpoint))
+            return savedEndpoint.ToString().TrimEnd('/');
+
+        if (Uri.TryCreate(server.Endpoint, UriKind.Absolute, out Uri? endpointUri) &&
             endpointUri.AbsolutePath.Contains("/proxy/", StringComparison.OrdinalIgnoreCase))
             return endpointUri.ToString().TrimEnd('/');
 
@@ -37,9 +40,9 @@ public sealed class ServerDirectoryService
         if (!string.IsNullOrWhiteSpace(launchKey))
             return "https://socketjack.com/proxy/" + Uri.EscapeDataString(launchKey);
 
-        if (Uri.TryCreate(server.Endpoint, UriKind.Absolute, out Uri endpointFallbackUri))
+        if (Uri.TryCreate(server.Endpoint, UriKind.Absolute, out Uri? endpointFallbackUri))
             return endpointFallbackUri.ToString().TrimEnd('/');
-        if (Uri.TryCreate(server.OpenAiBaseUrl, UriKind.Absolute, out Uri openAiUri))
+        if (Uri.TryCreate(server.OpenAiBaseUrl, UriKind.Absolute, out Uri? openAiUri))
             return openAiUri.ToString().TrimEnd('/');
 
         return "https://socketjack.com";
@@ -238,21 +241,21 @@ public sealed class ServerDirectoryService
     private static string NormalizeBaseUrl(string value)
     {
         value = (value ?? string.Empty).Trim();
-        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri uri))
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri))
             return string.Empty;
         return uri.GetLeftPart(UriPartial.Authority) + uri.AbsolutePath.TrimEnd('/');
     }
 
     private static string HostFromUrl(string value)
     {
-        if (!Uri.TryCreate((value ?? string.Empty).Trim(), UriKind.Absolute, out Uri uri))
+        if (!Uri.TryCreate((value ?? string.Empty).Trim(), UriKind.Absolute, out Uri? uri))
             return string.Empty;
         return uri.Host;
     }
 
     private static string SchemeFromUrl(string value)
     {
-        if (!Uri.TryCreate((value ?? string.Empty).Trim(), UriKind.Absolute, out Uri uri))
+        if (!Uri.TryCreate((value ?? string.Empty).Trim(), UriKind.Absolute, out Uri? uri))
             return string.Empty;
         return uri.Scheme;
     }

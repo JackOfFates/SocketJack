@@ -2,10 +2,10 @@
   <PropertyGroup>
     <TargetFramework>net10.0-android</TargetFramework>
     <OutputType>Exe</OutputType>
-    <RootNamespace>JackLLM.Android</RootNamespace>
-    <AssemblyName>JackLLM.Android</AssemblyName>
-    <ApplicationTitle>JackLLM</ApplicationTitle>
-    <ApplicationId>com.socketjack.jackllm.android</ApplicationId>
+    <RootNamespace>JackLLM.Mobile</RootNamespace>
+    <AssemblyName>JackLLM.Mobile</AssemblyName>
+    <ApplicationTitle>JackLLM Mobile</ApplicationTitle>
+    <ApplicationId>com.socketjack.jackllm.mobile</ApplicationId>
     <ApplicationIdGuid>7E8A35E6-8F5E-4D7E-82F0-4C8BEFDE1234</ApplicationIdGuid>
     <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
@@ -14,6 +14,13 @@
     <SingleProject>true</SingleProject>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
+    <AndroidPackageFormats>apk</AndroidPackageFormats>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
   </PropertyGroup>
 
   <ItemGroup>

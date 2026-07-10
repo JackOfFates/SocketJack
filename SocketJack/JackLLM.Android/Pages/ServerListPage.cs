@@ -1,78 +1,58 @@
-using JackLLM.Android.Models;
-using JackLLM.Android.Services;
-using Microsoft.Maui.Controls;
+using JackLLM.Mobile.Models;
+using JackLLM.Mobile.Services;
 using Microsoft.Maui.Controls.Shapes;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
-namespace JackLLM.Android.Pages;
+namespace JackLLM.Mobile.Pages;
 
 public sealed class ServerListPage : ContentPage
 {
-    private readonly ServerDirectoryService _directoryService;
-    private readonly RefreshView _refreshView;
-    private readonly CollectionView _collectionView;
-    private readonly Label _statusLabel;
-    private readonly ActivityIndicator _loadingIndicator;
+    private readonly ServerDirectoryService _directory;
+    private readonly ServerStore _store;
+    private readonly SecureCredentialStore _credentials;
+    private readonly CollectionView _servers;
+    private readonly Label _status;
+    private bool _loaded;
 
-    public ServerListPage(ServerDirectoryService directoryService)
+    public ServerListPage(ServerDirectoryService directory, ServerStore store, SecureCredentialStore credentials)
     {
-        _directoryService = directoryService;
-        Title = "JackLLM Servers";
+        _directory = directory;
+        _store = store;
+        _credentials = credentials;
+        Title = "JackLLM Mobile";
+        BackgroundColor = Color.FromArgb("#0B1020");
 
-        _statusLabel = new Label
+        _status = new Label { Text = "Choose a Workstation", TextColor = Color.FromArgb("#94A3B8"), FontSize = 13 };
+        _servers = new CollectionView { SelectionMode = SelectionMode.Single, ItemTemplate = new DataTemplate(ServerCard) };
+        _servers.SelectionChanged += async (_, args) =>
         {
-            Text = "Loading servers...",
-            FontSize = 12,
-            TextColor = Colors.Gray
+            if (args.CurrentSelection.FirstOrDefault() is not ServerInfo server) return;
+            _servers.SelectedItem = null;
+            await OpenServerAsync(server);
         };
 
-        _loadingIndicator = new ActivityIndicator
-        {
-            IsRunning = true,
-            IsVisible = true,
-            HeightRequest = 20,
-            WidthRequest = 20
-        };
+        var add = new Button { Text = "Add or pair", BackgroundColor = Color.FromArgb("#2563EB"), TextColor = Colors.White, CornerRadius = 12 };
+        add.Clicked += async (_, _) => await AddServerAsync();
+        var refresh = new Button { Text = "Refresh", BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, CornerRadius = 12 };
+        refresh.Clicked += async (_, _) => await ReloadAsync();
 
-        _collectionView = new CollectionView
+        Content = new Grid
         {
-            SelectionMode = SelectionMode.Single,
-            ItemTemplate = new DataTemplate(CreateServerTemplate)
-        };
-        _collectionView.SelectionChanged += OnSelectionChanged;
-
-        _refreshView = new RefreshView();
-        _refreshView.Content = _collectionView;
-        _refreshView.Refreshing += OnRefreshRequested;
-
-        Content = new VerticalStackLayout
-        {
-            Padding = new Thickness(12),
-            Spacing = 12,
+            Padding = new Thickness(16, 12),
+            RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star) },
+            RowSpacing = 12,
             Children =
             {
-                new Label
+                new VerticalStackLayout
                 {
-                    Text = "Select a server to launch JackLLM in-app.",
-                    FontSize = 14
-                },
-                new HorizontalStackLayout
-                {
-                    Spacing = 8,
+                    Spacing = 4,
                     Children =
                     {
-                        _loadingIndicator,
-                        _statusLabel
+                        new Label { Text = "JackLLM Mobile", FontSize = 30, FontAttributes = FontAttributes.Bold, TextColor = Colors.White },
+                        _status
                     }
-                },
-                new Button
-                {
-                    Text = "Refresh server list",
-                    Command = new Command(async () => await ReloadAsync())
-                },
-                _refreshView
+                }.Row(0),
+                new HorizontalStackLayout { Spacing = 10, Children = { add, refresh } }.Row(1),
+                _servers.Row(2)
             }
         };
     }
@@ -80,111 +60,80 @@ public sealed class ServerListPage : ContentPage
     protected override async void OnAppearing()
     {
         base.OnAppearing();
-        await ReloadAsync();
-    }
-
-    private async void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        if (e.CurrentSelection.Count == 0)
-            return;
-
-        if (e.CurrentSelection[0] is not ServerInfo selected)
-            return;
-
-        _collectionView.SelectedItem = null;
-        await NavigateToServerAsync(selected);
-    }
-
-    private async void OnRefreshRequested(object? sender, EventArgs e)
-    {
-        await ReloadAsync();
-        _refreshView.IsRefreshing = false;
+        if (!_loaded) { _loaded = true; await ReloadAsync(); }
     }
 
     private async Task ReloadAsync()
     {
+        _status.Text = "Finding saved and public Workstations…";
         try
         {
-            _loadingIndicator.IsRunning = true;
-            _loadingIndicator.IsVisible = true;
-            _statusLabel.Text = "Loading available servers...";
-
-            IReadOnlyList<ServerInfo> servers = await _directoryService.LoadAsync();
-            _collectionView.ItemsSource = servers;
-            _statusLabel.Text = servers.Count == 0
-                ? "No servers found from master lists."
-                : $"{servers.Count} server(s) loaded.";
+            var combined = _store.Load().ToList();
+            _servers.ItemsSource = combined.ToList();
+            if (combined.Count > 0)
+                _status.Text = $"{combined.Count} saved Workstation{(combined.Count == 1 ? "" : "s")} available";
+            foreach (ServerInfo server in await _directory.LoadAsync())
+                if (!combined.Any(item => item.LaunchKey.Equals(server.LaunchKey, StringComparison.OrdinalIgnoreCase))) combined.Add(server);
+            _servers.ItemsSource = combined;
+            _status.Text = combined.Count == 0 ? "No Workstations found. Add one by address or pairing code." : $"{combined.Count} Workstation{(combined.Count == 1 ? "" : "s")} available";
         }
-        catch (Exception ex)
-        {
-            _statusLabel.Text = "Unable to load server list: " + ex.Message;
-            _collectionView.ItemsSource = Array.Empty<ServerInfo>();
-        }
-        finally
-        {
-            _loadingIndicator.IsRunning = false;
-            _loadingIndicator.IsVisible = false;
-        }
+        catch (Exception ex) { _status.Text = "Server refresh failed: " + ex.Message; }
     }
 
-    private async Task NavigateToServerAsync(ServerInfo selectedServer)
+    private async Task AddServerAsync()
     {
-        string launchUrl = _directoryService.BuildLaunchUrl(selectedServer);
-        await Navigation.PushAsync(new ChatHostPage(selectedServer, launchUrl));
+        string endpoint = await DisplayPromptAsync("Add Workstation", "HTTPS address", initialValue: "https://", keyboard: Keyboard.Url) ?? "";
+        if (string.IsNullOrWhiteSpace(endpoint)) return;
+        try { endpoint = JackLlmClient.NormalizeBaseUrl(endpoint); }
+        catch (Exception ex) { await DisplayAlertAsync("Invalid address", ex.Message, "OK"); return; }
+
+        string code = await DisplayPromptAsync("Pairing", "Enter the six-digit pairing code, or leave blank if this server uses SocketJack sign-in.", keyboard: Keyboard.Numeric) ?? "";
+        var server = new ServerInfo { Name = new Uri(endpoint).Host, Endpoint = endpoint, Online = true, IsSaved = true };
+        if (!string.IsNullOrWhiteSpace(code))
+        {
+            try
+            {
+                using var pairingClient = new JackLlmClient(_credentials);
+                string token = await pairingClient.CompletePairingAsync(endpoint, code.Trim(), DeviceInfo.Current.Name);
+                await _credentials.SetServerTokenAsync(server.LaunchKey, token);
+            }
+            catch (Exception ex) { await DisplayAlertAsync("Pairing failed", ex.Message, "OK"); return; }
+        }
+        _store.Save(server);
+        await ReloadAsync();
+        await OpenServerAsync(server);
     }
 
-    private static View CreateServerTemplate()
+    private async Task OpenServerAsync(ServerInfo server)
     {
-        var title = new Label();
+        var launch = new ServerInfo
+        {
+            ServerId = server.ServerId, Name = server.Name, OwnerUserName = server.OwnerUserName,
+            Endpoint = _directory.BuildLaunchUrl(server), OpenAiBaseUrl = server.OpenAiBaseUrl,
+            SelectedModel = server.SelectedModel, AvailableModels = server.AvailableModels,
+            CertificateFingerprint = server.CertificateFingerprint, IsSaved = server.IsSaved
+        };
+        await Navigation.PushAsync(new ChatHostPage(launch, new JackLlmClient(_credentials), _store));
+    }
+
+    private static View ServerCard()
+    {
+        var title = new Label { FontSize = 17, FontAttributes = FontAttributes.Bold, TextColor = Colors.White };
         title.SetBinding(Label.TextProperty, nameof(ServerInfo.DisplayName));
-        title.FontSize = 16;
-
-        var details = new Label();
-        details.SetBinding(Label.TextProperty, nameof(ServerInfo.ModelLine));
-        details.TextColor = Colors.Gray;
-        details.FontSize = 12;
-
-        var meta = new Label();
-        meta.SetBinding(Label.TextProperty, nameof(ServerInfo.HardwareLine));
-        meta.TextColor = Colors.Gray;
-        meta.FontSize = 12;
-
-        var status = new Label();
-        status.TextColor = Colors.Gray;
-        status.FontSize = 12;
-        status.SetBinding(Label.TextProperty, new Binding(nameof(ServerInfo.Online), converter: new BoolToStatusTextConverter()));
-
+        var model = new Label { FontSize = 12, TextColor = Color.FromArgb("#94A3B8") };
+        model.SetBinding(Label.TextProperty, nameof(ServerInfo.ModelLine));
+        var hardware = new Label { FontSize = 12, TextColor = Color.FromArgb("#64748B") };
+        hardware.SetBinding(Label.TextProperty, nameof(ServerInfo.HardwareLine));
         return new Border
         {
-            Padding = new Thickness(12, 10),
-            StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(10) },
-            Stroke = Colors.Black.WithAlpha(0.2f),
-            Content = new VerticalStackLayout
-            {
-                Spacing = 4,
-                Children =
-                {
-                    title,
-                    details,
-                    meta,
-                    status
-                }
-            }
+            Margin = new Thickness(0, 0, 0, 10), Padding = 14, BackgroundColor = Color.FromArgb("#151C2F"), Stroke = Color.FromArgb("#26334D"),
+            StrokeShape = new RoundRectangle { CornerRadius = 16 },
+            Content = new VerticalStackLayout { Spacing = 5, Children = { title, model, hardware } }
         };
     }
 }
 
-internal sealed class BoolToStatusTextConverter : IValueConverter
+internal static class GridExtensions
 {
-    public object Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
-    {
-        if (value is bool online)
-            return online ? "Online" : "Offline";
-        return "Unknown";
-    }
-
-    public object ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
-    {
-        return false;
-    }
+    public static T Row<T>(this T view, int row) where T : BindableObject { Grid.SetRow(view, row); return view; }
 }

@@ -70,6 +70,12 @@ public sealed class LlmRuntimeOptions
         Environment.GetEnvironmentVariable("LLMRUNTIME_VLLM_ARGS") ??
         "--dtype auto --enforce-eager";
 
+    public List<RemoteVllmProfile> RemoteVllmProfiles { get; set; } = [];
+
+    public string SelectedRemoteVllmProfileId { get; set; } = "";
+
+    internal RemoteVllmManager? RemoteVllmManager { get; set; }
+
     public TimeSpan VllmStartupTimeout { get; set; } =
         TimeSpan.FromSeconds(Math.Clamp(
             int.TryParse(

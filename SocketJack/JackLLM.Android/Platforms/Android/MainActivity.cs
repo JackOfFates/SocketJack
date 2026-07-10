@@ -3,7 +3,7 @@ using Android.Content.PM;
 using Android.OS;
 using Microsoft.Maui;
 
-namespace JackLLM.Android;
+namespace JackLLM.Mobile;
 
 [Activity(
     Theme = "@style/Maui.SplashTheme",

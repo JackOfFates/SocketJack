@@ -28,6 +28,7 @@ public sealed class LlmRuntimeHost : IDisposable
     private readonly ModelRepositoryScanner _repositoryScanner = new();
     private readonly System.Net.Http.HttpClient _huggingFaceHttpClient = new();
     private readonly ModelConversionService _conversionService;
+    private readonly RemoteVllmManager _remoteVllm = new();
     private readonly Dictionary<int, GpuProcessCpuSample> _gpuProcessCpuSamples = new();
     private readonly object _gpuProcessCpuSamplesLock = new();
     private readonly ConcurrentDictionary<string, OpenAiMediaJob> _openAiMediaJobs = new(StringComparer.OrdinalIgnoreCase);
@@ -39,6 +40,7 @@ public sealed class LlmRuntimeHost : IDisposable
     public LlmRuntimeHost(LlmRuntimeOptions options, LlmModelRegistry? registry = null, LlmToolRegistry? toolRegistry = null, ILlmToolInvoker? toolInvoker = null, LlmRuntimeCompatibilityService? compatibility = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _options.RemoteVllmManager ??= _remoteVllm;
         _conversionService = new ModelConversionService(
             string.IsNullOrWhiteSpace(_options.CompleteModelRoot) ? _options.ModelRoot : _options.CompleteModelRoot,
             _options.OnnxConversionTimeout);
@@ -82,6 +84,8 @@ public sealed class LlmRuntimeHost : IDisposable
     public LlmProductionReadinessService ProductionReadiness { get; }
 
     public LlmRuntimeCompatibilityService Compatibility { get; }
+
+    public RemoteVllmManager RemoteVllm => _remoteVllm;
 
     public int Port => Server.Port;
 
@@ -237,6 +241,12 @@ public sealed class LlmRuntimeHost : IDisposable
         server.Map("POST", "/api/v1/models/convert", (_, request, _) => HandleConversionStart(request));
         server.Map("GET", "/api/v1/models/convert/status", (_, request, _) => HandleConversionStatus(request));
         server.Map("POST", "/api/v1/models/convert/cancel", (_, request, _) => HandleConversionCancel(request));
+
+        server.Map("GET", "/api/v1/remote-vllm/profiles", (_, _, _) => HandleRemoteVllmProfiles());
+        server.Map("GET", "/api/v1/remote-vllm/status", (_, request, cancellationToken) => HandleRemoteVllmOperation(request, "status", cancellationToken));
+        server.Map("POST", "/api/v1/remote-vllm/start", (_, request, cancellationToken) => HandleRemoteVllmOperation(request, "start", cancellationToken));
+        server.Map("POST", "/api/v1/remote-vllm/stop", (_, request, cancellationToken) => HandleRemoteVllmOperation(request, "stop", cancellationToken));
+        server.Map("POST", "/api/v1/remote-vllm/restart", (_, request, cancellationToken) => HandleRemoteVllmOperation(request, "restart", cancellationToken));
 
         server.Map("GET", "/api/v1/runtime/compatibility", (_, request, cancellationToken) => HandleCompatibilityStatus(request, cancellationToken));
         server.Map("GET", "/api/v1/runtime/gpu/processes", (_, request, _) => HandleGpuPythonProcesses(request));
@@ -1199,6 +1209,70 @@ public sealed class LlmRuntimeHost : IDisposable
         {
             SetStatus(request, (500, "Internal Server Error"));
             return Error(ex.Message, "compatibility_error", "linux_cuda_pytorch_install_failed");
+        }
+    }
+
+    private string HandleRemoteVllmProfiles()
+    {
+        return ToJson(new
+        {
+            selected_remote_profile_id = _options.SelectedRemoteVllmProfileId,
+            profiles = _options.RemoteVllmProfiles.Select(profile => new
+            {
+                id = profile.Id,
+                name = profile.Name,
+                ssh_host = profile.SshHost,
+                python_executable = RemoteVllmManager.Redact(profile.PythonExecutable),
+                model = profile.Model,
+                model_cache_path = RemoteVllmManager.Redact(profile.ModelCachePath),
+                api_port = profile.ApiPort,
+                openai_base_url = RemoteVllmManager.ResolveEndpoint(profile),
+                tensor_parallel_size = profile.TensorParallelSize,
+                context_length = profile.ContextLength,
+                max_vram_usage_percent = profile.MaxVramUsagePercent,
+                extra_arguments = RemoteVllmManager.Redact(profile.ExtraArguments),
+                acceleration = DSparkModelDetector.Resolve(profile.Model, profile.Acceleration).ToString().ToLowerInvariant(),
+                status = RemoteVllm.GetStatus(profile)
+            }).ToArray()
+        });
+    }
+
+    private string HandleRemoteVllmOperation(HttpRequest request, string operation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string profileId = request.QueryParameters.TryGetValue("profile_id", out string? queryId) ? queryId ?? "" : "";
+            if (!string.IsNullOrWhiteSpace(request.Body))
+            {
+                using JsonDocument document = ParseBody(request);
+                profileId = GetString(document.RootElement, "profile_id") ?? GetString(document.RootElement, "profileId") ?? profileId;
+            }
+            if (string.IsNullOrWhiteSpace(profileId)) profileId = _options.SelectedRemoteVllmProfileId;
+            RemoteVllmProfile? profile = _options.RemoteVllmProfiles.FirstOrDefault(candidate => string.Equals(candidate.Id, profileId, StringComparison.OrdinalIgnoreCase));
+            if (profile == null)
+            {
+                SetStatus(request, (404, "Not Found"));
+                return Error("Remote vLLM profile was not found.", "not_found", "remote_vllm_profile_not_found");
+            }
+
+            RemoteVllmStatus status = operation switch
+            {
+                "start" => RemoteVllm.StartAsync(profile, cancellationToken).GetAwaiter().GetResult(),
+                "stop" => RemoteVllm.StopAsync(profile, cancellationToken).GetAwaiter().GetResult(),
+                "restart" => RemoteVllm.RestartAsync(profile, cancellationToken).GetAwaiter().GetResult(),
+                _ => RemoteVllm.ProbeAsync(profile, cancellationToken).GetAwaiter().GetResult()
+            };
+            return ToJson(status);
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus(request, (408, "Request Timeout"));
+            return Error("Remote vLLM operation was cancelled.", "timeout", "remote_vllm_cancelled");
+        }
+        catch (Exception ex)
+        {
+            SetStatus(request, (500, "Internal Server Error"));
+            return Error(RemoteVllmManager.Redact(ex.Message), "remote_runtime_error", "remote_vllm_operation_failed");
         }
     }
 
@@ -5433,12 +5507,21 @@ public sealed class LlmRuntimeHost : IDisposable
     private object ToNativeModel(LlmModelInfo model)
     {
         LlmModelConfig config = Registry.GetModelConfig(model.Key);
+        RemoteVllmProfile? remoteProfile = model.FilePath.StartsWith("remote-vllm://", StringComparison.OrdinalIgnoreCase)
+            ? _options.RemoteVllmProfiles.FirstOrDefault(profile => string.Equals("remote-vllm://" + profile.Id, model.FilePath, StringComparison.OrdinalIgnoreCase))
+            : null;
+        RemoteVllmStatus? remoteStatus = remoteProfile == null ? null : RemoteVllm.GetStatus(remoteProfile);
         return new
     {
         type = model.Type,
         publisher = model.Publisher,
         key = model.Key,
         display_name = model.DisplayName,
+        acceleration = DSparkModelDetector.Resolve(model.Key, model.Acceleration).ToString().ToLowerInvariant(),
+        acceleration_status = remoteStatus?.AccelerationStatus ?? "unverified",
+        fallback_reason = remoteStatus?.FallbackReason ?? "",
+        remote_profile_id = remoteStatus?.RemoteProfileId ?? "",
+        tokens_per_second = remoteStatus?.TokensPerSecond,
         architecture = model.Architecture,
         quantization = model.QuantizationName == null ? null : new
         {
@@ -5478,6 +5561,11 @@ public sealed class LlmRuntimeHost : IDisposable
             promptPipelineReadyAt = instance.PromptPipelineReadyAtUtc?.ToString("O"),
             prompt_pipeline_warmup_seconds = instance.PromptPipelineWarmupSeconds,
             promptPipelineWarmupSeconds = instance.PromptPipelineWarmupSeconds,
+            acceleration = instance.Acceleration,
+            acceleration_status = instance.AccelerationStatus,
+            fallback_reason = instance.FallbackReason,
+            remote_profile_id = instance.RemoteProfileId,
+            tokens_per_second = instance.TokensPerSecond,
             config = ToNativeLoadConfig(instance.Config)
         }).ToArray(),
         max_context_length = model.MaxContextLength ?? 0,

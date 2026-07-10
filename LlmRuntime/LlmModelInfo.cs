@@ -42,6 +42,8 @@ public sealed class LlmModelInfo
 
     public IReadOnlyList<string> Aliases { get; init; } = [];
 
+    public VllmAccelerationMode Acceleration { get; init; } = VllmAccelerationMode.Auto;
+
     public IReadOnlyList<LoadedModelInstance> LoadedInstances { get; init; } = [];
 
     public bool IsLoaded => LoadedInstances.Count > 0;
@@ -89,6 +91,16 @@ public sealed class LoadedModelInstance
     public DateTimeOffset? PromptPipelineReadyAtUtc { get; init; }
 
     public double PromptPipelineWarmupSeconds { get; init; }
+
+    public string Acceleration { get; init; } = "standard";
+
+    public string AccelerationStatus { get; init; } = "unverified";
+
+    public string FallbackReason { get; init; } = "";
+
+    public string RemoteProfileId { get; init; } = "";
+
+    public double? TokensPerSecond { get; init; }
 }
 
 public sealed class LlmLoadConfig

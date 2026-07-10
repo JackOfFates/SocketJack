@@ -1,10 +1,10 @@
-using JackLLM.Android.Pages;
-using JackLLM.Android.Services;
+using JackLLM.Mobile.Pages;
+using JackLLM.Mobile.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.Controls.Hosting;
 using Microsoft.Maui.Hosting;
 
-namespace JackLLM.Android;
+namespace JackLLM.Mobile;
 
 public static class MauiProgram
 {
@@ -17,11 +17,14 @@ public static class MauiProgram
             {
             });
 
+        builder.Services.AddSingleton<SecureCredentialStore>();
+        builder.Services.AddSingleton<ServerStore>();
         builder.Services.AddSingleton<ServerDirectoryService>();
+        builder.Services.AddTransient<JackLlmClient>();
+        builder.Services.AddSingleton<MobileAudioService>();
         builder.Services.AddSingleton<ServerListPage>();
         builder.Services.AddTransient<ChatHostPage>();
 
         return builder.Build();
     }
 }
-

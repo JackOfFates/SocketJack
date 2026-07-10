@@ -1,8 +1,8 @@
 # JackLLM Workstation
 
-`JackLLM.Workstation` is the cross-platform, non-WPF host for JackLLM Workstation. It runs the SocketJack/LmVsProxy backend, the browser workstation UI, and optional embedded `LlmRuntime` on Linux.
+`JackLLM.Workstation` is the cross-platform backend host for JackLLM Workstation. It runs the SocketJack/LmVsProxy backend, serves the browser workstation UI, and can start an embedded `LlmRuntime`.
 
-The Windows `JackLLM/` project remains the WPF tray/window application. This project is the Linux-runnable service/terminal version.
+The Windows `JackLLM/` project remains the WPF tray/window application. This project is a headless service/terminal host and does not create a native desktop GUI.
 
 ## Run On Linux
 
@@ -45,7 +45,7 @@ WPF remote-admin screen capture/input is not available in this Linux host. The b
 
 <!-- LINECOUNTER-OUTPUT:START -->
 <details>
-<summary><strong>LineCounter - Output</strong> <code>1,571 lines / 5 files</code></summary>
+<summary><strong>LineCounter - Output</strong> <code>1,143 lines / 4 files</code></summary>
 
 <br>
 
@@ -54,10 +54,10 @@ WPF remote-admin screen capture/input is not available in this Linux host. The b
 
 | Language | Files | Lines |
 |---|---:|---:|
-| C# | 3 | 1,498 |
+| C# | 2 | 1,070 |
 | Markdown | 1 | 44 |
 | MSBuild/XML | 1 | 29 |
-| **Total** | **5** | **1,571** |
+| **Total** | **4** | **1,143** |
 
 </details>
 <!-- LINECOUNTER-OUTPUT:END -->

@@ -573,6 +573,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private const int ChatSessionColumnCount = 19;
 
+	private const string ChatMemoriesTableName = "JackLLMMemories";
+
+	private const int ChatMemoryColumnCount = 8;
+
 	private const string ChatPrivatePayloadPrefix = "SJCS1:";
 
 	private const string ChatPrivatePayloadPrefixV2 = "SJCS2:";
@@ -5061,6 +5065,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("GET", "/Session", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => RenderChatServerHtml(chatUiHtml, chatUiVars, request));
 		string workstationHtml = HtmlPageResources.GetHtml("JackLLMWorkstation.html");
 		server.Map("GET", "/Workstation", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => RenderChatServerHtml(workstationHtml, null, request));
+		RegisterSocketChatRoutes(server);
+		RegisterJackDirectorRoutes(server);
 		server.Map("GET", "/assets/jackllm-workstation-metadata.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildWorkstationMetadataImageResponse(request));
 		server.Map("GET", "/Account", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildSocketJackAccountPage(connection, request));
 		RegisterSockJackDmlRoutes(server);
@@ -5068,6 +5074,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Robots = "User-agent: *\nAllow: /\n";
 		server.Map("GET", "/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/health", "health", () => BuildChatHealthPayload(connection, request), () => GetChatSessionOwnerKey(connection, request)));
 		server.Map("GET", "/api/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/health", "health", () => BuildChatHealthPayload(connection, request), () => GetChatSessionOwnerKey(connection, request)));
+		RegisterMobileRoutes(server);
 		server.Map("OPTIONS", "/api/health", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("GET", "/api/master-list/ping", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/master-list/ping", "marketplace", () => JsonSerializer.Serialize(BuildMasterListPingPayload())));
 		server.Map("GET", "/api/lmvsproxy/ping", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/lmvsproxy/ping", "marketplace", () => JsonSerializer.Serialize(BuildMasterListPingPayload())));
@@ -5093,6 +5100,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("POST", "/api/model-runtime/models/convert", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/models/convert", request.Body, cancellationToken));
 		server.Map("GET", "/api/model-runtime/models/convert/status", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/models/convert/status" + (string.IsNullOrWhiteSpace(request.QueryString) ? "" : ("?" + request.QueryString)), null, cancellationToken));
 		server.Map("POST", "/api/model-runtime/models/convert/cancel", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/models/convert/cancel" + (string.IsNullOrWhiteSpace(request.QueryString) ? "" : ("?" + request.QueryString)), request.Body, cancellationToken));
+		server.Map("GET", "/api/model-runtime/remote-vllm/profiles", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/remote-vllm/profiles", null, cancellationToken));
+		server.Map("GET", "/api/model-runtime/remote-vllm/status", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/remote-vllm/status" + (string.IsNullOrWhiteSpace(request.QueryString) ? "" : ("?" + request.QueryString)), null, cancellationToken));
+		server.Map("POST", "/api/model-runtime/remote-vllm/start", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/remote-vllm/start", request.Body, cancellationToken));
+		server.Map("POST", "/api/model-runtime/remote-vllm/stop", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/remote-vllm/stop", request.Body, cancellationToken));
+		server.Map("POST", "/api/model-runtime/remote-vllm/restart", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/remote-vllm/restart", request.Body, cancellationToken));
 		foreach (string openAiModelsAlias in new[] { "/models", "/v1/models", "/api/model-runtime/v1/models", "/api/model-runtime/v1/v1/models", "/api/model-runtime/openai/v1/models", "/api/model-runtime/v1/openai/v1/models" })
 			server.Map("GET", openAiModelsAlias, (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/v1/models", null, cancellationToken));
 		foreach (string chatCompletionsAlias in new[] { "/chat/completions", "/v1/chat/completions", "/api/model-runtime/v1/chat/completions", "/api/model-runtime/chat/completions", "/api/model-runtime/v1/v1/chat/completions", "/api/model-runtime/openai/v1/chat/completions", "/api/model-runtime/v1/openai/v1/chat/completions" })
@@ -5268,6 +5280,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("POST", "/api/chat-session-share-message", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionShareMessageSaveRequest(connection, request));
 		server.Map("GET", "/api/chat-session-comments", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionCommentsGetRequest(connection, request));
 		server.Map("POST", "/api/chat-session-comments", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSessionCommentSaveRequest(connection, request));
+		server.Map("GET", "/api/chat-memories", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatMemoriesGetRequest(connection, request));
+		server.Map("POST", "/api/chat-memories", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatMemoriesMutationRequest(connection, request));
 		server.Map("POST", "/api/chat-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatFileUploadRequest(connection, request));
 		server.Map("GET", "/api/session-sync/files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFilesRequest(request));
 		server.Map("POST", "/api/session-sync/files", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleLocalAutoSessionFileUploadRequest(request));
@@ -16601,6 +16615,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			bool terminalMode = IsChatTerminalServiceSelected(request?.Body);
 			bool imageRequest = ChatUiRequestContainsImageContent(request?.Body);
 			string sessionId = EnsureChatUiSessionId(ExtractChatUiSessionId(request?.Body));
+			ProcessExplicitChatMemoryCommands(ownerKey, sessionId, request.Body);
 			if (agentMode && !permissions.agentAccess)
 			{
 				return BuildJsonError(request, 403, "Forbidden", "Agent access is disabled for this session.");
@@ -16711,6 +16726,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			bool terminalMode = IsChatTerminalServiceSelected(request?.Body);
 			ChatUiRequestContainsImageContent(request?.Body);
 			string sessionId = EnsureChatUiSessionId(ExtractChatUiSessionId(request?.Body));
+			ProcessExplicitChatMemoryCommands(ownerKey, sessionId, request.Body);
 			if (agentMode && !permissions.agentAccess)
 			{
 				SetHttpStatus(request, 403, "Forbidden");
@@ -17679,6 +17695,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return "sess_" + Guid.NewGuid().ToString("N");
 		}
 		return SanitizeFileName(sessionId);
+	}
+
+	private string EnsureOptionalChatUiSessionId(string sessionId)
+	{
+		sessionId = (sessionId ?? "").Trim();
+		return string.IsNullOrWhiteSpace(sessionId) ? "" : SanitizeFileName(sessionId);
 	}
 
 	private string ExtractChatUiStreamId(string requestBody)
@@ -21630,7 +21652,7 @@ except Exception as exc:
 					ownerKey = ownerKey,
 					sessionId = sessionId,
 					storage = BuildSolutionExplorerStorageMetrics(ownerKey, sessionId),
-					roots = BuildChatSolutionExplorerRoots(ownerKey, sessionId)
+					roots = BuildChatSolutionExplorerRoots(ownerKey, sessionId, includeAccessibleRoots: true)
 				});
 			}
 			if (!TryResolveSolutionExplorerDirectory(ownerKey, sessionId, kind, requestedPath, out var fullPath, out var error))
@@ -26399,7 +26421,9 @@ except Exception as exc:
 		long extractedSizeBytes = 0L;
 		try
 		{
-			if (!TryAuthenticateWebAuthRequest(request, out var principal, out var authError) || principal == null || string.IsNullOrWhiteSpace(principal.UserName))
+			bool authenticated = TryAuthenticateWebAuthRequest(request, out var principal, out var authError);
+			if ((!authenticated || principal == null || string.IsNullOrWhiteSpace(principal.UserName)) &&
+				(!IsLocalAdmin(connection, request) || !TryAuthorizeDatabaseAdministrator(connection, request, out principal, out authError)))
 			{
 				return BuildChatGitHubImportError(request, 401, "Unauthorized", FirstNonEmpty(authError, "Sign in before importing a GitHub repository."), "github_auth_failed");
 			}
@@ -26407,13 +26431,19 @@ except Exception as exc:
 			{
 				return BuildChatGitHubImportError(request, 403, "Forbidden", "Public accounts can view files but cannot import repositories.", "github_auth_failed");
 			}
-			string ownerKey = "webauth:" + principal.UserName.Trim().ToLowerInvariant();
-			RememberSocketJackBearerToken(ownerKey, principal.AccessToken);
-			RememberSocketJackServerOwnerPrincipal(principal);
-			if (StoreLocalWebAuthAccounts)
+			bool localPrincipal = string.Equals(principal.AuthType, "Localhost", StringComparison.OrdinalIgnoreCase);
+			string ownerKey = localPrincipal
+				? GetChatSessionOwnerKey(connection, request)
+				: "webauth:" + principal.UserName.Trim().ToLowerInvariant();
+			if (!localPrincipal)
 			{
-				GetOrCreateWebAuthTokenAccount(principal.UserName, connection, request);
-				LinkWebAuthUserToIp(principal.UserName, ExtractClientIp(connection, request) ?? "");
+				RememberSocketJackBearerToken(ownerKey, principal.AccessToken);
+				RememberSocketJackServerOwnerPrincipal(principal);
+				if (StoreLocalWebAuthAccounts)
+				{
+					GetOrCreateWebAuthTokenAccount(principal.UserName, connection, request);
+					LinkWebAuthUserToIp(principal.UserName, ExtractClientIp(connection, request) ?? "");
+				}
 			}
 			ChatPermissionState permissions = GetChatPermissions(ownerKey);
 			string restriction = BuildChatRestrictionMessage(permissions);
@@ -27262,6 +27292,7 @@ except Exception as exc:
 			GetChatSessionsTable();
 			GetDeveloperProjectWorkspacesTable();
 			GetChatSessionCommentsTable();
+			GetChatMemoriesTable();
 			GetChatPermissionsTable();
 			GetPersonaPlexConfigTable();
 			GetChatFilesystemAccessTable();
@@ -28494,7 +28525,7 @@ except Exception as exc:
 		return request.QueryParameters.TryGetValue(name, out value) ? value : null;
 	}
 
-	private List<SolutionExplorerEntry> BuildChatSolutionExplorerRoots(string ownerKey, string sessionId)
+	private List<SolutionExplorerEntry> BuildChatSolutionExplorerRoots(string ownerKey, string sessionId, bool includeAccessibleRoots = true)
 	{
 		List<SolutionExplorerEntry> roots = new List<SolutionExplorerEntry>();
 		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
@@ -28511,10 +28542,12 @@ except Exception as exc:
 				hasChildren = true
 			});
 		}
-		foreach (ChatFilesystemAccessEntry entry in GetChatFilesystemAccess(ownerKey))
+		if (includeAccessibleRoots)
 		{
-			if (entry != null && !string.IsNullOrWhiteSpace(entry.path))
+			foreach (ChatFilesystemAccessEntry entry in GetChatFilesystemAccess(ownerKey))
 			{
+				if (entry == null || string.IsNullOrWhiteSpace(entry.path))
+					continue;
 				roots.Add(new SolutionExplorerEntry
 				{
 					name = GetExplorerDisplayName(entry.path),
@@ -28849,6 +28882,27 @@ except Exception as exc:
 		List<SolutionExplorerEntry> directories = new List<SolutionExplorerEntry>();
 		HashSet<string> seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		HashSet<string> seenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
+		if (kind.Equals("session", StringComparison.OrdinalIgnoreCase) &&
+			!string.IsNullOrWhiteSpace(sessionRoot) &&
+			string.Equals(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), Path.GetFullPath(sessionRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+		{
+			foreach (ChatFilesystemAccessEntry accessibleEntry in GetChatFilesystemAccess(ownerKey))
+			{
+				if (accessibleEntry == null || string.IsNullOrWhiteSpace(accessibleEntry.path))
+					continue;
+				directories.Add(new SolutionExplorerEntry
+				{
+					name = GetExplorerDisplayName(accessibleEntry.path),
+					path = accessibleEntry.path,
+					kind = "accessible",
+					sessionId = sessionId,
+					type = "directory",
+					exists = accessibleEntry.exists,
+					hasChildren = accessibleEntry.exists
+				});
+			}
+		}
 		AddSandboxSolutionExplorerChildren(ownerKey, kind, directory, sessionId, directories, null, seenDirectories, seenFiles);
 		try
 		{
@@ -30248,6 +30302,11 @@ except Exception as exc:
 
 	private string GetChatSessionOwnerKey(NetworkConnection connection, HttpRequest request)
 	{
+		MobileDeviceRecord mobileDevice = AuthenticateMobileDevice(request);
+		if (mobileDevice != null)
+		{
+			return "mobile:" + mobileDevice.Id;
+		}
 		string ip = ExtractClientIp(connection, request);
 		if (string.IsNullOrWhiteSpace(ip))
 		{
@@ -31685,6 +31744,27 @@ except Exception as exc:
 		return table;
 	}
 
+	private Table GetChatMemoriesTable()
+	{
+		SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd("SocketJack", (string _) => new SocketJack.Net.Database.Database("SocketJack"));
+		Table table = db.Tables.GetOrAdd(ChatMemoriesTableName, (string _) => new Table(ChatMemoriesTableName));
+		EnsureChatMemoryColumns(table);
+		if (table.Rows == null)
+		{
+			table.Rows = new List<object[]>();
+		}
+		for (int i = 0; i < table.Rows.Count; i++)
+		{
+			object[] row = NormalizeChatMemoryRow(table.Rows[i]);
+			if (IsProtectedChatSessionPrivateValue(GetRowValue(row, 2)) || HasChatOwnerEncryptionSecret(GetRowValue(row, 1)))
+			{
+				ProtectChatMemoryRowSensitiveValues(row);
+			}
+			table.Rows[i] = row;
+		}
+		return table;
+	}
+
 	private Table GetChatFilesystemAccessTable()
 	{
 		SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd("SocketJack", (string _) => new SocketJack.Net.Database.Database("SocketJack"));
@@ -32095,6 +32175,22 @@ except Exception as exc:
 		EnsureColumn(table, 4, "AuthorName", 120);
 		EnsureColumn(table, 5, "Body", -1);
 		EnsureColumn(table, 6, "CreatedUtc", 80);
+	}
+
+	private void EnsureChatMemoryColumns(Table table)
+	{
+		if (table.Columns == null)
+		{
+			table.Columns = new List<Column>();
+		}
+		EnsureColumn(table, 0, "Id", 80);
+		EnsureColumn(table, 1, "OwnerKey", 160);
+		EnsureColumn(table, 2, "Text", -1);
+		EnsureColumn(table, 3, "SourceSessionId", 80);
+		EnsureColumn(table, 4, "CreatedUtc", 80);
+		EnsureColumn(table, 5, "UpdatedUtc", 80);
+		EnsureColumn(table, 6, "DeletedUtc", 80);
+		EnsureColumn(table, 7, "Category", 80);
 	}
 
 	private void EnsureChatPermissionColumns(Table table)
@@ -32954,6 +33050,80 @@ except Exception as exc:
 		}
 		string rowOwnerKey = NormalizeChatFilesystemOwnerKey(string.IsNullOrWhiteSpace(ownerKey) ? GetRowValue(row, 7) : ownerKey);
 		return TryUnprotectChatSessionPrivateValue(rowOwnerKey, value, "messages", out var _);
+	}
+
+	private object[] NormalizeChatMemoryRow(object[] row)
+	{
+		object[] normalized = new object[ChatMemoryColumnCount];
+		if (row != null)
+		{
+			int copy = Math.Min(row.Length, normalized.Length);
+			for (int i = 0; i < copy; i++)
+			{
+				normalized[i] = row[i];
+			}
+		}
+		string now = DateTimeOffset.UtcNow.ToString("O");
+		if (string.IsNullOrWhiteSpace(normalized[0]?.ToString()))
+		{
+			normalized[0] = "mem_" + Guid.NewGuid().ToString("N");
+		}
+		if (string.IsNullOrWhiteSpace(normalized[1]?.ToString()))
+		{
+			normalized[1] = "legacy";
+		}
+		if (normalized[2] == null)
+		{
+			normalized[2] = "";
+		}
+		if (normalized[3] == null)
+		{
+			normalized[3] = "";
+		}
+		if (string.IsNullOrWhiteSpace(normalized[4]?.ToString()))
+		{
+			normalized[4] = now;
+		}
+		if (string.IsNullOrWhiteSpace(normalized[5]?.ToString()))
+		{
+			normalized[5] = normalized[4];
+		}
+		if (normalized[6] == null)
+		{
+			normalized[6] = "";
+		}
+		if (normalized[7] == null)
+		{
+			normalized[7] = "";
+		}
+		return normalized;
+	}
+
+	private void ProtectChatMemoryRowSensitiveValues(object[] row)
+	{
+		if (row == null || row.Length < ChatMemoryColumnCount)
+		{
+			return;
+		}
+		string ownerKey = NormalizeChatFilesystemOwnerKey(GetRowValue(row, 1));
+		row[2] = ProtectChatSessionPrivateValue(ownerKey, GetRowValue(row, 2), "memory", "", normalizeJsonArray: false);
+	}
+
+	private object[] DecryptChatMemoryRowForOwner(object[] row, string ownerKey = null)
+	{
+		object[] normalized = NormalizeChatMemoryRow(row);
+		object[] clone = (object[])normalized.Clone();
+		string effectiveOwnerKey = NormalizeChatFilesystemOwnerKey(string.IsNullOrWhiteSpace(ownerKey) ? GetRowValue(clone, 1) : ownerKey);
+		clone[2] = GetChatMemoryPrivateValue(clone, effectiveOwnerKey);
+		return clone;
+	}
+
+	private string GetChatMemoryPrivateValue(object[] row, string ownerKey = null)
+	{
+		row = NormalizeChatMemoryRow(row);
+		string effectiveOwnerKey = NormalizeChatFilesystemOwnerKey(string.IsNullOrWhiteSpace(ownerKey) ? GetRowValue(row, 1) : ownerKey);
+		object[] privateValueRow = new object[8] { "", "", GetRowValue(row, 2), "", "", "", "", effectiveOwnerKey };
+		return GetChatSessionPrivateValue(privateValueRow, 2, "memory", "", effectiveOwnerKey);
 	}
 
 	private bool IsProtectedChatSessionPrivateValue(string value)
@@ -33869,6 +34039,432 @@ except Exception as exc:
 			return text;
 		}
 		return text.Substring(0, 38) + "...";
+	}
+
+	private string HandleChatMemoriesGetRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			string ownerKey = GetChatSessionOwnerKey(connection, request);
+			bool includeDeleted = string.Equals(GetQueryParameter(request, "includeDeleted"), "true", StringComparison.OrdinalIgnoreCase);
+			List<ChatMemoryRecord> memories = GetChatMemories(ownerKey, includeDeleted);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				ownerKey = ownerKey,
+				count = memories.Count,
+				memories = memories
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Chat UI] Memory load failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandleChatMemoriesMutationRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			string ownerKey = GetChatSessionOwnerKey(connection, request);
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
+			JsonElement root = document.RootElement;
+			string action = (ExtractStringProperty(root, "action") ?? "add").Trim().ToLowerInvariant();
+			string id = ExtractStringProperty(root, "id") ?? ExtractStringProperty(root, "memoryId") ?? "";
+			string text = ExtractStringProperty(root, "text") ?? ExtractStringProperty(root, "memory") ?? "";
+			string sourceSessionId = EnsureOptionalChatUiSessionId(ExtractStringProperty(root, "sessionId"));
+			if (action == "add" || action == "save" || action == "create")
+			{
+				if (!TrySaveChatMemory(ownerKey, text, sourceSessionId, "explicit", out var memory, out var saveError))
+				{
+					return BuildJsonError(request, 400, "Bad Request", saveError);
+				}
+				return JsonSerializer.Serialize(new
+				{
+					ok = true,
+					action = "add",
+					ownerKey = ownerKey,
+					memory = memory,
+					memories = GetChatMemories(ownerKey)
+				});
+			}
+			if (action == "delete" || action == "remove" || action == "forget")
+			{
+				int deleted = SoftDeleteChatMemories(ownerKey, id, text, clearAll: false);
+				return JsonSerializer.Serialize(new
+				{
+					ok = true,
+					action = "delete",
+					ownerKey = ownerKey,
+					deleted = deleted,
+					memories = GetChatMemories(ownerKey)
+				});
+			}
+			if (action == "clear" || action == "delete-all" || action == "forget-all")
+			{
+				int deleted = SoftDeleteChatMemories(ownerKey, "", "", clearAll: true);
+				return JsonSerializer.Serialize(new
+				{
+					ok = true,
+					action = "clear",
+					ownerKey = ownerKey,
+					deleted = deleted,
+					memories = GetChatMemories(ownerKey)
+				});
+			}
+			return BuildJsonError(request, 400, "Bad Request", "Unknown memory action.");
+		}
+		catch (JsonException ex)
+		{
+			return BuildJsonError(request, 400, "Bad Request", "Invalid memory JSON: " + ex.Message);
+		}
+		catch (Exception ex2)
+		{
+			LogMessage("[Chat UI] Memory update failed: " + ex2.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex2.Message);
+		}
+	}
+
+	private void ProcessExplicitChatMemoryCommands(string ownerKey, string sessionId, string requestBody)
+	{
+		try
+		{
+			string userText = ExtractLatestChatUiUserText(requestBody);
+			if (string.IsNullOrWhiteSpace(userText))
+			{
+				return;
+			}
+			string forgetText = ExtractExplicitMemoryForgetText(userText);
+			if (!string.IsNullOrWhiteSpace(forgetText))
+			{
+				SoftDeleteChatMemories(ownerKey, "", forgetText, clearAll: false);
+			}
+			foreach (string memoryText in ExtractExplicitMemorySaveTexts(userText))
+			{
+				TrySaveChatMemory(ownerKey, memoryText, sessionId, "explicit", out var _, out var _);
+			}
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Chat UI] Memory command processing failed: " + ex.Message);
+		}
+	}
+
+	private string BuildChatMemorySystemHint(string ownerKey)
+	{
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		if (string.IsNullOrWhiteSpace(ownerKey))
+		{
+			return "";
+		}
+		List<ChatMemoryRecord> memories = GetChatMemories(ownerKey)
+			.Where((ChatMemoryRecord memory) => memory != null && string.IsNullOrWhiteSpace(memory.deletedUtc))
+			.OrderByDescending((ChatMemoryRecord memory) => memory.updatedUtc ?? "")
+			.Take(24)
+			.ToList();
+		StringBuilder sb = new StringBuilder();
+		sb.AppendLine("[JackLLM saved memory]");
+		sb.AppendLine("JackLLM has application-managed explicit memory for this user. Use saved memories only as continuity context; the current user message wins if it conflicts. If the current user explicitly asks you to remember, save, forget, or make a mental note, acknowledge the memory action naturally and do not claim that JackLLM cannot store memories.");
+		if (memories.Count == 0)
+		{
+			sb.AppendLine("No saved memories are currently stored for this user.");
+			return sb.ToString().TrimEnd();
+		}
+		sb.AppendLine("Saved memories:");
+		int index = 1;
+		foreach (ChatMemoryRecord memory in memories)
+		{
+			string text = NormalizeChatMemoryText(memory.text, 320);
+			if (string.IsNullOrWhiteSpace(text))
+			{
+				continue;
+			}
+			sb.Append("- ").Append(index.ToString(CultureInfo.InvariantCulture)).Append(". ")
+				.AppendLine(text.Replace("\r", "").Replace("\n", " "));
+			index++;
+		}
+		return TruncateChatUiSystemContextText(sb.ToString().TrimEnd(), 6000);
+	}
+
+	private List<ChatMemoryRecord> GetChatMemories(string ownerKey, bool includeDeleted = false)
+	{
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		List<string> ownerKeys = GetEquivalentFilesystemOwnerKeys(ownerKey);
+		List<ChatMemoryRecord> memories = new List<ChatMemoryRecord>();
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatMemoriesTable();
+			foreach (object[] sourceRow in table.Rows)
+			{
+				object[] row = NormalizeChatMemoryRow(sourceRow);
+				if (!OwnerKeyListContains(ownerKeys, GetRowValue(row, 1)))
+				{
+					continue;
+				}
+				if (!includeDeleted && !string.IsNullOrWhiteSpace(GetRowValue(row, 6)))
+				{
+					continue;
+				}
+				memories.Add(ChatMemoryFromRow(DecryptChatMemoryRowForOwner(row, ownerKey)));
+			}
+		}
+		memories.Sort((ChatMemoryRecord a, ChatMemoryRecord b) => string.CompareOrdinal(b?.updatedUtc ?? "", a?.updatedUtc ?? ""));
+		return memories;
+	}
+
+	private bool TrySaveChatMemory(string ownerKey, string text, string sourceSessionId, string category, out ChatMemoryRecord memory, out string error)
+	{
+		memory = null;
+		error = "";
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		text = NormalizeChatMemoryText(text, 1000);
+		sourceSessionId = EnsureOptionalChatUiSessionId(sourceSessionId);
+		category = NormalizeChatMemoryCategory(category);
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			error = "Memory text is required.";
+			return false;
+		}
+		string now = DateTimeOffset.UtcNow.ToString("O");
+		string comparable = NormalizeChatMemoryComparable(text);
+		List<string> ownerKeys = GetEquivalentFilesystemOwnerKeys(ownerKey);
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatMemoriesTable();
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				object[] row = NormalizeChatMemoryRow(table.Rows[i]);
+				object[] readable = DecryptChatMemoryRowForOwner(row, ownerKey);
+				if (!OwnerKeyListContains(ownerKeys, GetRowValue(row, 1)))
+				{
+					table.Rows[i] = row;
+					continue;
+				}
+				if (string.Equals(NormalizeChatMemoryComparable(GetRowValue(readable, 2)), comparable, StringComparison.Ordinal))
+				{
+					readable[1] = ownerKey;
+					readable[2] = text;
+					readable[3] = sourceSessionId;
+					readable[5] = now;
+					readable[6] = "";
+					readable[7] = category;
+					ProtectChatMemoryRowSensitiveValues(readable);
+					table.Rows[i] = readable;
+					SaveChatSessionDataAndInvalidateCaches();
+					memory = ChatMemoryFromRow(DecryptChatMemoryRowForOwner(readable, ownerKey));
+					return true;
+				}
+				table.Rows[i] = row;
+			}
+			object[] next = NormalizeChatMemoryRow(new object[ChatMemoryColumnCount]
+			{
+				"mem_" + Guid.NewGuid().ToString("N"),
+				ownerKey,
+				text,
+				sourceSessionId,
+				now,
+				now,
+				"",
+				category
+			});
+			ProtectChatMemoryRowSensitiveValues(next);
+			table.Rows.Add(next);
+			SaveChatSessionDataAndInvalidateCaches();
+			memory = ChatMemoryFromRow(DecryptChatMemoryRowForOwner(next, ownerKey));
+			return true;
+		}
+	}
+
+	private int SoftDeleteChatMemories(string ownerKey, string id, string text, bool clearAll)
+	{
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		id = (id ?? "").Trim();
+		text = NormalizeChatMemoryText(text, 1000);
+		string comparableText = NormalizeChatMemoryComparable(text);
+		string now = DateTimeOffset.UtcNow.ToString("O");
+		List<string> ownerKeys = GetEquivalentFilesystemOwnerKeys(ownerKey);
+		int deleted = 0;
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatMemoriesTable();
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				object[] row = NormalizeChatMemoryRow(table.Rows[i]);
+				if (!OwnerKeyListContains(ownerKeys, GetRowValue(row, 1)) || !string.IsNullOrWhiteSpace(GetRowValue(row, 6)))
+				{
+					table.Rows[i] = row;
+					continue;
+				}
+				object[] readable = DecryptChatMemoryRowForOwner(row, ownerKey);
+				bool matches = clearAll ||
+					(!string.IsNullOrWhiteSpace(id) && string.Equals(GetRowValue(row, 0), id, StringComparison.Ordinal)) ||
+					(!string.IsNullOrWhiteSpace(comparableText) && NormalizeChatMemoryComparable(GetRowValue(readable, 2)).Contains(comparableText));
+				if (!matches)
+				{
+					table.Rows[i] = row;
+					continue;
+				}
+				row[5] = now;
+				row[6] = now;
+				table.Rows[i] = row;
+				deleted++;
+			}
+			if (deleted > 0)
+			{
+				SaveChatSessionDataAndInvalidateCaches();
+			}
+		}
+		return deleted;
+	}
+
+	private ChatMemoryRecord ChatMemoryFromRow(object[] row)
+	{
+		row = NormalizeChatMemoryRow(row);
+		return new ChatMemoryRecord
+		{
+			id = GetRowValue(row, 0),
+			ownerKey = GetRowValue(row, 1),
+			text = GetRowValue(row, 2),
+			sourceSessionId = GetRowValue(row, 3),
+			createdUtc = GetRowValue(row, 4),
+			updatedUtc = GetRowValue(row, 5),
+			deletedUtc = GetRowValue(row, 6),
+			category = GetRowValue(row, 7)
+		};
+	}
+
+	private string ExtractLatestChatUiUserText(string requestBody)
+	{
+		try
+		{
+			using JsonDocument document = ParseChatUiRequestBodyJson(requestBody);
+			JsonElement root = document.RootElement;
+			if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array)
+			{
+				int count = messages.GetArrayLength();
+				for (int i = count - 1; i >= 0; i--)
+				{
+					JsonElement message = messages[i];
+					string role = ExtractStringProperty(message, "role") ?? "";
+					if (role.Equals("user", StringComparison.OrdinalIgnoreCase))
+					{
+						string text = ExtractChatUiMessageContentText(message);
+						if (!string.IsNullOrWhiteSpace(text))
+						{
+							return text;
+						}
+					}
+				}
+			}
+			return ExtractStringProperty(root, "message") ?? ExtractStringProperty(root, "prompt") ?? "";
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
+	private List<string> ExtractExplicitMemorySaveTexts(string text)
+	{
+		List<string> memories = new List<string>();
+		text = NormalizeChatMemoryCommandText(text);
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			return memories;
+		}
+		string[] patterns = new string[5]
+		{
+			@"\b(?:please\s+)?remember\s+(?:that\s+|this\s*:?\s*)?(?<memory>[\s\S]+)$",
+			@"\b(?:save|store)\s+(?:this\s+)?(?:memory|note)?\s*(?:that\s+|:)?\s*(?<memory>[\s\S]+)$",
+			@"\b(?:make|take)\s+(?:a\s+)?mental\s+note\s+(?:that\s+|of\s+|:)?\s*(?<memory>[\s\S]+)$",
+			@"\bmental\s+note\s*:?\s*(?<memory>[\s\S]+)$",
+			@"\bnote\s+to\s+self\s*:?\s*(?<memory>[\s\S]+)$"
+		};
+		foreach (string pattern in patterns)
+		{
+			Match match = Regex.Match(text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+			if (!match.Success)
+			{
+				continue;
+			}
+			string memory = TrimChatMemoryCommandPayload(match.Groups["memory"].Value);
+			if (!string.IsNullOrWhiteSpace(memory) && !memories.Any((string existing) => string.Equals(NormalizeChatMemoryComparable(existing), NormalizeChatMemoryComparable(memory), StringComparison.Ordinal)))
+			{
+				memories.Add(memory);
+			}
+		}
+		return memories;
+	}
+
+	private string ExtractExplicitMemoryForgetText(string text)
+	{
+		text = NormalizeChatMemoryCommandText(text);
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			return "";
+		}
+		string[] patterns = new string[3]
+		{
+			@"\bforget\s+(?:that\s+|about\s+)?(?<memory>[\s\S]+)$",
+			@"\bdelete\s+(?:the\s+)?memory\s+(?:that\s+|about\s+)?(?<memory>[\s\S]+)$",
+			@"\bremove\s+(?:the\s+)?memory\s+(?:that\s+|about\s+)?(?<memory>[\s\S]+)$"
+		};
+		foreach (string pattern in patterns)
+		{
+			Match match = Regex.Match(text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+			if (match.Success)
+			{
+				return TrimChatMemoryCommandPayload(match.Groups["memory"].Value);
+			}
+		}
+		return "";
+	}
+
+	private static string NormalizeChatMemoryText(string text, int maxLength)
+	{
+		text = (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			return "";
+		}
+		text = Regex.Replace(text, "[ \\t]+", " ");
+		text = Regex.Replace(text, "\\n{3,}", "\n\n").Trim();
+		if (text.Length > maxLength)
+		{
+			text = text.Substring(0, Math.Max(0, maxLength)).TrimEnd();
+		}
+		return text;
+	}
+
+	private static string NormalizeChatMemoryComparable(string text)
+	{
+		return Regex.Replace((text ?? "").Trim().ToLowerInvariant(), "\\s+", " ");
+	}
+
+	private static string NormalizeChatMemoryCategory(string category)
+	{
+		category = Regex.Replace((category ?? "").Trim().ToLowerInvariant(), "[^a-z0-9_-]+", "-").Trim('-');
+		if (string.IsNullOrWhiteSpace(category))
+		{
+			return "explicit";
+		}
+		return category.Length > 80 ? category.Substring(0, 80) : category;
+	}
+
+	private static string NormalizeChatMemoryCommandText(string text)
+	{
+		text = (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+		return Regex.Replace(text, "[ \\t]+", " ");
+	}
+
+	private static string TrimChatMemoryCommandPayload(string text)
+	{
+		text = NormalizeChatMemoryText(text, 1000).Trim().Trim('"', '\'', ' ', '\t', '\r', '\n');
+		text = Regex.Replace(text, @"^(?:that|this)\s+", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
+		text = Regex.Replace(text, @"\s+(?:please|thanks|thank you)\.?$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
+		text = text.TrimEnd('?', ' ', '\t', '\r', '\n');
+		return NormalizeChatMemoryText(text, 1000);
 	}
 
 	private bool TryGetChatCommentIdentity(NetworkConnection connection, HttpRequest request, out string authorKey, out string displayName, out string error)
@@ -41367,6 +41963,25 @@ except Exception as exc:
 		{
 			return false;
 		}
+		const int maxAutoContinuationPasses = 3;
+		const int maxAutoContinuationOutputChars = 131072;
+		const int minAutoContinuationGrowthChars = 24;
+		if (continuationCount >= maxAutoContinuationPasses)
+		{
+			stopReason = "the auto-continuation pass limit was reached";
+			return false;
+		}
+		int outputLength = GetChatUiContinuationOutputLength(content, reasoning);
+		if (outputLength >= maxAutoContinuationOutputChars)
+		{
+			stopReason = "the auto-continuation output safety cap was reached";
+			return false;
+		}
+		if (continuationCount > 0 && lastContinuationOutputLength >= 0 && outputLength - lastContinuationOutputLength < minAutoContinuationGrowthChars)
+		{
+			stopReason = "the continuation stopped making meaningful progress";
+			return false;
+		}
 		if (!HasChatUiAutoContinuationTokenCapacity(ownerKey, usageMeter, out stopReason))
 		{
 			return false;
@@ -41763,6 +42378,10 @@ except Exception as exc:
 				return BuildChatUiBadRequestJson(request, materializeError);
 			}
 			request.Body = requestBody;
+			if (!sharedChat)
+			{
+				ProcessExplicitChatMemoryCommands(ownerKey, sessionId, request.Body);
+			}
 			if (agentMode && !permissions.agentAccess)
 			{
 				SetHttpStatus(request, 403, "Forbidden");
@@ -41799,7 +42418,7 @@ except Exception as exc:
 					usage = usageSnapshot
 				});
 			}
-			string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, ownerKey);
+			string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, ownerKey, includeMemories: !sharedChat);
 			string runtimeModelForUse = EnsureWebChatRuntimeModelReadyAsync(lmRequestJson, cancellationToken).GetAwaiter().GetResult();
 			if (agentMode || browserMode || terminalMode)
 			{
@@ -41977,6 +42596,10 @@ except Exception as exc:
 					return;
 				}
 				request.Body = streamRequestBody;
+				if (!sharedChat)
+				{
+					ProcessExplicitChatMemoryCommands(streamOwnerKey, sessionId, request.Body);
+				}
 				if (!EnsureChatUsageCanStart(output, streamOwnerKey, request?.Body))
 				{
 					return;
@@ -42017,7 +42640,7 @@ except Exception as exc:
 				}, requestBody: request?.Body, cancellationToken: cancellationToken).ConfigureAwait(continueOnCapturedContext: false));
 				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands))
 				{
-					string toolRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, streamOwnerKey);
+					string toolRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, streamOwnerKey, includeMemories: !sharedChat);
 					toolRequestJson = AddProxyResearchTools(toolRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, streamOwnerKey);
 					promptSessionId = promptSessionId ?? BeginActivePromptSession(agentMode ? "Web UI Agent" : (browserMode ? "Web UI Browser Skill" : "Web UI Terminal"), streamOwnerKey, toolRequestJson, sessionId, sharedParticipantKey);
 					string agentStatus = imageRequest
@@ -42088,7 +42711,7 @@ except Exception as exc:
 				{
 					try
 					{
-						string nativeRequestJson = BuildChatUiNativeChatRequestJson(request?.Body, permissions, promptUserName, streamOwnerKey);
+						string nativeRequestJson = BuildChatUiNativeChatRequestJson(request?.Body, permissions, promptUserName, streamOwnerKey, includeMemories: !sharedChat);
 						promptSessionId = promptSessionId ?? BeginActivePromptSession(sharedChat ? "Shared Web UI Chat" : "Web UI Chat", streamOwnerKey, nativeRequestJson, sessionId, sharedParticipantKey);
 						ChatUiCompletion nativeCompletion = new ChatUiCompletion();
 						switch (await TryForwardChatUiNativeChatStreamAsync(output, nativeRequestJson, promptSessionId, streamOwnerKey, usageMeter, imageRequest, cancellationToken, nativeCompletion))
@@ -42137,7 +42760,7 @@ except Exception as exc:
 						LogMessage("[Chat UI] Native " + selectedRuntimeDisplayName + " stream unavailable: " + ex2.Message);
 					}
 				}
-				string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: true, permissions, promptUserName, streamOwnerKey);
+				string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: true, permissions, promptUserName, streamOwnerKey, includeMemories: !sharedChat);
 				bool suppressOpenAiReasoning = ShouldSuppressChatUiReasoningForRequest(lmRequestJson);
 				await EnsureLmStudioForPromptAsync();
 				string url = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/v1/chat/completions";
@@ -49247,7 +49870,7 @@ except Exception as exc:
 		};
 	}
 
-	private string BuildChatUiCompletionRequestJson(string requestBody, bool streamResponses, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null)
+	private string BuildChatUiCompletionRequestJson(string requestBody, bool streamResponses, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null, bool includeMemories = true)
 	{
 		using JsonDocument document = ParseChatUiRequestBodyJson(requestBody);
 		using MemoryStream jsonStream = new MemoryStream();
@@ -49291,7 +49914,7 @@ except Exception as exc:
 		{
 			writer.WriteNumber("max_tokens", GetDefaultChatUiCompletionMaxTokens(agentMode));
 		}
-		List<string> systemParts = BuildChatUiSystemPromptParts(root, messageList, lastUserIndex, permissions, promptUserName, ownerKey, agentMode);
+		List<string> systemParts = BuildChatUiSystemPromptParts(root, messageList, lastUserIndex, permissions, promptUserName, ownerKey, agentMode, includeMemories);
 		writer.WritePropertyName("messages");
 		writer.WriteStartArray();
 		int messageCount = 0;
@@ -49325,7 +49948,7 @@ except Exception as exc:
 		return Encoding.UTF8.GetString(jsonStream.ToArray());
 	}
 
-	private string BuildChatUiNativeChatRequestJson(string requestBody, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null)
+	private string BuildChatUiNativeChatRequestJson(string requestBody, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null, bool includeMemories = true)
 	{
 		using JsonDocument document = ParseChatUiRequestBodyJson(requestBody);
 		using MemoryStream jsonStream = new MemoryStream();
@@ -49390,7 +50013,7 @@ except Exception as exc:
 		{
 			writer.WriteNumber("max_output_tokens", GetDefaultChatUiCompletionMaxTokens(agentMode));
 		}
-		string systemPrompt = BuildChatUiNativeSystemPrompt(root, messageList, lastUserIndex, permissions, promptUserName, ownerKey);
+		string systemPrompt = BuildChatUiNativeSystemPrompt(root, messageList, lastUserIndex, permissions, promptUserName, ownerKey, includeMemories);
 		if (!string.IsNullOrWhiteSpace(systemPrompt))
 		{
 			writer.WriteString("system_prompt", systemPrompt);
@@ -49480,7 +50103,7 @@ except Exception as exc:
 		return -1;
 	}
 
-	private List<string> BuildChatUiSystemPromptParts(JsonElement root, List<JsonElement> messages, int lastUserIndex, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null, bool uploadedFilesRequireReadFile = false)
+	private List<string> BuildChatUiSystemPromptParts(JsonElement root, List<JsonElement> messages, int lastUserIndex, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null, bool uploadedFilesRequireReadFile = false, bool includeMemories = true)
 	{
 		List<string> parts = new List<string>();
 		foreach (JsonElement message in messages)
@@ -49500,6 +50123,11 @@ except Exception as exc:
 		if (!string.IsNullOrWhiteSpace(userNameHint))
 		{
 			parts.Add(userNameHint.Trim());
+		}
+		string memoryHint = includeMemories ? BuildChatMemorySystemHint(ownerKey) : "";
+		if (!string.IsNullOrWhiteSpace(memoryHint))
+		{
+			parts.Add(memoryHint.Trim());
 		}
 		string selectedServiceId = ExtractStringProperty(root, "service") ?? "";
 		bool plainChatMode = string.IsNullOrWhiteSpace(selectedServiceId);
@@ -49628,11 +50256,11 @@ except Exception as exc:
 		return text.Substring(0, keep).TrimEnd() + suffix;
 	}
 
-	private string BuildChatUiNativeSystemPrompt(JsonElement root, List<JsonElement> messages, int lastUserIndex, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null)
+	private string BuildChatUiNativeSystemPrompt(JsonElement root, List<JsonElement> messages, int lastUserIndex, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null, bool includeMemories = true)
 	{
 		string selectedServiceId = ExtractStringProperty(root, "service") ?? "";
 		bool agentMode = string.Equals(selectedServiceId, "agent", StringComparison.OrdinalIgnoreCase);
-		List<string> parts = BuildChatUiSystemPromptParts(root, messages, lastUserIndex, permissions, promptUserName, ownerKey, agentMode);
+		List<string> parts = BuildChatUiSystemPromptParts(root, messages, lastUserIndex, permissions, promptUserName, ownerKey, agentMode, includeMemories);
 		return string.Join(Environment.NewLine + Environment.NewLine, parts);
 	}
 
@@ -50113,12 +50741,15 @@ except Exception as exc:
 		{
 			yield break;
 		}
+		int maxDirectories = Math.Max(24, Math.Min(300, maxFiles * 4));
 		Stack<string> pending = new Stack<string>();
 		pending.Push(root);
 		int yielded = 0;
-		while (pending.Count > 0 && yielded < maxFiles)
+		int visitedDirectories = 0;
+		while (pending.Count > 0 && yielded < maxFiles && visitedDirectories < maxDirectories)
 		{
 			string directory = pending.Pop();
+			visitedDirectories++;
 			string[] files;
 			try
 			{
@@ -50151,6 +50782,10 @@ except Exception as exc:
 			}
 			for (int i2 = children.Length - 1; i2 >= 0; i2--)
 			{
+				if (pending.Count + visitedDirectories >= maxDirectories)
+				{
+					break;
+				}
 				pending.Push(children[i2]);
 			}
 		}
@@ -67939,6 +68574,7 @@ except Exception as exc:
 			StopRemoteSessionFileCloneWatcher();
 			DisposeChatSessionSandboxes();
 			DisposeChatBrowserClientSessions();
+			_jackDirector?.Dispose();
 			_httpListener = null;
 			try
 			{

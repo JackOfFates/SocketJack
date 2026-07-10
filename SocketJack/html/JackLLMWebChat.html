@@ -1205,6 +1205,16 @@ body.agent-mode .live-changed {
     width: 16px;
     height: 16px;
 }
+.view-menu-button {
+    grid-template-columns: 1fr auto;
+    width: 100%;
+    text-align: left;
+}
+.view-menu-button::after {
+    content: ">";
+    color: rgba(125, 211, 252, 0.82);
+    font-weight: 900;
+}
 .server-hardware-panel {
     width: 100%;
     padding: 9px;
@@ -2816,6 +2826,103 @@ body.agent-mode .filesystem-item:hover {
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(24px) saturate(1.2);
     padding: 16px;
+}
+.memory-panel {
+    width: min(620px, calc(100vw - 32px));
+    max-height: min(760px, calc(100vh - 36px));
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 12px;
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    border-radius: 16px;
+    background:
+        linear-gradient(135deg, rgba(34, 197, 94, 0.10), rgba(14, 165, 233, 0.10)),
+        rgba(3, 7, 18, 0.88);
+    color: var(--text);
+    box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    backdrop-filter: blur(24px) saturate(1.16);
+    padding: 14px;
+}
+.memory-head,
+.memory-actions,
+.memory-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.memory-head {
+    justify-content: space-between;
+}
+.memory-title {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+}
+.memory-title strong {
+    color: #d8f3ff;
+    font: 900 0.95rem var(--ui-font);
+}
+.memory-title span,
+.memory-status,
+.memory-meta {
+    color: var(--muted);
+    font: 0.72rem var(--ui-font);
+}
+.memory-compose {
+    display: grid;
+    gap: 8px;
+}
+.memory-input {
+    width: 100%;
+    min-height: 84px;
+    resize: vertical;
+    box-sizing: border-box;
+    border: 1px solid rgba(125, 211, 252, 0.24);
+    border-radius: 10px;
+    color: var(--text);
+    background: rgba(2, 6, 23, 0.72);
+    padding: 10px;
+    font: 0.84rem var(--ui-font);
+}
+.memory-actions {
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+.memory-list {
+    min-height: 0;
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    overflow: auto;
+    padding-right: 3px;
+}
+.memory-empty,
+.memory-row {
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 10px;
+    background: rgba(2, 6, 23, 0.42);
+    padding: 10px;
+}
+.memory-empty {
+    color: var(--muted);
+    text-align: center;
+    font: 0.8rem var(--ui-font);
+}
+.memory-row {
+    display: grid;
+    gap: 8px;
+}
+.memory-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.38;
+    font-size: 0.86rem;
+}
+.memory-row-actions {
+    justify-content: space-between;
+}
+.memory-status.error {
+    color: #fca5a5;
 }
 .token-rate-backdrop {
     position: fixed;
@@ -14018,6 +14125,77 @@ body.shared-view .solution-panel-toggle,
 body.shared-view .comments-panel-toggle {
     display: none !important;
 }
+
+.jackdirector-launcher {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 6px 10px;
+    border: 1px solid rgba(76, 224, 210, 0.5);
+    border-radius: 8px;
+    color: #dffefa;
+    background: linear-gradient(135deg, rgba(28, 126, 131, 0.62), rgba(81, 61, 153, 0.72));
+    text-decoration: none;
+    font: 800 0.68rem/1 var(--ui-font);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+.jackdirector-launcher:hover,
+.jackdirector-launcher:focus-visible {
+    border-color: rgba(103, 232, 249, 0.9);
+    box-shadow: 0 0 0 2px rgba(76, 224, 210, 0.16), 0 10px 28px rgba(29, 78, 216, 0.26);
+}
+.jackdirector-new-badge {
+    position: absolute;
+    top: -9px;
+    right: -8px;
+    padding: 3px 5px;
+    border: 1px solid rgba(255, 238, 168, 0.72);
+    border-radius: 999px;
+    color: #241a00;
+    background: linear-gradient(135deg, #fff0a6, #ffb454);
+    box-shadow: 0 4px 14px rgba(255, 180, 84, 0.38);
+    font: 900 0.5rem/1 var(--ui-font);
+    letter-spacing: 0.08em;
+}
+.jackdirector-feature-toast {
+    position: fixed;
+    top: max(78px, calc(env(safe-area-inset-top) + 68px));
+    right: max(16px, env(safe-area-inset-right));
+    z-index: 210;
+    width: min(390px, calc(100vw - 32px));
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 14px;
+    padding: 14px;
+    border: 1px solid rgba(76, 224, 210, 0.48);
+    border-radius: 12px;
+    color: #eefcff;
+    background: linear-gradient(145deg, rgba(13, 24, 39, 0.98), rgba(27, 22, 58, 0.98));
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    animation: terminal-toast-enter 240ms var(--surface-ease) both;
+}
+.jackdirector-feature-toast[hidden] { display: none !important; }
+.jackdirector-feature-copy { display: grid; gap: 5px; }
+.jackdirector-feature-copy strong { color: #8ff4e9; font-size: 0.86rem; }
+.jackdirector-feature-copy span { color: rgba(218, 229, 244, 0.82); font-size: 0.72rem; line-height: 1.45; }
+.jackdirector-feature-actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+.jackdirector-feature-actions a { flex: 1; text-align: center; }
+.jackdirector-feature-close {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 7px;
+    color: #dbe7f5;
+    background: rgba(15, 23, 42, 0.72);
+}
+@media (max-width: 720px) {
+    .jackdirector-launcher { padding: 6px 8px; font-size: 0.62rem; }
+    .jackdirector-feature-toast { top: auto; bottom: max(14px, env(safe-area-inset-bottom)); }
+}
 </style>
 </head>
 <body class="app-loading">
@@ -14093,6 +14271,7 @@ body.shared-view .comments-panel-toggle {
                     </span>
                     <span class="top-panel-copy"><strong id="identityTitleText">JackLLM Host - local</strong><span id="identitySummaryText">Heartbeat checking</span></span>
                     <span id="heartbeatReconnectText" class="heartbeat-reconnect-text" aria-live="polite">Reconnecting</span>
+                    <a id="jackDirectorLauncher" class="jackdirector-launcher" href="/JackDirector" title="Open JackDirector distributed video studio">JackDirector<span class="jackdirector-new-badge">NEW</span></a>
                     <button id="logoutButton" class="ghost logout-button" type="button" hidden>Logout</button>
                 </div>
             </div>
@@ -14174,6 +14353,7 @@ body.shared-view .comments-panel-toggle {
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="sessionPanelToggle" type="checkbox" aria-controls="sessionSidebar">Sessions</label>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="solutionPanelToggle" type="checkbox" aria-controls="solutionExplorer">Files</label>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="commentsPanelToggle" type="checkbox" aria-controls="shareComments">Comments</label>
+                    <button id="memoryPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Memory</button>
                 </div>
             </div>
             <div id="serverHardwarePanel" class="server-hardware-panel hardware-glance-panel" aria-live="polite">
@@ -14590,6 +14770,28 @@ body.shared-view .comments-panel-toggle {
         </div>
     </div>
 </div>
+<div id="memoryBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="memoryTitle">
+    <section class="memory-panel">
+        <div class="memory-head">
+            <div class="memory-title">
+                <strong id="memoryTitle">Memory</strong>
+                <span id="memoryCountText">Loading memories</span>
+            </div>
+            <button id="memoryClose" class="ghost" type="button" aria-label="Close memory">Close</button>
+        </div>
+        <div class="memory-compose">
+            <textarea id="memoryInput" class="memory-input" maxlength="1000" placeholder="Save something JackLLM should remember"></textarea>
+            <div class="memory-actions">
+                <div id="memoryStatus" class="memory-status" aria-live="polite"></div>
+                <div class="memory-row-actions">
+                    <button id="memoryClear" class="ghost" type="button">Clear All</button>
+                    <button id="memoryAdd" class="ghost" type="button">Add Memory</button>
+                </div>
+            </div>
+        </div>
+        <div id="memoryList" class="memory-list"></div>
+    </section>
+</div>
 <div id="tokenRateRequestBackdrop" class="token-rate-backdrop" role="dialog" aria-modal="true" aria-labelledby="tokenRateRequestTitle">
     <section class="token-rate-panel">
         <button id="tokenRateRequestClose" class="token-rate-close" type="button" aria-label="Close token-rate request">x</button>
@@ -14642,6 +14844,16 @@ body.shared-view .comments-panel-toggle {
 </div>
 <div id="sessionAdminMenu" class="admin-menu hidden" role="menu"></div>
 <div id="terminalApprovalToasts" class="approval-toast-stack" aria-live="polite"></div>
+<aside id="jackDirectorFeatureToast" class="jackdirector-feature-toast" role="status" aria-live="polite" hidden>
+    <div class="jackdirector-feature-copy">
+        <strong><span aria-hidden="true">&#10022;</span> New feature: JackDirector</strong>
+        <span>Plan shots, approve keyframes, and distribute video rendering across paired JackLLM Workstations.</span>
+    </div>
+    <button id="jackDirectorFeatureClose" class="jackdirector-feature-close" type="button" aria-label="Dismiss JackDirector announcement" title="Dismiss">&#215;</button>
+    <div class="jackdirector-feature-actions">
+        <a class="jackdirector-launcher" href="/JackDirector">Open JackDirector</a>
+    </div>
+</aside>
 <div id="adminPermissionsBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="adminPermissionsTitle">
     <div class="confirm-dialog">
         <div id="adminPermissionsTitle" class="confirm-text">Edit permissions</div>
@@ -14791,6 +15003,15 @@ const sessionCountPill = document.getElementById('sessionCountPill');
 const viewMenuWrap = document.getElementById('viewMenuWrap');
 const viewMenuToggle = document.getElementById('viewMenuToggle');
 const viewMenu = document.getElementById('viewMenu');
+const memoryPanelToggle = document.getElementById('memoryPanelToggle');
+const memoryBackdrop = document.getElementById('memoryBackdrop');
+const memoryClose = document.getElementById('memoryClose');
+const memoryInput = document.getElementById('memoryInput');
+const memoryAdd = document.getElementById('memoryAdd');
+const memoryClear = document.getElementById('memoryClear');
+const memoryStatus = document.getElementById('memoryStatus');
+const memoryList = document.getElementById('memoryList');
+const memoryCountText = document.getElementById('memoryCountText');
 const sessionPanelToggle = document.getElementById('sessionPanelToggle');
 const solutionPanelToggle = document.getElementById('solutionPanelToggle');
 const sessionPanelEdgeToggle = document.getElementById('sessionPanelEdgeToggle');
@@ -14957,6 +15178,9 @@ const storageCostText = document.getElementById('storageCostText');
 const totalCostText = document.getElementById('totalCostText');
 const taxCostText = document.getElementById('taxCostText');
 const logoutButton = document.getElementById('logoutButton');
+const jackDirectorLauncher = document.getElementById('jackDirectorLauncher');
+const jackDirectorFeatureToast = document.getElementById('jackDirectorFeatureToast');
+const jackDirectorFeatureClose = document.getElementById('jackDirectorFeatureClose');
 const permissionsMenu = document.getElementById('permissionsMenu');
 const accessPanelToggle = document.getElementById('accessPanelToggle');
 const headerControlsPanel = accessPanelToggle ? accessPanelToggle.closest('.header-controls') : document.querySelector('.header-controls');
@@ -15274,6 +15498,8 @@ let sessionFiles = [];
 let sessionToolCalls = [];
 let recentSessionFileKeys = new Set();
 let chatSessions = [];
+let chatMemories = [];
+let chatMemoriesLoading = false;
 let chatSessionTotalCount = 0;
 let chatSessionsHasMore = false;
 let sessionsLoaded = false;
@@ -15977,6 +16203,18 @@ function safeStorageSet(storage, key, value) {
     try {
         if (storage && storage.setItem) storage.setItem(key, value);
     } catch { }
+}
+
+const jackDirectorFeatureNoticeKey = 'jackllm.feature.jackdirector.v1.dismissed';
+function showJackDirectorFeatureToast() {
+    if (!jackDirectorFeatureToast) return;
+    const dismissed = safeStorageGet(localStorage, jackDirectorFeatureNoticeKey) === '1';
+    jackDirectorFeatureToast.hidden = dismissed;
+}
+
+function dismissJackDirectorFeatureToast() {
+    safeStorageSet(localStorage, jackDirectorFeatureNoticeKey, '1');
+    if (jackDirectorFeatureToast) jackDirectorFeatureToast.hidden = true;
 }
 
 function safeStorageRemove(storage, key) {
@@ -22905,15 +23143,18 @@ function inferFilesystemSessionRoot() {
     return '';
 }
 function ensureDefaultFilesystemContext() {
-    const defaultRoot = inferFilesystemSessionRoot();
-    if (!defaultRoot) {
+    pruneFilesystemContextSelection();
+    if (filesystemContextExplicitlyConfigured)
+        return;
+    const availableRoots = filesystemContextRoots
+        .filter(root => root && root.exists !== false && root.path);
+    if (!availableRoots.length) {
         filesystemContextState.mode = 'none';
         filesystemContextState.roots = [];
         return;
     }
-    filesystemContextState.mode = 'none';
+    filesystemContextState.mode = 'all';
     filesystemContextState.roots = [];
-    filesystemContextExplicitlyConfigured = false;
     renderFilesystemContextMenu();
 }
 
@@ -23054,6 +23295,7 @@ async function mutateFilesystemAccess(action, path) {
     filesystemAccess = Array.isArray(data.directories) ? data.directories : [];
     filesystemContextRoots = mergeFilesystemContextRoots(data.contextRoots || data.filesystemContextRoots || [], filesystemContextRoots);
     pruneFilesystemContextSelection();
+    ensureDefaultFilesystemContext();
     applyPermissionUi();
     reloadFtpConfigFrame();
 }
@@ -30429,6 +30671,161 @@ function clampNumber(value, min, max, fallback) {
     return Math.max(min, Math.min(max, numeric));
 }
 
+function setMemoryStatus(message, isError) {
+    if (!memoryStatus) return;
+    memoryStatus.textContent = message || '';
+    memoryStatus.classList.toggle('error', !!isError);
+}
+
+function memoryDateLabel(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString();
+}
+
+function renderChatMemories() {
+    if (!memoryList) return;
+    memoryList.textContent = '';
+    const active = Array.isArray(chatMemories) ? chatMemories.filter(memory => memory && !memory.deletedUtc) : [];
+    if (memoryCountText)
+        memoryCountText.textContent = chatMemoriesLoading ? 'Loading memories' : (active.length === 1 ? '1 saved memory' : active.length + ' saved memories');
+    if (memoryClear) memoryClear.disabled = chatMemoriesLoading || active.length === 0;
+    if (!active.length) {
+        const empty = document.createElement('div');
+        empty.className = 'memory-empty';
+        empty.textContent = chatMemoriesLoading ? 'Loading memories...' : 'No saved memories yet.';
+        memoryList.appendChild(empty);
+        return;
+    }
+    active.forEach(memory => {
+        const row = document.createElement('div');
+        row.className = 'memory-row';
+        const text = document.createElement('div');
+        text.className = 'memory-text';
+        text.textContent = memory.text || '';
+        const actions = document.createElement('div');
+        actions.className = 'memory-row-actions';
+        const meta = document.createElement('div');
+        meta.className = 'memory-meta';
+        const updated = memoryDateLabel(memory.updatedUtc || memory.createdUtc);
+        meta.textContent = updated ? 'Saved ' + updated : 'Saved memory';
+        const remove = document.createElement('button');
+        remove.className = 'ghost';
+        remove.type = 'button';
+        remove.textContent = 'Delete';
+        remove.addEventListener('click', () => deleteChatMemory(memory.id));
+        actions.appendChild(meta);
+        actions.appendChild(remove);
+        row.appendChild(text);
+        row.appendChild(actions);
+        memoryList.appendChild(row);
+    });
+}
+
+async function loadChatMemories() {
+    if (chatMemoriesLoading) return;
+    chatMemoriesLoading = true;
+    setMemoryStatus('Loading memories...', false);
+    renderChatMemories();
+    try {
+        const response = await fetchWithTimeout('/api/chat-memories', null, 10000);
+        const data = await readJsonResponse(response, {});
+        if (!response.ok || !data || !data.ok)
+            throw new Error((data && data.error) || 'Memory list failed.');
+        chatMemories = Array.isArray(data.memories) ? data.memories : [];
+        setMemoryStatus(chatMemories.length ? '' : 'No memories saved yet.', false);
+    } catch (error) {
+        setMemoryStatus(error && error.message ? error.message : String(error), true);
+    } finally {
+        chatMemoriesLoading = false;
+        renderChatMemories();
+    }
+}
+
+function setMemoryPanelVisible(visible) {
+    if (!memoryBackdrop) return;
+    memoryBackdrop.classList.toggle('visible', !!visible);
+    if (visible) {
+        setViewMenuOpen(false);
+        loadChatMemories();
+        window.setTimeout(() => {
+            if (memoryInput) memoryInput.focus();
+        }, 0);
+    }
+}
+
+async function addChatMemoryFromInput() {
+    if (!memoryInput) return;
+    const text = memoryInput.value.trim();
+    if (!text) {
+        setMemoryStatus('Type a memory to save.', true);
+        return;
+    }
+    if (memoryAdd) memoryAdd.disabled = true;
+    setMemoryStatus('Saving memory...', false);
+    try {
+        const response = await fetchWithTimeout('/api/chat-memories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'add', text, sessionId: currentSessionId || '' })
+        }, 10000);
+        const data = await readJsonResponse(response, {});
+        if (!response.ok || !data || !data.ok)
+            throw new Error((data && data.error) || 'Memory save failed.');
+        chatMemories = Array.isArray(data.memories) ? data.memories : (data.memory ? [data.memory].concat(chatMemories || []) : chatMemories);
+        memoryInput.value = '';
+        setMemoryStatus('Memory saved.', false);
+        renderChatMemories();
+    } catch (error) {
+        setMemoryStatus(error && error.message ? error.message : String(error), true);
+    } finally {
+        if (memoryAdd) memoryAdd.disabled = false;
+    }
+}
+
+async function deleteChatMemory(id) {
+    if (!id) return;
+    setMemoryStatus('Deleting memory...', false);
+    try {
+        const response = await fetchWithTimeout('/api/chat-memories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id })
+        }, 10000);
+        const data = await readJsonResponse(response, {});
+        if (!response.ok || !data || !data.ok)
+            throw new Error((data && data.error) || 'Memory delete failed.');
+        chatMemories = Array.isArray(data.memories) ? data.memories : chatMemories.filter(memory => memory && memory.id !== id);
+        setMemoryStatus('Memory deleted.', false);
+        renderChatMemories();
+    } catch (error) {
+        setMemoryStatus(error && error.message ? error.message : String(error), true);
+    }
+}
+
+async function clearChatMemories() {
+    const active = Array.isArray(chatMemories) ? chatMemories.filter(memory => memory && !memory.deletedUtc) : [];
+    if (!active.length) return;
+    if (!window.confirm('Clear all saved memories?')) return;
+    setMemoryStatus('Clearing memories...', false);
+    try {
+        const response = await fetchWithTimeout('/api/chat-memories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'clear' })
+        }, 10000);
+        const data = await readJsonResponse(response, {});
+        if (!response.ok || !data || !data.ok)
+            throw new Error((data && data.error) || 'Memory clear failed.');
+        chatMemories = Array.isArray(data.memories) ? data.memories : [];
+        setMemoryStatus('Memories cleared.', false);
+        renderChatMemories();
+    } catch (error) {
+        setMemoryStatus(error && error.message ? error.message : String(error), true);
+    }
+}
+
 function setViewMenuOpen(open) {
     const allowed = !!open;
     if (allowed) {
@@ -35207,6 +35604,33 @@ if (viewMenu) {
         event.stopPropagation();
     });
 }
+if (memoryPanelToggle) {
+    memoryPanelToggle.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMemoryPanelVisible(true);
+    });
+}
+if (memoryClose)
+    memoryClose.addEventListener('click', () => setMemoryPanelVisible(false));
+if (memoryAdd)
+    memoryAdd.addEventListener('click', addChatMemoryFromInput);
+if (memoryInput) {
+    memoryInput.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+            event.preventDefault();
+            addChatMemoryFromInput();
+        }
+    });
+}
+if (memoryClear)
+    memoryClear.addEventListener('click', clearChatMemories);
+if (memoryBackdrop) {
+    memoryBackdrop.addEventListener('mousedown', event => {
+        if (event.target === memoryBackdrop)
+            setMemoryPanelVisible(false);
+    });
+}
 window.addEventListener('resize', positionViewMenu);
 window.addEventListener('scroll', positionViewMenu, true);
 if (sessionPanelToggle)
@@ -36030,6 +36454,7 @@ async function bootstrapChatApp() {
         addMessage('error', error && error.message ? error.message : String(error));
     } finally {
         releaseStartupUi();
+        showJackDirectorFeatureToast();
     }
 }
 
@@ -36037,6 +36462,7 @@ if (loginForm) loginForm.addEventListener('submit', submitLogin);
 if (loginClose) loginClose.addEventListener('click', closeLoginTab);
 if (registrationButton) registrationButton.addEventListener('click', openSocketJackRegistration);
 if (logoutButton) logoutButton.addEventListener('click', logout);
+if (jackDirectorFeatureClose) jackDirectorFeatureClose.addEventListener('click', dismissJackDirectorFeatureToast);
 if (premiumTokenLogin) premiumTokenLogin.addEventListener('click', showOptionalLoginGate);
 if (buyTokensButton) buyTokensButton.addEventListener('click', () => setTokenPurchasePanelVisible(true));
 if (tokenPurchaseClose) tokenPurchaseClose.addEventListener('click', () => setTokenPurchasePanelVisible(false));

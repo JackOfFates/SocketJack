@@ -1,6 +1,6 @@
 using System;
 
-namespace JackLLM.Android.Models;
+namespace JackLLM.Mobile.Models;
 
 public sealed class ServerInfo
 {
@@ -18,6 +18,8 @@ public sealed class ServerInfo
     public string CpuModel { get; set; } = "";
     public bool Online { get; set; } = true;
     public int HealthScore { get; set; }
+    public string CertificateFingerprint { get; set; } = "";
+    public bool IsSaved { get; set; }
 
     public string DisplayName => !string.IsNullOrWhiteSpace(Name)
         ? Name
@@ -48,7 +50,7 @@ public sealed class ServerInfo
         if (string.IsNullOrWhiteSpace(key))
             key = OpenAiBaseUrl;
         if (string.IsNullOrWhiteSpace(key))
-            return Guid.NewGuid().ToString("N");
+            return "manual";
         try
         {
             return new Uri(key).Host;
@@ -59,4 +61,3 @@ public sealed class ServerInfo
         }
     }
 }
-

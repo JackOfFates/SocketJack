@@ -1762,6 +1762,31 @@ public sealed class LlmModelRegistry : IDisposable
             }
         }
 
+        foreach (RemoteVllmProfile profile in _options.RemoteVllmProfiles.Where(profile => !string.IsNullOrWhiteSpace(profile.Id) && !string.IsNullOrWhiteSpace(profile.Model)))
+        {
+            string key = "remote-vllm:" + profile.Id;
+            if (!usedKeys.Add(key))
+                continue;
+            IReadOnlyList<string> tags = ["chat", "text", "vllm", "remote-vllm"];
+            models.Add(new LlmModelInfo
+            {
+                Key = key,
+                DisplayName = string.IsNullOrWhiteSpace(profile.Name) ? profile.Model : profile.Name + " - " + profile.Model,
+                FilePath = "remote-vllm://" + profile.Id,
+                FileName = profile.Model,
+                Type = "llm",
+                Publisher = "remote",
+                Architecture = "deepseek_v4",
+                QuantizationName = "remote",
+                MaxContextLength = profile.ContextLength > 0 ? profile.ContextLength : null,
+                Format = "safetensors",
+                Tags = tags,
+                Aliases = [profile.Model, profile.Id],
+                Acceleration = DSparkModelDetector.Resolve(profile.Model, profile.Acceleration),
+                LoadedInstances = GetLoadedInstances(key, "llm", tags)
+            });
+        }
+
         IReadOnlyList<LlmModelInfo> ordered = models
             .OrderBy(model => string.Equals(model.Publisher, "local", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(model => model.Key, StringComparer.OrdinalIgnoreCase)
@@ -2418,6 +2443,7 @@ public sealed class LlmModelRegistry : IDisposable
             Format = "safetensors",
             Tags = tags,
             Aliases = aliases,
+            Acceleration = DSparkModelDetector.Resolve(displayName, VllmAccelerationMode.Auto),
             LoadedInstances = GetLoadedInstances(key, "llm", tags)
         };
     }

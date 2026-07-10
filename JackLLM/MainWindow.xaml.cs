@@ -38,6 +38,7 @@ using JackONNX.Cuda;
 using JackONNX.DirectML;
 using JackONNX.Image;
 using JackONNX.LlmRuntime;
+using JackONNX.JackDirector;
 using JackONNX.Runtime;
 using LlmRuntime;
 using LlmRuntime.Wpf;
@@ -188,6 +189,7 @@ public partial class MainWindow : Window {
     private DispatcherTimer _trayTooltipHideTimer = null!;
     private DispatcherTimer _coachmarkTimer = null!;
     private Window? _trayStatusTooltipWindow;
+    private SocketChatWindow? _socketChatWindow;
     private TextBlock? _trayStatusTooltipTextBlock;
     private System.Drawing.Point _lastTrayMousePosition;
     private DateTimeOffset _lastTrayTooltipHoverUtc = DateTimeOffset.MinValue;
@@ -324,6 +326,8 @@ public partial class MainWindow : Window {
     private string _accessibleDirectorySignature = "";
     private string _activePipelineKind = "idle";
     private string _lmStatusText = "Not checked";
+    private string _remoteVllmStatusText = "unverified";
+    private string _remoteVllmStatusDetail = "No remote vLLM profile selected.";
     private string _lmLatencyText = "Latency: -";
     private Brush _lmStatusBrush = Brushes.SlateGray;
     private string _lmEndpointText = "";
@@ -674,6 +678,7 @@ public partial class MainWindow : Window {
         _proxy = await Task.Run(() => {
             cancellationToken.ThrowIfCancellationRequested();
             var proxy = new SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort) {
+                MobileAccessEnabled = string.Equals(Environment.GetEnvironmentVariable("JACKLLM_MOBILE_ACCESS"), "true", StringComparison.OrdinalIgnoreCase),
                 PromptTimeout = TimeSpan.FromMinutes(30),
                 StoreLocalWebAuthAccounts = false,
                 EnsureLmStudioStartedAsync = EnsureLmStudioProviderForPromptAsync
@@ -698,6 +703,7 @@ public partial class MainWindow : Window {
             IReadOnlyList<LlmToolDefinition> toolDefinitions = JackOnnxLlmRuntimeToolRegistration.CreateDefinitions(_jackOnnxToolOptions);
             return (runtime, toolDefinitions);
         }, cancellationToken);
+        _proxy.JackDirectorMediaExecutor = new JackOnnxJackDirectorMediaExecutor(_jackOnnxRuntime);
 
         ReportStartup(startupProgress, 42, "Connecting runtime services", "Registering SocketJack, LlmRuntime, and JackONNX callbacks.");
         _proxy.ModelRuntimeFallbackReporterAsync = ReportModelRuntimeFallbackToSocketJackAsync;
@@ -1856,6 +1862,29 @@ public partial class MainWindow : Window {
 
     private void OpenChatButton_Click(object sender, RoutedEventArgs e) {
         _ = OpenWebUiTabAsync(true, false);
+    }
+
+    private void SocketChatButton_Click(object sender, RoutedEventArgs e) {
+        OpenSocketChatWindow();
+    }
+
+    private void OpenSocketChatWindow() {
+        if (!_proxy.IsChatServerCreated || !_proxy.ChatServer.IsListening) {
+            SetStatus("Start the proxy to open SocketChat.");
+            return;
+        }
+
+        if (_socketChatWindow != null) {
+            if (_socketChatWindow.WindowState == WindowState.Minimized)
+                _socketChatWindow.WindowState = WindowState.Normal;
+            _socketChatWindow.Show();
+            _socketChatWindow.Activate();
+            return;
+        }
+
+        _socketChatWindow = new SocketChatWindow(BuildAuthenticatedChatServerEndpoint("/SocketChat")) { Owner = this };
+        _socketChatWindow.Closed += (_, _) => _socketChatWindow = null;
+        _socketChatWindow.Show();
     }
 
     private void WebUiReloadButton_Click(object sender, RoutedEventArgs e) {
@@ -5694,6 +5723,106 @@ public partial class MainWindow : Window {
         SetStatus("Models location set to " + selectedLocation + ".");
     }
 
+    private async void ModelsLocationMoveButton_Click(object sender, RoutedEventArgs e) {
+        string currentLocation = GetEffectiveModelsLocation();
+        using var dialog = new Forms.FolderBrowserDialog {
+            Description = "Choose the new base folder. Current Models and CompleteModels will be moved into it.",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true
+        };
+        string selectedPath = ToCurrentProcessPath(currentLocation);
+        if (Directory.Exists(selectedPath))
+            dialog.SelectedPath = selectedPath;
+        if (dialog.ShowDialog() != Forms.DialogResult.OK)
+            return;
+
+        string newLocation = NormalizeModelsLocationForSettings(dialog.SelectedPath);
+        if (string.IsNullOrWhiteSpace(newLocation) || AreSameModelStoragePath(currentLocation, newLocation)) {
+            SetStatus("Models are already stored in that location.");
+            return;
+        }
+
+        MessageBoxResult confirmation = System.Windows.MessageBox.Show(
+            "Move Models and CompleteModels from:\n\n" + currentLocation + "\n\nto:\n\n" + newLocation +
+            "\n\nFuture model downloads will also use the new location.",
+            "Move JackLLM Models",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        if (confirmation != MessageBoxResult.OK)
+            return;
+
+        ModelsLocationMoveButton.IsEnabled = false;
+        SetStatus("Moving models to " + newLocation + "...");
+        try {
+            bool restartEmbeddedRuntime = _embeddedLlmRuntime != null &&
+                                          string.Equals(GetSelectedModelRuntimeProvider(), RuntimeProviderLlmRuntime, StringComparison.OrdinalIgnoreCase) &&
+                                          string.IsNullOrWhiteSpace(GetExternalModelManagerRuntimeBaseUrl()) &&
+                                          (_proxy?.IsListening == true || _embeddedLlmRuntime.IsListening);
+            if (_embeddedLlmRuntime != null)
+                DisposeEmbeddedLlmRuntime();
+            if (IsWineSafeWpfMode() || IsWineEnvironment())
+                StopExternalLinuxNativeBackendProcesses();
+
+            await Task.Run(() => MoveModelStorage(currentLocation, newLocation));
+
+            ModelsLocationTextBox.Text = newLocation;
+            ApplyModelsLocationChange("models moved");
+            SaveSettingsIfReady();
+            if (restartEmbeddedRuntime)
+                StartSelectedEmbeddedLlmRuntimeInBackground("models-location-move");
+            SetStatus("Models moved to " + newLocation + ". Future downloads will use this location.");
+        } catch (Exception ex) {
+            AppendLog("Models move failed: " + ex.Message);
+            SetStatus("Models move failed: " + ex.Message);
+            System.Windows.MessageBox.Show(
+                "JackLLM could not move the models.\n\n" + ex.Message,
+                "Move Models Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        } finally {
+            ModelsLocationMoveButton.IsEnabled = true;
+        }
+    }
+
+    private static void MoveModelStorage(string sourceLocation, string destinationLocation) {
+        string sourceBase = ToCurrentProcessPath(sourceLocation);
+        string destinationBase = ToCurrentProcessPath(destinationLocation);
+        foreach (string childName in new[] { "Models", "CompleteModels" })
+            MoveModelDirectory(Path.Combine(sourceBase, childName), Path.Combine(destinationBase, childName));
+    }
+
+    private static void MoveModelDirectory(string sourceDirectory, string destinationDirectory) {
+        if (!Directory.Exists(sourceDirectory)) {
+            Directory.CreateDirectory(destinationDirectory);
+            return;
+        }
+
+        string[] sourceFiles = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories);
+        foreach (string sourceFile in sourceFiles) {
+            string relativePath = Path.GetRelativePath(sourceDirectory, sourceFile);
+            string destinationFile = Path.Combine(destinationDirectory, relativePath);
+            if (File.Exists(destinationFile))
+                throw new IOException("The destination already contains " + relativePath + ". Choose an empty folder or remove the conflicting file.");
+        }
+
+        foreach (string sourceFile in sourceFiles) {
+            string relativePath = Path.GetRelativePath(sourceDirectory, sourceFile);
+            string destinationFile = Path.Combine(destinationDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationFile) ?? destinationDirectory);
+            File.Copy(sourceFile, destinationFile, overwrite: false);
+            File.Delete(sourceFile);
+        }
+
+        foreach (string directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories)
+                     .OrderByDescending(path => path.Length)) {
+            if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                Directory.Delete(directory);
+        }
+        if (!Directory.EnumerateFileSystemEntries(sourceDirectory).Any())
+            Directory.Delete(sourceDirectory);
+        Directory.CreateDirectory(destinationDirectory);
+    }
+
     private void ApplyModelsLocationChange(string reason) {
         JackLLMSettings effectiveSettings = CaptureSettings();
         _settings.ModelsLocation = effectiveSettings.ModelsLocation;
@@ -6102,7 +6231,6 @@ public partial class MainWindow : Window {
             "export HF_XET_CACHE=\"${HF_XET_CACHE:-$HF_HOME/xet}\"\n" +
             "mkdir -p \"$HF_HOME\" \"$HUGGINGFACE_HUB_CACHE\" \"$TRANSFORMERS_CACHE\" \"$HF_XET_CACHE\"\n" +
             "export JACKLLM_RESTORE_LOADED_MODELS_ON_STARTUP=0\n" +
-            "export JACKLLM_LINUX_GUI=0\n" +
             "export NVIDIA_SMI_PATH=\"${NVIDIA_SMI_PATH:-/usr/bin/nvidia-smi}\"\n" +
             "export JACKLLM_NVIDIA_SMI=\"${JACKLLM_NVIDIA_SMI:-/usr/bin/nvidia-smi}\"\n" +
             "export LD_LIBRARY_PATH=\"$BASE:$LLAMA_NATIVE_DIRS:$CUDA_PY_DIRS:${LD_LIBRARY_PATH:-}\"\n" +
@@ -6462,6 +6590,8 @@ public partial class MainWindow : Window {
                     RestoreLoadedModelsOnStartup = false,
                     Port = LocalLmStudioProxyPort,
                     ServerName = "LlmRuntime"
+                    ,RemoteVllmProfiles = _settings.RemoteVllmProfiles ?? []
+                    ,SelectedRemoteVllmProfileId = _settings.SelectedRemoteVllmProfileId ?? ""
                 },
                 embeddedToolDefinitions,
                 JackOnnxLlmRuntimeToolRegistration.CreateJackOnnxBuiltInTools(_jackOnnxRuntime, _jackOnnxToolOptions));
@@ -9167,6 +9297,8 @@ public partial class MainWindow : Window {
             ModelRuntimeProvider = GetSelectedModelRuntimeProvider(),
             RemoteLmStudioEnabled = false,
             RemoteServer = "",
+            RemoteVllmProfiles = _settings.RemoteVllmProfiles ?? [],
+            SelectedRemoteVllmProfileId = _settings.SelectedRemoteVllmProfileId ?? "",
             ShellModeEnabled = true,
             ShellRemoteServer = GetShellTargetText(),
             ShellAgentPoolSize = NormalizeShellAgentPoolSize(ParseInt(ShellAgentPoolTextBox.Text, 8)),
@@ -9365,6 +9497,7 @@ public partial class MainWindow : Window {
         menu.Items.Add(new System.Windows.Controls.Separator());
         menu.Items.Add(CreateWpfTrayMenuItem("Show Dashboard", ShowFromTray));
         menu.Items.Add(CreateWpfTrayMenuItem("Open Web UI", () => OpenChatButton_Click(this, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
+        menu.Items.Add(CreateWpfTrayMenuItem("Chat", OpenSocketChatWindow, _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
         menu.Items.Add(CreateWpfTrayMenuItem(_proxy.IsListening ? "Stop Proxy" : "Start Proxy", () => {
             if (_proxy.IsListening)
                 _ = StopProxyAsync();
@@ -9422,6 +9555,9 @@ public partial class MainWindow : Window {
         var openChatItem = CreateTrayMenuItem("Open Web UI", () => OpenChatButton_Click(this, new RoutedEventArgs()));
         openChatItem.Enabled = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
         menu.Items.Add(openChatItem);
+        var socketChatItem = CreateTrayMenuItem("Chat", OpenSocketChatWindow);
+        socketChatItem.Enabled = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
+        menu.Items.Add(socketChatItem);
         var startStopItem = CreateTrayMenuItem(_proxy.IsListening ? "Stop Proxy" : "Start Proxy", () => {
             if (_proxy.IsListening)
                 _ = StopProxyAsync();
@@ -14663,6 +14799,7 @@ public partial class MainWindow : Window {
         StartStopButton.Background = running ? new SolidColorBrush(Color.FromRgb(137, 52, 66)) : new SolidColorBrush(Color.FromRgb(31, 122, 104));
         bool chatRunning = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
         OpenChatButton.IsEnabled = chatRunning;
+        SocketChatButton.IsEnabled = chatRunning;
         if (WebUiReloadButton != null)
             WebUiReloadButton.IsEnabled = chatRunning;
         if (WebUiOpenExternalButton != null)
@@ -16523,6 +16660,45 @@ public partial class MainWindow : Window {
             CreateServiceActionButton("Open Web UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
     }
 
+    private async Task RunRemoteVllmOperationAsync(string operation) {
+        RemoteVllmProfile? profile = (_settings.RemoteVllmProfiles ?? []).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, _settings.SelectedRemoteVllmProfileId, StringComparison.OrdinalIgnoreCase));
+        if (profile == null) {
+            _remoteVllmStatusText = "unverified";
+            _remoteVllmStatusDetail = "No remote vLLM profile selected.";
+            RefreshMetrics();
+            return;
+        }
+
+        try {
+            await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("remote-vllm-" + operation);
+            string method = string.Equals(operation, "status", StringComparison.OrdinalIgnoreCase) ? "GET" : "POST";
+            string endpoint = (_embeddedLlmRuntime?.OpenAiBaseUrl ?? "http://127.0.0.1:" + LocalLmStudioProxyPort.ToString(CultureInfo.InvariantCulture)) +
+                              "/api/v1/remote-vllm/" + operation;
+            using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(Math.Clamp(profile.StartupTimeoutSeconds + 30, 30, 3630)) };
+            using var request = new HttpRequestMessage(new HttpMethod(method), endpoint);
+            if (method == "GET")
+                request.RequestUri = new Uri(endpoint + "?profile_id=" + Uri.EscapeDataString(profile.Id));
+            else
+                request.Content = new StringContent(JsonSerializer.Serialize(new { profile_id = profile.Id }), Encoding.UTF8, "application/json");
+            using HttpResponseMessage response = await client.SendAsync(request);
+            string body = await response.Content.ReadAsStringAsync();
+            using JsonDocument document = JsonDocument.Parse(body);
+            JsonElement root = document.RootElement;
+            _remoteVllmStatusText = root.TryGetProperty("accelerationStatus", out JsonElement accelerationStatus)
+                ? accelerationStatus.GetString() ?? "unverified"
+                : root.TryGetProperty("state", out JsonElement state) ? state.GetString() ?? "unverified" : "unverified";
+            string fallback = root.TryGetProperty("fallbackReason", out JsonElement fallbackReason) ? fallbackReason.GetString() ?? "" : "";
+            string error = root.TryGetProperty("latestError", out JsonElement latestError) ? latestError.GetString() ?? "" : "";
+            string remoteEndpoint = root.TryGetProperty("endpoint", out JsonElement endpointValue) ? endpointValue.GetString() ?? "" : "";
+            _remoteVllmStatusDetail = FirstNonEmpty(error, fallback, remoteEndpoint, response.ReasonPhrase ?? "Remote operation completed.");
+        } catch (Exception ex) {
+            _remoteVllmStatusText = "failed";
+            _remoteVllmStatusDetail = RemoteVllmManager.Redact(ex.Message);
+        }
+        RefreshMetrics();
+    }
+
     private void RenderModelRuntimeServiceOptions(string serviceName) {
         bool isLlmRuntime = string.Equals(serviceName, "LlmRuntime", StringComparison.OrdinalIgnoreCase);
         AddServiceConfigSection(isLlmRuntime ? "Embedded LlmRuntime" : "LM Studio");
@@ -16538,6 +16714,21 @@ public partial class MainWindow : Window {
             AddServiceConfigRow("Capabilities", _llmRuntimeCapabilityLine);
             AddServiceConfigRow("JackONNX", _jackOnnxProviderLine);
             AddServiceConfigRow("Models", Path.Combine(GetJackLlmContentRoot(), "Models"));
+            RemoteVllmProfile? remoteProfile = (_settings.RemoteVllmProfiles ?? []).FirstOrDefault(profile =>
+                string.Equals(profile.Id, _settings.SelectedRemoteVllmProfileId, StringComparison.OrdinalIgnoreCase));
+            AddServiceConfigSection("Remote vLLM / DSpark");
+            AddServiceConfigRow("Profile", remoteProfile?.Name ?? "not configured");
+            AddServiceConfigRow("Model", remoteProfile?.Model ?? "-");
+            AddServiceConfigRow("Acceleration", remoteProfile == null ? "unverified" : DSparkModelDetector.Resolve(remoteProfile.Model, remoteProfile.Acceleration).ToString().ToLowerInvariant());
+            AddServiceConfigRow("Status", _remoteVllmStatusText, BuildServiceStatusBrush(_remoteVllmStatusText));
+            AddServiceConfigRow("Detail", _remoteVllmStatusDetail);
+            if (remoteProfile != null)
+            {
+                AddServiceActionRow(
+                    CreateServiceAsyncActionButton("Start remote", async () => await RunRemoteVllmOperationAsync("start")),
+                    CreateServiceAsyncActionButton("Probe remote", async () => await RunRemoteVllmOperationAsync("status")),
+                    CreateServiceAsyncActionButton("Stop remote", async () => await RunRemoteVllmOperationAsync("stop")));
+            }
             AddServiceActionRow(
                 CreateServiceActionButton("Use LlmRuntime", () => {
                     SelectModelRuntimeProvider(RuntimeProviderLlmRuntime);
@@ -22960,6 +23151,8 @@ public partial class MainWindow : Window {
         public string ModelRuntimeProvider { get; set; } = RuntimeProviderLlmRuntime;
         public bool RemoteLmStudioEnabled { get; set; } = false;
         public string RemoteServer { get; set; } = "127.0.0.1:11435";
+        public List<RemoteVllmProfile> RemoteVllmProfiles { get; set; } = [];
+        public string SelectedRemoteVllmProfileId { get; set; } = "";
         public bool ShellModeEnabled { get; set; } = true;
         public string ShellRemoteServer { get; set; } = "127.0.0.1:11436";
         public int ShellAgentPoolSize { get; set; } = 8;

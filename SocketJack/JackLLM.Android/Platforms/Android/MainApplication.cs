@@ -2,7 +2,7 @@ using Android.App;
 using Android.Runtime;
 using Microsoft.Maui;
 
-namespace JackLLM.Android;
+namespace JackLLM.Mobile;
 
 [Application(Theme = "@style/Maui.SplashTheme", UsesCleartextTraffic = false)]
 public class MainApplication : MauiApplication

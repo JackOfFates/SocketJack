@@ -300,7 +300,6 @@ RESTORE_ARGS=()
 case "${RESTORE_LOADED_MODELS,,}" in
   0|false|no|off) RESTORE_ARGS+=(--no-restore-loaded-models) ;;
 esac
-export JACKLLM_LINUX_GUI=0
 export NVIDIA_SMI_PATH="${NVIDIA_SMI_PATH:-/usr/bin/nvidia-smi}"
 export JACKLLM_NVIDIA_SMI="${JACKLLM_NVIDIA_SMI:-/usr/bin/nvidia-smi}"
 if [ -z "${JACKLLM_VLLM_PYTHON:-}" ] && [ -x /opt/vllm/venv/bin/python ]; then

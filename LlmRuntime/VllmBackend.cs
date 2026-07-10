@@ -29,6 +29,8 @@ public sealed class VllmBackend : ILlmBackend
     private Process? _process;
     private Uri _baseUri;
     private string _servedModelName;
+    private readonly RemoteVllmProfile? _remoteProfile;
+    private readonly RemoteVllmManager? _remoteManager;
     private bool _promptPipelineReady;
     private string _promptPipelineStatus = "cold";
     private string _promptPipelineDetail = "";
@@ -41,8 +43,10 @@ public sealed class VllmBackend : ILlmBackend
         ModelPath = modelPath;
         LoadConfig = loadConfig;
         _options = options ?? new LlmRuntimeOptions();
-        _baseUri = NormalizeBaseUri(_options.VllmBaseUrl);
-        _servedModelName = ResolveModelDirectory(modelPath);
+        _remoteProfile = ResolveRemoteProfile(modelPath, _options.RemoteVllmProfiles);
+        _remoteManager = _options.RemoteVllmManager;
+        _baseUri = NormalizeBaseUri(_remoteProfile == null ? _options.VllmBaseUrl : RemoteVllmManager.ResolveEndpoint(_remoteProfile));
+        _servedModelName = _remoteProfile?.Model ?? ResolveModelDirectory(modelPath);
     }
 
     public string InstanceId { get; }
@@ -68,6 +72,17 @@ public sealed class VllmBackend : ILlmBackend
         _promptPipelineReadyAtUtc = null;
         _promptPipelineStatus = "loading";
         _promptPipelineDetail = "Checking vLLM server.";
+
+        if (_remoteProfile != null)
+        {
+            RemoteVllmStatus status = await (_remoteManager ?? new RemoteVllmManager()).StartAsync(_remoteProfile, cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(status.State, "running", StringComparison.OrdinalIgnoreCase))
+                throw new LlmRuntimeException("Remote vLLM failed to start: " + FirstNonEmpty(status.LatestError, status.FallbackReason), "backend_error", "remote_vllm_start_failed");
+            MarkReady(status.AccelerationStatus == "fallback"
+                ? "Remote vLLM is ready with standard decoding fallback."
+                : "Remote vLLM is ready with " + status.Acceleration + " acceleration.");
+            return;
+        }
 
         if (await ProbeAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -121,17 +136,22 @@ public sealed class VllmBackend : ILlmBackend
         }
 
         stopwatch.Stop();
-        return new LlmChatResult
+        var result = new LlmChatResult
         {
             Model = InstanceId,
             Content = content,
             FinishReason = string.IsNullOrWhiteSpace(finishReason) ? "stop" : finishReason,
             Metrics = LlmInferenceMetrics.FromText(request, content, stopwatch.Elapsed)
         };
+        if (_remoteProfile != null && _remoteManager != null)
+            _remoteManager.RecordThroughput(_remoteProfile, result.Metrics.TokensPerSecond);
+        return result;
     }
 
     public async IAsyncEnumerable<LlmChatToken> StreamChatAsync(LlmChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var throughputStopwatch = Stopwatch.StartNew();
+        int streamedCharacters = 0;
         using var operation = _lifetime.Enter();
         await _inferenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -158,12 +178,17 @@ public sealed class VllmBackend : ILlmBackend
 
                 string text = ReadStreamDelta(payload);
                 if (!string.IsNullOrEmpty(text))
+                {
+                    streamedCharacters += text.Length;
                     yield return new LlmChatToken(text);
+                }
             }
         }
         finally
         {
             _inferenceLock.Release();
+            if (_remoteProfile != null && _remoteManager != null)
+                _remoteManager.RecordThroughput(_remoteProfile, (streamedCharacters / 4d) / Math.Max(throughputStopwatch.Elapsed.TotalSeconds, 0.001d));
         }
     }
 
@@ -413,6 +438,13 @@ public sealed class VllmBackend : ILlmBackend
             AddOptionIfMissing(arguments, extraArguments, "--kv-cache-dtype", "fp8_e5m2", "--kv_cache_dtype");
         }
 
+        if (DSparkModelDetector.IsOfficialDSparkModel(_servedModelName) &&
+            !ContainsOption(extraArguments, "--speculative-config", "--speculative_config"))
+        {
+            arguments.Add("--speculative-config");
+            arguments.Add("{\"method\":\"dspark\",\"num_speculative_tokens\":7,\"draft_sample_method\":\"greedy\"}");
+        }
+
         arguments.AddRange(extraArguments);
         return arguments;
     }
@@ -627,6 +659,18 @@ public sealed class VllmBackend : ILlmBackend
         return new Uri(text, UriKind.Absolute);
     }
 
+    private static RemoteVllmProfile? ResolveRemoteProfile(string modelPath, IReadOnlyList<RemoteVllmProfile> profiles)
+    {
+        const string prefix = "remote-vllm://";
+        if (!modelPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        string id = modelPath[prefix.Length..].Trim('/');
+        return profiles.FirstOrDefault(profile => string.Equals(profile.Id, id, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "Unknown error.";
+
     private static int ResolvePort(Uri uri) => uri.Port > 0 ? uri.Port : uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80;
 
     private static bool ContainsOption(IReadOnlyList<string> arguments, params string[] names)
@@ -797,6 +841,10 @@ public sealed class VllmBackend : ILlmBackend
             }
             _process?.Dispose();
             _process = null;
+            if (_remoteProfile != null && _remoteManager != null)
+            {
+                try { _remoteManager.StopAsync(_remoteProfile).GetAwaiter().GetResult(); } catch { }
+            }
             _inferenceLock.Dispose();
         }
         finally

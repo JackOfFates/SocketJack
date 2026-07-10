@@ -4,6 +4,7 @@ using JackONNX.Cuda;
 using JackONNX.DirectML;
 using JackONNX.Image;
 using JackONNX.LlmRuntime;
+using JackONNX.JackDirector;
 using JackONNX.Runtime;
 using LmVs;
 using LlmRuntime;
@@ -84,7 +85,6 @@ internal static class Program
         private readonly JackOnnxLlmRuntimeToolOptions _jackOnnxToolOptions = new();
         private readonly IReadOnlyList<LlmToolDefinition> _jackOnnxToolDefinitions;
         private LlmRuntimeModelRuntimeAdapter? _embeddedRuntime;
-        private LinuxWorkstationGui? _linuxGui;
         private bool _started;
 
         public WorkstationHost(WorkstationOptions options)
@@ -96,6 +96,7 @@ internal static class Program
                 StoreLocalWebAuthAccounts = options.StoreLocalWebAuthAccounts,
                 UseSocketJackMasterAuth = options.UseSocketJackMasterAuth,
                 PublicAccessEnabled = options.PublicAccessEnabled,
+                MobileAccessEnabled = options.MobileAccessEnabled,
                 BrowserPrivateNetworkAccessEnabled = options.BrowserPrivateNetworkAccessEnabled,
                 AuthTokensInQueryEnabled = options.AuthTokensInQueryEnabled,
                 WebChatModelLoadApiEnabled = options.WebChatModelLoadApiEnabled,
@@ -116,6 +117,7 @@ internal static class Program
 
             _lmStudioRuntime = new HttpLmVsProxyModelRuntime("LM Studio", options.LmStudioBaseUrl, () => Task.CompletedTask);
             _jackOnnxRuntime = JackOnnxRuntimeEngine.Create(CreateJackOnnxOptions(), CreateJackOnnxProviders());
+            _proxy.JackDirectorMediaExecutor = new JackOnnxJackDirectorMediaExecutor(_jackOnnxRuntime);
             _jackOnnxToolDefinitions = JackOnnxLlmRuntimeToolRegistration.CreateDefinitions(_jackOnnxToolOptions);
             LinuxDesktopRemoteControl.TryRegister(Log);
         }
@@ -136,14 +138,6 @@ internal static class Program
 
             if (_options.EnableSqlAdmin)
                 EnableSqlAdminPanel();
-
-            _linuxGui = LinuxWorkstationGui.TryStart(
-                _proxy.ChatServerUrl,
-                _proxy.LocalModelRuntime.DisplayName,
-                _proxy.LocalModelRuntime.OpenAiBaseUrl,
-                _options.ProxyPort,
-                _options.ChatServerPort,
-                Log);
 
             _started = true;
             Log("JackLLM Workstation is running.");
@@ -262,7 +256,6 @@ internal static class Program
                 Log("Stopping JackLLM Workstation.");
 
             _proxy.OutputLog -= OnProxyOutputLog;
-            _linuxGui?.Dispose();
             _proxy.Dispose();
             _embeddedRuntime?.Dispose();
         }
@@ -293,6 +286,7 @@ internal static class Program
         public bool WebChatModelLoadApiEnabled { get; private set; } = ReadBool("JACKLLM_WEBCHAT_MODEL_LOAD", false);
         public bool CopilotDuplicatorEnabled { get; private set; } = ReadBool("JACKLLM_COPILOT_DUPLICATOR", true);
         public bool PublicAccessEnabled { get; private set; } = ReadBool("JACKLLM_PUBLIC_ACCESS", false);
+        public bool MobileAccessEnabled { get; private set; } = ReadBool("JACKLLM_MOBILE_ACCESS", false);
         public bool BrowserPrivateNetworkAccessEnabled { get; private set; } = ReadBool("JACKLLM_BROWSER_PRIVATE_NETWORK_ACCESS", false);
         public bool AuthTokensInQueryEnabled { get; private set; } = ReadBool("JACKLLM_AUTH_TOKENS_IN_QUERY", false);
         public bool UseSocketJackMasterAuth { get; private set; } = ReadBool("JACKLLM_SOCKETJACK_AUTH", true);
@@ -368,6 +362,7 @@ internal static class Program
             writer.WriteLine("  --chat-model MODEL                  Chat model id. Default: lm-studio");
             writer.WriteLine("  --webchat-model-load true|false     Allow web chat model-load API.");
             writer.WriteLine("  --public-access true|false          Bind web console beyond loopback. Default: false.");
+            writer.WriteLine("  --mobile-access true|false          Enable short-lived pairing for JackLLM Mobile. Default: false.");
             writer.WriteLine("  --browser-private-network-access true|false");
             writer.WriteLine("                                      Allow browser tools to reach private/loopback IPs. Default: false.");
             writer.WriteLine("  --auth-tokens-in-query true|false   Accept bearer tokens in URLs. Default: false.");
@@ -480,6 +475,9 @@ internal static class Program
                     break;
                 case "public-access":
                     PublicAccessEnabled = ParseBool(value, key);
+                    break;
+                case "mobile-access":
+                    MobileAccessEnabled = ParseBool(value, key);
                     break;
                 case "browser-private-network-access":
                     BrowserPrivateNetworkAccessEnabled = ParseBool(value, key);
