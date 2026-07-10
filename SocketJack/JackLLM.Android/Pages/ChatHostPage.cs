@@ -23,9 +23,15 @@ public sealed class ChatHostPage : ContentPage
     private readonly Editor _prompt;
     private readonly Label _status;
     private readonly Button _send;
+    private readonly Border _liveActivityCard;
+    private readonly Label _liveActivityText;
+    private readonly ProgressBar _liveProgress;
+    private readonly ActivityIndicator _liveIndicator;
     private IReadOnlyList<ModelInfo> _allModels = Array.Empty<ModelInfo>();
     private MobileChatMode _mode = MobileChatMode.General;
     private CancellationTokenSource? _streamCancellation;
+    private CancellationTokenSource? _telemetryCancellation;
+    private DateTimeOffset _lastAutoScroll = DateTimeOffset.MinValue;
     private string _sessionId = Guid.NewGuid().ToString("N");
 
     public ChatHostPage(ServerInfo server, JackLlmClient client, ServerStore store)
@@ -49,15 +55,21 @@ public sealed class ChatHostPage : ContentPage
         var voice = new Button { Text = "Mic", CornerRadius = 12, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 58 };
         voice.Clicked += async (_, _) => await RecordVoiceAsync();
 
-        ToolbarItems.Add(new ToolbarItem("Sessions", null, async () => await ChooseSessionAsync()));
+        ToolbarItems.Add(new ToolbarItem("Sessions", null, async () => await Navigation.PushAsync(new SessionsPage(_client, LoadSessionAsync))));
         ToolbarItems.Add(new ToolbarItem("New", null, NewSession));
         ToolbarItems.Add(new ToolbarItem("Speak", null, async () => await SpeakLastAsync()));
 
         var modeRow = new HorizontalStackLayout { Spacing = 8, Padding = new Thickness(10, 8, 10, 4), BackgroundColor = Color.FromArgb("#111827"), Children = { _generalMode, _advancedMode } };
         var header = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, BackgroundColor = Color.FromArgb("#111827"), Padding = new Thickness(10, 2) };
         header.Add(_models, 0); header.Add(_services, 1);
+        _liveActivityText = new Label { Text = "Preparing compute…", TextColor = Color.FromArgb("#BFDBFE"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.TailTruncation };
+        _liveProgress = new ProgressBar { Progress = 0, ProgressColor = Color.FromArgb("#60A5FA"), BackgroundColor = Color.FromArgb("#26334D"), HeightRequest = 3 };
+        _liveIndicator = new ActivityIndicator { IsRunning = false, Color = Color.FromArgb("#60A5FA"), WidthRequest = 20, HeightRequest = 20 };
+        var liveGrid = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnSpacing = 8 };
+        liveGrid.Add(_liveIndicator, 0, 0); Grid.SetRowSpan(_liveIndicator, 2); liveGrid.Add(_liveActivityText, 1, 0); liveGrid.Add(_liveProgress, 1, 1);
+        _liveActivityCard = new Border { IsVisible = false, Margin = new Thickness(10, 4), Padding = new Thickness(10, 7), BackgroundColor = Color.FromArgb("#101D36"), Stroke = Color.FromArgb("#1D4ED8"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 12 }, Content = liveGrid };
         var composer = new Border { Margin = new Thickness(10, 6, 10, 10), Padding = new Thickness(8), BackgroundColor = Color.FromArgb("#151C2F"), Stroke = Color.FromArgb("#26334D"), StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Children = { attach, voice.Column(1), _prompt.Column(2), _send.Column(3) } } };
-        Content = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) }, Children = { modeRow.Row(0), header.Row(1), _status.Row(2), _messageList.Row(3), composer.Row(4) } };
+        Content = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) }, Children = { modeRow.Row(0), header.Row(1), _status.Row(2), _liveActivityCard.Row(3), _messageList.Row(4), composer.Row(5) } };
         RestoreModePreference();
         SetMode(_mode);
     }
@@ -120,52 +132,77 @@ public sealed class ChatHostPage : ContentPage
         if (string.IsNullOrWhiteSpace(text) && _attachments.Count == 0) return;
         if (_models.SelectedItem is not ModelInfo model) { await DisplayAlertAsync("No model", "This Workstation did not report an available chat model.", "OK"); return; }
         var user = new ChatMessage { Role = "user", Content = text + AttachmentCaption() };
-        var assistant = new ChatMessage { Role = "assistant", Status = "Starting…" };
-        _messages.Add(user); _messages.Add(assistant); _prompt.Text = "";
+        var assistant = new ChatMessage { Role = "assistant", Status = "Starting…", IsGenerating = true, IsReasoningExpanded = true };
+        _messages.Add(user); _messages.Add(assistant); _prompt.Text = ""; _prompt.Unfocus();
         var attachments = _attachments.ToArray(); _attachments.Clear();
-        _streamCancellation = new CancellationTokenSource(); _send.Text = "Stop"; _status.Text = "Generating…";
+        _streamCancellation = new CancellationTokenSource();
+        _telemetryCancellation = CancellationTokenSource.CreateLinkedTokenSource(_streamCancellation.Token);
+        _send.Text = "Stop"; _status.Text = "Generating…";
+        SetLiveActivity(true, "Warming up model…", 0);
+        Task telemetryTask = MonitorHardwareAsync(assistant, _telemetryCancellation.Token);
         try
         {
             string service = _mode == MobileChatMode.General ? "chat" : _services.SelectedItem?.ToString() ?? "agent";
             await foreach (ChatStreamEvent item in _client.StreamChatAsync(model.Id, service, _sessionId, _messages.Where(m => m != assistant).ToArray(), attachments, _streamCancellation.Token))
             {
-                switch (item.Type.ToLowerInvariant())
+                string eventType = item.Type.Replace("_", "", StringComparison.Ordinal).Replace("-", "", StringComparison.Ordinal).ToLowerInvariant();
+                switch (eventType)
                 {
-                    case "content": case "delta": assistant.Content += item.Content; break;
-                    case "reasoning": assistant.Reasoning += item.Reasoning + item.Content; break;
-                    case "progress": assistant.Status = string.IsNullOrWhiteSpace(item.Status) ? "Working…" : item.Status; break;
-                    case "toolcall": case "tool_call": assistant.Tools.Add(new ToolActivity { Name = string.IsNullOrWhiteSpace(item.ToolName) ? "Tool" : item.ToolName, Status = item.ToolStatus, Detail = item.Status }); break;
+                    case "content": case "delta": case "contentdelta": case "answer": case "message":
+                        assistant.Content += item.Content;
+                        if (!string.IsNullOrWhiteSpace(item.Reasoning)) assistant.Reasoning += item.Reasoning;
+                        ExtractEmbeddedReasoning(assistant);
+                        if (assistant.HasReasoning && !assistant.IsCapturingEmbeddedReasoning) assistant.IsReasoningExpanded = false;
+                        break;
+                    case "reasoning": case "reasoningdelta": case "thinking": case "thinkingdelta":
+                        assistant.Reasoning += item.Reasoning + item.Content;
+                        break;
+                    case "progress":
+                        assistant.Status = string.IsNullOrWhiteSpace(item.Status) ? "Working…" : item.Status;
+                        SetLiveActivity(true, assistant.Status, NormalizeProgress(item.Progress));
+                        break;
+                    case "usage": UpdateUsageTelemetry(assistant, item); break;
+                    case "toolcall": assistant.Tools.Add(new ToolActivity { Name = string.IsNullOrWhiteSpace(item.ToolName) ? "Tool" : item.ToolName, Status = item.ToolStatus, Detail = item.Status }); break;
                     case "error":
                         assistant.Content = string.IsNullOrWhiteSpace(item.Content) ? item.Status : item.Content;
                         throw new InvalidOperationException(string.IsNullOrWhiteSpace(assistant.Content) ? "The Workstation returned an error." : assistant.Content);
-                    case "done": assistant.Status = ""; break;
+                    case "done": case "complete": case "completed": case "end":
+                        assistant.Status = "";
+                        assistant.IsReasoningExpanded = false;
+                        break;
+                    default:
+                        if (!string.IsNullOrWhiteSpace(item.Reasoning)) assistant.Reasoning += item.Reasoning;
+                        if (!string.IsNullOrWhiteSpace(item.Content)) assistant.Content += item.Content;
+                        ExtractEmbeddedReasoning(assistant);
+                        break;
                 }
-                OnPropertyChanged(nameof(_messages));
-                _messageList.ItemsSource = null; _messageList.ItemsSource = _messages;
-                if (_messages.Count > 0) _messageList.ScrollTo(_messages[^1], position: ScrollToPosition.End, animate: false);
+                if (DateTimeOffset.UtcNow - _lastAutoScroll > TimeSpan.FromMilliseconds(300))
+                {
+                    _lastAutoScroll = DateTimeOffset.UtcNow;
+                    _messageList.ScrollTo(assistant, position: ScrollToPosition.End, animate: false);
+                }
             }
+            await ReconcileCompletedSessionAsync(assistant);
+            assistant.IsGenerating = false;
+            assistant.IsReasoningExpanded = false;
+            assistant.Status = "";
             _status.Text = "Ready";
         }
-        catch (OperationCanceledException) { assistant.Status = "Stopped"; _status.Text = "Generation stopped"; }
-        catch (Exception ex) { assistant.Status = "Error: " + ex.Message; _status.Text = assistant.Status; }
-        finally { _streamCancellation.Dispose(); _streamCancellation = null; _send.Text = "Send"; }
+        catch (OperationCanceledException) { assistant.Status = "Stopped"; assistant.IsGenerating = false; _status.Text = "Generation stopped"; }
+        catch (Exception ex) { assistant.Status = "Error: " + ex.Message; assistant.IsGenerating = false; _status.Text = assistant.Status; }
+        finally
+        {
+            _telemetryCancellation?.Cancel();
+            try { await telemetryTask; } catch (OperationCanceledException) { }
+            _telemetryCancellation?.Dispose(); _telemetryCancellation = null;
+            SetLiveActivity(false, "", 0);
+            _streamCancellation.Dispose(); _streamCancellation = null; _send.Text = "Send";
+            if (_messages.Count > 0) _messageList.ScrollTo(_messages[^1], position: ScrollToPosition.End, animate: true);
+        }
     }
 
     private void Stop() { _streamCancellation?.Cancel(); if (!string.IsNullOrWhiteSpace(_client.ActiveStreamId)) _ = _client.StopAsync(_client.ActiveStreamId); }
     private void NewSession() { Stop(); _sessionId = Guid.NewGuid().ToString("N"); _messages.Clear(); _status.Text = "New conversation"; }
-
-    private async Task ChooseSessionAsync()
-    {
-        try
-        {
-            var sessions = await _client.GetSessionsAsync();
-            if (sessions.Count == 0) { await DisplayAlertAsync("Sessions", "No saved sessions were found.", "OK"); return; }
-            string? title = await DisplayActionSheetAsync("Sessions", "Cancel", null, sessions.Select(s => s.Title).ToArray());
-            ChatSessionInfo? selected = sessions.FirstOrDefault(s => s.Title == title);
-            if (selected is not null) await LoadSessionAsync(selected.Id);
-        }
-        catch (Exception ex) { await DisplayAlertAsync("Sessions", ex.Message, "OK"); }
-    }
 
     private async Task LoadSessionAsync(string id)
     {
@@ -173,7 +210,15 @@ public sealed class ChatHostPage : ContentPage
         _sessionId = detail.Id;
         _messages.Clear();
         foreach (ChatMessage message in detail.Messages)
+        {
+            if (message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
+            {
+                ExtractEmbeddedReasoning(message);
+                message.IsGenerating = false;
+                message.IsReasoningExpanded = false;
+            }
             _messages.Add(message);
+        }
         if (!string.IsNullOrWhiteSpace(detail.Model) && _models.ItemsSource is IEnumerable<ModelInfo> models)
         {
             List<ModelInfo> list = models.ToList();
@@ -229,14 +274,125 @@ public sealed class ChatHostPage : ContentPage
 
     private string AttachmentCaption() => _attachments.Count == 0 ? "" : "\n\n[Attached: " + string.Join(", ", _attachments.Select(a => a.Name)) + "]";
 
+    private async Task MonitorHardwareAsync(ChatMessage assistant, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                HardwareSnapshot hardware = await _client.GetHardwareAsync(cancellationToken);
+                assistant.Telemetry = hardware.Display;
+                _liveActivityText.Text = hardware.Display;
+            }
+            catch (OperationCanceledException) { break; }
+            catch { }
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+        }
+    }
+
+    private async Task ReconcileCompletedSessionAsync(ChatMessage streamedAssistant)
+    {
+        try
+        {
+            ChatSessionDetail detail = await _client.GetSessionAsync(_sessionId);
+            ChatMessage? saved = detail.Messages.LastOrDefault(message => message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase));
+            if (saved is null) return;
+            if (saved.Content.Length >= streamedAssistant.Content.Length) streamedAssistant.Content = saved.Content;
+            if (saved.Reasoning.Length >= streamedAssistant.Reasoning.Length) streamedAssistant.Reasoning = saved.Reasoning;
+            ExtractEmbeddedReasoning(streamedAssistant);
+        }
+        catch { }
+    }
+
+    private void UpdateUsageTelemetry(ChatMessage assistant, ChatStreamEvent item)
+    {
+        string prompt = item.PromptTokensTotal > 0 ? $" · Prompt {item.PromptTokensLoaded:N0}/{item.PromptTokensTotal:N0}" : "";
+        assistant.Status = $"Tokens {item.TokensUsed:N0} · GPU compute {item.GpuSecondsUsed:0.##}s · CPU {item.CpuComputeSecondsUsed:0.##}s · RAM {item.RamGbSecondsUsed:0.##} GB·s{prompt}";
+    }
+
+    private void SetLiveActivity(bool visible, string text, double progress)
+    {
+        _liveActivityCard.IsVisible = visible;
+        _liveIndicator.IsRunning = visible;
+        if (!string.IsNullOrWhiteSpace(text)) _liveActivityText.Text = text;
+        _liveProgress.Progress = progress;
+    }
+
+    private static double NormalizeProgress(double? value)
+    {
+        if (!value.HasValue) return 0;
+        return Math.Clamp(value.Value > 1 ? value.Value / 100d : value.Value, 0, 1);
+    }
+
+    private static void ExtractEmbeddedReasoning(ChatMessage message)
+    {
+        string content = message.Content;
+        if (string.IsNullOrEmpty(content)) return;
+
+        if (!message.IsCapturingEmbeddedReasoning)
+        {
+            int thinkStart = content.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+            if (thinkStart >= 0)
+            {
+                message.Content = content[..thinkStart];
+                content = content[(thinkStart + 7)..];
+                message.IsCapturingEmbeddedReasoning = true;
+            }
+            else
+            {
+                string[] thinkingMarkers = { "**Thinking:**", "**Thinking:** ", "Thinking:" };
+                string? marker = thinkingMarkers.FirstOrDefault(value => content.TrimStart().StartsWith(value, StringComparison.OrdinalIgnoreCase));
+                if (marker is null) return;
+                content = content.TrimStart()[marker.Length..].TrimStart();
+                message.Content = "";
+                message.IsCapturingEmbeddedReasoning = true;
+            }
+        }
+
+        if (!message.IsCapturingEmbeddedReasoning) return;
+        string[] answerMarkers = { "</think>", "**Answer:**", "**Final Answer:**", "Final Answer:" };
+        int markerIndex = -1;
+        string? answerMarker = null;
+        foreach (string candidate in answerMarkers)
+        {
+            int index = content.IndexOf(candidate, StringComparison.OrdinalIgnoreCase);
+            if (index >= 0 && (markerIndex < 0 || index < markerIndex)) { markerIndex = index; answerMarker = candidate; }
+        }
+        if (markerIndex < 0)
+        {
+            message.Reasoning += content;
+            message.Content = "";
+            return;
+        }
+
+        message.Reasoning += content[..markerIndex].TrimEnd();
+        message.Content = content[(markerIndex + answerMarker!.Length)..].TrimStart();
+        message.IsCapturingEmbeddedReasoning = false;
+        message.IsReasoningExpanded = false;
+    }
+
     private static View MessageTemplate()
     {
         var role = new Label { FontSize = 11, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#93C5FD") };
         role.SetBinding(Label.TextProperty, nameof(ChatMessage.Role));
         var content = new Label { FontSize = 15, TextColor = Colors.White, LineBreakMode = LineBreakMode.WordWrap };
         content.SetBinding(Label.TextProperty, nameof(ChatMessage.Content));
-        var reasoning = new Label { FontSize = 12, TextColor = Color.FromArgb("#94A3B8"), FontAttributes = FontAttributes.Italic };
+        var reasoning = new Label { FontSize = 12, TextColor = Color.FromArgb("#CBD5E1"), FontAttributes = FontAttributes.Italic, LineBreakMode = LineBreakMode.WordWrap };
         reasoning.SetBinding(Label.TextProperty, nameof(ChatMessage.Reasoning));
+        reasoning.SetBinding(IsVisibleProperty, nameof(ChatMessage.IsReasoningExpanded));
+        var reasoningTitle = new Label { FontSize = 12, TextColor = Color.FromArgb("#93C5FD"), FontAttributes = FontAttributes.Bold };
+        reasoningTitle.SetBinding(Label.TextProperty, nameof(ChatMessage.ReasoningHeader));
+        var reasoningChevron = new Label { FontSize = 15, TextColor = Color.FromArgb("#93C5FD"), HorizontalOptions = LayoutOptions.End };
+        reasoningChevron.SetBinding(Label.TextProperty, nameof(ChatMessage.ReasoningChevron));
+        var reasoningHeader = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Children = { reasoningTitle, reasoningChevron.Column(1) } };
+        var reasoningExpander = new Border { Padding = new Thickness(10, 7), BackgroundColor = Color.FromArgb("#17233A"), Stroke = Color.FromArgb("#334155"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 10 }, Content = new VerticalStackLayout { Spacing = 6, Children = { reasoningHeader, reasoning } } };
+        reasoningExpander.SetBinding(IsVisibleProperty, nameof(ChatMessage.ShowReasoning));
+        var reasoningTap = new TapGestureRecognizer();
+        reasoningTap.Tapped += (_, _) => { if (reasoningExpander.BindingContext is ChatMessage message) message.IsReasoningExpanded = !message.IsReasoningExpanded; };
+        reasoningExpander.GestureRecognizers.Add(reasoningTap);
+        var telemetry = new Label { FontSize = 10, TextColor = Color.FromArgb("#A7F3D0"), LineBreakMode = LineBreakMode.WordWrap };
+        telemetry.SetBinding(Label.TextProperty, nameof(ChatMessage.Telemetry));
+        telemetry.SetBinding(IsVisibleProperty, nameof(ChatMessage.HasTelemetry));
         var status = new Label { FontSize = 11, TextColor = Color.FromArgb("#60A5FA") };
         status.SetBinding(Label.TextProperty, nameof(ChatMessage.Status));
         var tools = new CollectionView
@@ -250,7 +406,7 @@ public sealed class ChatHostPage : ContentPage
             HeightRequest = 36
         };
         tools.SetBinding(ItemsView.ItemsSourceProperty, nameof(ChatMessage.Tools));
-        var border = new Border { Margin = new Thickness(10, 5), Padding = 12, StrokeThickness = 0, StrokeShape = new RoundRectangle { CornerRadius = 16 }, Content = new VerticalStackLayout { Spacing = 5, Children = { role, content, reasoning, tools, status } } };
+        var border = new Border { Margin = new Thickness(10, 5), Padding = 12, StrokeThickness = 0, StrokeShape = new RoundRectangle { CornerRadius = 16 }, Content = new VerticalStackLayout { Spacing = 7, Children = { role, reasoningExpander, content, tools, telemetry, status } } };
         border.SetBinding(Border.BackgroundColorProperty, nameof(ChatMessage.BubbleColor));
         return border;
     }

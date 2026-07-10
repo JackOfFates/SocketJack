@@ -66,7 +66,21 @@ private sealed class ChatSessionSummary
             public long promptTokenBudget { get; set; }
             public string runtime { get; set; } = "";
             public int commentCount { get; set; }
+            public long tokensUsed { get; set; }
+            public double gpuSeconds { get; set; }
+            public double cpuComputeSeconds { get; set; }
+            public double ramGbSeconds { get; set; }
+            public long ioBytes { get; set; }
             public ChatSessionCompatibilityPayload compatibility { get; set; }
+        }
+
+private sealed class ChatSessionComputeSummary
+        {
+            public long TokensUsed { get; set; }
+            public double GpuSeconds { get; set; }
+            public double CpuComputeSeconds { get; set; }
+            public double RamGbSeconds { get; set; }
+            public long IoBytes { get; set; }
         }
 
 private sealed class ChatSessionListRowSnapshot

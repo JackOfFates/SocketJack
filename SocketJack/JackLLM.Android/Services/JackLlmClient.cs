@@ -108,8 +108,47 @@ public sealed class JackLlmClient : IDisposable
         JsonElement list = root.ValueKind == JsonValueKind.Array ? root : TryProperty(root, "sessions", out var sessions) ? sessions : default;
         var result = new List<ChatSessionInfo>();
         if (list.ValueKind == JsonValueKind.Array)
-            foreach (JsonElement item in list.EnumerateArray()) result.Add(new ChatSessionInfo { Id = ReadString(item, "id", "sessionId"), Title = ReadString(item, "title", "name") });
+            foreach (JsonElement item in list.EnumerateArray()) result.Add(new ChatSessionInfo
+            {
+                Id = ReadString(item, "id", "sessionId"),
+                Title = ReadString(item, "title", "name"),
+                CreatedAt = ReadDate(item, "createdUtc", "createdAt"),
+                UpdatedAt = ReadDate(item, "updatedUtc", "updatedAt", "savedUtc"),
+                Model = ReadString(item, "model"),
+                Runtime = ReadString(item, "runtime"),
+                MessageCount = (int)ReadLong(item, "messageCount"),
+                FileCount = (int)ReadLong(item, "fileCount"),
+                CommentCount = (int)ReadLong(item, "commentCount"),
+                PromptTokenCount = ReadLong(item, "promptTokenCount"),
+                PromptTokenBudget = ReadLong(item, "promptTokenBudget"),
+                TokensUsed = ReadLong(item, "tokensUsed"),
+                GpuSeconds = ReadDouble(item, "gpuSeconds") ?? 0,
+                CpuComputeSeconds = ReadDouble(item, "cpuComputeSeconds") ?? 0,
+                RamGbSeconds = ReadDouble(item, "ramGbSeconds") ?? 0,
+                IoBytes = ReadLong(item, "ioBytes")
+            });
         return result;
+    }
+
+    public async Task<HardwareSnapshot> GetHardwareAsync(CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/server-hardware", cancellationToken);
+        JsonElement root = json.RootElement;
+        TryProperty(root, "cpu", out JsonElement cpu);
+        TryProperty(root, "ram", out JsonElement ram);
+        TryProperty(root, "gpu", out JsonElement gpu);
+        return new HardwareSnapshot
+        {
+            CpuPercent = ReadDouble(cpu, "percent"),
+            RamPercent = ReadDouble(ram, "percent"),
+            RamUsedBytes = ReadULong(ram, "usedBytes"),
+            RamTotalBytes = ReadULong(ram, "totalBytes"),
+            GpuPercent = ReadDouble(gpu, "percent"),
+            VramPercent = ReadDouble(gpu, "vramPercent"),
+            VramUsedBytes = ReadULong(gpu, "vramUsedBytes"),
+            VramTotalBytes = ReadULong(gpu, "vramTotalBytes"),
+            GpuName = ReadString(gpu, "name")
+        };
     }
 
     public async Task<ChatSessionDetail> GetSessionAsync(string id, CancellationToken cancellationToken = default)
@@ -192,6 +231,7 @@ public sealed class JackLlmClient : IDisposable
     {
         try
         {
+            if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) line = line[5..].TrimStart();
             using JsonDocument json = JsonDocument.Parse(line);
             JsonElement root = json.RootElement;
             string type = ReadString(root, "type");
@@ -204,6 +244,13 @@ public sealed class JackLlmClient : IDisposable
                 Progress = ReadDouble(root, "progress"),
                 ToolName = ReadString(root, "toolName", "name", "tool"),
                 ToolStatus = ReadString(root, "toolStatus", "state"),
+                TokenDelta = ReadLong(root, "tokenDelta"),
+                TokensUsed = ReadLong(root, "tokensUsed"),
+                GpuSecondsUsed = ReadDouble(root, "gpuSecondsUsed") ?? 0,
+                CpuComputeSecondsUsed = ReadDouble(root, "cpuComputeSecondsUsed") ?? 0,
+                RamGbSecondsUsed = ReadDouble(root, "ramGbSecondsUsed") ?? 0,
+                PromptTokensLoaded = ReadLong(root, "promptTokensLoaded"),
+                PromptTokensTotal = ReadLong(root, "promptTokensTotal"),
                 RawJson = line
             };
         }
@@ -247,6 +294,13 @@ public sealed class JackLlmClient : IDisposable
     private static bool TryProperty(JsonElement element, string name, out JsonElement value) { value = default; if (element.ValueKind != JsonValueKind.Object) return false; foreach (var property in element.EnumerateObject()) if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) { value = property.Value; return true; } return false; }
     private static string ReadString(JsonElement element, params string[] names) { foreach (string name in names) if (TryProperty(element, name, out var value)) return value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString(); return ""; }
     private static double? ReadDouble(JsonElement element, string name) => TryProperty(element, name, out var value) && value.TryGetDouble(out double number) ? number : null;
+    private static long ReadLong(JsonElement element, string name) => TryProperty(element, name, out var value) && value.TryGetInt64(out long number) ? number : 0;
+    private static ulong ReadULong(JsonElement element, string name) => TryProperty(element, name, out var value) && value.TryGetUInt64(out ulong number) ? number : 0;
+    private static DateTimeOffset ReadDate(JsonElement element, params string[] names)
+    {
+        string value = ReadString(element, names);
+        return DateTimeOffset.TryParse(value, out DateTimeOffset parsed) ? parsed : default;
+    }
     private static bool ReadBool(JsonElement element, params string[] names)
     {
         foreach (string name in names)

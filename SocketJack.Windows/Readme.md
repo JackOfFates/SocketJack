@@ -15,9 +15,10 @@ Share any `FrameworkElement` as a live image stream, view it from another peer, 
 
 | Package / surface | Version | Target |
 |---|---:|---|
-| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.0` | `net8.0-windows7.0`, `net10.0-windows7.0` |
-| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.0` | `.NET Standard 2.1` |
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.4` | `net8.0-windows7.0`, `net10.0-windows7.0` |
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.8` | `.NET Standard 2.1` |
 | `JackLLM Workstation` | `2026.0` | WPF app metadata |
+| `JackLLM Mobile` | `1.0` | Android app |
 | `JackLLM Workstation Linux` | `1:26.0.1` | Debian-compatible package version for the 2026 line |
 
 <details open>
@@ -79,11 +80,25 @@ JackLLM Workstation can register a WPF host with SocketJack.WPF so the browser c
 </details>
 
 <details>
+<summary><strong>#JackLLM Mobile</strong> - Android companion for workstation sessions</summary>
+
+JackLLM Mobile extends the JackLLM Workstation flow to Android. It can send prompts, view assistant responses, monitor model and compute status, and reopen workstation sessions from a phone or tablet.
+
+![JackLLM Mobile chat](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-chat.png)
+
+![JackLLM Mobile sessions](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-sessions.png)
+
+Project README: [SocketJack/JackLLM.Android/README.md](https://github.com/JackOfFates/SocketJack/blob/master/SocketJack/JackLLM.Android/README.md)
+
+</details>
+
+<details>
 <summary><strong>#Documentation</strong> - examples and related packages</summary>
 
 - [Examples](https://github.com/JackOfFates/SocketJack/blob/master/examples.md)
 - [SocketJack.WPF package](https://www.nuget.org/packages/SocketJack.WPF)
 - [SocketJack package](https://www.nuget.org/packages/SocketJack)
+- [JackLLM Mobile README](https://github.com/JackOfFates/SocketJack/blob/master/SocketJack/JackLLM.Android/README.md)
 - [GitHub repository](https://github.com/JackOfFates/SocketJack)
 
 </details>

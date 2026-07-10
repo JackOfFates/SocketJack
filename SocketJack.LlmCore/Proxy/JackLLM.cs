@@ -21916,6 +21916,7 @@ except Exception as exc:
 			}
 			List<ChatSessionListRowSnapshot> pageRows = page.Where((ChatSessionListRowSnapshot item) => item?.Row != null).ToList();
 			Dictionary<string, int> commentCounts = CountChatSessionCommentsBySessionSnapshot(pageRows.Select((ChatSessionListRowSnapshot item) => GetRowValue(item.Row, 0)));
+			Dictionary<string, ChatSessionComputeSummary> computeBySession = GetChatSessionComputeSummaries(ownerKeys, pageRows.Select((ChatSessionListRowSnapshot item) => GetRowValue(item.Row, 0)));
 			List<ChatSessionSummary> sessions = new List<ChatSessionSummary>(pageRows.Count);
 			foreach (ChatSessionListRowSnapshot snapshot in pageRows)
 			{
@@ -21924,6 +21925,7 @@ except Exception as exc:
 				int messageCount = CountChatSessionPrivateArrayItems(row, 5, "messages", "[]", ownerKey, allowDecrypt: true);
 				int fileCount = CountChatSessionPrivateArrayItems(row, 6, "files", "[]", ownerKey, allowDecrypt: true);
 				int commentCount = (commentCounts.TryGetValue(sessionId, out var comments) ? comments : 0);
+				ChatSessionComputeSummary compute = (computeBySession.TryGetValue(sessionId, out var recordedCompute) ? recordedCompute : new ChatSessionComputeSummary());
 				sessions.Add(new ChatSessionSummary
 				{
 					id = sessionId,
@@ -21945,6 +21947,11 @@ except Exception as exc:
 					promptTokenBudget = ParseStoredLong(GetRowValue(row, 17), 8192L),
 					runtime = GetRowValue(row, 18),
 					commentCount = commentCount,
+					tokensUsed = compute.TokensUsed,
+					gpuSeconds = compute.GpuSeconds,
+					cpuComputeSeconds = compute.CpuComputeSeconds,
+					ramGbSeconds = compute.RamGbSeconds,
+					ioBytes = compute.IoBytes,
 					compatibility = BuildChatSessionCompatibilityPayload(row, null, null, -1L, 0L, messageCount, fileCount, commentCount)
 				});
 			}
@@ -21972,6 +21979,40 @@ except Exception as exc:
 				error = ex.Message
 			});
 		}
+	}
+
+	private Dictionary<string, ChatSessionComputeSummary> GetChatSessionComputeSummaries(List<string> ownerKeys, IEnumerable<string> sessionIds)
+	{
+		HashSet<string> wanted = new HashSet<string>((sessionIds ?? Array.Empty<string>()).Where(id => !string.IsNullOrWhiteSpace(id)), StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, ChatSessionComputeSummary> result = new Dictionary<string, ChatSessionComputeSummary>(StringComparer.OrdinalIgnoreCase);
+		if (wanted.Count == 0)
+		{
+			return result;
+		}
+		lock (_chatSessionLock)
+		{
+			Table table = GetFinanceUsageLedgerTable();
+			foreach (object[] sourceRow in table.Rows)
+			{
+				object[] row = NormalizeFinanceUsageLedgerRow(sourceRow);
+				string sessionId = GetRowValue(row, 6);
+				if (!wanted.Contains(sessionId) || !OwnerKeyListContains(ownerKeys, GetRowValue(row, 2)))
+				{
+					continue;
+				}
+				if (!result.TryGetValue(sessionId, out ChatSessionComputeSummary summary))
+				{
+					summary = new ChatSessionComputeSummary();
+					result[sessionId] = summary;
+				}
+				summary.TokensUsed += Math.Max(0L, ParseStoredLong(GetRowValue(row, 8), 0L));
+				summary.GpuSeconds += Math.Max(0.0, ParseStoredDouble(GetRowValue(row, 10), 0.0));
+				summary.CpuComputeSeconds += Math.Max(0.0, ParseStoredDouble(GetRowValue(row, 11), 0.0));
+				summary.RamGbSeconds += Math.Max(0.0, ParseStoredDouble(GetRowValue(row, 12), 0.0));
+				summary.IoBytes += Math.Max(0L, ParseStoredLong(GetRowValue(row, 13), 0L));
+			}
+		}
+		return result;
 	}
 
 	private int ReadChatSessionListTake(HttpRequest request)
