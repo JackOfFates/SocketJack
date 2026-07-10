@@ -1038,7 +1038,7 @@ namespace SocketJack.Net {
 
         /// <summary>
         /// Maps a disk directory as an explicit document root. Disk roots delegate to
-        /// <see cref="MapDirectory"/> so the existing path containment and .htaccess
+        /// <see cref="MapDirectory(string, string)"/> so the existing path containment and .htaccess
         /// protections remain authoritative.
         /// </summary>
         public void MapDocumentRoot(string urlPrefix, string localDirectory) {

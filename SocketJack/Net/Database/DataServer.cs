@@ -410,8 +410,7 @@ namespace SocketJack.Net.Database {
 
             byte[] salt = new byte[PasswordSaltSize];
             RandomNumberGenerator.Fill(salt);
-            using var kdf = new Rfc2898DeriveBytes(password, salt, PasswordHashIterations, HashAlgorithmName.SHA256);
-            byte[] hash = kdf.GetBytes(PasswordHashSize);
+            byte[] hash = DerivePasswordHash(password, salt, PasswordHashIterations, PasswordHashSize);
             return PasswordHashPrefix + PasswordHashIterations.ToString() + "$" + Convert.ToBase64String(salt) + "$" + Convert.ToBase64String(hash);
         }
 
@@ -427,13 +426,70 @@ namespace SocketJack.Net.Database {
             try {
                 byte[] salt = Convert.FromBase64String(parts[2]);
                 byte[] expected = Convert.FromBase64String(parts[3]);
-                using var kdf = new Rfc2898DeriveBytes(password ?? "", salt, iterations, HashAlgorithmName.SHA256);
-                byte[] actual = kdf.GetBytes(expected.Length);
+                byte[] actual = DerivePasswordHash(password ?? "", salt, iterations, expected.Length);
                 return CryptographicOperations.FixedTimeEquals(actual, expected);
             } catch {
                 return false;
             }
         }
+
+        private static byte[] DerivePasswordHash(string password, byte[] salt, int iterations, int outputLength) {
+#if NET6_0_OR_GREATER
+            return Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, outputLength);
+#else
+            return DerivePbkdf2(Encoding.UTF8.GetBytes(password ?? ""), salt, iterations, outputLength);
+#endif
+        }
+
+        private static byte[] DerivePbkdf2(byte[] seed, byte[] salt, int iterations, int outputLength) {
+#if NET6_0_OR_GREATER
+            return Rfc2898DeriveBytes.Pbkdf2(seed, salt, iterations, HashAlgorithmName.SHA256, outputLength);
+#else
+            if (seed == null)
+                throw new ArgumentNullException(nameof(seed));
+            if (salt == null)
+                throw new ArgumentNullException(nameof(salt));
+            if (iterations <= 0)
+                throw new ArgumentOutOfRangeException(nameof(iterations));
+            if (outputLength < 0)
+                throw new ArgumentOutOfRangeException(nameof(outputLength));
+            if (outputLength == 0)
+                return Array.Empty<byte>();
+
+            byte[] result = new byte[outputLength];
+            byte[] blockInput = new byte[salt.Length + 4];
+            Buffer.BlockCopy(salt, 0, blockInput, 0, salt.Length);
+
+            using var hmac = new HMACSHA256(seed);
+            byte[] block = new byte[hmac.HashSize / 8];
+            int offset = 0;
+            uint blockIndex = 1;
+
+            while (offset < outputLength) {
+                blockInput[salt.Length] = (byte)(blockIndex >> 24);
+                blockInput[salt.Length + 1] = (byte)(blockIndex >> 16);
+                blockInput[salt.Length + 2] = (byte)(blockIndex >> 8);
+                blockInput[salt.Length + 3] = (byte)blockIndex;
+
+                byte[] iterationHash = hmac.ComputeHash(blockInput);
+                Buffer.BlockCopy(iterationHash, 0, block, 0, block.Length);
+
+                for (int i = 1; i < iterations; i++) {
+                    iterationHash = hmac.ComputeHash(iterationHash);
+                    for (int j = 0; j < block.Length; j++)
+                        block[j] ^= iterationHash[j];
+                }
+
+                int bytesToCopy = Math.Min(block.Length, outputLength - offset);
+                Buffer.BlockCopy(block, 0, result, offset, bytesToCopy);
+                offset += bytesToCopy;
+                blockIndex++;
+            }
+
+            return result;
+#endif
+        }
+
         private void ApplyDatabaseSqlAdminCredentials() {
             foreach (var database in Databases.Values) {
                 if (database == null || !database.HasSqlAdminCredentials)
@@ -1488,11 +1544,7 @@ namespace SocketJack.Net.Database {
             Buffer.BlockCopy(_dataEncryptionSecret, 0, rawSeed, 0, _dataEncryptionSecret.Length);
             Buffer.BlockCopy(contextBytes, 0, rawSeed, _dataEncryptionSecret.Length, contextBytes.Length);
 
-            #pragma warning disable SYSLIB0060
-            using (var kdf = new Rfc2898DeriveBytes(rawSeed, salt, EncryptionDerivationIterations, HashAlgorithmName.SHA256)) {
-                return kdf.GetBytes(EncryptionKeySize);
-            }
-            #pragma warning restore SYSLIB0060
+            return DerivePbkdf2(rawSeed, salt, EncryptionDerivationIterations, EncryptionKeySize);
         }
 
         private static string GetDataServerMachineSecret() {
