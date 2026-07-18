@@ -65,6 +65,7 @@ private sealed class ChatSessionSummary
             public long promptTokenCount { get; set; }
             public long promptTokenBudget { get; set; }
             public string runtime { get; set; } = "";
+            public string reasoningLevel { get; set; } = "inherit";
             public int commentCount { get; set; }
             public long tokensUsed { get; set; }
             public double gpuSeconds { get; set; }
@@ -101,6 +102,7 @@ private sealed class ChatSessionCompatibilityPayload
             public string updatedUtc { get; set; } = "";
             public string model { get; set; } = "";
             public string runtime { get; set; } = "";
+            public string reasoningLevel { get; set; } = "inherit";
             public string state { get; set; } = "";
             public bool titleLocked { get; set; }
             public bool locked { get; set; }

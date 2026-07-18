@@ -9,15 +9,17 @@ public sealed class ServerListPage : ContentPage
     private readonly ServerDirectoryService _directory;
     private readonly ServerStore _store;
     private readonly SecureCredentialStore _credentials;
+    private readonly MobileGenerationCoordinator _generation;
     private readonly CollectionView _servers;
     private readonly Label _status;
     private bool _loaded;
 
-    public ServerListPage(ServerDirectoryService directory, ServerStore store, SecureCredentialStore credentials)
+    public ServerListPage(ServerDirectoryService directory, ServerStore store, SecureCredentialStore credentials, MobileGenerationCoordinator generation)
     {
         _directory = directory;
         _store = store;
         _credentials = credentials;
+        _generation = generation;
         Title = "JackLLM Mobile";
         BackgroundColor = Color.FromArgb("#0B1020");
 
@@ -112,8 +114,11 @@ public sealed class ServerListPage : ContentPage
             Endpoint = _directory.BuildLaunchUrl(server), OpenAiBaseUrl = server.OpenAiBaseUrl,
             SelectedModel = server.SelectedModel, AvailableModels = server.AvailableModels,
             CertificateFingerprint = server.CertificateFingerprint, IsSaved = server.IsSaved
+            , CredentialKey = server.LaunchKey
         };
-        await Navigation.PushAsync(new ChatHostPage(launch, new JackLlmClient(_credentials), _store));
+        string mode = await DisplayActionSheetAsync("Open Workstation", "Cancel", null, "Chat", "PC Access");
+        if (mode == "PC Access") await Navigation.PushAsync(new PcAccessPage(launch, new JackLlmClient(_credentials)));
+        else if (mode == "Chat") await Navigation.PushAsync(new ChatHostPage(launch, new JackLlmClient(_credentials), _store, _generation));
     }
 
     private static View ServerCard()

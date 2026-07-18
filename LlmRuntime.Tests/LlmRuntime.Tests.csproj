@@ -22,5 +22,8 @@
   <ItemGroup>
     <Compile Include="..\LlmRuntime.VisualStudio\SocketJackCopilotServices.cs" Link="VisualStudio\SocketJackCopilotServices.cs" />
     <Compile Include="..\LlmRuntime.VisualStudio2026\SessionSyncDiffState.cs" Link="VisualStudio2026\SessionSyncDiffState.cs" />
+    <Compile Include="..\SocketJack\JackLLM.Android\Services\MobileNotificationPolicy.cs" Link="Mobile\MobileNotificationPolicy.cs" />
+    <Compile Include="..\SocketJack\JackLLM.Android\Services\MobileOutputReliability.cs" Link="Mobile\MobileOutputReliability.cs" />
+    <Compile Include="..\SocketJack\JackLLM.Android\Services\RemoteViewportMath.cs" Link="Mobile\RemoteViewportMath.cs" />
   </ItemGroup>
 </Project>

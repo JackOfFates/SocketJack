@@ -790,7 +790,9 @@ public sealed class ModelFileCandidate
         if (fit.SharedVideoMemoryBytes > 0 && runtimeMemoryEstimate > fit.SharedVideoMemoryBytes)
         {
             IsWarning = true;
-            Reason = "Larger than estimated shared video memory.";
+            Reason = fit.VideoMemoryIsDedicated
+                ? "Larger than detected dedicated VRAM."
+                : "Larger than estimated shared video memory.";
         }
     }
 
@@ -878,6 +880,8 @@ public sealed class ModelFileCandidate
 public sealed class ModelFitSnapshot
 {
     public long SharedVideoMemoryBytes { get; init; }
+
+    public bool VideoMemoryIsDedicated { get; init; }
 
     public long DriveFreeBytes { get; init; }
 }

@@ -43,6 +43,10 @@ public sealed class LlmChatRequest
 
     public JsonElement? Metadata { get; set; }
 
+    public string ReasoningLevel { get; set; } = "auto";
+
+    public ModelRouteDecision? RouteDecision { get; set; }
+
     public static LlmChatRequest FromJson(JsonElement root)
     {
         int? requestedMaxTokens =
@@ -67,6 +71,7 @@ public sealed class LlmChatRequest
             SessionSaved = GetBool(root, "session_saved") ?? GetBool(root, "sessionSaved"),
             PromptTokenBudget = GetInt32(root, "prompt_token_budget") ?? GetInt32(root, "promptTokenBudget") ?? GetInt32(root, "context_length") ?? GetInt32(root, "contextLength") ?? GetInt32(root, "n_ctx") ?? GetInt32(root, "nCtx")
         };
+        request.ReasoningLevel = GetString(root, "reasoning_level") ?? GetString(root, "reasoningLevel") ?? ReadReasoningEffort(root) ?? "auto";
 
         if (root.TryGetProperty("metadata", out var metadata) && metadata.ValueKind == JsonValueKind.Object)
         {
@@ -87,6 +92,13 @@ public sealed class LlmChatRequest
             request.ToolChoice = toolChoice.Clone();
 
         return request;
+    }
+
+    private static string? ReadReasoningEffort(JsonElement root)
+    {
+        if (root.TryGetProperty("reasoning", out JsonElement reasoning) && reasoning.ValueKind == JsonValueKind.Object)
+            return GetString(reasoning, "effort");
+        return null;
     }
 
     private static void ApplySessionMetadata(LlmChatRequest request, JsonElement metadata)
@@ -112,8 +124,15 @@ public sealed class LlmChatRequest
     {
         string role = GetString(element, "role") ?? "user";
         string content = "";
+        JsonElement? structuredContent = null;
+        bool hasImageContent = false;
         if (element.TryGetProperty("content", out var contentElement))
+        {
             content = ReadContent(contentElement);
+            hasImageContent = ContentContainsImage(contentElement);
+            if (hasImageContent)
+                structuredContent = contentElement.Clone();
+        }
 
         if (role.Equals("tool", StringComparison.OrdinalIgnoreCase))
         {
@@ -128,7 +147,19 @@ public sealed class LlmChatRequest
             }
         }
 
-        return new LlmChatMessage(role, content);
+        return new LlmChatMessage(role, content, structuredContent, hasImageContent);
+    }
+
+    private static bool ContentContainsImage(JsonElement content)
+    {
+        if (content.ValueKind == JsonValueKind.Array)
+            return content.EnumerateArray().Any(ContentContainsImage);
+        if (content.ValueKind != JsonValueKind.Object)
+            return false;
+        string type = GetString(content, "type") ?? "";
+        return type.Equals("image_url", StringComparison.OrdinalIgnoreCase)
+            || type.Equals("input_image", StringComparison.OrdinalIgnoreCase)
+            || content.TryGetProperty("image_url", out _);
     }
 
     private static bool TryReadAssistantToolCalls(JsonElement element, out string content)
@@ -231,7 +262,10 @@ public sealed class LlmChatRequest
                     return part.GetString() ?? "";
                 if (part.ValueKind == JsonValueKind.Object && part.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
                     return text.GetString() ?? "";
-                return part.ValueKind == JsonValueKind.Object ? part.GetRawText() : "";
+                // Binary image data is retained as structured content, not copied
+                // into the text prompt where base64 would consume the context.
+                return part.ValueKind == JsonValueKind.Object && ContentContainsImage(part) ? "" :
+                    part.ValueKind == JsonValueKind.Object ? part.GetRawText() : "";
             }).Where(value => !string.IsNullOrWhiteSpace(value)));
         }
 
@@ -288,7 +322,7 @@ public sealed class LlmChatRequest
     private static float Clamp(float value, float min, float max) => Math.Min(Math.Max(value, min), max);
 }
 
-public sealed record LlmChatMessage(string Role, string Content);
+public sealed record LlmChatMessage(string Role, string Content, JsonElement? StructuredContent = null, bool HasImageContent = false);
 
 public sealed record LlmChatToken(string Text, string FinishReason = "");
 

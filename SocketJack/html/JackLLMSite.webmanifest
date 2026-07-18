@@ -1,0 +1,23 @@
+{
+  "name": "JackLLM Web Chat",
+  "short_name": "JackLLM",
+  "description": "JackLLM Workstation web chat",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070914",
+  "theme_color": "#070914",
+  "icons": [
+    {
+      "src": "/assets/jackllm-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/jackllm-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

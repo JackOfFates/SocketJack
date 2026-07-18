@@ -22,6 +22,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
     private static readonly JsonSerializerOptions BrowserJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ModelRepositoryScanner RepositoryScanner = new(ApiClient);
     private static readonly TimeSpan IdealModelCacheDuration = TimeSpan.FromMinutes(20);
+    private static readonly Lazy<VideoMemoryCapacity> VideoMemory = new(DetectVideoMemoryCapacity);
 
     private readonly HuggingFaceIdealModelScanner _idealModelScanner = new(ApiClient);
     private readonly Dictionary<string, IdealModelCategoryCacheEntry> _idealModelCache = new(StringComparer.OrdinalIgnoreCase);
@@ -593,7 +594,8 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
             {
                 repo = $"{owner}/{repo}",
                 revision = "main",
-                sharedVideoMemoryBytes = modelFit.SharedVideoMemoryBytes,
+                videoMemoryBytes = modelFit.SharedVideoMemoryBytes,
+                videoMemoryLabel = modelFit.VideoMemoryIsDedicated ? "Dedicated VRAM" : "Estimated shared video memory",
                 driveFreeBytes = modelFit.DriveFreeBytes,
                 modelsDirectory = ModelsDirectory,
                 completeModelsDirectory = CompleteModelsDirectory,
@@ -840,9 +842,9 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;background:#161b22;border-bottom:1px solid #30363d">
       <div>
         <div style="font-weight:700;color:#f0f6fc">LlmRuntime downloads</div>
-        <div style="font-size:12px;color:#8b949e">GGUF/ONNX files save to ${payload.modelsDirectory}. Complete PyTorch bundles save to ${payload.completeModelsDirectory}. Suggested models must fit shared video memory and free drive space.</div>
+        <div style="font-size:12px;color:#8b949e">GGUF/ONNX files save to ${payload.modelsDirectory}. Complete PyTorch bundles save to ${payload.completeModelsDirectory}. Suggested models are compared with the detected video-memory capacity and free drive space.</div>
       </div>
-      <div style="font-size:12px;color:#8b949e;text-align:right">Shared video memory: ${fmt(payload.sharedVideoMemoryBytes)}<br/>Drive free: ${fmt(payload.driveFreeBytes)}</div>
+      <div style="font-size:12px;color:#8b949e;text-align:right">${esc(payload.videoMemoryLabel)}: ${fmt(payload.videoMemoryBytes)}<br/>Drive free: ${fmt(payload.driveFreeBytes)}</div>
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="color:#8b949e"><th style="padding:8px 14px;text-align:left">File</th><th style="padding:8px 14px;text-align:left">Format</th><th style="padding:8px 14px;text-align:left">Quant</th><th style="padding:8px 14px;text-align:left">Tags</th><th style="padding:8px 14px;text-align:right">Size</th><th style="padding:8px 14px;text-align:left">Fit</th><th style="padding:8px 14px;text-align:right">Action</th></tr></thead><tbody>${rows || '<tr><td style="padding:14px">No GGUF, ONNX, or source tensor files found in this repository.</td></tr>'}</tbody></table>`;
 
@@ -2117,19 +2119,77 @@ exit 1
 
         return new ModelFitSnapshot
         {
-            SharedVideoMemoryBytes = EstimateSharedVideoMemoryBytes(),
+            SharedVideoMemoryBytes = VideoMemory.Value.Bytes,
+            VideoMemoryIsDedicated = VideoMemory.Value.IsDedicated,
             DriveFreeBytes = free
         };
     }
 
-    private static long EstimateSharedVideoMemoryBytes()
+    private static VideoMemoryCapacity DetectVideoMemoryCapacity()
     {
+        long dedicatedBytes = DetectNvidiaDedicatedVideoMemoryBytes();
+        if (dedicatedBytes > 0)
+            return new VideoMemoryCapacity(dedicatedBytes, IsDedicated: true);
+
         var memoryStatus = new MemoryStatusEx();
         if (GlobalMemoryStatusEx(memoryStatus) && memoryStatus.ullTotalPhys > 0)
-            return (long)Math.Min(memoryStatus.ullTotalPhys / 2, long.MaxValue);
+            return new VideoMemoryCapacity(
+                (long)Math.Min(memoryStatus.ullTotalPhys / 2, long.MaxValue),
+                IsDedicated: false);
 
-        return 0;
+        return new VideoMemoryCapacity(0, IsDedicated: false);
     }
+
+    private static long DetectNvidiaDedicatedVideoMemoryBytes()
+    {
+        try
+        {
+            string nvidiaSmi = Environment.GetEnvironmentVariable("JACKLLM_NVIDIA_SMI") ??
+                               Environment.GetEnvironmentVariable("NVIDIA_SMI_PATH") ??
+                               "nvidia-smi";
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = nvidiaSmi,
+                    Arguments = "--query-gpu=memory.total --format=csv,noheader,nounits",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            if (!process.Start())
+                return 0;
+
+            if (!process.WaitForExit(1500))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return 0;
+            }
+
+            if (process.ExitCode != 0)
+                return 0;
+
+            long largestMiB = 0;
+            foreach (string line in process.StandardOutput.ReadToEnd().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (long.TryParse(line.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long mib) && mib > largestMiB)
+                    largestMiB = mib;
+            }
+
+            return largestMiB > 0 && largestMiB <= long.MaxValue / (1024L * 1024L)
+                ? largestMiB * 1024L * 1024L
+                : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private readonly record struct VideoMemoryCapacity(long Bytes, bool IsDedicated);
 
     private static class DownloadFormat
     {

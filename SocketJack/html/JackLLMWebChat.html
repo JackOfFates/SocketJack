@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#070914">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/jackllm-favicon-16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/jackllm-favicon-32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="/assets/jackllm-favicon-48.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/jackllm-apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
 <title>$META_TITLE</title>
 <meta name="description" content="$META_DESCRIPTION">
 <meta property="og:title" content="$META_TITLE">
@@ -14196,6 +14203,7 @@ body.shared-view .comments-panel-toggle {
     .jackdirector-launcher { padding: 6px 8px; font-size: 0.62rem; }
     .jackdirector-feature-toast { top: auto; bottom: max(14px, env(safe-area-inset-bottom)); }
 }
+.goal-panel{position:absolute;left:12px;bottom:calc(100% + 10px);z-index:180;width:min(440px,calc(100% - 24px));box-sizing:border-box;padding:16px;border:1px solid rgba(125,211,252,.34);border-radius:16px;background:rgba(8,18,36,.97);box-shadow:0 24px 70px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(20px) saturate(1.18);display:grid;gap:10px}.goal-panel[hidden]{display:none}.goal-panel-head,.goal-options,.goal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.goal-panel-head{justify-content:space-between}.goal-panel-title{display:flex;align-items:center;gap:9px}.goal-panel-close{width:30px;height:30px;min-height:30px;padding:0;border-radius:8px}.goal-panel textarea{width:100%;min-height:58px;resize:vertical;box-sizing:border-box;border:1px solid var(--border);border-radius:9px;padding:9px;background:rgba(2,6,23,.78);color:inherit}.goal-options small,.goal-stage-summary{color:var(--muted);font-size:12px}.goal-actions button{min-width:92px}.chat-mode-button.goal-mode-button[aria-expanded="true"]{border-color:#7dd3fc;background:rgba(14,165,233,.24);box-shadow:0 0 0 1px rgba(125,211,252,.18),0 8px 24px rgba(2,132,199,.2)}.plan-mode .goal-panel{border-color:#a78bfa}@media(max-width:720px){.goal-panel{position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;max-height:calc(100dvh - 24px);overflow:auto}}.plan-clarification{padding:12px;border:1px solid #8b5cf6;border-radius:12px;margin:8px 0}.plan-clarification button{margin:4px}.plan-card{padding:14px;border:1px solid #8b5cf6;border-radius:14px;background:rgba(76,29,149,.15)}
 </style>
 </head>
 <body class="app-loading">
@@ -14297,16 +14305,16 @@ body.shared-view .comments-panel-toggle {
                         </div>
                         <div class="permissions-panel">
                             <div class="permission-group permission-group-core" data-group-label="Core">
-                                <label class="permission-row"><input id="permInternetSearch" type="checkbox">Internet Search</label>
-                                <label class="permission-row"><input id="permVsCopilotTools" type="checkbox">VS Tools</label>
-                                <label class="permission-row"><input id="permAgentAccess" type="checkbox">Agent</label>
+                                <label class="permission-row"><input id="permInternetSearch" type="checkbox">Internet Search <input id="dreamPermInternetSearch" type="checkbox" title="Allow during Dreaming" disabled> Dream</label>
+                                <label class="permission-row"><input id="permVsCopilotTools" type="checkbox">VS Tools <input id="dreamPermVsCopilotTools" type="checkbox" title="Allow during Dreaming" disabled> Dream</label>
+                                <label class="permission-row"><input id="permAgentAccess" type="checkbox">Agent <input id="dreamPermAgentAccess" type="checkbox" title="Allow during Dreaming" disabled> Dream</label>
                             </div>
                             <div class="permission-group permission-group-files" data-group-label="Files">
-                                <label class="permission-row"><input id="permFileUploads" type="checkbox">Upload</label>
-                                <label class="permission-row"><input id="permImageUploads" type="checkbox">Images</label>
-                                <label class="permission-row"><input id="permFileDownloads" type="checkbox">Download</label>
+                                <label class="permission-row"><input id="permFileUploads" type="checkbox">Upload <input id="dreamPermFileUploads" type="checkbox" disabled> Dream</label>
+                                <label class="permission-row"><input id="permImageUploads" type="checkbox">Images <input id="dreamPermImageUploads" type="checkbox" disabled> Dream</label>
+                                <label class="permission-row"><input id="permFileDownloads" type="checkbox">Download <input id="dreamPermFileDownloads" type="checkbox" disabled> Dream</label>
                                 <div class="ftp-permission-row">
-                                    <label class="permission-row"><input id="permFtpServer" type="checkbox">FTP</label>
+                                    <label class="permission-row"><input id="permFtpServer" type="checkbox">FTP <input id="dreamPermFtpServer" type="checkbox" disabled> Dream</label>
                                     <button id="ftpConfigToggle" class="permission-more" type="button" title="FTP Server configuration" aria-label="FTP Server configuration">...</button>
                                 </div>
                                 <details class="filesystem-menu">
@@ -14318,8 +14326,9 @@ body.shared-view .comments-panel-toggle {
                                 </details>
                             </div>
                             <div class="permission-group permission-group-admin" data-group-label="Admin">
-                                <label class="permission-row"><input id="permTerminalCommands" type="checkbox">Terminal</label>
+                                <label class="permission-row"><input id="permTerminalCommands" type="checkbox">Terminal <input id="dreamPermTerminalCommands" type="checkbox" title="Requires Terminal Trust" disabled> Dream</label>
                                 <label class="permission-row"><input id="permTerminalForeverApproved" type="checkbox">Terminal Trust</label>
+                                        <label class="permission-row"><input id="permPcAccess" type="checkbox">PC Access <input id="dreamPermPcAccess" type="checkbox" disabled> Dream</label>
                                 <details class="token-rate-admin-menu">
                                     <summary class="permission-row">Token-rate Requests</summary>
                                     <div class="token-rate-admin-panel">
@@ -14354,6 +14363,7 @@ body.shared-view .comments-panel-toggle {
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="solutionPanelToggle" type="checkbox" aria-controls="solutionExplorer">Files</label>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="commentsPanelToggle" type="checkbox" aria-controls="shareComments">Comments</label>
                     <button id="memoryPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Memory</button>
+                    <button id="dreamPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Dreaming</button>
                 </div>
             </div>
             <div id="serverHardwarePanel" class="server-hardware-panel hardware-glance-panel" aria-live="polite">
@@ -14680,6 +14690,21 @@ body.shared-view .comments-panel-toggle {
         </aside>
     </section>
     <form id="composer" class="composer no-media-source">
+        <section id="goalPanel" class="goal-panel" hidden>
+            <div class="goal-panel-head">
+                <div class="goal-panel-title"><strong>Goal</strong><span id="goalStatus">Active</span></div>
+                <button id="goalPanelClose" class="ghost goal-panel-close" type="button" aria-label="Close goal panel" title="Close goal panel">X</button>
+            </div>
+            <textarea id="goalObjective" rows="2" placeholder="Define the outcome for this session"></textarea>
+            <textarea id="goalProgress" rows="2" placeholder="Progress summary"></textarea>
+            <div class="goal-options">
+                <label><input id="goalTesting" type="checkbox"> Test</label>
+                <label><input id="goalVerification" type="checkbox"> Verify</label>
+                <small>Off by default for faster prototyping.</small>
+            </div>
+            <div class="goal-actions"><button id="goalSave" type="button">Save goal</button><button id="goalComplete" type="button">Complete</button><button id="goalBlocked" type="button">Blocked</button></div>
+            <div id="goalStageSummary" class="goal-stage-summary"></div>
+        </section>
         <span id="mobileComposerControlsAnchor" hidden></span>
         <div id="composerAttachStack" class="composer-attach-stack" aria-label="Attachment controls">
             <label id="imageAttach" class="attach" title="Load images">
@@ -14702,7 +14727,7 @@ body.shared-view .comments-panel-toggle {
         <div id="composerModelControls" class="composer-model-controls" aria-label="Model controls">
             <label class="composer-model-field">
                 <span class="sr-only">Model</span>
-                <select id="modelSelect" aria-label="Model"><option value="$CHAT_MODEL">$CHAT_MODEL</option></select>
+                <select id="modelSelect" aria-label="Model"><option value="auto">Auto · Instant Router</option><option value="$CHAT_MODEL">$CHAT_MODEL</option></select>
                 <span id="modelCapabilityIcons" class="model-capability-icons" aria-live="polite"></span>
                 <span class="param-hint" role="tooltip"><strong>Model</strong><span>Choose an LM Studio model or an LlmRuntime text, image, video, or audio model. Vision-capable models unlock image attachments, while tool-capable models can be used from Agent mode when the matching permissions are enabled.</span></span>
             </label>
@@ -14730,6 +14755,13 @@ body.shared-view .comments-panel-toggle {
                 <label class="param-field">Temp <input id="temperatureInput" type="number" min="0" max="2" step="0.05" value="0.7"><span class="param-hint" role="tooltip"><strong>Temperature</strong><span>Controls randomness. Lower values like 0.1 make answers steadier and more repeatable. Higher values make the model more exploratory, creative, and occasionally less predictable.</span></span></label>
                 <label class="param-field">Top P <input id="topPInput" type="number" min="0" max="1" step="0.05" value="1"><span class="param-hint" role="tooltip"><strong>Top P</strong><span>Limits token choices to the smallest probability pool whose combined weight reaches this value. Keep it near 1 for natural breadth; lower it to make responses more conservative without changing temperature as much.</span></span></label>
                 <label class="param-field">Max <input id="maxTokensInput" type="number" min="1" step="1" placeholder="auto"><span class="param-hint" role="tooltip"><strong>Max Tokens</strong><span>Caps how much text the model may generate in one response. Leave it on auto to let LM Studio choose. Set a number when you need short replies or want to prevent very long generations.</span></span></label>
+                <label class="param-field routing-reasoning-field">Reasoning
+                    <input id="reasoningLevelInput" type="range" min="0" max="4" step="1" value="4" list="reasoningLevelTicks" aria-label="Global reasoning level">
+                    <output id="reasoningLevelOutput">Auto</output>
+                    <datalist id="reasoningLevelTicks"><option value="0" label="Minimal"></option><option value="1" label="Low"></option><option value="2" label="Medium"></option><option value="3" label="High"></option><option value="4" label="Auto"></option></datalist>
+                    <span class="param-hint" role="tooltip"><strong>Reasoning</strong><span>Auto adapts to each prompt. Minimal through High favor progressively stronger local models when Model is Auto. A manually selected model stays fixed.</span></span>
+                </label>
+                <label class="retry-toggle" title="When enabled, this session follows the global reasoning slider."><input id="sessionReasoningInherit" type="checkbox" checked>Session inherits</label>
             </div>
         </div>
         <button id="send" type="submit">Send</button>
@@ -14790,6 +14822,17 @@ body.shared-view .comments-panel-toggle {
             </div>
         </div>
         <div id="memoryList" class="memory-list"></div>
+    </section>
+</div>
+<div id="dreamBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="dreamTitle">
+    <section class="memory-panel">
+        <div class="memory-head"><div class="memory-title"><strong id="dreamTitle">Dreaming</strong><span id="dreamStatus">Loading resource state</span></div><button id="dreamClose" class="ghost" type="button">Close</button></div>
+        <div class="memory-compose">
+            <label class="permission-row"><input id="dreamEnabled" type="checkbox">Enable resource-aware dreaming</label>
+            <div class="memory-actions"><select id="dreamPreset"><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option><option value="custom">Custom</option></select><button id="dreamSave" class="ghost" type="button">Save</button><button id="dreamNow" class="ghost" type="button">Dream Now</button><button id="dreamStop" class="ghost" type="button">Stop</button></div>
+            <div class="param-grid"><label>Start CPU %<input id="dreamStartCpu" type="number" min="1" max="99"></label><label>Pause CPU %<input id="dreamPauseCpu" type="number" min="2" max="100"></label><label>Start RAM %<input id="dreamStartRam" type="number" min="1" max="99"></label><label>Pause RAM %<input id="dreamPauseRam" type="number" min="2" max="100"></label><label>Start GPU %<input id="dreamStartGpu" type="number" min="1" max="99"></label><label>Pause GPU %<input id="dreamPauseGpu" type="number" min="2" max="100"></label><label>Start VRAM %<input id="dreamStartVram" type="number" min="1" max="99"></label><label>Pause VRAM %<input id="dreamPauseVram" type="number" min="2" max="100"></label><label>Start disk %<input id="dreamStartDisk" type="number" min="1" max="99"></label><label>Pause disk %<input id="dreamPauseDisk" type="number" min="2" max="100"></label></div>
+        </div>
+        <div id="dreamJournal" class="memory-list"><div class="memory-empty">No dreams recorded yet.</div></div>
     </section>
 </div>
 <div id="tokenRateRequestBackdrop" class="token-rate-backdrop" role="dialog" aria-modal="true" aria-labelledby="tokenRateRequestTitle">
@@ -14869,6 +14912,7 @@ body.shared-view .comments-panel-toggle {
             <label class="permission-row admin-sql-permission-row"><input id="adminPermSqlAdmin" type="checkbox">SQL Admin</label>
             <label class="permission-row"><input id="adminPermTerminalCommands" type="checkbox">Terminal Commands</label>
             <label class="permission-row"><input id="adminPermTerminalForeverApproved" type="checkbox">Terminal Forever Approved</label>
+            <label class="permission-row"><input id="adminPermPcAccess" type="checkbox">PC Access</label>
         </div>
         <div class="confirm-actions">
             <button id="adminPermissionsCancel" class="ghost" type="button">Cancel</button>
@@ -14934,6 +14978,14 @@ const loginError = document.getElementById('loginError');
 const loginSubtitle = document.getElementById('loginSubtitle');
 const form = document.getElementById('composer');
 const prompt = document.getElementById('prompt');
+const goalPanel = document.getElementById('goalPanel');
+const goalPanelClose = document.getElementById('goalPanelClose');
+const goalObjective = document.getElementById('goalObjective');
+const goalProgress = document.getElementById('goalProgress');
+const goalTesting = document.getElementById('goalTesting');
+const goalVerification = document.getElementById('goalVerification');
+const goalStatus = document.getElementById('goalStatus');
+const goalStageSummary = document.getElementById('goalStageSummary');
 const promptIntellisense = document.getElementById('promptIntellisense');
 const premiumTokenHint = document.getElementById('premiumTokenHint');
 const premiumTokenText = document.getElementById('premiumTokenText');
@@ -15086,6 +15138,9 @@ const toolAvailability = document.getElementById('toolAvailability');
 const generationSettingsWrap = document.getElementById('generationSettings');
 const generationSettingsToggle = document.getElementById('generationSettingsToggle');
 const generationSettingsPanel = document.getElementById('generationSettingsPanel');
+const reasoningLevelInput = document.getElementById('reasoningLevelInput');
+const reasoningLevelOutput = document.getElementById('reasoningLevelOutput');
+const sessionReasoningInherit = document.getElementById('sessionReasoningInherit');
 const mobileComposerControlsAnchor = document.getElementById('mobileComposerControlsAnchor');
 const mobileComposerMoreControls = document.getElementById('mobileComposerMoreControls');
 const composerAttachStack = document.getElementById('composerAttachStack');
@@ -15276,6 +15331,7 @@ const permFtpServer = document.getElementById('permFtpServer');
 const permSqlAdmin = document.getElementById('permSqlAdmin');
 const permTerminalCommands = document.getElementById('permTerminalCommands');
 const permTerminalForeverApproved = document.getElementById('permTerminalForeverApproved');
+const permPcAccess = document.getElementById('permPcAccess');
 const permissionNote = document.getElementById('permissionNote');
 const permissionGlobalTarget = document.getElementById('permissionGlobalTarget');
 const permissionUserSearch = document.getElementById('permissionUserSearch');
@@ -15325,6 +15381,7 @@ const adminPermSqlAdmin = document.getElementById('adminPermSqlAdmin');
 const adminSqlPermissionRow = document.querySelector('.admin-sql-permission-row');
 const adminPermTerminalCommands = document.getElementById('adminPermTerminalCommands');
 const adminPermTerminalForeverApproved = document.getElementById('adminPermTerminalForeverApproved');
+const adminPermPcAccess = document.getElementById('adminPermPcAccess');
 const remoteAdminBackdrop = document.getElementById('remoteAdminBackdrop');
 const remoteAdminStatus = document.getElementById('remoteAdminStatus');
 const remoteAdminMeta = document.getElementById('remoteAdminMeta');
@@ -15691,6 +15748,9 @@ const baseChatMode = {
     label: 'Chat',
     title: 'Use Chat mode for direct conversation without forcing a service.'
 };
+let interactionMode = 'chat';
+let activeGoal = {};
+let activePlan = {};
 function chatModeButtonLabel(serviceId) {
     if (serviceId === 'agent') return 'Agent mode';
     if (serviceId === browserSkillServiceId) return 'Browser skill mode';
@@ -15784,6 +15844,28 @@ function renderChatModeStrip() {
     const current = selectedService();
     const strip = chatModeStrip;
     strip.textContent = '';
+    const planButton = document.createElement('button');
+    planButton.type = 'button';
+    planButton.className = 'chat-mode-button chat-mode-primary-button';
+    planButton.textContent = 'P';
+    planButton.title = 'Plan mode: inspect and clarify before implementation.';
+    planButton.setAttribute('aria-pressed', interactionMode === 'plan' ? 'true' : 'false');
+    planButton.addEventListener('click', () => setInteractionMode(interactionMode === 'plan' ? 'chat' : 'plan'));
+    strip.appendChild(planButton);
+    const goalButton = document.createElement('button');
+    goalButton.id = 'goalPanelToggle';
+    goalButton.type = 'button';
+    goalButton.className = 'chat-mode-button goal-mode-button';
+    goalButton.textContent = 'GOAL';
+    goalButton.title = goalPanel && !goalPanel.hidden ? 'Close goal panel.' : 'Open goal panel.';
+    goalButton.setAttribute('aria-controls', 'goalPanel');
+    goalButton.setAttribute('aria-expanded', goalPanel && !goalPanel.hidden ? 'true' : 'false');
+    goalButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setGoalPanelOpen(!goalPanel || goalPanel.hidden);
+    });
+    strip.appendChild(goalButton);
     const appendModeButton = (spec, className) => {
         const button = document.createElement('button');
         button.type = 'button';
@@ -15838,6 +15920,14 @@ function renderChatModeStrip() {
 
     syncMediaModeIndexForService(current);
     positionChatModeDock();
+}
+
+function setInteractionMode(mode) {
+    interactionMode = mode === 'plan' ? 'plan' : (selectedService() || 'chat');
+    document.body.classList.toggle('plan-mode', interactionMode === 'plan');
+    if (prompt) prompt.placeholder = interactionMode === 'plan' ? 'Describe what you want planned. JackLLM will inspect and ask clarifying questions before implementation.' : 'Message JackLLM';
+    renderChatModeStrip();
+    scheduleDraftSessionSave();
 }
 function showChatModeDock() {
     if (!chatModeDock) return;
@@ -22067,6 +22157,7 @@ function saveSettings() {
         temperature: temperatureInput ? temperatureInput.value : '',
         top_p: topPInput ? topPInput.value : '',
         max_tokens: maxTokensInput ? maxTokensInput.value : '',
+        reasoning_level: reasoningLevelName(),
         retry_until_success: retryUntilSuccessEnabled(),
         tts_enabled: !!(ttsEnabled && ttsEnabled.checked),
         filesystem_context_explicit: !!filesystemContextExplicitlyConfigured,
@@ -22087,6 +22178,8 @@ function applySavedSettings() {
     if (saved.temperature !== undefined && temperatureInput) temperatureInput.value = saved.temperature;
     if (saved.top_p !== undefined && topPInput) topPInput.value = saved.top_p;
     if (saved.max_tokens !== undefined && maxTokensInput) maxTokensInput.value = saved.max_tokens;
+    if (saved.reasoning_level !== undefined && reasoningLevelInput) reasoningLevelInput.value = String(Math.max(0, ['minimal','low','medium','high','auto'].indexOf(String(saved.reasoning_level).toLowerCase())));
+    updateReasoningLevelUi();
     if (retryPrompt) retryPrompt.checked = saved.retry_until_success === undefined ? true : !!saved.retry_until_success;
     if (ttsEnabled && saved.tts_enabled !== undefined) ttsEnabled.checked = !!saved.tts_enabled;
     applySavedFilesystemContext(saved);
@@ -22096,6 +22189,8 @@ function generationSettings(browserSkillContext, modelOverride, mediaSource) {
     const requestedModel = modelOverride || modelForSelectedService();
     const normalizedModel = isDefaultModelPlaceholder(requestedModel) ? (firstAvailableModel(true) || requestedModel) : requestedModel;
     const settings = { model: normalizedModel };
+    settings.reasoningLevel = effectiveReasoningLevel();
+    settings.sessionReasoningLevel = sessionReasoningInherit && sessionReasoningInherit.checked ? 'inherit' : effectiveReasoningLevel();
     const service = selectedService();
     const temperature = parseFloat(temperatureInput && temperatureInput.value);
     const topP = parseFloat(topPInput && topPInput.value);
@@ -22134,6 +22229,14 @@ function markLmStudioIdle(detail) {
     if (activeAbortController || isProcessingQueue) return;
     setLmStudioStatus('idle', detail || 'Model runtime is reachable and idle.');
 }
+
+const reasoningLevelNames = ['minimal', 'low', 'medium', 'high', 'auto'];
+function reasoningLevelName() { return reasoningLevelNames[Math.max(0, Math.min(4, Number(reasoningLevelInput && reasoningLevelInput.value || 4)))] || 'auto'; }
+function sessionReasoningStorageKey() { return settingsKey + '.reasoning.' + (currentSessionId || 'new'); }
+function effectiveReasoningLevel() { return sessionReasoningInherit && sessionReasoningInherit.checked ? reasoningLevelName() : (localStorage.getItem(sessionReasoningStorageKey()) || reasoningLevelName()); }
+function updateReasoningLevelUi() { if (reasoningLevelOutput) reasoningLevelOutput.value = reasoningLevelName().replace(/^./, c => c.toUpperCase()); }
+function saveSessionReasoningPreference() { if (!sessionReasoningInherit || sessionReasoningInherit.checked) localStorage.removeItem(sessionReasoningStorageKey()); else localStorage.setItem(sessionReasoningStorageKey(), reasoningLevelName()); saveSettings(); updateReasoningLevelUi(); }
+function loadSessionReasoningPreference() { const value = localStorage.getItem(sessionReasoningStorageKey()); if (sessionReasoningInherit) sessionReasoningInherit.checked = !value; if (value && reasoningLevelInput) reasoningLevelInput.value = String(Math.max(0, reasoningLevelNames.indexOf(value))); updateReasoningLevelUi(); }
 
 function pulseHeartbeat() {
     if (!heartbeatStatus) return;
@@ -22656,7 +22759,9 @@ function applyPermissionUi() {
     if (permSqlAdmin) permSqlAdmin.checked = !!permissionState.sqlAdmin;
     if (permTerminalCommands) permTerminalCommands.checked = permissionState.terminalCommands !== false;
     if (permTerminalForeverApproved) permTerminalForeverApproved.checked = !!permissionState.terminalForeverApproved;
-    [permInternetSearch, permVsCopilotTools, permAgentAccess, permFileUploads, permImageUploads, permFileDownloads, permFtpServer, permSqlAdmin, permTerminalCommands, permTerminalForeverApproved].forEach(input => {
+    if (permPcAccess) permPcAccess.checked = !!permissionState.pcAccess;
+    [['dreamPermInternetSearch','internetSearch'],['dreamPermVsCopilotTools','vsCopilotTools'],['dreamPermAgentAccess','agentAccess'],['dreamPermTerminalCommands','terminalCommands'],['dreamPermFileUploads','fileUploads'],['dreamPermImageUploads','imageUploads'],['dreamPermFileDownloads','fileDownloads'],['dreamPermFtpServer','ftpServer'],['dreamPermPcAccess','pcAccess']].forEach(([id,key]) => { const dream=document.getElementById(id); if(dream){ dream.checked=!!permissionState['dream'+key.charAt(0).toUpperCase()+key.slice(1)] && !!permissionState[key]; dream.disabled=!adminEditable || !permissionState[key] || (key==='terminalCommands'&&!permissionState.terminalForeverApproved); } });
+    [permInternetSearch, permVsCopilotTools, permAgentAccess, permFileUploads, permImageUploads, permFileDownloads, permFtpServer, permSqlAdmin, permTerminalCommands, permTerminalForeverApproved, permPcAccess].forEach(input => {
         if (input) input.disabled = !adminEditable;
     });
     if (permissionGlobalTarget) permissionGlobalTarget.disabled = !adminEditable;
@@ -22999,6 +23104,7 @@ async function loadPermissions(timeoutMs, ownerKey) {
         sqlAdmin: !!(data.permissions && data.permissions.sqlAdmin),
         terminalCommands: data.permissions ? data.permissions.terminalCommands !== false : true,
         terminalForeverApproved: !!(data.permissions && data.permissions.terminalForeverApproved),
+        pcAccess: !!(data.permissions && data.permissions.pcAccess),
         mutedUntilUtc: data.permissions && data.permissions.mutedUntilUtc ? data.permissions.mutedUntilUtc : '',
         bannedUntilUtc: data.permissions && data.permissions.bannedUntilUtc ? data.permissions.bannedUntilUtc : '',
         muteUntilEnabled: !!(data.permissions && data.permissions.muteUntilEnabled),
@@ -24535,6 +24641,16 @@ async function savePermissions() {
         sqlAdmin: !!(permSqlAdmin && permSqlAdmin.checked),
         terminalCommands: !!(permTerminalCommands && permTerminalCommands.checked),
         terminalForeverApproved: !!(permTerminalForeverApproved && permTerminalForeverApproved.checked),
+        pcAccess: !!(permPcAccess && permPcAccess.checked),
+        dreamInternetSearch: !!document.getElementById('dreamPermInternetSearch')?.checked,
+        dreamVsCopilotTools: !!document.getElementById('dreamPermVsCopilotTools')?.checked,
+        dreamAgentAccess: !!document.getElementById('dreamPermAgentAccess')?.checked,
+        dreamTerminalCommands: !!document.getElementById('dreamPermTerminalCommands')?.checked,
+        dreamFileUploads: !!document.getElementById('dreamPermFileUploads')?.checked,
+        dreamImageUploads: !!document.getElementById('dreamPermImageUploads')?.checked,
+        dreamFileDownloads: !!document.getElementById('dreamPermFileDownloads')?.checked,
+        dreamFtpServer: !!document.getElementById('dreamPermFtpServer')?.checked,
+        dreamPcAccess: !!document.getElementById('dreamPermPcAccess')?.checked,
         mutedUntilUtc: permissionState.mutedUntilUtc || '',
         bannedUntilUtc: permissionState.bannedUntilUtc || '',
         muteUntilEnabled: !!permissionState.muteUntilEnabled,
@@ -24569,6 +24685,7 @@ async function savePermissions() {
             sqlAdmin: !!data.permissions.sqlAdmin,
             terminalCommands: data.permissions.terminalCommands !== false,
             terminalForeverApproved: !!data.permissions.terminalForeverApproved,
+            pcAccess: !!data.permissions.pcAccess,
             mutedUntilUtc: data.permissions.mutedUntilUtc || '',
             bannedUntilUtc: data.permissions.bannedUntilUtc || '',
             muteUntilEnabled: !!data.permissions.muteUntilEnabled,
@@ -27279,10 +27396,19 @@ function stripDanglingReasoningTagFragmentsForDisplay(text) {
         .replace(/\n{3,}/g, '\n\n');
 }
 
+function stripTrailingIncompleteMarkupTagForDisplay(text) {
+    return normalizeDisplayText(text || '')
+        // A stream can stop between the opening angle bracket, slash, tag name,
+        // or attributes. Keep that incomplete protocol fragment out of the UI;
+        // the next render will restore any legitimate text once `>` arrives.
+        .replace(/<\/?[A-Za-z_][A-Za-z0-9_.:-]*(?:\s[^<>]*)?$|<\/?\s*$/i, '')
+        .replace(/[ \t]+$/g, '');
+}
+
 function sanitizeToolTranscriptForDisplay(text) {
     let value = stripInternalModelMetadataForDisplay(stripLooseToolJsonForDisplay(removeSerializedChatStreamControlEvents(text || '')));
     if (!hasToolTranscriptMarkup(value))
-        return trimRunawayUnpunctuatedTail(stripDanglingReasoningTagFragmentsForDisplay(repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(value)))));
+        return stripTrailingIncompleteMarkupTagForDisplay(trimRunawayUnpunctuatedTail(stripDanglingReasoningTagFragmentsForDisplay(repairRuntimeSpacingArtifacts(sanitizeFinalAnswerMarkupForDisplay(stripReasoningMarkupForDisplay(value))))));
 
     const resultClose = value.toLowerCase().lastIndexOf('</tool_result>');
     if (resultClose >= 0) {
@@ -27309,7 +27435,7 @@ function sanitizeToolTranscriptForDisplay(text) {
     value = sanitizeFinalAnswerMarkupForDisplay(value);
     value = repairRuntimeSpacingArtifacts(value);
     value = stripDanglingReasoningTagFragmentsForDisplay(value);
-    return trimRunawayUnpunctuatedTail(value);
+    return stripTrailingIncompleteMarkupTagForDisplay(trimRunawayUnpunctuatedTail(value));
 }
 
 function hasToolTranscriptMarkup(text) {
@@ -27562,6 +27688,13 @@ function createMarkdownTextNodes(text) {
             continue;
         }
 
+        const looseTable = parseLooseMarkdownTable(lines, index);
+        if (looseTable) {
+            nodes.push(createMarkdownTable(looseTable.headers, looseTable.rows));
+            index = looseTable.nextIndex;
+            continue;
+        }
+
         const unordered = /^\s{0,3}[-*+]\s+(.+)$/.exec(line);
         const ordered = /^\s{0,3}\d+[.)]\s+(.+)$/.exec(line);
         if (unordered || ordered) {
@@ -27604,7 +27737,8 @@ function isMarkdownBlockStart(lines, index) {
         /^\s{0,3}>\s?/.test(line) ||
         /^\s{0,3}[-*+]\s+/.test(line) ||
         /^\s{0,3}\d+[.)]\s+/.test(line) ||
-        isMarkdownTableStart(lines, index);
+        isMarkdownTableStart(lines, index) ||
+        !!parseLooseMarkdownTable(lines, index);
 }
 
 function isMarkdownTableStart(lines, index) {
@@ -27623,6 +27757,10 @@ function parseMarkdownTable(lines, index) {
         index++;
     }
 
+    return { table: createMarkdownTable(headers, bodyRows), nextIndex: index };
+}
+
+function createMarkdownTable(headers, bodyRows) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headRow = document.createElement('tr');
@@ -27649,7 +27787,41 @@ function parseMarkdownTable(lines, index) {
         table.appendChild(tbody);
     }
 
-    return { table, nextIndex: index };
+    return table;
+}
+
+// Smaller local models occasionally collapse a two-column Markdown table into
+// one pipe-delimited line and omit the divider. Recover the unambiguous form:
+// the first half is short header labels and the second half is the data row.
+function parseLooseMarkdownTable(lines, index) {
+    const value = String(lines[index] || '').trim();
+    if (!value.startsWith('|') || !value.endsWith('|')) return null;
+    const headerCells = splitMarkdownTableRow(value);
+    if (headerCells.length < 2 || headerCells.some(cell => !cell || cell.length > 40)) return null;
+
+    const rows = [];
+    let nextIndex = index + 1;
+    while (nextIndex < lines.length) {
+        const candidate = String(lines[nextIndex] || '').trim();
+        if (!candidate.includes('|')) break;
+        const cells = splitMarkdownTableRow(candidate);
+        if (cells.length !== headerCells.length) break;
+        rows.push(cells);
+        nextIndex++;
+    }
+    if (rows.length && rows.some(row => row.some((cell, cellIndex) => cell.length > headerCells[cellIndex].length || /<br\s*\/?>/i.test(cell))))
+        return { headers: headerCells, rows, nextIndex };
+
+    // Also recover the rarer fully collapsed form where headers and one row
+    // were emitted on the same physical line.
+    if (headerCells.length >= 4 && headerCells.length % 2 === 0) {
+        const half = headerCells.length / 2;
+        const headers = headerCells.slice(0, half);
+        const row = headerCells.slice(half);
+        if (headers.every(cell => cell && cell.length <= 40) && row.some((cell, cellIndex) => cell.length > headers[cellIndex].length || /<br\s*\/?>/i.test(cell)))
+            return { headers, rows: [row], nextIndex: index + 1 };
+    }
+    return null;
 }
 
 function splitMarkdownTableRow(row) {
@@ -27660,13 +27832,15 @@ function splitMarkdownTableRow(row) {
 }
 
 function renderInlineMarkdown(target, text) {
-    const tokenRegex = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)|\[\d+(?:\s*,\s*\d+)*\](?!\()|\b(?:https?:\/\/|www\.)[^\s<>"']+)/gi;
+    const tokenRegex = /(<br\s*\/?>|`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\)|\[\d+(?:\s*,\s*\d+)*\](?!\()|\b(?:https?:\/\/|www\.)[^\s<>"']+)/gi;
     let cursor = 0;
     let match;
     while ((match = tokenRegex.exec(text || '')) !== null) {
         if (match.index > cursor) appendLinkedPlainText(target, text.slice(cursor, match.index));
         const token = match[0];
-        if (token.startsWith('`')) {
+        if (/^<br\s*\/?>$/i.test(token)) {
+            target.appendChild(document.createElement('br'));
+        } else if (token.startsWith('`')) {
             const code = document.createElement('code');
             code.textContent = token.slice(1, -1);
             target.appendChild(code);
@@ -29765,6 +29939,10 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             event = unwrapChatStreamControlEvent(event);
             if (event.type === 'ignored-control-event') return false;
             if (event.type === 'error') throw new Error(event.content || event.body || 'Model runtime streaming request failed.');
+            if (event.type === 'route' || event.routing) {
+                renderAutoRouteBadge(streamState, event.routing || event);
+                return false;
+            }
             applyUsageEvent(event, ensureActiveStreamPartsVisible(streamState) || parts);
             if (event.type === 'progress') {
                 const tokenProgress = promptTokenProgressFromEvent(event);
@@ -29892,6 +30070,31 @@ function conversationContextMessagesFrom(sourceMessages) {
                 ? sanitizeToolTranscriptForDisplay(message.content || '')
                 : message.content
         }));
+}
+
+function renderAutoRouteBadge(streamState, routing) {
+    const item = streamState && streamState.item;
+    if (!item || !routing) return;
+    const model = routing.selectedModel || routing.selected_model || routing.model || '';
+    const reasoning = routing.effectiveReasoning || routing.effective_reasoning || routing.reasoningLevel || 'auto';
+    let details = item.querySelector('.auto-route-decision');
+    if (!details) {
+        details = document.createElement('details');
+        details.className = 'auto-route-decision';
+        item.prepend(details);
+    }
+    const fingerprint = routing.promptFingerprint || routing.prompt_fingerprint || '';
+    const factors = Array.isArray(routing.candidates) && routing.candidates.length ? (routing.candidates[0].factors || []).join(' · ') : '';
+    details.innerHTML = '<summary>Auto · ' + escapeHtml(model) + ' · ' + escapeHtml(String(reasoning)) + '</summary>' +
+        '<div>' + escapeHtml(routing.reasonCode || routing.reason_code || 'best match') + (factors ? ' · ' + escapeHtml(factors) : '') + '</div>' +
+        '<div class="auto-route-feedback"><button type="button" data-route-feedback="good">Good choice</button><button type="button" data-route-feedback="wrong">Wrong model</button></div>';
+    details.querySelectorAll('[data-route-feedback]').forEach(button => button.addEventListener('click', async () => {
+        const accepted = button.dataset.routeFeedback === 'good';
+        let correctedModel = '';
+        if (!accepted) correctedModel = window.prompt('Which enabled model should have been used?', '') || '';
+        const response = await fetch('/api/model-routing/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ promptFingerprint: fingerprint, selectedModel: model, correctedModel, accepted, classification: routing.classification || '', reasoningLevel: reasoning }) });
+        button.parentElement.textContent = response.ok ? 'Feedback saved locally.' : 'Could not save feedback.';
+    }));
 }
 
 function conversationContextMessages() {
@@ -32299,7 +32502,11 @@ async function saveSessionSnapshot(sessionId, title, model, sessionMessages, fil
         draftPrompt: draftText,
         promptTokenCount: estimateLocalPromptTokens(normalizedMessages, draftText),
         promptTokenBudget: 8192,
-        runtime: selectedService() || 'LM Studio'
+        runtime: selectedService() || 'LM Studio',
+        reasoningLevel: sessionReasoningInherit && sessionReasoningInherit.checked ? 'inherit' : effectiveReasoningLevel()
+        ,interactionMode: interactionMode
+        ,goal: activeGoal
+        ,plan: activePlan
     };
     if (isSessionTitleLocked(sessionId))
         payload.titleLocked = true;
@@ -32335,6 +32542,56 @@ async function saveSessionSnapshot(sessionId, title, model, sessionMessages, fil
     }
     return false;
 }
+
+function renderGoalPanel() {
+    if (!goalPanel) return;
+    goalObjective.value = activeGoal.objective || '';
+    goalProgress.value = activeGoal.progressSummary || '';
+    goalTesting.checked = !!activeGoal.testingEnabled;
+    goalVerification.checked = !!activeGoal.verificationEnabled;
+    goalStatus.textContent = activeGoal.status || 'active';
+    const stages = [];
+    if (activeGoal.testingEnabled) stages.push('Testing: ' + (activeGoal.testingStatus || 'pending'));
+    if (activeGoal.verificationEnabled) stages.push('Verification: ' + (activeGoal.verificationStatus || 'pending'));
+    goalStageSummary.textContent = stages.join(' · ') || 'Testing and verification are off for faster prototyping.';
+}
+
+function setGoalPanelOpen(open) {
+    if (!goalPanel) return;
+    goalPanel.hidden = !open;
+    const toggle = document.getElementById('goalPanelToggle');
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.title = open ? 'Close goal panel.' : 'Open goal panel.';
+    }
+    if (open) window.setTimeout(() => goalObjective && goalObjective.focus(), 0);
+}
+
+function updateGoal(status) {
+    const nextStatus = status || activeGoal.status || 'active';
+    if (nextStatus === 'complete' && ((goalTesting.checked && activeGoal.testingStatus !== 'passed') || (goalVerification.checked && activeGoal.verificationStatus !== 'passed'))) {
+        addMessage('error', 'Complete the enabled testing and verification stages before completing this goal.');
+        return;
+    }
+    activeGoal = Object.assign({}, activeGoal, { objective: goalObjective.value.trim(), progressSummary: goalProgress.value.trim(), testingEnabled: goalTesting.checked, verificationEnabled: goalVerification.checked, status: nextStatus, revision: Number(activeGoal.revision || 0) + 1, updatedUtc: new Date().toISOString() });
+    renderGoalPanel();
+    saveCurrentSession(true).catch(error => addMessage('error', error.message || String(error)));
+}
+
+document.getElementById('goalSave')?.addEventListener('click', () => updateGoal('active'));
+document.getElementById('goalComplete')?.addEventListener('click', () => updateGoal('complete'));
+document.getElementById('goalBlocked')?.addEventListener('click', () => updateGoal('blocked'));
+goalPanelClose?.addEventListener('click', () => setGoalPanelOpen(false));
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && goalPanel && !goalPanel.hidden)
+        setGoalPanelOpen(false);
+});
+document.addEventListener('pointerdown', event => {
+    if (!goalPanel || goalPanel.hidden || goalPanel.contains(event.target)) return;
+    const toggle = document.getElementById('goalPanelToggle');
+    if (toggle && toggle.contains(event.target)) return;
+    setGoalPanelOpen(false);
+});
 
 function setSessionListRefreshStatus(message, isError) {
     sessionListStatusMessage = message || '';
@@ -33802,6 +34059,7 @@ function setAdminPermissionInputs(permissions) {
     if (adminPermSqlAdmin) adminPermSqlAdmin.checked = !!state.sqlAdmin;
     if (adminPermTerminalCommands) adminPermTerminalCommands.checked = state.terminalCommands !== false;
     if (adminPermTerminalForeverApproved) adminPermTerminalForeverApproved.checked = !!state.terminalForeverApproved;
+    if (adminPermPcAccess) adminPermPcAccess.checked = !!state.pcAccess;
 }
 
 function readAdminPermissionInputs() {
@@ -33816,6 +34074,7 @@ function readAdminPermissionInputs() {
         sqlAdmin: !!(adminPermSqlAdmin && adminPermSqlAdmin.checked),
         terminalCommands: !!(adminPermTerminalCommands && adminPermTerminalCommands.checked),
         terminalForeverApproved: !!(adminPermTerminalForeverApproved && adminPermTerminalForeverApproved.checked)
+        ,pcAccess: !!(adminPermPcAccess && adminPermPcAccess.checked)
     };
 }
 
@@ -33881,6 +34140,11 @@ async function loadSession(id) {
         return;
     }
     currentSessionId = data.session.id;
+    activeGoal = data.session.goal && typeof data.session.goal === 'object' ? data.session.goal : {};
+    activePlan = data.session.plan && typeof data.session.plan === 'object' ? data.session.plan : {};
+    interactionMode = data.session.interactionMode || 'chat';
+    setInteractionMode(interactionMode);
+    renderGoalPanel();
     forgetSessionOwnershipSaveConflict(currentSessionId);
     applySessionActionResult(data.session);
     messages.length = 0;
@@ -33905,6 +34169,10 @@ async function loadSession(id) {
             updateImageAttachVisibility();
         }
     }
+    const savedReasoningLevel = String(data.session.reasoningLevel || data.session.reasoning_level || 'inherit').toLowerCase();
+    if (sessionReasoningInherit) sessionReasoningInherit.checked = savedReasoningLevel === 'inherit';
+    if (savedReasoningLevel !== 'inherit' && reasoningLevelInput) reasoningLevelInput.value = String(Math.max(0, reasoningLevelNames.indexOf(savedReasoningLevel)));
+    updateReasoningLevelUi();
     pendingImages = [];
     pendingFiles = [];
     renderPreviews();
@@ -34850,6 +35118,8 @@ function runtimeModelMeta(model) {
 
 function mergeRuntimeModelsIntoSelect(models) {
     if (!modelSelect || !Array.isArray(models)) return;
+    ensureModelOption('auto', 'auto', 'Instant local routing chooses the best enabled compatible model for each prompt.', 'Auto · Instant Router');
+    setModelOptionRuntimeLoadable('auto', false);
     let firstLoadedModel = '';
     models.forEach(model => {
         const id = runtimeModelId(model);
@@ -34994,7 +35264,7 @@ function updateLlmRuntimeReadyGlow() {
 
 async function ensureSelectedRuntimeModelLoadedForChat(streamState, modelId) {
     const id = modelId || selectedModel();
-    if (!id || isDefaultModelPlaceholder(id)) return;
+    if (!id || isDefaultModelPlaceholder(id) || id === 'auto' || id === 'model:auto') return;
     const sources = modelOptionSources[id] || [];
     if (!sources.includes('runtime')) return;
     if (isModelOptionLoaded(id, 'runtime')) {
@@ -35822,7 +36092,7 @@ document.addEventListener('scroll', () => {
     if (ftpConfigExpanded)
         updatePermissionsPanelOffset();
 }, true);
-[permInternetSearch, permVsCopilotTools, permAgentAccess, permFileUploads, permImageUploads, permFileDownloads, permFtpServer, permSqlAdmin, permTerminalCommands, permTerminalForeverApproved].forEach(input => {
+[permInternetSearch, permVsCopilotTools, permAgentAccess, permFileUploads, permImageUploads, permFileDownloads, permFtpServer, permSqlAdmin, permTerminalCommands, permTerminalForeverApproved, permPcAccess].forEach(input => {
     if (!input) return;
     input.addEventListener('change', () => {
         updateServiceLabels();
@@ -36157,6 +36427,11 @@ maxTokensInput.addEventListener('change', saveSettings);
 temperatureInput.addEventListener('input', saveSettings);
 topPInput.addEventListener('input', saveSettings);
 maxTokensInput.addEventListener('input', saveSettings);
+if (reasoningLevelInput) {
+    reasoningLevelInput.addEventListener('input', () => { updateReasoningLevelUi(); if (!sessionReasoningInherit || sessionReasoningInherit.checked) saveSettings(); else saveSessionReasoningPreference(); });
+    reasoningLevelInput.addEventListener('change', saveSessionReasoningPreference);
+}
+if (sessionReasoningInherit) sessionReasoningInherit.addEventListener('change', saveSessionReasoningPreference);
 if (voiceInput)
     voiceInput.addEventListener('click', startVoiceInput);
 if (personaPlexToggle)
@@ -36539,6 +36814,23 @@ if (sharedSessionKey) {
             if (loginError) loginError.textContent = error && error.message ? error.message : String(error);
         });
 }
+
+const dreamUi = {
+    backdrop: document.getElementById('dreamBackdrop'), status: document.getElementById('dreamStatus'), journal: document.getElementById('dreamJournal'),
+    enabled: document.getElementById('dreamEnabled'), preset: document.getElementById('dreamPreset'),
+    fields: { startCpuPercent:'dreamStartCpu', pauseCpuPercent:'dreamPauseCpu', startRamPercent:'dreamStartRam', pauseRamPercent:'dreamPauseRam', startGpuPercent:'dreamStartGpu', pauseGpuPercent:'dreamPauseGpu', startVramPercent:'dreamStartVram', pauseVramPercent:'dreamPauseVram', startDiskPercent:'dreamStartDisk', pauseDiskPercent:'dreamPauseDisk' }
+};
+let dreamSettings = null;
+async function dreamFetch(url, options) { const response = await fetch(url, options); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || 'Dream request failed.'); return data; }
+function renderDreamSettings(settings) { dreamSettings = settings; dreamUi.enabled.checked = !!settings.enabled; dreamUi.preset.value = settings.preset || 'custom'; Object.entries(dreamUi.fields).forEach(([key,id]) => { const field=document.getElementById(id); if(field) field.value=settings[key]; }); }
+function renderDreamJournal(entries) { dreamUi.journal.textContent=''; if(!entries.length){ dreamUi.journal.innerHTML='<div class="memory-empty">No dreams recorded yet.</div>'; return; } entries.forEach(entry => { const row=document.createElement('div'); row.className='memory-row'; const text=document.createElement('div'); text.className='memory-text'; text.textContent=(entry.summary||'Dream')+' ('+(entry.status||'unknown')+')'; row.appendChild(text); (entry.candidates||[]).filter(x=>x.disposition==='review').forEach(candidate => { if(candidate.candidateType==='memory-conflict'){ const detail=document.createElement('div'); detail.className='memory-meta'; detail.textContent='Stale: '+(candidate.staleMemoryText||'')+' | Proposed: '+(candidate.text||''); row.appendChild(detail); } const actions=document.createElement('div'); actions.className='memory-row-actions'; const choices=candidate.candidateType==='memory-conflict'?['approve','overwrite','delete-stale','reject']:['approve','reject']; choices.forEach(action => { const button=document.createElement('button'); button.className='ghost'; button.textContent=action==='delete-stale'?'Delete stale':action; button.onclick=async()=>{ await dreamFetch('/api/dream-candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:candidate.id,action})}); await loadDreamUi(); }; actions.appendChild(button); }); row.appendChild(actions); }); dreamUi.journal.appendChild(row); }); }
+async function loadDreamUi(){ try { const [settings,status,journal]=await Promise.all([dreamFetch('/api/dream-settings'),dreamFetch('/api/dream-status'),dreamFetch('/api/dream-journal')]); renderDreamSettings(settings.settings); dreamUi.status.textContent=(status.status||'unknown')+(status.limitingResource?' - '+status.limitingResource:''); renderDreamJournal(journal.journal||[]); } catch(error){ dreamUi.status.textContent=error.message; } }
+document.getElementById('dreamPanelToggle')?.addEventListener('click',()=>{ dreamUi.backdrop.classList.add('visible'); loadDreamUi(); });
+document.getElementById('dreamClose')?.addEventListener('click',()=>dreamUi.backdrop.classList.remove('visible'));
+document.getElementById('dreamNow')?.addEventListener('click',async()=>{ await dreamFetch('/api/dream-runs',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"action":"start"}'}); loadDreamUi(); });
+document.getElementById('dreamStop')?.addEventListener('click',async()=>{ await dreamFetch('/api/dream-runs',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"action":"stop"}'}); loadDreamUi(); });
+document.getElementById('dreamSave')?.addEventListener('click',async()=>{ const next=Object.assign({},dreamSettings||{}, {enabled:dreamUi.enabled.checked,preset:dreamUi.preset.value}); Object.entries(dreamUi.fields).forEach(([key,id])=>next[key]=Number(document.getElementById(id).value)); await dreamFetch('/api/dream-settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)}); loadDreamUi(); });
+[['permInternetSearch','dreamPermInternetSearch'],['permVsCopilotTools','dreamPermVsCopilotTools'],['permAgentAccess','dreamPermAgentAccess'],['permTerminalCommands','dreamPermTerminalCommands'],['permFileUploads','dreamPermFileUploads'],['permImageUploads','dreamPermImageUploads'],['permFileDownloads','dreamPermFileDownloads'],['permFtpServer','dreamPermFtpServer'],['permPcAccess','dreamPermPcAccess']].forEach(([allowId,dreamId])=>{ const allow=document.getElementById(allowId),dream=document.getElementById(dreamId); allow?.addEventListener('change',()=>{ const standingOk=allowId!=='permTerminalCommands'||!!document.getElementById('permTerminalForeverApproved')?.checked; dream.disabled=!allow.checked||!standingOk; if(dream.disabled) dream.checked=false; }); });
 </script>
 </body>
 </html>

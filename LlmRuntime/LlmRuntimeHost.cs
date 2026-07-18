@@ -33,6 +33,8 @@ public sealed class LlmRuntimeHost : IDisposable
     private readonly object _gpuProcessCpuSamplesLock = new();
     private readonly ConcurrentDictionary<string, OpenAiMediaJob> _openAiMediaJobs = new(StringComparer.OrdinalIgnoreCase);
     private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
+    private readonly InstantModelRouter _modelRouter = new();
+    private readonly ModelRoutingFeedbackStore _modelRoutingFeedback;
     private CancellationTokenSource? _startupModelLoadCancellation;
     private Task? _startupModelLoadTask;
     private bool _disposed;
@@ -40,6 +42,7 @@ public sealed class LlmRuntimeHost : IDisposable
     public LlmRuntimeHost(LlmRuntimeOptions options, LlmModelRegistry? registry = null, LlmToolRegistry? toolRegistry = null, ILlmToolInvoker? toolInvoker = null, LlmRuntimeCompatibilityService? compatibility = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _modelRoutingFeedback = new ModelRoutingFeedbackStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "LlmRuntime"));
         _options.RemoteVllmManager ??= _remoteVllm;
         _conversionService = new ModelConversionService(
             string.IsNullOrWhiteSpace(_options.CompleteModelRoot) ? _options.ModelRoot : _options.CompleteModelRoot,
@@ -227,6 +230,9 @@ public sealed class LlmRuntimeHost : IDisposable
             scheduler = "local-instance-pool",
             instances = Registry.GetSchedulerStatus().Select(ToSchedulerInstanceStatus).ToArray()
         }));
+        server.Map("POST", "/api/v1/model-routing/preview", (_, request, _) => HandleModelRoutingPreview(request));
+        server.Map("POST", "/api/v1/model-routing/feedback", (_, request, _) => HandleModelRoutingFeedback(request));
+        server.Map("GET", "/api/v1/model-routing/status", (_, _, _) => HandleModelRoutingStatus());
 
         server.Map("POST", "/api/v1/models/load", (_, request, cancellationToken) => HandleLoad(request, cancellationToken));
         server.Map("POST", "/api/v1/models/unload", (_, request, _) => HandleUnload(request));
@@ -2706,7 +2712,27 @@ public sealed class LlmRuntimeHost : IDisposable
             return;
         }
 
+        if (IsAutoModel(chatRequest.Model))
+        {
+            ModelRouteDecision decision = RouteChatRequest(chatRequest);
+            if (!decision.Success)
+            {
+                SetStatus(request, HttpStatusForError("no_compatible_model"));
+                stream.ContentType = "application/json";
+                stream.Write(Error("No enabled local model is compatible with this request and the current VRAM policy.", "unsupported_capability", "no_compatible_model"));
+                return;
+            }
+            chatRequest.Model = decision.SelectedModel;
+            chatRequest.RouteDecision = decision;
+            stream.SetHeader("X-SocketJack-Routed-Model", decision.SelectedModel);
+            stream.SetHeader("X-SocketJack-Reasoning-Level", decision.EffectiveReasoning.ToString().ToLowerInvariant());
+            stream.SetHeader("X-SocketJack-Route-Reason", decision.ReasonCode);
+        }
+
         if (RejectGenerationModelChatRequest(chatRequest, request, stream))
+            return;
+
+        if (RejectUnsupportedVisionChatRequest(chatRequest, request, stream))
             return;
 
         ApplyPromptContextBudget(chatRequest);
@@ -2718,6 +2744,94 @@ public sealed class LlmRuntimeHost : IDisposable
         }
 
         await CompleteChatCompletion(chatRequest, request, stream, cancellationToken).ConfigureAwait(false);
+    }
+
+    private string HandleModelRoutingPreview(HttpRequest request)
+    {
+        try
+        {
+            using JsonDocument document = ParseBody(request);
+            JsonElement root = document.RootElement;
+            string prompt = GetString(root, "prompt") ?? ReadLastUserPrompt(root);
+            var routeRequest = new ModelRouteRequest(
+                prompt,
+                GetString(root, "service") ?? "chat",
+                ParseReasoningLevel(GetString(root, "reasoningLevel") ?? GetString(root, "reasoning_level")),
+                GetBool(root, "requiresVision") ?? GetBool(root, "requires_vision") ?? BodyRequiresVision(root),
+                GetBool(root, "requiresTools") ?? GetBool(root, "requires_tools") ?? BodyRequiresTools(root),
+                GetInt32(root, "requiredContextTokens") ?? GetInt32(root, "required_context_tokens") ?? EstimatePromptTokensFromText(prompt),
+                GetInt64(root, "availableVramBytes") ?? QueryAvailableVramBytes());
+            return ToJson(new { ok = true, decision = _modelRouter.Route(Registry.ListModels(), routeRequest) });
+        }
+        catch (Exception ex) { SetStatus(request, (400, "Bad Request")); return Error(ex.Message, "invalid_request_error", "invalid_routing_request"); }
+    }
+
+    private string HandleModelRoutingFeedback(HttpRequest request)
+    {
+        try
+        {
+            using JsonDocument document = ParseBody(request);
+            JsonElement root = document.RootElement;
+            _modelRoutingFeedback.Append(new
+            {
+                timestampUtc = DateTimeOffset.UtcNow,
+                promptFingerprint = GetString(root, "promptFingerprint") ?? GetString(root, "prompt_fingerprint") ?? "",
+                selectedModel = GetString(root, "selectedModel") ?? GetString(root, "selected_model") ?? "",
+                correctedModel = GetString(root, "correctedModel") ?? GetString(root, "corrected_model") ?? "",
+                accepted = GetBool(root, "accepted") ?? false,
+                classification = GetString(root, "classification") ?? "",
+                reasoningLevel = GetString(root, "reasoningLevel") ?? GetString(root, "reasoning_level") ?? ""
+            });
+            return ToJson(new { ok = true });
+        }
+        catch (Exception ex) { SetStatus(request, (400, "Bad Request")); return Error(ex.Message, "invalid_request_error", "invalid_feedback"); }
+    }
+
+    private string HandleModelRoutingStatus()
+    {
+        int minimumExamples = int.TryParse(Environment.GetEnvironmentVariable("JACKLLM_ROUTER_MIN_TRAINING_EXAMPLES"), out int configured) ? Math.Clamp(configured, 100, 100000) : 500;
+        int examples = _modelRoutingFeedback.CountValidated();
+        string modelPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "LlmRuntime", "model-router.int8.onnx");
+        bool classifierPresent = File.Exists(modelPath);
+        return ToJson(new
+        {
+            mode = classifierPresent && examples >= minimumExamples ? "hybrid_classifier_available" : "deterministic_collecting_feedback",
+            deterministicFallback = true,
+            validatedExamples = examples,
+            minimumTrainingExamples = minimumExamples,
+            readyForTraining = examples >= minimumExamples,
+            classifier = new { format = "onnx-int8", present = classifierPresent, enabled = false, path = modelPath, activationRequiresBenchmark = true }
+        });
+    }
+
+    private ModelRouteDecision RouteChatRequest(LlmChatRequest request)
+    {
+        string prompt = request.Messages.LastOrDefault(message => message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Content ?? "";
+        int tokens = Math.Max(request.PromptTokenBudget ?? 0, EstimatePromptTokens(request.Messages));
+        return _modelRouter.Route(Registry.ListModels(), new ModelRouteRequest(prompt, "chat", ParseReasoningLevel(request.ReasoningLevel), RequiresVision(request), request.Tools.Count > 0, tokens, QueryAvailableVramBytes()));
+    }
+
+    private static bool IsAutoModel(string? model) => string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) || model.Equals("model:auto", StringComparison.OrdinalIgnoreCase);
+    private static RouterReasoningLevel ParseReasoningLevel(string? value) => Enum.TryParse(value, true, out RouterReasoningLevel level) ? level : RouterReasoningLevel.Auto;
+    private static bool RequiresVision(LlmChatRequest request) => request.Messages.Any(message => message.HasImageContent);
+    private static int EstimatePromptTokensFromText(string text) => Math.Max(1, (text?.Length ?? 0) / 4);
+    private static string ReadLastUserPrompt(JsonElement root)
+    {
+        if (!root.TryGetProperty("messages", out JsonElement messages) || messages.ValueKind != JsonValueKind.Array) return "";
+        return messages.EnumerateArray().Reverse().Select(item => GetString(item, "content") ?? "").FirstOrDefault(value => value.Length > 0) ?? "";
+    }
+    private static bool BodyRequiresVision(JsonElement root) => root.GetRawText().Contains("image_url", StringComparison.OrdinalIgnoreCase) || root.GetRawText().Contains("input_image", StringComparison.OrdinalIgnoreCase);
+    private static bool BodyRequiresTools(JsonElement root) => root.TryGetProperty("tools", out JsonElement tools) && tools.ValueKind == JsonValueKind.Array && tools.GetArrayLength() > 0;
+    private static long? QueryAvailableVramBytes()
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo("nvidia-smi", "--query-gpu=memory.free --format=csv,noheader,nounits") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true });
+            if (process == null || !process.WaitForExit(1500)) { try { process?.Kill(); } catch { } return null; }
+            long totalMiB = process.StandardOutput.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => long.TryParse(line.Trim(), out long value) ? value : 0).Sum();
+            return totalMiB > 0 ? totalMiB * 1024L * 1024L : null;
+        }
+        catch { return null; }
     }
 
     private bool RejectGenerationModelChatRequest(LlmChatRequest request, HttpRequest httpRequest, ChunkedStream stream)
@@ -2734,6 +2848,31 @@ public sealed class LlmRuntimeHost : IDisposable
             $"Model '{model.DisplayName}' is a {model.Type} generation model. Use {serviceLabel} instead of the text chat completions endpoint.",
             "unsupported_model_type",
             "unsupported_model_type"));
+        return true;
+    }
+
+    private bool RejectUnsupportedVisionChatRequest(LlmChatRequest request, HttpRequest httpRequest, ChunkedStream stream)
+    {
+        if (!RequiresVision(request))
+            return false;
+
+        LlmModelInfo? model = Registry.FindModel(request.Model);
+        bool supportsVision = model != null &&
+            (model.LoadedInstances.Any(instance => instance.Modalities.Any(modality =>
+                 modality.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+                 modality.Equals("vision", StringComparison.OrdinalIgnoreCase))) ||
+             ((model.Publisher.Equals("remote", StringComparison.OrdinalIgnoreCase) ||
+               model.FilePath.StartsWith("remote-vllm://", StringComparison.OrdinalIgnoreCase)) &&
+              model.Tags.Any(tag => tag.Equals("vision", StringComparison.OrdinalIgnoreCase))));
+        if (supportsVision)
+            return false;
+
+        SetStatus(httpRequest, HttpStatusForError("unsupported_capability"));
+        stream.ContentType = "application/json";
+        stream.Write(Error(
+            $"Model '{request.Model}' does not have a vision projection/backend. Choose a model that supports both image input and the requested tools.",
+            "unsupported_capability",
+            "vision_not_supported"));
         return true;
     }
 
@@ -2786,7 +2925,7 @@ public sealed class LlmRuntimeHost : IDisposable
     internal static IReadOnlyList<LlmChatMessage> BuildCompressedPromptMessages(IReadOnlyList<LlmChatMessage> messages, int targetPromptTokens)
     {
         var source = (messages ?? Array.Empty<LlmChatMessage>())
-            .Where(message => message != null && !string.IsNullOrWhiteSpace(message.Content))
+            .Where(message => message != null && (!string.IsNullOrWhiteSpace(message.Content) || message.HasImageContent))
             .ToList();
         if (source.Count == 0)
             return Array.Empty<LlmChatMessage>();
@@ -2822,7 +2961,7 @@ public sealed class LlmRuntimeHost : IDisposable
         for (int i = tailStart; i < source.Count; i++)
         {
             LlmChatMessage message = source[i];
-            result.Add(new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, tailLimit, message.Role + " message")));
+            result.Add(new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, tailLimit, message.Role + " message"), message.StructuredContent, message.HasImageContent));
         }
 
         return TightenCompressedPromptMessages(result, targetPromptTokens);
@@ -2836,20 +2975,21 @@ public sealed class LlmRuntimeHost : IDisposable
         int targetChars = Math.Max(400, targetPromptTokens * 4);
         int perMessageLimit = Math.Max(240, targetChars / Math.Max(1, messages.Count));
         var tightened = messages
-            .Select(message => new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, perMessageLimit, message.Role + " message")))
+            .Select(message => new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, perMessageLimit, message.Role + " message"), message.StructuredContent, message.HasImageContent))
             .ToList();
 
         if (EstimatePromptTokens(tightened) <= targetPromptTokens)
             return tightened;
 
-        string lastUser = tightened.LastOrDefault(message => message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Content ?? "";
+        LlmChatMessage? lastUserMessage = tightened.LastOrDefault(message => message.Role.Equals("user", StringComparison.OrdinalIgnoreCase));
+        string lastUser = lastUserMessage?.Content ?? "";
         string summary = BuildContextCompressionSummary(tightened, Math.Max(300, targetChars - Math.Min(targetChars / 2, Math.Max(240, lastUser.Length))));
         var compact = new List<LlmChatMessage>
         {
             new("system", summary)
         };
-        if (!string.IsNullOrWhiteSpace(lastUser))
-            compact.Add(new LlmChatMessage("user", CompressTextMiddle(lastUser, Math.Max(240, targetChars / 2), "latest user message")));
+        if (!string.IsNullOrWhiteSpace(lastUser) || lastUserMessage?.HasImageContent == true)
+            compact.Add(new LlmChatMessage("user", CompressTextMiddle(lastUser, Math.Max(240, targetChars / 2), "latest user message"), lastUserMessage?.StructuredContent, lastUserMessage?.HasImageContent == true));
 
         return compact;
     }
@@ -3436,6 +3576,18 @@ public sealed class LlmRuntimeHost : IDisposable
             stream.ContentType = "text/event-stream";
             sseStarted = true;
 
+            if (request.RouteDecision is { } route)
+            {
+                WriteSseData(stream, ToJson(new
+                {
+                    type = "route",
+                    routing = route,
+                    model = route.SelectedModel,
+                    reasoningLevel = route.EffectiveReasoning.ToString().ToLowerInvariant(),
+                    status = "Auto selected " + route.SelectedModel
+                }));
+            }
+
             if (request.Tools.Count > 0 && !ShouldBypassToolSelection(request))
             {
                 var result = await CompleteChatWithToolsAsync(request, cancellationToken).ConfigureAwait(false);
@@ -3501,6 +3653,37 @@ public sealed class LlmRuntimeHost : IDisposable
             {
                 wroteVisibleText = true;
                 WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, trailingVisibleText, null, null, null)));
+            }
+
+            // Some reasoning models can consume the entire first pass inside a
+            // hidden <think> block and still report a normal stop. Give them one
+            // bounded answer-only pass before exposing a diagnostic to the user.
+            if (!wroteVisibleText && hiddenReasoningFilter.SuppressedAny && completionTokens > 0)
+            {
+                request.Messages = request.Messages.Concat(new[]
+                {
+                    new LlmChatMessage("system", "The previous pass contained only hidden reasoning. Answer the user's latest message now. Emit concise visible assistant text immediately. Do not output thinking, analysis, XML reasoning tags, or mention this retry instruction.")
+                }).ToArray();
+                request.ReasoningLevel = "minimal";
+                var retryFilter = new LlmHiddenReasoningStreamFilter();
+                await foreach (var token in Registry.StreamChatAsync(request, cancellationToken).ConfigureAwait(false))
+                {
+                    if (!string.IsNullOrWhiteSpace(token.FinishReason))
+                        streamFinishReason = token.FinishReason;
+                    completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
+                    string visibleRetryText = retryFilter.Accept(token.Text);
+                    if (ShouldEmitVisibleAssistantText(visibleRetryText, wroteVisibleText))
+                    {
+                        wroteVisibleText = true;
+                        WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, visibleRetryText, null, null, null)));
+                    }
+                }
+                string retryTrailingText = retryFilter.Flush();
+                if (ShouldEmitVisibleAssistantText(retryTrailingText, wroteVisibleText))
+                {
+                    wroteVisibleText = true;
+                    WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, retryTrailingText, null, null, null)));
+                }
             }
 
             stopwatch.Stop();
@@ -3612,6 +3795,23 @@ public sealed class LlmRuntimeHost : IDisposable
             stream.ContentType = "application/json";
             stream.Write(Error($"Invalid JSON request body: {ex.Message}", "invalid_request_error", "invalid_json"));
             return;
+        }
+
+        if (IsAutoModel(chatRequest.Model))
+        {
+            ModelRouteDecision decision = RouteChatRequest(chatRequest);
+            if (!decision.Success)
+            {
+                SetStatus(request, HttpStatusForError("no_compatible_model"));
+                stream.ContentType = "application/json";
+                stream.Write(Error("No enabled local model is compatible with this response request and the current VRAM policy.", "unsupported_capability", "no_compatible_model"));
+                return;
+            }
+            chatRequest.Model = decision.SelectedModel;
+            chatRequest.RouteDecision = decision;
+            stream.SetHeader("X-SocketJack-Routed-Model", decision.SelectedModel);
+            stream.SetHeader("X-SocketJack-Reasoning-Level", decision.EffectiveReasoning.ToString().ToLowerInvariant());
+            stream.SetHeader("X-SocketJack-Route-Reason", decision.ReasonCode);
         }
 
         if (RejectGenerationModelChatRequest(chatRequest, request, stream))
@@ -4550,7 +4750,9 @@ public sealed class LlmRuntimeHost : IDisposable
             SessionLocked = request.SessionLocked,
             SessionSaved = request.SessionSaved,
             PromptTokenBudget = request.PromptTokenBudget,
-            Metadata = request.Metadata
+            Metadata = request.Metadata,
+            ReasoningLevel = request.ReasoningLevel,
+            RouteDecision = request.RouteDecision
         };
     }
 

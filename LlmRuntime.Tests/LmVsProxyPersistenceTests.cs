@@ -25,6 +25,7 @@ public sealed class LmVsProxyPersistenceTests
                 snapshot.FtpServer = true;
                 snapshot.SqlAdmin = true;
                 snapshot.TerminalCommands = false;
+                snapshot.PcAccess = true;
                 first.SaveChatClientPermissionsDiagnostics(snapshot);
             }
 
@@ -36,6 +37,7 @@ public sealed class LmVsProxyPersistenceTests
                 Assert.IsTrue(reloaded.FtpServer);
                 Assert.IsTrue(reloaded.SqlAdmin);
                 Assert.IsFalse(reloaded.TerminalCommands);
+                Assert.IsTrue(reloaded.PcAccess);
                 Assert.IsTrue(File.Exists(Path.Combine(dataRoot, "SocketJack", "JackLLMChat", "SocketJackDatabase.json")));
             }
         }
@@ -64,6 +66,7 @@ public sealed class LmVsProxyPersistenceTests
             disabled.AgentAccess = false;
             disabled.FileUploads = false;
             disabled.ImageUploads = false;
+            disabled.PcAccess = false;
             disabled.MuteUntilEnabled = true;
             disabled.BanUntilEnabled = true;
             disabled.MutedUntilUtc = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
@@ -80,6 +83,7 @@ public sealed class LmVsProxyPersistenceTests
             Assert.IsTrue(local.AgentAccess);
             Assert.IsTrue(local.FileUploads);
             Assert.IsTrue(local.ImageUploads);
+            Assert.IsFalse(local.PcAccess, "Local admin elevation must not implicitly grant PC Access.");
             Assert.IsFalse(local.MuteUntilEnabled);
             Assert.IsFalse(local.BanUntilEnabled);
             Assert.AreEqual("", local.MutedUntilUtc);

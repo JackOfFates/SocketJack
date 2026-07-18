@@ -219,10 +219,10 @@ public sealed class VllmBackend : ILlmBackend
         var payload = new
         {
             model = _servedModelName,
-            messages = request.Messages.Select(message => new
+            messages = request.Messages.Select(message => new Dictionary<string, object?>
             {
-                role = NormalizeRole(message.Role),
-                content = message.Content ?? ""
+                ["role"] = NormalizeRole(message.Role),
+                ["content"] = message.StructuredContent.HasValue ? message.StructuredContent.Value : message.Content ?? ""
             }).ToArray(),
             stream,
             max_tokens = Math.Clamp(request.MaxTokens, 1, 131072),

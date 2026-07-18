@@ -56,7 +56,7 @@
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes>2026.8 updates the package documentation with JackLLM Mobile for Android.</PackageReleaseNotes>
+    <PackageReleaseNotes>2026.8 updates the package documentation with the shared JackLLM Mobile app for Android and iOS.</PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
     <PackageIcon>SocketJackIcon.png</PackageIcon>
     <PackageReadmeFile>Readme.md</PackageReadmeFile>
@@ -602,11 +602,19 @@
     <ItemGroup>
       <None Remove="html\*.html" />
       <None Remove="html\*.png" />
+      <None Remove="html\*.ico" />
+      <None Remove="html\*.webmanifest" />
       <None Remove="JackLLM.Android\**" />
       <EmbeddedResource Include="html\*.html">
         <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
       </EmbeddedResource>
       <EmbeddedResource Include="html\*.png">
+        <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
+      </EmbeddedResource>
+      <EmbeddedResource Include="html\*.ico">
+        <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
+      </EmbeddedResource>
+      <EmbeddedResource Include="html\*.webmanifest">
         <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
       </EmbeddedResource>
     </ItemGroup>

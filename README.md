@@ -19,7 +19,7 @@ It is built for projects that need real network behavior without rebuilding wire
 | Explore networking features | [#Networking](#networking) |
 | Share or control WPF windows | [#SocketJack.WPF](#socketjackwpf) |
 | Learn about JackLLM Workstation | [#JackLLM Workstation](#jackllm-workstation) |
-| Try JackLLM Mobile for Android | [#JackLLM Mobile](#jackllm-mobile-android) |
+| Try JackLLM Mobile for Android or iOS | [#JackLLM Mobile](#jackllm-mobile-android-and-ios) |
 
 <a id="versions"></a>
 ## #Versions
@@ -34,7 +34,7 @@ SocketJack 2026 is the current platform line. The core packages use year-based v
 | `JackLLM Workstation Linux` | `1:26.0.1` | Debian package version | Linux-compatible Debian version for the 2026 line. The epoch keeps upgrades ordered after earlier `2026.0.x` packages. |
 | `SocketJack LlmRuntime VS Extension` | `0.1.4` | Visual Studio 2022 VSIX | Legacy VSSDK extension in `LlmRuntime.VisualStudio/`. |
 | `SocketJack LlmRuntime VS 2026 Extension` | `0.2.30` | Visual Studio 2026 VSIX | Modern VisualStudio.Extensibility extension in `LlmRuntime.VisualStudio2026/`. |
-| `JackLLM Mobile` | `1.0` | Android app | MAUI Android client in `SocketJack/JackLLM.Android/` for workstation chat and session management. |
+| `JackLLM Mobile` | `1.0` | Android + iOS app | Shared MAUI client in `SocketJack/JackLLM.Android/` for workstation chat, PC Access, and session management. |
 | `SocketJack.Unity` | `1.1.0.1` | `.NET Standard 2.1` | Legacy Unity-facing package surface. |
 | `SocketJack.WebSocketServer` | `1.1.0.1` | `.NET Standard 2.1` | Legacy WebSocket server package surface. |
 
@@ -256,9 +256,9 @@ With JackLLM Workstation you can:
 
 <a id="jackllm-mobile-android"></a>
 <details>
-<summary><strong>#JackLLM Mobile</strong> - Android client for workstation chat and sessions</summary>
+<summary><strong>#JackLLM Mobile</strong> - Android and iOS client for workstation chat and sessions</summary>
 
-JackLLM Mobile is the Android companion app for JackLLM Workstation. It connects to a workstation endpoint, sends prompts from a phone or tablet, shows assistant responses with model and compute telemetry, and lets you reopen workstation conversations from a mobile session list.
+JackLLM Mobile is the shared Android and iOS companion app for JackLLM Workstation. It connects to a workstation endpoint, sends prompts from a phone or tablet, shows assistant responses with model and compute telemetry, and lets you reopen workstation conversations from a mobile session list. Both platforms compile the same shared Mobile pages, models, and services.
 
 ![JackLLM Mobile chat](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-chat.png)
 
@@ -282,7 +282,7 @@ Project README: [SocketJack/JackLLM.Android/README.md](SocketJack/JackLLM.Androi
 | `SocketJack-MagicMasterList/` | Public server-list and SocketJack.com-facing host project. |
 | `JackLLM/` | Windows WPF JackLLM Workstation app. |
 | `JackLLM.Workstation/` | Linux/service-style JackLLM Workstation host. |
-| `SocketJack/JackLLM.Android/` | Android JackLLM Mobile app. |
+| `SocketJack/JackLLM.Android/` | Shared Android and iOS JackLLM Mobile app. |
 | `LlmRuntime.VisualStudio/` | Visual Studio 2022 extension. |
 | `LlmRuntime.VisualStudio2026/` | Visual Studio 2026 extension. |
 | `LlmRuntime/` | LLM runtime project and documentation. |

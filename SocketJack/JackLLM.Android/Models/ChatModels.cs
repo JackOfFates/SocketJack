@@ -11,6 +11,7 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     private string _telemetry = "";
     private bool _isReasoningExpanded = true;
     private bool _isGenerating;
+    private string _routeSummary = "";
 
     public string Role { get => _role; set { if (_role == value) return; _role = value; PropertyChanged?.Invoke(this, new(nameof(Role))); PropertyChanged?.Invoke(this, new(nameof(IsUser))); PropertyChanged?.Invoke(this, new(nameof(BubbleColor))); } }
     public string Content { get => _content; set { if (_content == value) return; _content = value; PropertyChanged?.Invoke(this, new(nameof(Content))); PropertyChanged?.Invoke(this, new(nameof(HasContent))); } }
@@ -19,6 +20,8 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     public string Telemetry { get => _telemetry; set { if (_telemetry == value) return; _telemetry = value; PropertyChanged?.Invoke(this, new(nameof(Telemetry))); PropertyChanged?.Invoke(this, new(nameof(HasTelemetry))); } }
     public bool IsReasoningExpanded { get => _isReasoningExpanded; set { if (_isReasoningExpanded == value) return; _isReasoningExpanded = value; PropertyChanged?.Invoke(this, new(nameof(IsReasoningExpanded))); PropertyChanged?.Invoke(this, new(nameof(ReasoningChevron))); } }
     public bool IsGenerating { get => _isGenerating; set { if (_isGenerating == value) return; _isGenerating = value; PropertyChanged?.Invoke(this, new(nameof(IsGenerating))); PropertyChanged?.Invoke(this, new(nameof(ReasoningHeader))); PropertyChanged?.Invoke(this, new(nameof(ShowReasoning))); } }
+    public string RouteSummary { get => _routeSummary; set { if (_routeSummary == value) return; _routeSummary = value; PropertyChanged?.Invoke(this, new(nameof(RouteSummary))); PropertyChanged?.Invoke(this, new(nameof(HasRouteSummary))); } }
+    public bool HasRouteSummary => !string.IsNullOrWhiteSpace(RouteSummary);
     public ObservableCollection<ToolActivity> Tools { get; } = new();
     public bool IsUser => Role.Equals("user", StringComparison.OrdinalIgnoreCase);
     public bool HasContent => !string.IsNullOrWhiteSpace(Content);
@@ -29,6 +32,8 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     public string ReasoningHeader => IsGenerating ? "Thinking…" : "Thinking process";
     public string ReasoningChevron => IsReasoningExpanded ? "⌃" : "⌄";
     public bool IsCapturingEmbeddedReasoning { get; set; }
+    public bool IsLocalOnly { get; set; }
+    public string GenerationId { get; set; } = "";
     public Color BubbleColor => IsUser ? Color.FromArgb("#2563EB") : Color.FromArgb("#1F2937");
     public Color TextColor => Colors.White;
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
@@ -51,6 +56,7 @@ public sealed class ChatStreamEvent
     public double? Progress { get; init; }
     public string ToolName { get; init; } = "";
     public string ToolStatus { get; init; } = "";
+    public string ToolDetail { get; init; } = "";
     public long TokenDelta { get; init; }
     public long TokensUsed { get; init; }
     public double GpuSecondsUsed { get; init; }
@@ -59,6 +65,10 @@ public sealed class ChatStreamEvent
     public long PromptTokensLoaded { get; init; }
     public long PromptTokensTotal { get; init; }
     public string RawJson { get; init; } = "";
+    public string RoutedModel { get; init; } = "";
+    public string ReasoningLevel { get; init; } = "";
+    public string RouteReason { get; init; } = "";
+    public string PromptFingerprint { get; init; } = "";
 }
 
 public sealed class ChatSessionInfo
@@ -92,8 +102,51 @@ public sealed class ChatSessionDetail
     public string Id { get; set; } = "";
     public string Title { get; set; } = "New chat";
     public string Model { get; set; } = "";
+    public string ReasoningLevel { get; set; } = "inherit";
     public List<ChatMessage> Messages { get; } = new();
     public List<AttachmentInfo> Files { get; } = new();
+}
+
+public sealed class PcAccessStreamSession
+{
+    public string SessionId { get; set; } = "";
+    public string RtmpUrl { get; set; } = "";
+    public string Encoder { get; set; } = "";
+    public string Codec { get; set; } = "";
+    public int BitrateKbps { get; set; }
+    public PcDesktopBounds Desktop { get; set; } = new();
+    public PcCursorState Cursor { get; set; } = new();
+}
+
+public sealed class PcAccessPointerSnapshot
+{
+    public PcDesktopBounds Desktop { get; set; } = new();
+    public PcCursorState Cursor { get; set; } = new();
+}
+
+public sealed class PcAccessFtpConnection
+{
+    public string Host { get; set; } = "";
+    public int Port { get; set; } = 2121;
+    public string UserName { get; set; } = "";
+    public string Password { get; set; } = "";
+    public string Root { get; set; } = "/";
+    public bool AllowWrite { get; set; }
+}
+
+public sealed class PcDesktopBounds
+{
+    public int Left { get; set; }
+    public int Top { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+}
+
+public sealed class PcCursorState
+{
+    public double X { get; set; }
+    public double Y { get; set; }
+    public bool Visible { get; set; }
 }
 
 public sealed class HardwareSnapshot
@@ -120,9 +173,12 @@ public sealed class ModelInfo
     public string Service { get; set; } = "chat";
     public bool SupportsChat { get; set; } = true;
     public bool SupportsTools { get; set; }
+    public bool SupportsImages { get; set; }
     public bool SupportsAudioGeneration { get; set; }
     public bool SupportsImageGeneration { get; set; }
     public bool SupportsVideoGeneration { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool IsAvailable { get; set; } = true;
     public bool IsGeneralChatCandidate => SupportsChat && !SupportsAudioGeneration && !SupportsImageGeneration && !SupportsVideoGeneration;
     public override string ToString() => string.IsNullOrWhiteSpace(Name) ? Id : Name;
 }
@@ -132,5 +188,28 @@ public sealed class AttachmentInfo
     public string Name { get; init; } = "attachment";
     public string ContentType { get; init; } = "application/octet-stream";
     public byte[] Data { get; init; } = Array.Empty<byte>();
-    public string DataUrl => $"data:{ContentType};base64,{Convert.ToBase64String(Data)}";
+    public string MediaType
+    {
+        get
+        {
+            string declared = (ContentType ?? "").Split(';', 2)[0].Trim().ToLowerInvariant();
+            if (declared.StartsWith("image/", StringComparison.Ordinal)) return declared;
+            if (Data.Length >= 8 && Data[0] == 0x89 && Data[1] == 0x50 && Data[2] == 0x4E && Data[3] == 0x47) return "image/png";
+            if (Data.Length >= 3 && Data[0] == 0xFF && Data[1] == 0xD8 && Data[2] == 0xFF) return "image/jpeg";
+            if (Data.Length >= 6 && Data[0] == (byte)'G' && Data[1] == (byte)'I' && Data[2] == (byte)'F') return "image/gif";
+            if (Data.Length >= 12 && Data[0] == (byte)'R' && Data[1] == (byte)'I' && Data[2] == (byte)'F' && Data[8] == (byte)'W' && Data[9] == (byte)'E' && Data[10] == (byte)'B' && Data[11] == (byte)'P') return "image/webp";
+            return Path.GetExtension(Name).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" or ".jfif" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".heic" => "image/heic",
+                ".heif" => "image/heif",
+                _ => string.IsNullOrWhiteSpace(declared) ? "application/octet-stream" : declared
+            };
+        }
+    }
+    public bool IsImage => MediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+    public string DataUrl => $"data:{MediaType};base64,{Convert.ToBase64String(Data)}";
 }

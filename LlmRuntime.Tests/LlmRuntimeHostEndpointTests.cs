@@ -18,6 +18,57 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
+    public void ChatRequestFromJson_PreservesVisionContentWithoutPuttingBase64InTextPrompt()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "model": "vision-model",
+          "messages": [{
+            "role": "user",
+            "content": [
+              { "type": "text", "text": "What is in this image?" },
+              { "type": "image_url", "image_url": { "url": "data:image/png;base64,iVBORw0KGgo=" } }
+            ]
+          }]
+        }
+        """);
+
+        LlmChatRequest request = LlmChatRequest.FromJson(document.RootElement);
+
+        Assert.AreEqual(1, request.Messages.Count);
+        Assert.AreEqual("What is in this image?", request.Messages[0].Content);
+        Assert.IsTrue(request.Messages[0].HasImageContent);
+        Assert.IsNotNull(request.Messages[0].StructuredContent);
+        Assert.IsFalse(request.Messages[0].Content.Contains("base64", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public void ContextCompression_PreservesLatestUserVisionContent()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "model": "vision-model",
+          "messages": [
+            { "role": "system", "content": "A very long system prompt that must be compacted." },
+            { "role": "user", "content": [
+              { "type": "text", "text": "Describe this." },
+              { "type": "image_url", "image_url": { "url": "data:image/png;base64,iVBORw0KGgo=" } }
+            ] }
+          ]
+        }
+        """);
+        LlmChatRequest request = LlmChatRequest.FromJson(document.RootElement);
+
+        IReadOnlyList<LlmChatMessage> compressed = LlmRuntimeHost.BuildCompressedPromptMessages(request.Messages, 1);
+        LlmChatMessage? user = compressed.LastOrDefault(message => message.Role == "user");
+
+        Assert.IsNotNull(user);
+        Assert.IsTrue(user.HasImageContent);
+        Assert.IsNotNull(user.StructuredContent);
+        StringAssert.Contains(user.StructuredContent.Value.GetRawText(), "image_url");
+    }
+
+    [TestMethod]
     public void ChatRequestFromJson_PreservesToolCallOnlyAssistantAndEmptyToolResult()
     {
         using var document = JsonDocument.Parse("""
@@ -690,6 +741,41 @@ public sealed class LlmRuntimeHostEndpointTests
 
             StringAssert.Contains(body, "without producing visible assistant text");
             Assert.IsFalse(body.Contains("hidden reasoning", StringComparison.OrdinalIgnoreCase));
+            StringAssert.Contains(body, "data: [DONE]");
+        }
+        finally
+        {
+            LlmModelRegistryTests.TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task ChatCompletionsEndpoint_RetriesHiddenOnlyStreamAndReturnsVisibleAnswer()
+    {
+        string root = LlmModelRegistryTests.CreateTempDirectory();
+        int port = NextPort();
+        try
+        {
+            GgufMetadataReaderTests.WriteSyntheticGguf(Path.Combine(root, "HiddenRetry-Q4_0.gguf"));
+            using var registry = new LlmModelRegistry(
+                new LlmRuntimeOptions { ModelRoot = root },
+                new FakeBackendFactory("<think>hidden reasoning only</think>", "Visible answer after retry."));
+            registry.Load("HiddenRetry-Q4_0");
+            using var host = new LlmRuntimeHost(new LlmRuntimeOptions { ModelRoot = root, Port = port }, registry);
+            Assert.IsTrue(host.Start());
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"http://127.0.0.1:{port}/v1/chat/completions",
+                new StringContent("{\"model\":\"HiddenRetry-Q4_0\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hey what's up\"}]}", Encoding.UTF8, "application/json"));
+            string body = await response.Content.ReadAsStringAsync();
+
+            StringAssert.Contains(body, "Visible ");
+            StringAssert.Contains(body, "answer ");
+            StringAssert.Contains(body, "after ");
+            StringAssert.Contains(body, "retry. ");
+            Assert.IsFalse(body.Contains("without producing visible assistant text", StringComparison.OrdinalIgnoreCase));
+            Assert.IsFalse(body.Contains("hidden reasoning only", StringComparison.OrdinalIgnoreCase));
             StringAssert.Contains(body, "data: [DONE]");
         }
         finally

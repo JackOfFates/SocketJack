@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -26,11 +27,119 @@ public sealed class JackLlmClient : IDisposable
                 certificate is not null && NormalizeFingerprint(certificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256)).Equals(expected, StringComparison.OrdinalIgnoreCase);
         }
         _http = new HttpClient(handler) { BaseAddress = new Uri(NormalizeBaseUrl(server.Endpoint)), Timeout = TimeSpan.FromMinutes(30) };
-        string? token = await _credentials.GetServerTokenAsync(server.LaunchKey);
+        string credentialKey = string.IsNullOrWhiteSpace(server.CredentialKey) ? server.LaunchKey : server.CredentialKey;
+        string? token = await _credentials.GetServerTokenAsync(credentialKey);
         if (string.IsNullOrWhiteSpace(token)) token = await _credentials.GetSocketJackTokenAsync();
         if (!string.IsNullOrWhiteSpace(token)) _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using HttpResponseMessage response = await _http.GetAsync("/api/health", cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<TimeSpan?> MeasureHealthAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            using HttpResponseMessage response = await _http!.GetAsync("/api/health", timeout.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            stopwatch.Stop();
+            return stopwatch.Elapsed;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
+        catch (HttpRequestException) { return null; }
+    }
+
+    public async Task<bool> SupportsVoiceAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        foreach (string path in new[] { "/v1/audio/transcriptions", "/v1/audio/speech" })
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, path);
+                using HttpResponseMessage response = await _http!.SendAsync(request, cancellationToken);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return false;
+            }
+            catch (HttpRequestException) { return false; }
+        }
+        return true;
+    }
+
+    public async Task<JsonDocument> GetPcAccessStatusAsync(CancellationToken cancellationToken = default) => await GetJsonAsync("/api/pc-access/status", cancellationToken);
+
+    public async Task<PcAccessStreamSession> StartPcAccessStreamAsync(int width = 1280, int height = 720, int fps = 20, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await PostJsonAsync("/api/pc-access/stream/start", new { width, height, fps }, cancellationToken);
+        return ReadPcAccessSession(json.RootElement);
+    }
+
+    public async Task<PcAccessPointerSnapshot> GetPcAccessPointerAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/pc-access/pointer?sessionId=" + Uri.EscapeDataString(sessionId), cancellationToken);
+        return ReadPcAccessPointer(json.RootElement);
+    }
+
+    public async Task<byte[]> GetPcDesktopFrameAsync(int width, int height, int quality, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync($"/api/pc-access/desktop?width={width}&height={height}&quality={quality}", cancellationToken);
+        string data = ReadString(json.RootElement, "data");
+        return Convert.FromBase64String(data);
+    }
+
+    public Task SendPcInputAsync(object input, CancellationToken cancellationToken = default) => PostAsync("/api/pc-access/desktop/input", input, cancellationToken);
+    public Task DisconnectPcAccessAsync(CancellationToken cancellationToken = default) => PostAsync("/api/pc-access/disconnect", new { }, cancellationToken);
+    public async Task<PcAccessFtpConnection> GetPcAccessFtpAsync(CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/pc-access/ftp", cancellationToken);
+        JsonElement root = json.RootElement;
+        return new PcAccessFtpConnection
+        {
+            Host = ReadString(root, "host"),
+            Port = (int)ReadLong(root, "port"),
+            UserName = ReadString(root, "userName"),
+            Password = ReadString(root, "password"),
+            Root = ReadString(root, "root"),
+            AllowWrite = ReadBool(root, "allowWrite")
+        };
+    }
+    public async Task<JsonDocument> BrowsePcFilesAsync(string path, CancellationToken cancellationToken = default) => await GetJsonAsync("/api/pc-access/files?path=" + Uri.EscapeDataString(path ?? ""), cancellationToken);
+    public Task CreatePcDirectoryAsync(string path, CancellationToken cancellationToken = default) => PostAsync("/api/pc-access/files", new { path, kind = "directory" }, cancellationToken);
+
+    private static PcAccessStreamSession ReadPcAccessSession(JsonElement root)
+    {
+        PcAccessPointerSnapshot pointer = ReadPcAccessPointer(root);
+        return new PcAccessStreamSession
+        {
+            SessionId = ReadString(root, "sessionId"),
+            RtmpUrl = ReadString(root, "rtmpUrl"),
+            Encoder = ReadString(root, "encoder"),
+            Codec = ReadString(root, "codec"),
+            BitrateKbps = (int)ReadLong(root, "bitrateKbps"),
+            Desktop = pointer.Desktop,
+            Cursor = pointer.Cursor
+        };
+    }
+
+    private static PcAccessPointerSnapshot ReadPcAccessPointer(JsonElement root)
+    {
+        TryProperty(root, "desktop", out JsonElement desktop);
+        TryProperty(root, "cursor", out JsonElement cursor);
+        return new PcAccessPointerSnapshot
+        {
+            Desktop = new PcDesktopBounds
+            {
+                Left = (int)ReadLong(desktop, "left"), Top = (int)ReadLong(desktop, "top"),
+                Width = (int)ReadLong(desktop, "width"), Height = (int)ReadLong(desktop, "height")
+            },
+            Cursor = new PcCursorState
+            {
+                X = ReadDouble(cursor, "x") ?? 0, Y = ReadDouble(cursor, "y") ?? 0,
+                Visible = ReadBool(cursor, "visible")
+            }
+        };
     }
 
     public async Task<IReadOnlyList<ModelInfo>> GetModelsAsync(CancellationToken cancellationToken = default)
@@ -39,6 +148,7 @@ public sealed class JackLlmClient : IDisposable
         JsonElement root = json.RootElement;
         JsonElement list = root.ValueKind == JsonValueKind.Array ? root : TryProperty(root, "models", out var models) ? models : default;
         var result = new List<ModelInfo>();
+        result.Add(new ModelInfo { Id = "auto", Name = "Auto · Instant Router", Service = "chat", SupportsChat = true, SupportsTools = true, SupportsImages = true });
         if (list.ValueKind == JsonValueKind.Array)
         {
             foreach (JsonElement item in list.EnumerateArray())
@@ -56,9 +166,12 @@ public sealed class JackLlmClient : IDisposable
                         Name = ReadString(item, "displayName", "name", "id"),
                         Service = service,
                         SupportsTools = ReadBool(item, "supportsTools", "tools", "toolUse"),
+                        SupportsImages = ReadBool(item, "supportsImages", "supportsVision", "vision", "images"),
                         SupportsAudioGeneration = supportsAudio,
                         SupportsImageGeneration = supportsImage,
                         SupportsVideoGeneration = supportsVideo,
+                        IsLoaded = ReadBool(item, "isLoaded", "loaded"),
+                        IsAvailable = !TryProperty(item, "isAvailable", out _) || ReadBool(item, "isAvailable", "available"),
                         SupportsChat = !supportsAudio && !supportsImage && !supportsVideo && !service.Equals("audio", StringComparison.OrdinalIgnoreCase)
                     });
                 }
@@ -67,13 +180,13 @@ public sealed class JackLlmClient : IDisposable
         return result;
     }
 
-    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string sessionId, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string sessionId, string reasoningLevel, string sessionReasoningLevel, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         EnsureConnected();
         var uploaded = new List<object>();
         foreach (AttachmentInfo attachment in attachments)
             uploaded.Add(await UploadFileAsync(sessionId, attachment, cancellationToken));
-        string streamId = ActiveStreamId = "mobile_" + Guid.NewGuid().ToString("N");
+        string streamId = ActiveStreamId = string.IsNullOrWhiteSpace(requestedStreamId) ? "mobile_" + Guid.NewGuid().ToString("N") : requestedStreamId;
         string prompt = messages.LastOrDefault(message => message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Content ?? "";
         var payload = new Dictionary<string, object?>
         {
@@ -81,21 +194,31 @@ public sealed class JackLlmClient : IDisposable
             ["service"] = string.IsNullOrWhiteSpace(service) ? "chat" : service,
             ["sessionId"] = sessionId,
             ["streamId"] = streamId,
+            ["reasoningLevel"] = string.IsNullOrWhiteSpace(reasoningLevel) ? "auto" : reasoningLevel,
+            ["sessionReasoningLevel"] = string.IsNullOrWhiteSpace(sessionReasoningLevel) ? "inherit" : sessionReasoningLevel,
+            ["max_tokens"] = service.Equals("agent", StringComparison.OrdinalIgnoreCase) ? 16384 : 4096,
+            ["filesystemContext"] = new { mode = "none", roots = Array.Empty<string>() },
             ["prompt"] = prompt,
-            ["messages"] = messages.Select(m => new { role = m.Role, content = m.Content }).ToArray(),
+            ["messages"] = BuildWireMessages(messages, attachments),
             ["files"] = uploaded
         };
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat-stream") { Content = Json(payload) };
-        using HttpResponseMessage response = await _http!.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        try
         {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            yield return ParseStreamEvent(line);
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat-stream") { Content = Json(payload) };
+            using HttpResponseMessage response = await _http!.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                yield return ParseStreamEvent(line);
+            }
         }
-        ActiveStreamId = "";
+        finally
+        {
+            if (ActiveStreamId.Equals(streamId, StringComparison.Ordinal)) ActiveStreamId = "";
+        }
     }
 
     public async Task StopAsync(string streamId, CancellationToken cancellationToken = default) => await PostAsync("/api/chat-stream/stop", new { streamId }, cancellationToken);
@@ -162,6 +285,7 @@ public sealed class JackLlmClient : IDisposable
             Title = ReadString(session, "title", "name"),
             Model = ReadString(session, "model")
         };
+        detail.ReasoningLevel = ReadString(session, "reasoningLevel", "reasoning_level");
         if (string.IsNullOrWhiteSpace(detail.Id)) detail.Id = id;
         if (string.IsNullOrWhiteSpace(detail.Title)) detail.Title = "New chat";
         if (TryProperty(session, "messages", out JsonElement messages) && messages.ValueKind == JsonValueKind.Array)
@@ -235,15 +359,17 @@ public sealed class JackLlmClient : IDisposable
             using JsonDocument json = JsonDocument.Parse(line);
             JsonElement root = json.RootElement;
             string type = ReadString(root, "type");
+            JsonElement routing = TryProperty(root, "routing", out JsonElement routeElement) ? routeElement : root;
             return new ChatStreamEvent
             {
                 Type = string.IsNullOrWhiteSpace(type) ? "delta" : type,
-                Content = ReadString(root, "content", "text", "delta", "answer", "answerContent", "message", "response", "body", "error"),
+                Content = ReadString(root, "content", "text", "delta", "answer", "answerContent", "message", "response", "error"),
                 Reasoning = ReadString(root, "reasoning", "reasoningContent", "thought", "thinking"),
                 Status = ReadString(root, "status", "state", "message", "statusText"),
                 Progress = ReadDouble(root, "progress"),
                 ToolName = ReadString(root, "toolName", "name", "tool"),
                 ToolStatus = ReadString(root, "toolStatus", "state"),
+                ToolDetail = ReadString(root, "label", "summary", "resultPreview", "argumentsPreview"),
                 TokenDelta = ReadLong(root, "tokenDelta"),
                 TokensUsed = ReadLong(root, "tokensUsed"),
                 GpuSecondsUsed = ReadDouble(root, "gpuSecondsUsed") ?? 0,
@@ -251,6 +377,10 @@ public sealed class JackLlmClient : IDisposable
                 RamGbSecondsUsed = ReadDouble(root, "ramGbSecondsUsed") ?? 0,
                 PromptTokensLoaded = ReadLong(root, "promptTokensLoaded"),
                 PromptTokensTotal = ReadLong(root, "promptTokensTotal"),
+                RoutedModel = ReadString(routing, "selectedModel", "selected_model", "model"),
+                ReasoningLevel = ReadString(routing, "effectiveReasoning", "effective_reasoning", "reasoningLevel"),
+                RouteReason = ReadString(routing, "reasonCode", "reason_code"),
+                PromptFingerprint = ReadString(routing, "promptFingerprint", "prompt_fingerprint"),
                 RawJson = line
             };
         }
@@ -266,11 +396,47 @@ public sealed class JackLlmClient : IDisposable
     private async Task<object> UploadFileAsync(string sessionId, AttachmentInfo file, CancellationToken cancellationToken)
     {
         EnsureConnected();
-        using HttpResponseMessage response = await _http!.PostAsync("/api/chat-file", Json(new { sessionId, name = file.Name, type = file.ContentType, dataUrl = file.DataUrl, asFile = true }), cancellationToken);
+        using HttpResponseMessage response = await _http!.PostAsync("/api/chat-file", Json(new { sessionId, name = file.Name, type = file.MediaType, dataUrl = file.DataUrl, asFile = !file.IsImage }), cancellationToken);
         string body = await response.Content.ReadAsStringAsync(cancellationToken);
         response.EnsureSuccessStatusCode();
         using JsonDocument json = JsonDocument.Parse(body);
         return TryProperty(json.RootElement, "file", out var uploaded) ? JsonSerializer.Deserialize<object>(uploaded.GetRawText())! : new { name = file.Name };
+    }
+
+    private static object[] BuildWireMessages(IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments)
+    {
+        AttachmentInfo[] images = attachments.Where(attachment => attachment.IsImage).ToArray();
+        int imageMessageIndex = -1;
+        if (images.Length > 0)
+        {
+            for (int index = messages.Count - 1; index >= 0; index--)
+            {
+                if (messages[index].Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                {
+                    imageMessageIndex = index;
+                    break;
+                }
+            }
+        }
+
+        var wireMessages = new List<object>(messages.Count);
+        for (int index = 0; index < messages.Count; index++)
+        {
+            ChatMessage message = messages[index];
+            if (index != imageMessageIndex)
+            {
+                wireMessages.Add(new { role = message.Role, content = message.Content });
+                continue;
+            }
+
+            var content = new List<object>();
+            if (!string.IsNullOrWhiteSpace(message.Content))
+                content.Add(new { type = "text", text = message.Content });
+            foreach (AttachmentInfo image in images)
+                content.Add(new { type = "image_url", image_url = new { url = image.DataUrl } });
+            wireMessages.Add(new { role = message.Role, content = content.ToArray() });
+        }
+        return wireMessages.ToArray();
     }
 
     private async Task<JsonDocument> GetJsonAsync(string path, CancellationToken cancellationToken)
@@ -287,6 +453,15 @@ public sealed class JackLlmClient : IDisposable
         EnsureConnected();
         using HttpResponseMessage response = await _http!.PostAsync(path, Json(payload), cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    private async Task<JsonDocument> PostJsonAsync(string path, object payload, CancellationToken cancellationToken)
+    {
+        EnsureConnected();
+        using HttpResponseMessage response = await _http!.PostAsync(path, Json(payload), cancellationToken);
+        string body = await response.Content.ReadAsStringAsync(cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
     }
 
     private static StringContent Json(object value) => new(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");

@@ -182,6 +182,7 @@ public partial class MainWindow : Window {
     private JackLLMSettings _settings = new();
     private string _activeModelRuntimeProvider = RuntimeProviderLlmRuntime;
     private Forms.NotifyIcon? _trayIcon;
+    private System.Drawing.Icon? _trayIconImage;
     private Forms.ContextMenuStrip? _trayMenu;
     private System.Windows.Controls.ContextMenu? _wpfTrayMenu;
     private bool _trayContextMenuAvailabilityLogged;
@@ -417,7 +418,6 @@ public partial class MainWindow : Window {
     private DispatcherTimer? _wpfChatIntellisenseTimer;
     private string _wpfChatActiveStreamId = "";
     private string _lastWpfChatPromptText = "";
-    private Window? _personaPlexInstallToast;
     private bool _personaPlexInstallNoticeShown;
     private bool _personaPlexInstallInProgress;
     private bool _personaPlexNeedsTokenNotice;
@@ -684,6 +684,11 @@ public partial class MainWindow : Window {
                 EnsureLmStudioStartedAsync = EnsureLmStudioProviderForPromptAsync
             };
             proxy.UseStripePaymentsFromEnvironment();
+            proxy.PcAccessCaptureJpeg = CapturePcAccessDesktopJpeg;
+            proxy.PcAccessInput = ApplyPcAccessInput;
+            proxy.PcAccessStartRtmp = StartPcAccessRtmpPublisher;
+            proxy.PcAccessStopRtmp = StopPcAccessRtmpPublisher;
+            proxy.PcAccessDesktopState = GetPcAccessDesktopState;
             return proxy;
         }, cancellationToken);
         _lmStudioRuntime = await Task.Run(
@@ -752,6 +757,8 @@ public partial class MainWindow : Window {
         ServerSessionsListBox.ItemsSource = _serverSessionItems;
         WorkspaceTreeView.ItemsSource = _workspaceTreeItems;
         ServerWorkspaceTreeView.ItemsSource = _workspaceTreeItems;
+        AccessibleDirectoriesListBox.ItemsSource = _accessibleDirectoryItems;
+        ServerAccessibleDirectoriesListBox.ItemsSource = _accessibleDirectoryItems;
         ServicesListBox.ItemsSource = _serviceMetricItems;
         PipelineItemsControl.ItemsSource = _pipelineItems;
         FilesystemPermissionRequestsControl.ItemsSource = _filesystemPermissionRequests;
@@ -1095,6 +1102,7 @@ public partial class MainWindow : Window {
             DisposeWpfChatVoice();
             try { StopShellMode(updateCheckbox: false); } catch { }
             StopLinuxNativeBackendSupervisor();
+            StopPcAccessRtmpPublisher();
             try {
                 if (_proxy.IsListening || (_proxy.IsChatServerCreated && _proxy.ChatServer.IsListening))
                     _proxy.Stop();
@@ -4368,6 +4376,8 @@ public partial class MainWindow : Window {
         CheckBox terminalCommands = CreatePermissionCheckBox("Terminal Commands", snapshot.TerminalCommands);
         CheckBox terminalForeverApproved = CreatePermissionCheckBox("Terminal Forever Approved", snapshot.TerminalForeverApproved);
         terminalForeverApproved.ToolTip = "THIS IS DANGEROUS AND CAN BE USED TO HARM YOUR COMPUTER.";
+        CheckBox pcAccess = CreatePermissionCheckBox("PC Access", snapshot.PcAccess);
+        pcAccess.ToolTip = "Allows a paired JackLLM Mobile device to view/control Windows and access approved filesystem roots.";
 
         root.Children.Add(agentAccess);
         root.Children.Add(fileUploads);
@@ -4379,6 +4389,7 @@ public partial class MainWindow : Window {
         root.Children.Add(sqlAdmin);
         root.Children.Add(terminalCommands);
         root.Children.Add(terminalForeverApproved);
+        root.Children.Add(pcAccess);
 
         root.Children.Add(new TextBlock {
             Text = "Terminal command rules",
@@ -4472,6 +4483,7 @@ public partial class MainWindow : Window {
                 snapshot.SqlAdmin = sqlAdmin.IsChecked.GetValueOrDefault();
                 snapshot.TerminalCommands = terminalCommands.IsChecked.GetValueOrDefault();
                 snapshot.TerminalForeverApproved = terminalForeverApproved.IsChecked.GetValueOrDefault();
+                snapshot.PcAccess = pcAccess.IsChecked.GetValueOrDefault();
                 ChatClientPermissionSnapshot updated = _proxy.SaveChatClientPermissionsDiagnostics(snapshot);
                 AppendLog("Saved chat client permissions for " + updated.OwnerKey + ".");
                 RefreshSessionsPanel(true);
@@ -4580,8 +4592,8 @@ public partial class MainWindow : Window {
     private void BrowseAccessibleDirectoryButton_Click(object sender, RoutedEventArgs e) {
         try {
             var dialog = new OpenFolderDialog {
-                Title = "Select accessible directory",
-                Multiselect = false
+                Title = "Select accessible directories",
+                Multiselect = true
             };
             object? selectedTreeItem = ServerWorkspaceTreeView?.SelectedItem ?? WorkspaceTreeView?.SelectedItem;
             if (selectedTreeItem is FileTreeItem selected &&
@@ -4594,7 +4606,7 @@ public partial class MainWindow : Window {
             }
 
             if (dialog.ShowDialog(this) == true)
-                AddAccessibleDirectoryPath(dialog.FolderName);
+                AddAccessibleDirectoryPaths(dialog.FolderNames);
         } catch (Exception ex) {
             SetFilesystemAccessStatusText("Add failed: " + TrimForDisplay(ex.Message, 120));
         }
@@ -4607,6 +4619,35 @@ public partial class MainWindow : Window {
             return;
 
         RemoveAccessibleDirectoryPath(item.SourcePath);
+    }
+
+    private void RemoveAccessibleDirectoryListItemButton_Click(object sender, RoutedEventArgs e) {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.Tag is AccessibleDirectoryListItem item &&
+            !string.IsNullOrWhiteSpace(item.Path))
+            RemoveAccessibleDirectoryPath(item.Path);
+    }
+
+    private void ClearAccessibleDirectoriesButton_Click(object sender, RoutedEventArgs e) {
+        List<string> paths = _accessibleDirectoryItems
+            .Select(item => item.Path)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToList();
+        if (paths.Count == 0) {
+            SetFilesystemAccessStatusText("No accessible directories to clear.");
+            return;
+        }
+
+        MessageBoxResult result = MessageBox.Show(
+            this,
+            "Remove access to all " + paths.Count + " listed director" + (paths.Count == 1 ? "y?" : "ies?"),
+            "Clear accessible folders",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes)
+            return;
+
+        RemoveAccessibleDirectoryPaths(paths);
     }
 
     private async void DownloadWorkspaceTreeDirectoryZipButton_Click(object sender, RoutedEventArgs e) {
@@ -4671,17 +4712,41 @@ public partial class MainWindow : Window {
             : item.SourcePath);
     }
 
-    private void AddAccessibleDirectoryPath(string path) {
+    private void AddAccessibleDirectoryPaths(IEnumerable<string> paths) {
         try {
             string ownerKey = ResolveActiveFilesystemOwnerKey();
-            _proxy.AddChatFilesystemAccessDirectory(ownerKey, path);
-            SetFilesystemAccessStatusText("Added directory.");
+            int added = 0;
+            foreach (string path in paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase)) {
+                _proxy.AddChatFilesystemAccessDirectory(ownerKey, path);
+                added++;
+            }
+            SetFilesystemAccessStatusText(added == 0
+                ? "No directories selected."
+                : "Added " + added + " director" + (added == 1 ? "y." : "ies."));
             _accessibleDirectorySignature = "";
             _workspaceTreeSignature = "";
             RefreshAccessibleDirectories(true);
             RefreshWorkspaceExplorer(true);
         } catch (Exception ex) {
             SetFilesystemAccessStatusText("Add failed: " + TrimForDisplay(ex.Message, 120));
+        }
+    }
+
+    private void RemoveAccessibleDirectoryPaths(IEnumerable<string> paths) {
+        try {
+            string ownerKey = ResolveActiveFilesystemOwnerKey();
+            int removed = 0;
+            foreach (string path in paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase)) {
+                _proxy.RemoveChatFilesystemAccessDirectory(ownerKey, path);
+                removed++;
+            }
+            SetFilesystemAccessStatusText("Removed " + removed + " director" + (removed == 1 ? "y." : "ies."));
+            _accessibleDirectorySignature = "";
+            _workspaceTreeSignature = "";
+            RefreshAccessibleDirectories(true);
+            RefreshWorkspaceExplorer(true);
+        } catch (Exception ex) {
+            SetFilesystemAccessStatusText("Remove failed: " + TrimForDisplay(ex.Message, 120));
         }
     }
 
@@ -9397,9 +9462,13 @@ public partial class MainWindow : Window {
         Forms.ContextMenuStrip? menu = TryCreateTrayContextMenu();
 
         try {
+            string? executablePath = Environment.ProcessPath;
+            _trayIconImage = !string.IsNullOrWhiteSpace(executablePath)
+                ? System.Drawing.Icon.ExtractAssociatedIcon(executablePath)
+                : null;
             _trayIcon = new Forms.NotifyIcon {
                 Text = BuildTrayIconText(),
-                Icon = System.Drawing.SystemIcons.Application,
+                Icon = _trayIconImage ?? System.Drawing.SystemIcons.Application,
                 ContextMenuStrip = menu,
                 Visible = true
             };
@@ -9407,6 +9476,8 @@ public partial class MainWindow : Window {
             AppendLog("Tray icon unavailable: " + TrimForDisplay(ex.GetBaseException().Message, 180));
             _trayMenu?.Dispose();
             _trayMenu = null;
+            _trayIconImage?.Dispose();
+            _trayIconImage = null;
             return false;
         }
 
@@ -9920,6 +9991,8 @@ public partial class MainWindow : Window {
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         _trayIcon = null;
+        _trayIconImage?.Dispose();
+        _trayIconImage = null;
         _trayMenu?.Dispose();
         _trayMenu = null;
     }
@@ -13178,6 +13251,12 @@ public partial class MainWindow : Window {
         if (_personaPlexInstallNoticeShown || _personaPlexInstallInProgress || _shutdownCompleted || _isStopping)
             return;
 
+        // A model installed through Hugging Face is already a deliberate
+        // PersonaPlex setup. Do not nag at startup merely because Workstation's
+        // optional managed Python runtime lives somewhere else or is not set up.
+        if (HasPersonaPlexHuggingFaceModelCache())
+            return;
+
         try {
             using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(8));
             using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, PersonaPlexApiUrl("/api/personaplex/status"));
@@ -13202,6 +13281,19 @@ public partial class MainWindow : Window {
         } catch (Exception ex) {
             TryBeginOnUi(() => AppendLog("PersonaPlex install notice check failed: " + TrimForDisplay(ex.Message, 180)), "PersonaPlex notice log");
         }
+    }
+
+    private static bool HasPersonaPlexHuggingFaceModelCache() {
+        var roots = new List<string>();
+        string? hubCache = Environment.GetEnvironmentVariable("HUGGINGFACE_HUB_CACHE");
+        string? hfHome = Environment.GetEnvironmentVariable("HF_HOME");
+        if (!string.IsNullOrWhiteSpace(hubCache))
+            roots.Add(hubCache);
+        if (!string.IsNullOrWhiteSpace(hfHome))
+            roots.Add(Path.Combine(hfHome, "hub"));
+        roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "huggingface", "hub"));
+
+        return roots.Any(root => Directory.Exists(Path.Combine(root, "models--nvidia--personaplex-7b-v1")));
     }
 
     private static bool TryReadJsonBool(JsonElement element, string name) {
@@ -13235,71 +13327,29 @@ public partial class MainWindow : Window {
             TryBeginOnUi(ShowPersonaPlexInstallToast, "PersonaPlex install toast");
             return;
         }
-        if (_personaPlexInstallToast != null)
+        if (PersonaPlexInstallOverlay.Visibility == Visibility.Visible)
             return;
-
-        var toast = new Window {
-            Title = "Voice chat setup",
-            Owner = IsVisible ? this : null,
-            Width = 470,
-            SizeToContent = SizeToContent.Height,
-            WindowStyle = WindowStyle.None,
-            ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false,
-            Topmost = true,
-            ShowActivated = false,
-            Background = new SolidColorBrush(Color.FromRgb(24, 32, 38)),
-            AllowsTransparency = false
-        };
-
-        var border = new Border {
-            Background = new SolidColorBrush(Color.FromRgb(24, 32, 38)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(64, 201, 162)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(14)
-        };
-
         bool needsToken = _personaPlexNeedsTokenNotice;
-        var root = new StackPanel();
-        root.Children.Add(new TextBlock {
-            Text = needsToken ? "Finish NVIDIA PersonaPlex Voice Mode setup" : "Install NVIDIA PersonaPlex for Voice Mode?",
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 15,
-            Foreground = Brushes.White,
-            TextWrapping = TextWrapping.Wrap
-        });
-        root.Children.Add(new TextBlock {
-            Text = needsToken
-                ? "PersonaPlex is installed, but NVIDIA's model weights need Hugging Face access. Accept the nvidia/personaplex-7b-v1 license, then paste a token here so Workstation can start Voice Mode."
-                : "Optional voice chat uses NVIDIA PersonaPlex. JackLLM Workstation can download it, create the Python environment, and configure CUDA to use all detected NVIDIA GPUs.",
-            Foreground = new SolidColorBrush(Color.FromRgb(196, 205, 218)),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 6, 0, 12)
-        });
-
-        var buttons = new WrapPanel();
-        AddPersonaPlexInstallToastButton(buttons, needsToken ? "Add Token" : "Install", () => {
-            ClosePersonaPlexInstallToast();
-            if (needsToken)
-                ShowPersonaPlexTokenDialog();
-            else
-                _ = InstallPersonaPlexVoiceModeFromWorkstationAsync();
-        });
-        AddPersonaPlexInstallToastButton(buttons, "Model Page", OpenPersonaPlexModelPage, new SolidColorBrush(Color.FromRgb(43, 52, 63)));
-        AddPersonaPlexInstallToastButton(buttons, "Not now", DismissPersonaPlexInstallToast, new SolidColorBrush(Color.FromRgb(43, 52, 63)));
-
-        root.Children.Add(buttons);
-        border.Child = root;
-        toast.Content = border;
-        toast.Closed += (_, _) => {
-            if (ReferenceEquals(_personaPlexInstallToast, toast))
-                _personaPlexInstallToast = null;
-        };
-        _personaPlexInstallToast = toast;
-        toast.Show();
-        PositionPersonaPlexInstallToast();
+        PersonaPlexInstallOverlayTitle.Text = needsToken ? "Finish NVIDIA PersonaPlex Voice Mode setup" : "Install NVIDIA PersonaPlex for Voice Mode?";
+        PersonaPlexInstallOverlayMessage.Text = needsToken
+            ? "PersonaPlex is installed, but NVIDIA's model weights need Hugging Face access. Accept the nvidia/personaplex-7b-v1 license, then paste a token here so Workstation can start Voice Mode."
+            : "Optional voice chat uses NVIDIA PersonaPlex. JackLLM Workstation can download it, create the Python environment, and configure CUDA to use all detected NVIDIA GPUs.";
+        PersonaPlexInstallOverlayPrimaryButton.Content = needsToken ? "Add Token" : "Install";
+        PersonaPlexInstallOverlay.Visibility = Visibility.Visible;
     }
+
+    private void PersonaPlexInstallOverlayPrimaryButton_Click(object sender, RoutedEventArgs e) {
+        bool needsToken = _personaPlexNeedsTokenNotice;
+        ClosePersonaPlexInstallToast();
+        if (needsToken)
+            ShowPersonaPlexTokenDialog();
+        else
+            _ = InstallPersonaPlexVoiceModeFromWorkstationAsync();
+    }
+
+    private void PersonaPlexInstallOverlayModelPageButton_Click(object sender, RoutedEventArgs e) => OpenPersonaPlexModelPage();
+
+    private void PersonaPlexInstallOverlayDismissButton_Click(object sender, RoutedEventArgs e) => DismissPersonaPlexInstallToast();
 
     private void AddPersonaPlexInstallToastButton(WrapPanel panel, string label, Action action, Brush? background = null) {
         var button = new Button {
@@ -13415,11 +13465,7 @@ public partial class MainWindow : Window {
     }
 
     private void ClosePersonaPlexInstallToast() {
-        if (_personaPlexInstallToast == null)
-            return;
-        Window toast = _personaPlexInstallToast;
-        _personaPlexInstallToast = null;
-        try { toast.Close(); } catch { }
+        PersonaPlexInstallOverlay.Visibility = Visibility.Collapsed;
     }
 
     private void DismissPersonaPlexInstallToast() {
@@ -13430,15 +13476,7 @@ public partial class MainWindow : Window {
     }
 
     private void PositionPersonaPlexInstallToast() {
-        if (_personaPlexInstallToast == null)
-            return;
-        try {
-            Rect workArea = SystemParameters.WorkArea;
-            _personaPlexInstallToast.UpdateLayout();
-            double height = _personaPlexInstallToast.ActualHeight > 0 ? _personaPlexInstallToast.ActualHeight : _personaPlexInstallToast.Height;
-            _personaPlexInstallToast.Left = Math.Max(workArea.Left + 8, workArea.Right - _personaPlexInstallToast.Width - 16);
-            _personaPlexInstallToast.Top = Math.Max(workArea.Top + 8, workArea.Bottom - height - 16);
-        } catch { }
+        // The notification is hosted by MainWindow.xaml and follows its layout.
     }
 
     private async Task SavePersonaPlexTokenFromWorkstationAsync(string token) {
@@ -13664,6 +13702,8 @@ public partial class MainWindow : Window {
             UserPermTerminalCommandsCheckBox.IsChecked = enabled;
         if (UserPermTerminalTrustCheckBox != null)
             UserPermTerminalTrustCheckBox.IsChecked = enabled;
+        if (UserPermPcAccessCheckBox != null)
+            UserPermPcAccessCheckBox.IsChecked = enabled;
     }
 
     private void ApplyUserPermissionsSnapshot(ChatClientPermissionSnapshot snapshot) {
@@ -13688,6 +13728,8 @@ public partial class MainWindow : Window {
             UserPermTerminalCommandsCheckBox.IsChecked = snapshot.TerminalCommands;
         if (UserPermTerminalTrustCheckBox != null)
             UserPermTerminalTrustCheckBox.IsChecked = snapshot.TerminalForeverApproved;
+        if (UserPermPcAccessCheckBox != null)
+            UserPermPcAccessCheckBox.IsChecked = snapshot.PcAccess;
     }
 
     private ChatClientPermissionSnapshot ReadSelectedUserPermissionsSnapshot(WebAuthUserItem? user) {
@@ -13708,6 +13750,7 @@ public partial class MainWindow : Window {
         snapshot.SqlAdmin = UserPermSqlAdminCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.TerminalCommands = UserPermTerminalCommandsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.TerminalForeverApproved = UserPermTerminalTrustCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.PcAccess = UserPermPcAccessCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         return snapshot;
     }
 
@@ -16854,6 +16897,7 @@ public partial class MainWindow : Window {
             AddServiceConfigRow(directory.Exists ? "Folder" : "Missing folder", directory.DetailLine, directory.Exists ? null : Brushes.Orange);
         AddServiceActionRow(
             CreateServiceActionButton("Add folder", () => BrowseAccessibleDirectoryButton_Click(null, new RoutedEventArgs())),
+            CreateServiceActionButton("Clear folders", () => ClearAccessibleDirectoriesButton_Click(null, new RoutedEventArgs()), directories.Count > 0),
             CreateServiceActionButton("Refresh folders", () => {
                 RefreshAccessibleDirectories(true);
                 RefreshWorkspaceExplorer(true);

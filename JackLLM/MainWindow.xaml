@@ -5,6 +5,7 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="JackLLM Workstation"
+        Icon="Assets/JackLLM.ico"
         Width="1280"
         Height="1100"
         MinWidth="700"
@@ -737,6 +738,7 @@
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="*"/>
                                         </Grid.RowDefinitions>
                                         <DockPanel>
@@ -745,13 +747,20 @@
                                                     DockPanel.Dock="Right"
                                                     Click="RefreshExplorerButton_Click"
                                                     Padding="8,3"/>
+                                            <Button x:Name="ClearAccessibleDirectoriesButton"
+                                                    Content="Clear All"
+                                                    DockPanel.Dock="Right"
+                                                    Click="ClearAccessibleDirectoriesButton_Click"
+                                                    Padding="8,3"
+                                                    Margin="0,0,6,0"
+                                                    ToolTip="Remove access to every listed directory"/>
                                             <Button x:Name="BrowseAccessibleDirectoryButton"
-                                                    Content="Add Dir"
+                                                    Content="Add Folders"
                                                     DockPanel.Dock="Right"
                                                     Click="BrowseAccessibleDirectoryButton_Click"
                                                     Padding="8,3"
                                                     Margin="0,0,6,0"
-                                                    ToolTip="Add accessible directory"/>
+                                                    ToolTip="Add one or more accessible directories"/>
                                             <TextBlock Text="Solution Explorer"
                                                        FontSize="16"
                                                        FontWeight="SemiBold"
@@ -773,8 +782,44 @@
                                                        TextWrapping="Wrap"
                                                        Margin="0,2,0,0"/>
                                         </StackPanel>
+                                        <Border Grid.Row="2"
+                                                MaxHeight="150"
+                                                Margin="0,0,0,7"
+                                                Background="#66070A10"
+                                                BorderBrush="{StaticResource PanelBorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="4">
+                                            <ListBox x:Name="AccessibleDirectoriesListBox"
+                                                     Background="Transparent"
+                                                     BorderThickness="0"
+                                                     Foreground="{StaticResource TextBrush}"
+                                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid Margin="5,3">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                                                <TextBlock Text="{Binding Path}" Foreground="{StaticResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"/>
+                                                            </StackPanel>
+                                                            <Button Grid.Column="1"
+                                                                    Content="Remove"
+                                                                    Tag="{Binding}"
+                                                                    Click="RemoveAccessibleDirectoryListItemButton_Click"
+                                                                    Padding="7,2"
+                                                                    Margin="8,0,0,0"
+                                                                    VerticalAlignment="Center"/>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </Border>
                                         <TreeView x:Name="WorkspaceTreeView"
-                                                  Grid.Row="2"
+                                                  Grid.Row="3"
                                                   Background="#66070A10"
                                                   BorderBrush="{StaticResource PanelBorderBrush}"
                                                   BorderThickness="1"
@@ -3694,6 +3739,10 @@
                                                                       Content="Terminal forever approved"
                                                                       ToolTip="THIS IS DANGEROUS AND CAN BE USED TO HARM YOUR COMPUTER."
                                                                       Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserPermPcAccessCheckBox"
+                                                                      Content="PC Access"
+                                                                      ToolTip="Allows a permitted JackLLM Mobile device to view/control Windows and access approved filesystem roots."
+                                                                      Margin="0,0,8,7"/>
                                                         </UniformGrid>
                                                         <WrapPanel Margin="0,4,0,0">
                                                             <Button Content="Load Permissions"
@@ -3914,6 +3963,7 @@
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="*"/>
                                                 </Grid.RowDefinitions>
                                                 <DockPanel>
@@ -3922,12 +3972,20 @@
                                                             DockPanel.Dock="Right"
                                                             Click="RefreshExplorerButton_Click"
                                                             Padding="8,3"/>
+                                                    <Button x:Name="ServerClearAccessibleDirectoriesButton"
+                                                            Content="Clear All"
+                                                            DockPanel.Dock="Right"
+                                                            Click="ClearAccessibleDirectoriesButton_Click"
+                                                            Padding="8,3"
+                                                            Margin="0,0,6,0"
+                                                            ToolTip="Remove access to every listed directory"/>
                                                     <Button x:Name="ServerBrowseAccessibleDirectoryButton"
-                                                            Content="Add Dir"
+                                                            Content="Add Folders"
                                                             DockPanel.Dock="Right"
                                                             Click="BrowseAccessibleDirectoryButton_Click"
                                                             Padding="8,3"
-                                                            Margin="0,0,6,0"/>
+                                                            Margin="0,0,6,0"
+                                                            ToolTip="Add one or more accessible directories"/>
                                                     <TextBlock Text="Solution Explorer"
                                                                FontSize="16"
                                                                FontWeight="SemiBold"
@@ -3949,8 +4007,44 @@
                                                                TextWrapping="Wrap"
                                                                Margin="0,2,0,0"/>
                                                 </StackPanel>
+                                                <Border Grid.Row="2"
+                                                        MaxHeight="150"
+                                                        Margin="0,0,0,7"
+                                                        Background="#66070A10"
+                                                        BorderBrush="{StaticResource PanelBorderBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="4">
+                                                    <ListBox x:Name="ServerAccessibleDirectoriesListBox"
+                                                             Background="Transparent"
+                                                             BorderThickness="0"
+                                                             Foreground="{StaticResource TextBrush}"
+                                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                        <ListBox.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Grid Margin="5,3">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="Auto"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <StackPanel>
+                                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                                                        <TextBlock Text="{Binding Path}" Foreground="{StaticResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"/>
+                                                                    </StackPanel>
+                                                                    <Button Grid.Column="1"
+                                                                            Content="Remove"
+                                                                            Tag="{Binding}"
+                                                                            Click="RemoveAccessibleDirectoryListItemButton_Click"
+                                                                            Padding="7,2"
+                                                                            Margin="8,0,0,0"
+                                                                            VerticalAlignment="Center"/>
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </ListBox.ItemTemplate>
+                                                    </ListBox>
+                                                </Border>
                                                 <TreeView x:Name="ServerWorkspaceTreeView"
-                                                          Grid.Row="2"
+                                                          Grid.Row="3"
                                                           Background="#66070A10"
                                                           BorderBrush="{StaticResource PanelBorderBrush}"
                                                           BorderThickness="1"
@@ -4227,6 +4321,56 @@
                     </Grid>
                 </Border>
             </Grid>
+
+            <Border x:Name="PersonaPlexInstallOverlay"
+                    Grid.Row="1"
+                    Panel.ZIndex="900"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Width="470"
+                    MaxWidth="470"
+                    Margin="18"
+                    Padding="14"
+                    Background="#F0182026"
+                    BorderBrush="#40C9A2"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock x:Name="PersonaPlexInstallOverlayTitle"
+                               FontWeight="SemiBold"
+                               FontSize="15"
+                               Foreground="White"
+                               TextWrapping="Wrap"/>
+                    <TextBlock x:Name="PersonaPlexInstallOverlayMessage"
+                               Foreground="#C4CDDA"
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,12"/>
+                    <WrapPanel>
+                        <Button x:Name="PersonaPlexInstallOverlayPrimaryButton"
+                                Click="PersonaPlexInstallOverlayPrimaryButton_Click"
+                                Margin="0,0,6,6"
+                                Padding="10,5"
+                                Background="#1E5848"
+                                Foreground="White"
+                                BorderBrush="#40C9A2"/>
+                        <Button Content="Model Page"
+                                Click="PersonaPlexInstallOverlayModelPageButton_Click"
+                                Margin="0,0,6,6"
+                                Padding="10,5"
+                                Background="#2B343F"
+                                Foreground="White"
+                                BorderBrush="#40C9A2"/>
+                        <Button Content="Not now"
+                                Click="PersonaPlexInstallOverlayDismissButton_Click"
+                                Margin="0,0,6,6"
+                                Padding="10,5"
+                                Background="#2B343F"
+                                Foreground="White"
+                                BorderBrush="#40C9A2"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
 
             <Canvas x:Name="RemoteCursorOverlay"
                     Grid.RowSpan="2"

@@ -26,11 +26,11 @@ public sealed class ServerDirectoryService
         if (server is null)
             throw new ArgumentNullException(nameof(server));
 
-        if (!string.IsNullOrWhiteSpace(server.ServerId))
-            return "https://socketjack.com/proxy/" + Uri.EscapeDataString(server.LaunchKey);
-
         if (server.IsSaved && Uri.TryCreate(server.Endpoint, UriKind.Absolute, out Uri? savedEndpoint))
             return savedEndpoint.ToString().TrimEnd('/');
+
+        if (!string.IsNullOrWhiteSpace(server.ServerId))
+            return "https://socketjack.com/proxy/" + Uri.EscapeDataString(server.LaunchKey);
 
         if (Uri.TryCreate(server.Endpoint, UriKind.Absolute, out Uri? endpointUri) &&
             endpointUri.AbsolutePath.Contains("/proxy/", StringComparison.OrdinalIgnoreCase))

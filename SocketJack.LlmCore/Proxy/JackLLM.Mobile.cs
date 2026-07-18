@@ -20,6 +20,8 @@ public partial class LmVsProxy
 
     private void RegisterMobileRoutes(HttpServer server)
     {
+        MobileAccessState persistedState = GetMobileAccessState();
+        MobileAccessEnabled = MobileAccessEnabled || persistedState.Enabled;
         server.Map("GET", "/mobile", (connection, request, cancellationToken) => HandleMobileAdminPage(connection, request));
         server.Map("GET", "/mobile/", (connection, request, cancellationToken) => HandleMobileAdminPage(connection, request));
         server.Map("GET", "/api/mobile/status", (connection, request, cancellationToken) => HandleMobileStatus(connection, request));
@@ -28,6 +30,7 @@ public partial class LmVsProxy
         server.Map("POST", "/api/mobile/pairing/complete", (connection, request, cancellationToken) => HandleMobilePairingComplete(connection, request));
         server.Map("GET", "/api/mobile/devices", (connection, request, cancellationToken) => HandleMobileDevices(connection, request));
         server.Map("DELETE", "/api/mobile/devices/*", (connection, request, cancellationToken) => HandleMobileDeviceDelete(connection, request));
+        RegisterPcAccessRoutes(server);
     }
 
     private string HandleMobileAdminPage(NetworkConnection connection, HttpRequest request)
@@ -108,6 +111,9 @@ load().catch(e=>setNote(e.message,true));
             JsonElement root = document.RootElement;
             bool enabled = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("enabled", out JsonElement enabledElement) && enabledElement.ValueKind == JsonValueKind.True;
             MobileAccessEnabled = enabled;
+            MobileAccessState state = GetMobileAccessState();
+            state.Enabled = enabled;
+            SaveMobileAccessState(state);
             return JsonSerializer.Serialize(new { ok = true, enabled = MobileAccessEnabled });
         }
         catch (JsonException ex) { return BuildJsonError(request, 400, "Bad Request", "Invalid JSON: " + ex.Message); }
@@ -143,7 +149,8 @@ load().catch(e=>setNote(e.message,true));
             {
                 CodeHash = HashSecret(code),
                 CreatedAtUtc = DateTimeOffset.UtcNow,
-                ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(5)
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(5),
+                OwnerKey = GetChatSessionOwnerKey(connection, request)
             });
             SaveMobileAccessState(state);
             return JsonSerializer.Serialize(new
@@ -195,6 +202,7 @@ load().catch(e=>setNote(e.message,true));
                     LastSeenAtUtc = now,
                     Scopes = new[] { "chat", "models", "sessions", "files", "media", "voice", "share" }
                 };
+                device.OwnerKey = string.IsNullOrWhiteSpace(pairing.OwnerKey) ? "mobile:" + device.Id : pairing.OwnerKey;
                 state.Devices.Add(device);
                 SaveMobileAccessState(state);
                 return JsonSerializer.Serialize(new { ok = true, token, deviceId = device.Id, device.Name, device.Scopes });
@@ -256,7 +264,19 @@ load().catch(e=>setNote(e.message,true));
             _mobileAccessState = File.Exists(path) ? JsonSerializer.Deserialize<MobileAccessState>(File.ReadAllText(path)) : null;
         }
         catch { _mobileAccessState = null; }
-        return _mobileAccessState ??= new MobileAccessState();
+        _mobileAccessState ??= new MobileAccessState();
+        bool migrated = false;
+        foreach (MobileDeviceRecord device in _mobileAccessState.Devices)
+        {
+            if (!string.IsNullOrWhiteSpace(device.OwnerKey)) continue;
+            // Devices paired before owner-aware pairing belonged to the local
+            // Workstation user. Preserve their old mobile:<id> data through the
+            // equivalent-owner alias while moving future data to that user.
+            device.OwnerKey = GetDefaultLocalChatOwnerKey();
+            migrated = true;
+        }
+        if (migrated) SaveMobileAccessState(_mobileAccessState);
+        return _mobileAccessState;
     }
 
     private void SaveMobileAccessState(MobileAccessState state)
@@ -284,6 +304,7 @@ load().catch(e=>setNote(e.message,true));
 
     private sealed class MobileAccessState
     {
+        public bool Enabled { get; set; }
         public List<MobilePairingRecord> Pairings { get; set; } = new List<MobilePairingRecord>();
         public List<MobileDeviceRecord> Devices { get; set; } = new List<MobileDeviceRecord>();
     }
@@ -294,6 +315,7 @@ load().catch(e=>setNote(e.message,true));
         public DateTimeOffset CreatedAtUtc { get; set; }
         public DateTimeOffset ExpiresAtUtc { get; set; }
         public bool Used { get; set; }
+        public string OwnerKey { get; set; } = "";
     }
 
     private sealed class MobileDeviceRecord
@@ -305,5 +327,6 @@ load().catch(e=>setNote(e.message,true));
         public DateTimeOffset CreatedAtUtc { get; set; }
         public DateTimeOffset LastSeenAtUtc { get; set; }
         public string[] Scopes { get; set; } = Array.Empty<string>();
+        public string OwnerKey { get; set; } = "";
     }
 }

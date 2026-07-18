@@ -67,6 +67,7 @@
     <IsPackable>false</IsPackable>
     <AssemblyTitle>JackLLM Workstation</AssemblyTitle>
     <Product>JackLLM Workstation</Product>
+    <ApplicationIcon>Assets\JackLLM.ico</ApplicationIcon>
     <Version>2026.0</Version>
     <AssemblyVersion>2026.0.0.0</AssemblyVersion>
     <FileVersion>2026.0.0.0</FileVersion>
@@ -75,6 +76,11 @@
     <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8618;CS8622;CS8625</NoWarn>
     <JackOnnxBundleCudaDependencies>true</JackOnnxBundleCudaDependencies>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\JackLLM.ico" />
+    <Resource Include="Assets\JackLLM.png" />
+  </ItemGroup>
 
   <Target Name="CopyJackLLMUpdater" AfterTargets="Build" Condition="'$(IncludeJackLLMUpdater)' == 'true'">
     <ItemGroup>

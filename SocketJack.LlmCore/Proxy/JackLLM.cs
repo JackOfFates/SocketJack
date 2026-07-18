@@ -571,7 +571,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private const string ErrorDiagnosticsTableName = "LmVsProxyErrorLog";
 
-	private const int ChatSessionColumnCount = 19;
+	private const int ChatSessionColumnCount = 23;
 
 	private const string ChatMemoriesTableName = "JackLLMMemories";
 
@@ -5021,6 +5021,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return new FileResponse(bytes, "image/png", "JackLLMWorkstationMetadata.png");
 	}
 
+	private static object BuildEmbeddedChatAssetResponse(HttpRequest request, string resourceName, string contentType)
+	{
+		byte[] bytes = HtmlPageResources.GetBytes(resourceName);
+		if (bytes == null || bytes.Length == 0)
+		{
+			request.Context.StatusCodeNumber = 404;
+			request.Context.ReasonPhrase = "Not Found";
+			request.Context.Response.ContentType = "text/plain; charset=utf-8";
+			return "JackLLM asset not found.";
+		}
+		request.Context.Response.Headers["Cache-Control"] = "public, max-age=604800, immutable";
+		return new FileResponse(bytes, contentType, resourceName);
+	}
+
 	private HttpServer CreateChatServer()
 	{
 		NetworkOptions networkOptions = NetworkOptions.NewDefault();
@@ -5063,10 +5077,19 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		string chatUiHtml = HtmlPageResources.GetHtml("JackLLMWebChat.html");
 		server.Map("GET", "/", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => RenderChatServerHtml(chatUiHtml, chatUiVars, request));
 		server.Map("GET", "/Session", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => RenderChatServerHtml(chatUiHtml, chatUiVars, request));
+		server.Map("GET", "/favicon.ico", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMFavicon.ico", "image/x-icon"));
+		server.Map("GET", "/assets/jackllm-favicon-16.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMFavicon16.png", "image/png"));
+		server.Map("GET", "/assets/jackllm-favicon-32.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMFavicon32.png", "image/png"));
+		server.Map("GET", "/assets/jackllm-favicon-48.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMFavicon48.png", "image/png"));
+		server.Map("GET", "/assets/jackllm-apple-touch-icon.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMAppleTouchIcon180.png", "image/png"));
+		server.Map("GET", "/assets/jackllm-icon-192.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMWebIcon192.png", "image/png"));
+		server.Map("GET", "/assets/jackllm-icon-512.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMWebIcon512.png", "image/png"));
+		server.Map("GET", "/site.webmanifest", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildEmbeddedChatAssetResponse(request, "JackLLMSite.webmanifest", "application/manifest+json; charset=utf-8"));
 		string workstationHtml = HtmlPageResources.GetHtml("JackLLMWorkstation.html");
 		server.Map("GET", "/Workstation", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => RenderChatServerHtml(workstationHtml, null, request));
 		RegisterSocketChatRoutes(server);
 		RegisterJackDirectorRoutes(server);
+		RegisterDreamRoutes(server);
 		server.Map("GET", "/assets/jackllm-workstation-metadata.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildWorkstationMetadataImageResponse(request));
 		server.Map("GET", "/Account", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildSocketJackAccountPage(connection, request));
 		RegisterSockJackDmlRoutes(server);
@@ -5089,6 +5112,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("OPTIONS", "/api/chat-sql-admin/control", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("GET", "/api/models", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatUiModelsRequest(cancellationToken));
 		server.Map("GET", "/api/model-runtime/models", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/models", null, cancellationToken));
+		server.Map("POST", "/api/model-routing/preview", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/model-routing/preview", request.Body, cancellationToken));
+		server.Map("POST", "/api/model-routing/feedback", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/model-routing/feedback", request.Body, cancellationToken));
+		server.Map("GET", "/api/model-routing/status", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/model-routing/status", null, cancellationToken));
 		server.Map("POST", "/api/model-runtime/models/load", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/models/load", request.Body, cancellationToken));
 		server.Map("POST", "/api/model-runtime/models/unload", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/models/unload", request.Body, cancellationToken));
 		server.Map("POST", "/api/model-runtime/models/download", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/models/download", request.Body, cancellationToken));
@@ -5108,9 +5134,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		foreach (string openAiModelsAlias in new[] { "/models", "/v1/models", "/api/model-runtime/v1/models", "/api/model-runtime/v1/v1/models", "/api/model-runtime/openai/v1/models", "/api/model-runtime/v1/openai/v1/models" })
 			server.Map("GET", openAiModelsAlias, (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/v1/models", null, cancellationToken));
 		foreach (string chatCompletionsAlias in new[] { "/chat/completions", "/v1/chat/completions", "/api/model-runtime/v1/chat/completions", "/api/model-runtime/chat/completions", "/api/model-runtime/v1/v1/chat/completions", "/api/model-runtime/openai/v1/chat/completions", "/api/model-runtime/v1/openai/v1/chat/completions" })
-			server.MapStream("POST", chatCompletionsAlias, async (NetworkConnection connection, HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken) => await ForwardLocalModelRuntimeStreamRequestAsync("POST", "/v1/chat/completions", request, stream, cancellationToken));
+			server.MapStream("POST", chatCompletionsAlias, async (NetworkConnection connection, HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken) => { EnrichRuntimeRequestWithMemories(connection, request, responsesApi: false); await ForwardLocalModelRuntimeStreamRequestAsync("POST", "/v1/chat/completions", request, stream, cancellationToken); });
 		foreach (string responsesAlias in new[] { "/v1/responses", "/api/model-runtime/v1/responses", "/api/model-runtime/v1/v1/responses", "/api/model-runtime/openai/v1/responses", "/api/model-runtime/v1/openai/v1/responses" })
-			server.MapStream("POST", responsesAlias, async (NetworkConnection connection, HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken) => await ForwardLocalModelRuntimeStreamRequestAsync("POST", "/v1/responses", request, stream, cancellationToken));
+			server.MapStream("POST", responsesAlias, async (NetworkConnection connection, HttpRequest request, ChunkedStream stream, CancellationToken cancellationToken) => { EnrichRuntimeRequestWithMemories(connection, request, responsesApi: true); await ForwardLocalModelRuntimeStreamRequestAsync("POST", "/v1/responses", request, stream, cancellationToken); });
 		server.Map("GET", "/api/model-runtime/compatibility", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("GET", "/api/v1/runtime/compatibility" + (string.IsNullOrWhiteSpace(request.QueryString) ? "" : ("?" + request.QueryString)), null, cancellationToken));
 		server.Map("POST", "/api/model-runtime/compatibility/config", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/runtime/compatibility/config", request.Body, cancellationToken));
 		server.Map("POST", "/api/model-runtime/compatibility/reset", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ForwardLocalModelRuntimeRequest("POST", "/api/v1/runtime/compatibility/reset", request.Body, cancellationToken));
@@ -6871,6 +6897,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return "";
 		}
 		string requestedModel = ExtractChatUiStringProperty(requestBody, "model") ?? "";
+		if (requestedModel.Equals("auto", StringComparison.OrdinalIgnoreCase) || requestedModel.Equals("model:auto", StringComparison.OrdinalIgnoreCase))
+		{
+			progress?.Invoke("Instant router will select a compatible local model...", null);
+			return "";
+		}
 		string model = (IsChatModelPlaceholder(requestedModel) ? ResolveChatUiRequestModel(requestedModel) : requestedModel.Trim());
 		if (IsChatModelPlaceholder(model))
 		{
@@ -18238,7 +18269,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return false;
 		}
 		string id = modelId.ToLowerInvariant();
-		return id.Contains("vision") || id.Contains("visual") || id.Contains("image") || id.Contains("multimodal") || id.Contains("vl") || id.Contains("v-l") || id.Contains("claude") || id.Contains("llava") || id.Contains("bakllava") || id.Contains("moondream") || id.Contains("pixtral") || id.Contains("minicpm-v") || id.Contains("qwen-vl") || id.Contains("qwen2-vl") || id.Contains("qwen2.5-vl") || id.Contains("qwen3") || id.Contains("gemma-3") || id.Contains("gemma3") || id.Contains("gpt-4o") || id.Contains("omni");
+		// Do not infer vision from a text model family or a distillation source
+		// (for example "qwen3" or "claude"). GGUF vision inference also needs
+		// its multimodal projection, so only explicit vision identifiers are safe.
+		return id.Contains("vision") || id.Contains("visual") || id.Contains("image") || id.Contains("multimodal") || id.Contains("vlm") || id.Contains("v-l") || id.Contains("llava") || id.Contains("bakllava") || id.Contains("moondream") || id.Contains("pixtral") || id.Contains("minicpm-v") || id.Contains("qwen-vl") || id.Contains("qwen2-vl") || id.Contains("qwen2.5-vl") || id.Contains("gemma-3-vision") || id.Contains("gemma3-vision") || id.Contains("gpt-4o") || id.Contains("omni");
 	}
 
 	private bool ModelLikelySupportsTools(string modelId)
@@ -18895,6 +18929,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				permissions.bannedUntilUtc = bannedUntil;
 			}
+			ApplyDreamPermissionJson(root, permissions);
 			SaveChatPermissions(ownerKey, permissions);
 			ApplyRuntimeChatPermissions(GetChatPermissions());
 			RecordObservabilityEvent("security", "permissions saved", "updated", "Saved chat permissions.", ownerKey, "/api/chat-permissions", 0L);
@@ -20303,7 +20338,10 @@ except Exception as exc:
 		bool markerExists = File.Exists(marker);
 		bool pythonExists = File.Exists(python);
 		bool moshiExists = Directory.Exists(moshi);
-		bool installed = markerExists && pythonExists && moshiExists;
+		// Older/manual installs may not have Workstation's installed.json marker.
+		// The runnable environment and PersonaPlex package are the authoritative
+		// installation footprint; the marker is only metadata.
+		bool installed = pythonExists && moshiExists;
 		bool footprintFound =
 			Directory.Exists(root) ||
 			markerExists ||
@@ -20312,10 +20350,6 @@ except Exception as exc:
 			File.Exists(GetPersonaPlexHfTokenPath()) ||
 			!string.IsNullOrWhiteSpace(ReadPersonaPlexModelConfigHfToken());
 		var missing = new List<string>();
-		if (!markerExists)
-		{
-			missing.Add("install marker");
-		}
 		if (!pythonExists)
 		{
 			missing.Add("Python environment");
@@ -21946,6 +21980,7 @@ except Exception as exc:
 					promptTokenCount = ParseStoredLong(GetRowValue(row, 16), 0L),
 					promptTokenBudget = ParseStoredLong(GetRowValue(row, 17), 8192L),
 					runtime = GetRowValue(row, 18),
+					reasoningLevel = GetRowValue(row, 19),
 					commentCount = commentCount,
 					tokensUsed = compute.TokensUsed,
 					gpuSeconds = compute.GpuSeconds,
@@ -22329,6 +22364,10 @@ except Exception as exc:
 							promptTokenCount = ParseStoredLong(GetRowValue(readableRow, 16), 0L),
 							promptTokenBudget = ParseStoredLong(GetRowValue(readableRow, 17), 8192L),
 							runtime = GetRowValue(readableRow, 18),
+							reasoningLevel = GetRowValue(readableRow, 19),
+							interactionMode = GetRowValue(readableRow, 20),
+							goal = DeserializeJsonElement(GetRowValue(readableRow, 21), "{}"),
+							plan = DeserializeJsonElement(GetRowValue(readableRow, 22), "{}"),
 							commentCount = CountChatSessionComments(GetRowValue(readableRow, 0)),
 							compatibility = BuildChatSessionCompatibilityPayload(readableRow, null, null, -1L, 0L)
 						}
@@ -22397,6 +22436,12 @@ except Exception as exc:
 			JsonElement promptTokenBudgetElement;
 			long promptTokenBudget = (root.TryGetProperty("promptTokenBudget", out promptTokenBudgetElement) ? NormalizePromptTokenBudget(ReadJsonLong(promptTokenBudgetElement, 8192L)) : ExtractPromptTokenBudgetFromRequestBody(body, model));
 			string runtime = ExtractStringProperty(root, "runtime") ?? InferChatSessionRuntime(model);
+			string reasoningLevel = NormalizeReasoningLevel(ExtractStringProperty(root, "reasoningLevel") ?? ExtractStringProperty(root, "reasoning_level"), allowInherit: true);
+			string interactionMode = NormalizeInteractionMode(ExtractStringProperty(root, "interactionMode"));
+			JsonElement goalElement;
+			string goalJson = root.TryGetProperty("goal", out goalElement) ? NormalizeJsonObjectRawText(goalElement.GetRawText()) : "{}";
+			JsonElement planElement;
+			string planJson = root.TryGetProperty("plan", out planElement) ? NormalizeJsonObjectRawText(planElement.GetRawText()) : "{}";
 			title = NormalizeChatSessionTitleInput(title);
 			if (string.IsNullOrWhiteSpace(title))
 			{
@@ -22421,7 +22466,7 @@ except Exception as exc:
 				}
 				if (existingIndex < 0)
 				{
-					object[] next = CreateChatSessionRow(id, title, now, now, model, messagesJson, filesJson, ownerKey, draftPrompt, "", shareEnabled: false, titleLocked, now, locked: false, "", "", promptTokenBudget, runtime);
+					object[] next = CreateChatSessionRow(id, title, now, now, model, messagesJson, filesJson, ownerKey, draftPrompt, "", shareEnabled: false, titleLocked, now, locked: false, "", "", promptTokenBudget, runtime, reasoningLevel, interactionMode, goalJson, planJson);
 					if (!EnsureChatStorageCanAdd(ownerKey, id, EstimateChatSessionRowStorageBytes(next), out var usageSnapshot, out var storageError))
 					{
 						SetHttpStatus(request, 507, "Insufficient Storage");
@@ -22472,6 +22517,10 @@ except Exception as exc:
 					next2[16] = EstimateChatSessionPromptTokens(messagesJson, draftPrompt).ToString(CultureInfo.InvariantCulture);
 					next2[17] = promptTokenBudget.ToString(CultureInfo.InvariantCulture);
 					next2[18] = (string.IsNullOrWhiteSpace(runtime) ? GetRowValue(existing, 18) : runtime);
+					next2[19] = reasoningLevel;
+					next2[20] = root.TryGetProperty("interactionMode", out _) ? interactionMode : GetRowValue(existing, 20);
+					next2[21] = root.TryGetProperty("goal", out _) ? goalJson : GetRowValue(existing, 21);
+					next2[22] = root.TryGetProperty("plan", out _) ? planJson : GetRowValue(existing, 22);
 					long rowDelta = Math.Max(0L, EstimateChatSessionRowStorageBytes(next2) - EstimateChatSessionRowStorageBytes(existing));
 					if (!EnsureChatStorageCanAdd(ownerKey, id, rowDelta, out var usageSnapshot2, out var storageError2))
 					{
@@ -22502,7 +22551,8 @@ except Exception as exc:
 				locked = false,
 				promptTokenCount = EstimateChatSessionPromptTokens(messagesJson, draftPrompt),
 				promptTokenBudget = promptTokenBudget,
-				runtime = runtime
+				runtime = runtime,
+				reasoningLevel = reasoningLevel
 			});
 		}
 		catch (Exception ex)
@@ -22867,6 +22917,10 @@ except Exception as exc:
 			promptTokenCount = ParseStoredLong(GetRowValue(row, 16), 0L),
 			promptTokenBudget = ParseStoredLong(GetRowValue(row, 17), 8192L),
 			runtime = GetRowValue(row, 18),
+			reasoningLevel = GetRowValue(row, 19),
+			interactionMode = GetRowValue(row, 20),
+			goal = DeserializeJsonElement(GetRowValue(row, 21), "{}"),
+			plan = DeserializeJsonElement(GetRowValue(row, 22), "{}"),
 			commentCount = CountChatSessionComments(sessionId),
 			compatibility = BuildChatSessionCompatibilityPayload(row, null, null, -1L, 0L)
 		};
@@ -22895,6 +22949,7 @@ except Exception as exc:
 			string requestFilesJson = ExtractChatUiJsonArrayProperty(requestBody, "files", "[]");
 			requestFilesJson = NormalizeChatSessionFilesJsonForStorage(requestFilesJson, sessionId);
 			string requestModel = ExtractChatUiStringProperty(requestBody, "model") ?? "";
+			string requestReasoningLevel = NormalizeReasoningLevel(ExtractChatUiStringProperty(requestBody, "sessionReasoningLevel") ?? ExtractChatUiStringProperty(requestBody, "session_reasoning_level") ?? ExtractChatUiStringProperty(requestBody, "reasoningLevel") ?? ExtractChatUiStringProperty(requestBody, "reasoning_level"), allowInherit: true);
 			string now = DateTimeOffset.UtcNow.ToString("O");
 			lock (_chatSessionLock)
 			{
@@ -22940,7 +22995,7 @@ except Exception as exc:
 				ChatUsageSnapshot snapshot;
 				if (existingIndex < 0)
 				{
-					object[] next = CreateChatSessionRow(sessionId, title, now, now, model, messagesJson, requestFilesJson, ownerKey, "", "", shareEnabled: false, titleLocked: false, now, locked: false, "", "", promptTokenBudget, runtime);
+					object[] next = CreateChatSessionRow(sessionId, title, now, now, model, messagesJson, requestFilesJson, ownerKey, "", "", shareEnabled: false, titleLocked: false, now, locked: false, "", "", promptTokenBudget, runtime, requestReasoningLevel);
 					if (!EnsureChatStorageCanAdd(ownerKey, sessionId, EstimateChatSessionRowStorageBytes(next), out snapshot, out var storageError))
 					{
 						LogMessage("[Chat UI] Background completion save skipped for session " + sessionId + ": " + storageError);
@@ -22965,6 +23020,7 @@ except Exception as exc:
 					next2[16] = EstimateChatSessionPromptTokens(messagesJson, GetRowValue(existing, 8)).ToString(CultureInfo.InvariantCulture);
 					next2[17] = promptTokenBudget.ToString(CultureInfo.InvariantCulture);
 					next2[18] = (string.IsNullOrWhiteSpace(runtime) ? GetRowValue(existing, 18) : runtime);
+					next2[19] = requestReasoningLevel;
 					long rowDelta = Math.Max(0L, EstimateChatSessionRowStorageBytes(next2) - EstimateChatSessionRowStorageBytes(existing));
 					if (!EnsureChatStorageCanAdd(ownerKey, sessionId, rowDelta, out snapshot, out var storageError2))
 					{
@@ -23145,6 +23201,7 @@ except Exception as exc:
 							promptTokenCount = ParseStoredLong(GetRowValue(readableRow, 16), 0L),
 							promptTokenBudget = ParseStoredLong(GetRowValue(readableRow, 17), 8192L),
 							runtime = GetRowValue(readableRow, 18),
+							reasoningLevel = GetRowValue(readableRow, 19),
 							commentCount = CountChatSessionComments(sessionId),
 							ownerKey = ownerKey,
 							usage = usage,
@@ -27146,31 +27203,41 @@ except Exception as exc:
 	{
 		try
 		{
-			if (!TryAuthenticateWebAuthRequest(request, out var principal, out var authError) || principal == null || string.IsNullOrWhiteSpace(principal.UserName))
+			MobileDeviceRecord mobileDevice = AuthenticateMobileDevice(request);
+			WebAuthPrincipal principal = null;
+			string ownerKey;
+			string uploadUserName;
+			if (mobileDevice != null)
 			{
-				SetHttpStatus(request, 401, "Unauthorized");
-				return JsonSerializer.Serialize(new
+				if (mobileDevice.Scopes == null || !mobileDevice.Scopes.Contains("files", StringComparer.OrdinalIgnoreCase))
 				{
-					ok = false,
-					error = FirstNonEmpty(authError, "Sign in before uploading files.")
-				});
+					SetHttpStatus(request, 403, "Forbidden");
+					return JsonSerializer.Serialize(new { ok = false, error = "This paired device is not authorized to upload files." });
+				}
+				ownerKey = FirstNonEmpty(mobileDevice.OwnerKey, "mobile:" + mobileDevice.Id);
+				uploadUserName = FirstNonEmpty(mobileDevice.Name, "Android phone");
 			}
-			if (principal.IsPublicAccount)
+			else
 			{
-				SetHttpStatus(request, 403, "Forbidden");
-				return JsonSerializer.Serialize(new
+				if (!TryAuthenticateWebAuthRequest(request, out principal, out var authError) || principal == null || string.IsNullOrWhiteSpace(principal.UserName))
 				{
-					ok = false,
-					error = "Public accounts can view files but cannot upload them."
-				});
-			}
-			string ownerKey = "webauth:" + principal.UserName.Trim().ToLowerInvariant();
-			RememberSocketJackBearerToken(ownerKey, principal.AccessToken);
-			RememberSocketJackServerOwnerPrincipal(principal);
-			if (StoreLocalWebAuthAccounts)
-			{
-				GetOrCreateWebAuthTokenAccount(principal.UserName, connection, request);
-				LinkWebAuthUserToIp(principal.UserName, ExtractClientIp(connection, request) ?? "");
+					SetHttpStatus(request, 401, "Unauthorized");
+					return JsonSerializer.Serialize(new { ok = false, error = FirstNonEmpty(authError, "Sign in before uploading files.") });
+				}
+				if (principal.IsPublicAccount)
+				{
+					SetHttpStatus(request, 403, "Forbidden");
+					return JsonSerializer.Serialize(new { ok = false, error = "Public accounts can view files but cannot upload them." });
+				}
+				ownerKey = "webauth:" + principal.UserName.Trim().ToLowerInvariant();
+				uploadUserName = principal.UserName;
+				RememberSocketJackBearerToken(ownerKey, principal.AccessToken);
+				RememberSocketJackServerOwnerPrincipal(principal);
+				if (StoreLocalWebAuthAccounts)
+				{
+					GetOrCreateWebAuthTokenAccount(principal.UserName, connection, request);
+					LinkWebAuthUserToIp(principal.UserName, ExtractClientIp(connection, request) ?? "");
+				}
 			}
 			ChatPermissionState permissions = GetChatPermissions(ownerKey);
 			string restriction = BuildChatRestrictionMessage(permissions);
@@ -27285,7 +27352,7 @@ except Exception as exc:
 					ok = true,
 					sessionId = sessionId,
 					ownerKey = ownerKey,
-					username = principal.UserName,
+					username = uploadUserName,
 					file = ((extractedFiles.Count > 0) ? BuildPublicChatSessionFile(extractedFiles[0], sessionId) : null),
 					files = extractedFiles.Select(file => BuildPublicChatSessionFile(file, sessionId)).ToList(),
 					extractedFiles = extractedFiles.Select(file => BuildPublicChatSessionFile(file, sessionId)).ToList(),
@@ -27310,7 +27377,7 @@ except Exception as exc:
 				ok = true,
 				sessionId = sessionId,
 				ownerKey = ownerKey,
-				username = principal.UserName,
+				username = uploadUserName,
 				file = publicFile,
 				usage = GetChatUsageSnapshot(ownerKey, sessionId)
 			});
@@ -27563,6 +27630,7 @@ except Exception as exc:
 			agentAccess = source.agentAccess,
 			fileUploads = source.fileUploads,
 			imageUploads = source.imageUploads,
+			pcAccess = source.pcAccess,
 			mutedUntilUtc = source.mutedUntilUtc ?? "",
 			bannedUntilUtc = source.bannedUntilUtc ?? "",
 			muteUntilEnabled = source.muteUntilEnabled,
@@ -27648,14 +27716,18 @@ except Exception as exc:
 			fileUploads = ParseStoredBool(GetRowValue(row, 12), fallback: true),
 			imageUploads = ParseStoredBool(GetRowValue(row, 13), fallback: true),
 			terminalCommands = ParseStoredBool(GetRowValue(row, 14), fallback: true),
-			terminalForeverApproved = ParseStoredBool(GetRowValue(row, 15), fallback: false)
+			terminalForeverApproved = ParseStoredBool(GetRowValue(row, 15), fallback: false),
+			pcAccess = ParseStoredBool(GetRowValue(row, 16), fallback: false),
+			dreamInternetSearch = ParseStoredBool(GetRowValue(row, 17), false), dreamVsCopilotTools = ParseStoredBool(GetRowValue(row, 18), false), dreamFileDownloads = ParseStoredBool(GetRowValue(row, 19), false),
+			dreamFtpServer = ParseStoredBool(GetRowValue(row, 20), false), dreamSqlAdmin = ParseStoredBool(GetRowValue(row, 21), false), dreamTerminalCommands = ParseStoredBool(GetRowValue(row, 22), false),
+			dreamAgentAccess = ParseStoredBool(GetRowValue(row, 23), false), dreamFileUploads = ParseStoredBool(GetRowValue(row, 24), false), dreamImageUploads = ParseStoredBool(GetRowValue(row, 25), false), dreamPcAccess = ParseStoredBool(GetRowValue(row, 26), false)
 		};
 	}
 
 	private object[] ChatPermissionStateToRow(string ownerKey, ChatPermissionState permissions)
 	{
 		permissions = permissions ?? new ChatPermissionState();
-		return NormalizeChatPermissionRow(new object[16]
+		return NormalizeChatPermissionRow(new object[27]
 		{
 			string.IsNullOrWhiteSpace(ownerKey) ? "global" : ownerKey.Trim(),
 			permissions.internetSearch ? "true" : "false",
@@ -27672,7 +27744,10 @@ except Exception as exc:
 			permissions.fileUploads ? "true" : "false",
 			permissions.imageUploads ? "true" : "false",
 			permissions.terminalCommands ? "true" : "false",
-			permissions.terminalForeverApproved ? "true" : "false"
+			permissions.terminalForeverApproved ? "true" : "false",
+			permissions.pcAccess ? "true" : "false",
+			permissions.dreamInternetSearch ? "true" : "false", permissions.dreamVsCopilotTools ? "true" : "false", permissions.dreamFileDownloads ? "true" : "false", permissions.dreamFtpServer ? "true" : "false", permissions.dreamSqlAdmin ? "true" : "false",
+			permissions.dreamTerminalCommands ? "true" : "false", permissions.dreamAgentAccess ? "true" : "false", permissions.dreamFileUploads ? "true" : "false", permissions.dreamImageUploads ? "true" : "false", permissions.dreamPcAccess ? "true" : "false"
 		});
 	}
 
@@ -27723,6 +27798,10 @@ except Exception as exc:
 		{
 			permissions.terminalForeverApproved = ReadJsonBool(terminalForeverApproved, permissions.terminalForeverApproved);
 		}
+		if (root.TryGetProperty("pcAccess", out var pcAccess))
+		{
+			permissions.pcAccess = ReadJsonBool(pcAccess, permissions.pcAccess);
+		}
 		if (root.TryGetProperty("muteUntilEnabled", out var muteUntilEnabled))
 		{
 			permissions.muteUntilEnabled = ReadJsonBool(muteUntilEnabled, permissions.muteUntilEnabled);
@@ -27757,6 +27836,7 @@ except Exception as exc:
 		permissions.imageUploads = snapshot.ImageUploads;
 		permissions.terminalCommands = snapshot.TerminalCommands;
 		permissions.terminalForeverApproved = snapshot.TerminalForeverApproved;
+		permissions.pcAccess = snapshot.PcAccess;
 		permissions.mutedUntilUtc = snapshot.MutedUntilUtc ?? "";
 		permissions.bannedUntilUtc = snapshot.BannedUntilUtc ?? "";
 		permissions.muteUntilEnabled = snapshot.MuteUntilEnabled;
@@ -27780,6 +27860,7 @@ except Exception as exc:
 			ImageUploads = permissions.imageUploads,
 			TerminalCommands = permissions.terminalCommands,
 			TerminalForeverApproved = permissions.terminalForeverApproved,
+			PcAccess = permissions.pcAccess,
 			MutedUntilUtc = (permissions.mutedUntilUtc ?? ""),
 			BannedUntilUtc = (permissions.bannedUntilUtc ?? ""),
 			MuteUntilEnabled = permissions.muteUntilEnabled,
@@ -28367,6 +28448,22 @@ except Exception as exc:
 		List<string> keys = new List<string>();
 		AddOwnerKey(keys, ownerKey);
 		AddWebAuthLinkedIpOwnerKeys(keys, ownerKey);
+		lock (_mobilePairingLock)
+		{
+			MobileAccessState mobileState = GetMobileAccessState();
+			foreach (MobileDeviceRecord device in mobileState.Devices)
+			{
+				string legacyKey = "mobile:" + device.Id;
+				if (string.Equals(device.OwnerKey, ownerKey, StringComparison.OrdinalIgnoreCase))
+				{
+					AddOwnerKey(keys, legacyKey);
+				}
+				else if (string.Equals(legacyKey, ownerKey, StringComparison.OrdinalIgnoreCase))
+				{
+					AddOwnerKey(keys, device.OwnerKey);
+				}
+			}
+		}
 		string ip = ExtractIpFromOwnerKey(ownerKey);
 		if (IsLoopbackClientIp(ip))
 		{
@@ -30346,7 +30443,7 @@ except Exception as exc:
 		MobileDeviceRecord mobileDevice = AuthenticateMobileDevice(request);
 		if (mobileDevice != null)
 		{
-			return "mobile:" + mobileDevice.Id;
+			return NormalizeChatFilesystemOwnerKey(string.IsNullOrWhiteSpace(mobileDevice.OwnerKey) ? "mobile:" + mobileDevice.Id : mobileDevice.OwnerKey);
 		}
 		string ip = ExtractClientIp(connection, request);
 		if (string.IsNullOrWhiteSpace(ip))
@@ -32148,6 +32245,10 @@ except Exception as exc:
 		EnsureColumn(table, 16, "PromptTokenCount", 32);
 		EnsureColumn(table, 17, "PromptTokenBudget", 32);
 		EnsureColumn(table, 18, "Runtime", 80);
+		EnsureColumn(table, 19, "ReasoningLevel", 24);
+		EnsureColumn(table, 20, "InteractionMode", 24);
+		EnsureColumn(table, 21, "GoalJson", 131072);
+		EnsureColumn(table, 22, "PlanJson", 524288);
 	}
 
 	private void EnsureDeveloperProjectWorkspaceColumns(Table table)
@@ -32256,6 +32357,9 @@ except Exception as exc:
 		EnsureColumn(table, 13, "ImageUploads", 16);
 		EnsureColumn(table, 14, "TerminalCommands", 16);
 		EnsureColumn(table, 15, "TerminalForeverApproved", 16);
+		EnsureColumn(table, 16, "PcAccess", 16);
+		string[] dreamColumns = { "DreamInternetSearch", "DreamVsCopilotTools", "DreamFileDownloads", "DreamFtpServer", "DreamSqlAdmin", "DreamTerminalCommands", "DreamAgentAccess", "DreamFileUploads", "DreamImageUploads", "DreamPcAccess" };
+		for (int i = 0; i < dreamColumns.Length; i++) EnsureColumn(table, 17 + i, dreamColumns[i], 16);
 	}
 
 	private void EnsurePersonaPlexConfigColumns(Table table)
@@ -32675,10 +32779,10 @@ except Exception as exc:
 		table.Columns[index] = new Column(name, typeof(string), maxLength);
 	}
 
-	private object[] CreateChatSessionRow(string id, string title, string createdUtc, string updatedUtc, string model, string messagesJson, string filesJson, string ownerKey, string draftPrompt, string shareKey, bool shareEnabled, bool titleLocked, string savedUtc, bool locked, string lockedUtc, string clonedFromSessionId, long promptTokenBudget, string runtime)
+	private object[] CreateChatSessionRow(string id, string title, string createdUtc, string updatedUtc, string model, string messagesJson, string filesJson, string ownerKey, string draftPrompt, string shareKey, bool shareEnabled, bool titleLocked, string savedUtc, bool locked, string lockedUtc, string clonedFromSessionId, long promptTokenBudget, string runtime, string reasoningLevel = "inherit", string interactionMode = "chat", string goalJson = "{}", string planJson = "{}")
 	{
 		long promptTokens = EstimateChatSessionPromptTokens(messagesJson, draftPrompt);
-		object[] row = NormalizeChatSessionRow(new object[19]
+		object[] row = NormalizeChatSessionRow(new object[23]
 		{
 			id ?? "",
 			title ?? "",
@@ -32698,7 +32802,11 @@ except Exception as exc:
 			clonedFromSessionId ?? "",
 			promptTokens.ToString(CultureInfo.InvariantCulture),
 			NormalizePromptTokenBudget(promptTokenBudget).ToString(CultureInfo.InvariantCulture),
-			runtime ?? ""
+			runtime ?? "",
+			NormalizeReasoningLevel(reasoningLevel, allowInherit: true),
+			NormalizeInteractionMode(interactionMode),
+			NormalizeJsonObjectRawText(goalJson),
+			NormalizeJsonObjectRawText(planJson)
 		});
 		ProtectChatSessionRowSensitiveValues(row);
 		return row;
@@ -32818,6 +32926,7 @@ except Exception as exc:
 			updatedUtc = GetRowValue(row, 3),
 			model = (model ?? ""),
 			runtime = (runtime ?? ""),
+			reasoningLevel = GetRowValue(row, 19),
 			state = (locked ? "locked" : (string.IsNullOrWhiteSpace(savedUtc) ? "draft" : "saved")),
 			titleLocked = ParseStoredBool(GetRowValue(row, 11), fallback: false),
 			locked = locked,
@@ -32942,7 +33051,7 @@ except Exception as exc:
 
 	private object[] NormalizeChatSessionRow(object[] row)
 	{
-		object[] normalized = new object[19];
+		object[] normalized = new object[23];
 		if (row != null)
 		{
 			int copy = Math.Min(row.Length, normalized.Length);
@@ -33036,7 +33145,24 @@ except Exception as exc:
 		{
 			normalized[18] = InferChatSessionRuntime(GetRowValue(normalized, 4));
 		}
+		normalized[19] = NormalizeReasoningLevel(normalized[19]?.ToString(), allowInherit: true);
+		normalized[20] = NormalizeInteractionMode(normalized[20]?.ToString());
+		normalized[21] = NormalizeJsonObjectRawText(normalized[21]?.ToString());
+		normalized[22] = NormalizeJsonObjectRawText(normalized[22]?.ToString());
 		return normalized;
+	}
+
+	private static string NormalizeInteractionMode(string value)
+	{
+		string normalized = (value ?? "").Trim().ToLowerInvariant();
+		return normalized == "plan" || normalized == "agent" || normalized == "companion" ? normalized : "chat";
+	}
+
+	private static string NormalizeReasoningLevel(string value, bool allowInherit)
+	{
+		string normalized = (value ?? "").Trim().ToLowerInvariant();
+		if (allowInherit && normalized == "inherit") return normalized;
+		return normalized == "minimal" || normalized == "low" || normalized == "medium" || normalized == "high" || normalized == "auto" ? normalized : (allowInherit ? "inherit" : "auto");
 	}
 
 	private void ProtectChatSessionRowSensitiveValues(object[] row)
@@ -34206,7 +34332,7 @@ except Exception as exc:
 			.ToList();
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("[JackLLM saved memory]");
-		sb.AppendLine("JackLLM has application-managed explicit memory for this user. Use saved memories only as continuity context; the current user message wins if it conflicts. If the current user explicitly asks you to remember, save, forget, or make a mental note, acknowledge the memory action naturally and do not claim that JackLLM cannot store memories.");
+		sb.AppendLine("JackLLM has persistent application-managed memory shared across this user's sessions and runtime requests. You DO have a way to remember through JackLLM. Use saved memories as continuity context. Never say you cannot remember or have no memory mechanism. If the current user explicitly asks you to remember, save, forget, or make a mental note, acknowledge that JackLLM will persist it. Conflicts are held for journal review rather than silently replacing an older fact.");
 		if (memories.Count == 0)
 		{
 			sb.AppendLine("No saved memories are currently stored for this user.");
@@ -34265,6 +34391,12 @@ except Exception as exc:
 		if (string.IsNullOrWhiteSpace(text))
 		{
 			error = "Memory text is required.";
+			return false;
+		}
+		if (!category.StartsWith("conflict-", StringComparison.OrdinalIgnoreCase) && TryQueueMemoryConflict(ownerKey, text, sourceSessionId, out ChatMemoryRecord conflicting))
+		{
+			memory = conflicting;
+			error = "This memory conflicts with an existing memory and was queued in the Dream Journal for review.";
 			return false;
 		}
 		string now = DateTimeOffset.UtcNow.ToString("O");
@@ -34623,12 +34755,14 @@ except Exception as exc:
 		normalized[13] = (ParseStoredBool(normalized[13]?.ToString(), fallback: true) ? "true" : "false");
 		normalized[14] = (ParseStoredBool(normalized[14]?.ToString(), fallback: true) ? "true" : "false");
 		normalized[15] = (ParseStoredBool(normalized[15]?.ToString(), fallback: false) ? "true" : "false");
+		normalized[16] = (ParseStoredBool(normalized[16]?.ToString(), fallback: false) ? "true" : "false");
+		for (int i = 17; i < normalized.Length; i++) normalized[i] = ParseStoredBool(normalized[i]?.ToString(), false) ? "true" : "false";
 		return normalized;
 	}
 
 	private object[] CreateDefaultChatPermissionRow()
 	{
-		return new object[16]
+		return new object[27]
 		{
 			"global",
 			"false",
@@ -34645,7 +34779,8 @@ except Exception as exc:
 			"true",
 			"true",
 			"true",
-			"false"
+			"false",
+			"false", "false", "false", "false", "false", "false", "false", "false", "false", "false", "false"
 		};
 	}
 
@@ -42150,6 +42285,9 @@ except Exception as exc:
 			return completion;
 		}
 		bool completionHadOutput = HasChatUiCompletionOutput(completion);
+		bool recoveredFromNoVisibleAnswer = IsNoVisibleAssistantTextDiagnostic(accumulatedContent.ToString()) &&
+			!string.IsNullOrWhiteSpace(completion.Content) &&
+			!IsNoVisibleAssistantTextDiagnostic(completion.Content);
 		string mergedContent = MergeChatUiContinuationText(accumulatedContent.ToString(), completion.Content ?? "");
 		string mergedReasoning = MergeChatUiContinuationText(accumulatedReasoning.ToString(), completion.Reasoning ?? "");
 		completion.Content = mergedContent;
@@ -42161,6 +42299,13 @@ except Exception as exc:
 		else if (string.IsNullOrWhiteSpace(completion.FinishReason))
 		{
 			completion.FinishReason = priorFinishReason ?? "";
+		}
+		if (recoveredFromNoVisibleAnswer && IsChatUiOutputLimitFinishReason(completion.FinishReason))
+		{
+			// The earlier pass had no user-visible draft to continue. Once the
+			// recovery pass returns a real answer, the earlier hidden-token limit
+			// is no longer a user-facing truncation and should not add a warning.
+			completion.FinishReason = "stop";
 		}
 		return completion;
 	}
@@ -42189,6 +42334,16 @@ except Exception as exc:
 	{
 		existing = existing ?? "";
 		next = next ?? "";
+		bool existingIsNoVisibleAnswerDiagnostic = IsNoVisibleAssistantTextDiagnostic(existing);
+		bool nextIsNoVisibleAnswerDiagnostic = IsNoVisibleAssistantTextDiagnostic(next);
+		if (existingIsNoVisibleAnswerDiagnostic && !string.IsNullOrWhiteSpace(next) && !nextIsNoVisibleAnswerDiagnostic)
+		{
+			return next;
+		}
+		if (nextIsNoVisibleAnswerDiagnostic && !string.IsNullOrWhiteSpace(existing) && !existingIsNoVisibleAnswerDiagnostic)
+		{
+			return existing;
+		}
 		if (string.IsNullOrEmpty(existing))
 		{
 			return next;
@@ -42215,6 +42370,12 @@ except Exception as exc:
 		}
 		bool needsNewline = !char.IsWhiteSpace(existing[existing.Length - 1]) && !char.IsWhiteSpace(next[0]);
 		return existing + (needsNewline ? "\n" : "") + next;
+	}
+
+	private bool IsNoVisibleAssistantTextDiagnostic(string value)
+	{
+		return !string.IsNullOrWhiteSpace(value) &&
+			value.TrimStart().StartsWith("The model used the response budget without producing visible assistant text.", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private string BuildChatUiNoContentErrorMessage(string source)
@@ -42839,6 +43000,13 @@ except Exception as exc:
 							LogMessage("[Chat UI] Streaming " + runtimeDisplayName + " returned " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " " + response.ReasonPhrase + ": " + TruncateForLog(body, 1000));
 							WriteChatUiStreamEvent(output, "error", response.ReasonPhrase ?? (runtimeDisplayName + " streaming request failed."), "", body, null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
 							return;
+						}
+						if (response.Headers.TryGetValues("X-SocketJack-Routed-Model", out IEnumerable<string> routedModels))
+						{
+							string routedModel = routedModels.FirstOrDefault() ?? "";
+							string routedReasoning = response.Headers.TryGetValues("X-SocketJack-Reasoning-Level", out IEnumerable<string> reasoningValues) ? (reasoningValues.FirstOrDefault() ?? "auto") : "auto";
+							string routedReason = response.Headers.TryGetValues("X-SocketJack-Route-Reason", out IEnumerable<string> reasonValues) ? (reasonValues.FirstOrDefault() ?? "best_match") : "best_match";
+							output.WriteLine(JsonSerializer.Serialize(new { type = "route", routing = new { selectedModel = routedModel, effectiveReasoning = routedReasoning, reasonCode = routedReason }, status = "Auto selected " + routedModel }));
 						}
 						using Stream upstreamStream = await response.Content.ReadAsStreamAsync();
 						using StreamReader reader = new StreamReader(upstreamStream, Encoding.UTF8);
@@ -46225,7 +46393,7 @@ except Exception as exc:
 		if (ShouldPreloadExplicitProxyToolCalls() && TryBuildExplicitRequiredProxyFileWriteToolCall(currentRequestJson, out var explicitFileWriteCall))
 		{
 			LogToolCalls("chat ui explicit required file write", new List<ToolCallData> { explicitFileWriteCall });
-			string continuationRequest0 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { explicitFileWriteCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+			string continuationRequest0 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { explicitFileWriteCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 			if (!string.IsNullOrWhiteSpace(continuationRequest0))
 			{
 				if (TryBuildImmediatePostToolCompletion(currentRequestJson, continuationRequest0, emitLiveContent, out var immediateFileWriteCompletion0))
@@ -46238,7 +46406,7 @@ except Exception as exc:
 		if (ShouldPreloadExplicitProxyToolCalls() && TryBuildExplicitBrowserOpenToolCall(currentRequestJson, out var explicitBrowserOpenCall))
 		{
 			LogToolCalls("chat ui explicit browser open", new List<ToolCallData> { explicitBrowserOpenCall });
-			string continuationRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { explicitBrowserOpenCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+			string continuationRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { explicitBrowserOpenCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 			if (!string.IsNullOrWhiteSpace(continuationRequest))
 			{
 				if (TryBuildDirectBrowserOpenCompletion(currentRequestJson, continuationRequest, out var directBrowserCompletion))
@@ -46248,24 +46416,8 @@ except Exception as exc:
 				currentRequestJson = continuationRequest;
 			}
 		}
-		if (ShouldPreloadExplicitProxyToolCalls() && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var explicitSearchCall))
-		{
-			LogToolCalls("chat ui explicit internet search", new List<ToolCallData> { explicitSearchCall });
-			bool keepSearchTools = PromptRequestsSourceMaterialInspection(FirstNonEmpty(ExtractChatUiLastUserPromptText(currentRequestJson), ExtractLastUserMessage(currentRequestJson) ?? ""));
-				string continuationRequest2 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { explicitSearchCall }, keepSearchTools, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
-				if (!string.IsNullOrWhiteSpace(continuationRequest2))
-				{
-					if (TryBuildImmediatePostToolCompletion(currentRequestJson, continuationRequest2, emitLiveContent, out var immediateSearchCompletion))
-					{
-						return immediateSearchCompletion;
-					}
-					if (!keepSearchTools && TryBuildDirectInternetSearchCompletion(currentRequestJson, continuationRequest2, out var directSearchCompletion))
-					{
-						return directSearchCompletion;
-				}
-				currentRequestJson = continuationRequest2;
-			}
-		}
+		// Let the model decide whether a search is needed and compose its semantic query.
+		// Preloading from command text can leak phrases such as "search the internet for".
 		for (int toolRound = 0; toolRound < 36 + autoContinuationCount; toolRound++)
 		{
 			currentRequestJson = ApplyPendingChatUiSteering(currentRequestJson, consumeSteering);
@@ -46347,7 +46499,17 @@ except Exception as exc:
 				if (!hasFinalProxyToolResult && toolRound < 35 && ShouldRejectUngroundedExternalAnswer(currentRequestJson, final.Content) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var finalGroundingSearchCall))
 				{
 					LogMessage("[Chat UI] Rejected ungrounded external/link answer in final-answer mode; forcing internet_search before responding.");
-					string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { finalGroundingSearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+					string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { finalGroundingSearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+					if (!string.IsNullOrWhiteSpace(groundingRequest))
+					{
+						currentRequestJson = groundingRequest;
+						continue;
+					}
+				}
+				if (!hasFinalProxyToolResult && toolRound < 35 && ShouldForceInternetSearchAfterEmptyOutputLimit(currentRequestJson, final.FinishReason, final.Content, final.Reasoning) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var finalEmptyRecoverySearchCall))
+				{
+					LogMessage("[Chat UI] Empty output-limit completion for an external lookup; forcing internet_search instead of recursively retrying an empty answer.");
+					string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { finalEmptyRecoverySearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 					if (!string.IsNullOrWhiteSpace(groundingRequest))
 					{
 						currentRequestJson = groundingRequest;
@@ -46389,7 +46551,7 @@ except Exception as exc:
 			{
 				LogToolCalls("chat ui proxy tools", toolCalls);
 				bool finalAnswerRound = toolRound >= 34;
-				string continuationRequest3 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, toolCalls, !finalAnswerRound, ownerKey, sessionId, emitToolCall);
+				string continuationRequest3 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, toolCalls, !finalAnswerRound, ownerKey, sessionId, emitToolCall, cancellationToken);
 				if (!string.IsNullOrWhiteSpace(continuationRequest3))
 				{
 					if (TryBuildImmediatePostToolCompletion(currentRequestJson, continuationRequest3, emitLiveContent, out var immediateCompletion))
@@ -46411,7 +46573,7 @@ except Exception as exc:
 			if (TryBuildRequiredProxyFileWriteToolCallFromAssistantDraft(responseBody, currentRequestJson, out var rescuedFileWriteToolCall))
 			{
 				LogToolCalls("chat ui required file-write rescue", new List<ToolCallData> { rescuedFileWriteToolCall });
-				string continuationRequest4a = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { rescuedFileWriteToolCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+				string continuationRequest4a = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { rescuedFileWriteToolCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 				if (!string.IsNullOrWhiteSpace(continuationRequest4a))
 				{
 					if (TryBuildImmediatePostToolCompletion(currentRequestJson, continuationRequest4a, emitLiveContent, out var immediateFileWriteCompletion))
@@ -46425,7 +46587,7 @@ except Exception as exc:
 			if (!hasProxyToolResult && TryBuildProxyToolCallFromAssistantIntent(responseBody, currentRequestJson, out var rescuedToolCall))
 			{
 				LogToolCalls("chat ui assistant intent rescue", new List<ToolCallData> { rescuedToolCall });
-				string continuationRequest4 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { rescuedToolCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+				string continuationRequest4 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { rescuedToolCall }, keepProxyTools: true, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 				if (!string.IsNullOrWhiteSpace(continuationRequest4))
 				{
 					currentRequestJson = continuationRequest4;
@@ -46503,7 +46665,17 @@ except Exception as exc:
 			if (!hasProxyToolResult && toolRound < 35 && ShouldRejectUngroundedExternalAnswer(currentRequestJson, direct.Content) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var groundingSearchCall))
 			{
 				LogMessage("[Chat UI] Rejected ungrounded external/link answer; forcing internet_search before responding.");
-				string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { groundingSearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
+				string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { groundingSearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+				if (!string.IsNullOrWhiteSpace(groundingRequest))
+				{
+					currentRequestJson = groundingRequest;
+					continue;
+				}
+			}
+			if (!hasProxyToolResult && toolRound < 35 && ShouldForceInternetSearchAfterEmptyOutputLimit(currentRequestJson, direct.FinishReason, direct.Content, direct.Reasoning) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var emptyRecoverySearchCall))
+			{
+				LogMessage("[Chat UI] Empty output-limit completion for an external lookup; forcing internet_search instead of recursively retrying an empty answer.");
+				string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { emptyRecoverySearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 				if (!string.IsNullOrWhiteSpace(groundingRequest))
 				{
 					currentRequestJson = groundingRequest;
@@ -46872,20 +47044,16 @@ except Exception as exc:
 		}
 		if (!RequestAlreadyHasInternetSearchResult(requestBody) && (AssistantTextLooksLikeSearchIntent(assistantText) || HasExplicitInternetSearchIntent(prompt)))
 		{
-			string query = ExtractAssistantIntentSearchQuery(assistantText, prompt);
-			if (!string.IsNullOrWhiteSpace(query))
+			int requestedTake = ExtractRequestedInternetSearchSourceCount(prompt + "\n" + assistantText, 8, 12);
+			toolCall = new ToolCallData
 			{
-				int requestedTake = ExtractRequestedInternetSearchSourceCount(prompt + "\n" + assistantText, 8, 12);
-				toolCall = new ToolCallData
-				{
-					Id = "call_proxy_" + Guid.NewGuid().ToString("N").Substring(0, 16),
-					Name = "internet_search",
-					ArgumentsJson = "{\"query\":\"" + EscapeJson(query) + "\",\"take\":" + requestedTake.ToString(CultureInfo.InvariantCulture) + "}",
-					ArgumentsWereMalformed = false
-				};
-				LogMessage("[Chat UI] Rescued plain search intent from assistant text for \"" + TruncateForLog(query, 160) + "\".");
-				return true;
-			}
+				Id = "call_proxy_" + Guid.NewGuid().ToString("N").Substring(0, 16),
+				Name = "internet_search",
+				ArgumentsJson = "{\"action\":\"search\",\"query\":\"\",\"take\":" + requestedTake.ToString(CultureInfo.InvariantCulture) + "}",
+				ArgumentsWereMalformed = false
+			};
+			LogMessage("[Chat UI] Rescued plain search intent; the context-aware query planner will choose the search terms.");
+			return true;
 		}
 		return false;
 	}
@@ -47422,27 +47590,6 @@ except Exception as exc:
 		return Uri.TryCreate(url, UriKind.Absolute, out _);
 	}
 
-	private string ExtractAssistantIntentSearchQuery(string assistantText, string prompt)
-	{
-		string query = ExtractExplicitInternetSearchQuery(prompt);
-		if (IsUsefulInternetSearchQueryCandidate(query))
-		{
-			return query;
-		}
-		Match match = Regex.Match(assistantText ?? "", "(?is)(?:search|look\\s+up|find|google)\\s+(?:for\\s+)?[\"'`]?(?<query>[^\\r\\n\"'`<>]{3,180})", RegexOptions.CultureInvariant);
-		if (match.Success)
-		{
-			query = match.Groups["query"].Value;
-			query = Regex.Replace(query, "(?is)\\s+(?:then|and)\\s+(?:answer|return|summarize|include|provide)\\b.*$", "");
-			query = NormalizeInternetSearchQueryCandidate(query);
-			if (IsUsefulInternetSearchQueryCandidate(query))
-			{
-				return query;
-			}
-		}
-		return DeriveInternetSearchQueryFromUserPrompt(prompt ?? "");
-	}
-
 	private bool TryBuildImmediatePostToolCompletion(string requestBody, string continuationRequestJson, Func<string, bool> emitLiveContent, out ChatUiCompletion completion)
 	{
 		completion = null;
@@ -47652,20 +47799,15 @@ except Exception as exc:
 		{
 			return false;
 		}
-		string query = ExtractExplicitInternetSearchQuery(prompt);
-		if (string.IsNullOrWhiteSpace(query))
-		{
-			return false;
-		}
 		int requestedTake = ExtractRequestedInternetSearchSourceCount(prompt, 6, 12);
 		toolCall = new ToolCallData
 		{
 			Id = "call_proxy_" + Guid.NewGuid().ToString("N").Substring(0, 16),
 			Name = "internet_search",
-			ArgumentsJson = "{\"query\":\"" + EscapeJson(query) + "\",\"take\":" + requestedTake.ToString(CultureInfo.InvariantCulture) + "}",
+			ArgumentsJson = "{\"action\":\"search\",\"query\":\"\",\"take\":" + requestedTake.ToString(CultureInfo.InvariantCulture) + "}",
 			ArgumentsWereMalformed = false
 		};
-		LogMessage("[Chat UI] Agent explicit web-search intent detected; preloading internet_search for \"" + TruncateForLog(query, 160) + "\".");
+		LogMessage("[Chat UI] Agent explicit web-search intent detected; the context-aware query planner will choose the search terms.");
 		return true;
 	}
 
@@ -48020,6 +48162,16 @@ except Exception as exc:
 			return false;
 		}
 		return Regex.IsMatch(content, "(?is)https?://|www\\.|\\[[1-9][0-9]?\\]\\s|\\bSources?:\\b|\\b(?:github\\.com|ebay\\.[a-z]{2,}|newegg\\.com|amazon\\.com)\\b", RegexOptions.CultureInvariant);
+	}
+
+	private bool ShouldForceInternetSearchAfterEmptyOutputLimit(string requestBody, string finishReason, string content, string reasoning)
+	{
+		if (!string.IsNullOrWhiteSpace(content) || !string.IsNullOrWhiteSpace(reasoning) || !IsChatUiOutputLimitFinishReason(finishReason) || RequestAlreadyHasInternetSearchResult(requestBody))
+		{
+			return false;
+		}
+		string prompt = FirstNonEmpty(ExtractChatUiLastUserPromptText(requestBody), ExtractLastUserMessage(requestBody) ?? "");
+		return HasExplicitInternetSearchIntent(prompt);
 	}
 
 	private bool HasExplicitInternetSearchIntent(string prompt)
@@ -49932,6 +50084,8 @@ except Exception as exc:
 		string requestedModel = ExtractStringProperty(root, "model");
 		writer.WriteString("model", ResolveChatUiRequestModel(requestedModel));
 		writer.WriteBoolean("stream", streamResponses);
+		string reasoningLevel = ExtractStringProperty(root, "reasoningLevel") ?? ExtractStringProperty(root, "reasoning_level") ?? "auto";
+		writer.WriteString("reasoningLevel", reasoningLevel);
 		string selectedServiceId = ExtractStringProperty(root, "service") ?? "";
 		bool agentMode = string.Equals(selectedServiceId, "agent", StringComparison.OrdinalIgnoreCase);
 		if (root.TryGetProperty("temperature", out var temperature))
@@ -49955,7 +50109,7 @@ except Exception as exc:
 		{
 			writer.WriteNumber("max_tokens", GetDefaultChatUiCompletionMaxTokens(agentMode));
 		}
-		List<string> systemParts = BuildChatUiSystemPromptParts(root, messageList, lastUserIndex, permissions, promptUserName, ownerKey, agentMode, includeMemories);
+		List<string> systemParts = BuildChatUiSystemPromptParts(root, messageList, lastUserIndex, permissions, promptUserName, ownerKey, uploadedFilesRequireReadFile: agentMode, includeMemories: includeMemories);
 		writer.WritePropertyName("messages");
 		writer.WriteStartArray();
 		int messageCount = 0;
@@ -50680,85 +50834,26 @@ except Exception as exc:
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("[LmVsProxy Agent Filesystem Context]");
 		sb.AppendLine("Mode: " + (mode.Equals("all", StringComparison.OrdinalIgnoreCase) ? "All approved roots" : "Selected approved roots") + ".");
-		sb.AppendLine("This context is a bounded filesystem manifest only. It does not contain file contents; call vs_read_file before relying on a file's contents or editing it.");
-		sb.AppendLine("Do not acknowledge, summarize, or reveal filenames from this manifest until the user asks about files, searches for files, or a VS tool result makes the filename relevant.");
-		sb.AppendLine("Allowed roots and visible files:");
-		int total = 0;
-		bool charCapped = false;
-		foreach (AgentFilesystemContextRootEntry root in roots)
+		sb.AppendLine("No directory listing, filenames, metadata, or file contents are included in this prompt.");
+		sb.AppendLine("Use vs_search_files or vs_list_files to discover files on demand, then vs_read_file for exact content. These tools are restricted to the current session and approved filesystem roots, including the root exposed by FTP when FTP is configured.");
+		sb.AppendLine("Approved roots:");
+		int shown = 0;
+		foreach (AgentFilesystemContextRootEntry root in roots ?? new List<AgentFilesystemContextRootEntry>())
 		{
 			if (root == null || string.IsNullOrWhiteSpace(root.Path))
 			{
 				continue;
 			}
-			if (sb.Length >= 20000)
+			if (shown >= 24 || sb.Length >= 4000)
 			{
-				charCapped = true;
 				break;
 			}
-			string rootHeader = Environment.NewLine + "- " + (root.DisplayName ?? GetAgentFilesystemContextDisplayName(root.Path)) + " [" + (root.Source ?? "root") + "]" + Environment.NewLine + "  Root path: " + GetAgentFilesystemContextDisplayPath(root) + Environment.NewLine;
-			if (!TryAppendFilesystemContextLine(sb, rootHeader, 20000))
-			{
-				charCapped = true;
-				break;
-			}
-			int shownForRoot = 0;
-			bool capped = false;
-			foreach (string file in SafeEnumerateFilesystemContextFiles(root.Path, 81))
-			{
-				if (shownForRoot >= 80 || total >= 180 || sb.Length >= 20000)
-				{
-					capped = true;
-					if (sb.Length >= 20000)
-					{
-						charCapped = true;
-					}
-					break;
-				}
-				FileInfo info;
-				try
-				{
-					info = new FileInfo(file);
-				}
-				catch
-				{
-					continue;
-				}
-				if (info.Exists)
-				{
-					string fileLine = "  - " + GetFilesystemContextRelativePath(root.Path, file) + " | " + info.Length.ToString(CultureInfo.InvariantCulture) + " bytes | " + info.LastWriteTimeUtc.ToString("O") + Environment.NewLine;
-					if (!TryAppendFilesystemContextLine(sb, fileLine, 20000))
-					{
-						capped = true;
-						charCapped = true;
-						break;
-					}
-					shownForRoot++;
-					total++;
-				}
-			}
-			if (shownForRoot == 0)
-			{
-				TryAppendFilesystemContextLine(sb, "  (no files visible)" + Environment.NewLine, 20000);
-			}
-			if (capped)
-			{
-				TryAppendFilesystemContextLine(sb, "  (...additional files omitted by the filesystem context cap)" + Environment.NewLine, 20000);
-			}
-			if (total < 180)
-			{
-				continue;
-			}
-			break;
+			sb.Append("- ").Append(root.DisplayName ?? GetAgentFilesystemContextDisplayName(root.Path))
+				.Append(" [").Append(root.Source ?? "root").Append("]")
+				.Append(" | ").AppendLine(GetAgentFilesystemContextDisplayPath(root));
+			shown++;
 		}
-		if (total >= 180)
-		{
-			TryAppendFilesystemContextLine(sb, Environment.NewLine + "Additional roots/files were omitted by the total manifest cap. Use vs_list_files or vs_search_files to inspect more." + Environment.NewLine, 20300);
-		}
-		if (charCapped)
-		{
-			sb.AppendLine("Manifest text was shortened for LlmRuntime prompt safety. Use vs_list_files or vs_search_files for more.");
-		}
+		if ((roots?.Count ?? 0) > shown) sb.AppendLine("- Additional approved roots omitted; use vs_list_files or vs_search_files to query them.");
 		return sb.ToString().Trim();
 	}
 
@@ -51102,7 +51197,16 @@ except Exception as exc:
 	{
 		StringBuilder sb = new StringBuilder();
 		sb.AppendLine("[LmVsProxy uploaded session files]");
-		sb.AppendLine(requireReadFile ? "The user uploaded files for this Agent turn. This section is a file index, not file content. Do not treat uploaded files as image_url or vision input. Call read_file or vs_read_file with the exact saved path before answering about a file." : "The user uploaded files for this turn. Use read_file with the exact saved path when you need to inspect a file.");
+		bool hasImages = files.Any(IsUploadedImagePromptContext);
+		bool hasOtherFiles = files.Any(file => !IsUploadedImagePromptContext(file));
+		if (hasImages)
+		{
+			sb.AppendLine("Uploaded images are also attached to the current user message as vision input. Inspect their visual content directly; the saved paths below are available only when a file tool operation is useful.");
+		}
+		if (hasOtherFiles)
+		{
+			sb.AppendLine(requireReadFile ? "Other uploaded files are listed by path only. Call read_file or vs_read_file with the exact saved path before answering about their contents." : "Use read_file with the exact saved path when you need to inspect a non-image file.");
+		}
 		foreach (UploadedFilePromptContext file in files)
 		{
 			string displayPath = GetUploadedFilePromptDisplayPath(file);
@@ -51121,6 +51225,26 @@ except Exception as exc:
 			}
 		}
 		return sb.ToString().Trim();
+	}
+
+	private static bool IsUploadedImagePromptContext(UploadedFilePromptContext file)
+	{
+		if (file == null)
+		{
+			return false;
+		}
+		if (!string.IsNullOrWhiteSpace(file.Type) && file.Type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+		{
+			return true;
+		}
+		string extension = Path.GetExtension(file.Name ?? file.FullPath ?? "");
+		return extension.Equals(".png", StringComparison.OrdinalIgnoreCase)
+			|| extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+			|| extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+			|| extension.Equals(".gif", StringComparison.OrdinalIgnoreCase)
+			|| extension.Equals(".webp", StringComparison.OrdinalIgnoreCase)
+			|| extension.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+			|| extension.Equals(".heif", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private bool TryReadUploadedPromptText(UploadedFilePromptContext file, string ownerKey, out string content)
@@ -51163,6 +51287,10 @@ except Exception as exc:
 		}
 		sb.AppendLine(".");
 		sb.AppendLine("This is a bounded project manifest only. File contents are not included in prompt context. Do not infer implementation details from filenames alone.");
+		if (files.Any(IsUploadedImagePromptContext))
+		{
+			sb.AppendLine("Uploaded images are also attached to the current user message as vision input; use the manifest path only for file operations.");
+		}
 		sb.AppendLine("Use vs_list_files to browse directories, vs_search_files to find relevant files, and read_file/vs_read_file to inspect exact contents before answering or editing.");
 		if (!string.IsNullOrWhiteSpace(sessionRoot))
 		{
@@ -53931,7 +54059,7 @@ except Exception as exc:
 				{
 					LogToolCalls("live proxy research", toolCalls);
 					LogStreamDiagnostic(streamId, "proxy-tools", diagnosticStartedUtc, "executing proxy-owned native tool calls; count=" + toolCalls.Count);
-					await ForwardProxyToolResultAsync(toolCalls, model, clientStream, writeLock, CancellationToken.None);
+					await ForwardProxyToolResultAsync(toolCalls, model, clientStream, writeLock, requestBody, CancellationToken.None);
 					passthroughFrames++;
 					wroteDone = true;
 				}
@@ -53969,7 +54097,7 @@ except Exception as exc:
 				{
 					LogToolCalls("live qwen proxy research", toolCalls2);
 					LogStreamDiagnostic(streamId, "proxy-tools", diagnosticStartedUtc, "executing proxy-owned qwen tool calls; count=" + toolCalls2.Count);
-					await ForwardProxyToolResultAsync(toolCalls2, model, clientStream, writeLock, CancellationToken.None);
+					await ForwardProxyToolResultAsync(toolCalls2, model, clientStream, writeLock, requestBody, CancellationToken.None);
 					passthroughFrames++;
 					wroteDone = true;
 				}
@@ -54013,7 +54141,7 @@ except Exception as exc:
 			{
 				LogToolCalls("live loose proxy tools", toolCallsLoose);
 				LogStreamDiagnostic(streamId, "proxy-tools", diagnosticStartedUtc, "executing proxy-owned loose tool calls; count=" + toolCallsLoose.Count);
-				await ForwardProxyToolResultAsync(toolCallsLoose, model, clientStream, writeLock, CancellationToken.None);
+				await ForwardProxyToolResultAsync(toolCallsLoose, model, clientStream, writeLock, requestBody, CancellationToken.None);
 				passthroughFrames++;
 				wroteDone = true;
 			}
@@ -54042,7 +54170,7 @@ except Exception as exc:
 				{
 					LogToolCalls("loose text proxy tools", looseToolCalls);
 					LogStreamDiagnostic(streamId, "loose-tool", diagnosticStartedUtc, "converted loose assistant tool JSON into executable call(s); count=" + looseToolCalls.Count);
-					await ForwardProxyToolResultAsync(looseToolCalls, model, clientStream, writeLock, CancellationToken.None);
+					await ForwardProxyToolResultAsync(looseToolCalls, model, clientStream, writeLock, requestBody, CancellationToken.None);
 					passthroughFrames++;
 					wroteDone = true;
 				}
@@ -54560,16 +54688,6 @@ except Exception as exc:
 		{
 			return;
 		}
-		string prompt = FirstNonEmpty(ExtractChatUiLastUserPromptText(requestBody), ExtractLastUserMessage(requestBody) ?? "");
-		string fallbackQuery = ExtractExplicitInternetSearchQuery(prompt);
-		if (!IsUsefulInternetSearchQueryCandidate(fallbackQuery))
-		{
-			fallbackQuery = DeriveInternetSearchQueryFromUserPrompt(prompt);
-		}
-		if (!IsUsefulInternetSearchQueryCandidate(fallbackQuery))
-		{
-			return;
-		}
 		foreach (ToolCallData toolCall in toolCalls)
 		{
 			if (toolCall == null || !string.Equals(toolCall.Name, "internet_search", StringComparison.Ordinal))
@@ -54582,15 +54700,200 @@ except Exception as exc:
 			{
 				continue;
 			}
-			string query = NormalizeInternetSearchQueryCandidate(FirstNonEmpty(ExtractJsonStringProperty(toolCall.ArgumentsJson, "query"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "q"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "search")));
-			if (IsUsefulInternetSearchQueryCandidate(query) && query.IndexOf("SocketJack Auto", StringComparison.OrdinalIgnoreCase) < 0)
+			string rawQuery = FirstNonEmpty(ExtractJsonStringProperty(toolCall.ArgumentsJson, "query"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "q"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "search"));
+			string query = NormalizeContextAwareInternetSearchQuery(rawQuery);
+			if (!InternetSearchQueryRequiresPlanning(rawQuery, query))
+			{
+				if (!string.Equals(rawQuery, query, StringComparison.Ordinal))
+				{
+					toolCall.ArgumentsJson = RewriteInternetSearchArguments(toolCall.ArgumentsJson, query, requestBody);
+					LogMessage("[Chat UI] Normalized whitespace in the LLM-provided internet_search query.");
+				}
+			}
+		}
+	}
+
+	private string NormalizeContextAwareInternetSearchQuery(string query)
+	{
+		return Regex.Replace(query ?? "", "\\s+", " ", RegexOptions.CultureInvariant).Trim().Trim('"', '\'', '`');
+	}
+
+	private bool InternetSearchQueryRequiresPlanning(string rawQuery, string normalizedQuery)
+	{
+		string raw = (rawQuery ?? "").Trim();
+		string query = normalizedQuery ?? "";
+		if (!IsUsefulInternetSearchQueryCandidate(query) || query.Length > 220)
+		{
+			return true;
+		}
+		return raw.IndexOf("SocketJack Auto", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			raw.IndexOf("internet_search", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			raw.IndexOf("<tool_call", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			raw.IndexOf("User request:", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			Regex.IsMatch(raw, "(?is)^\\s*(?:please\\s+|kindly\\s+)?(?:search|look\\s+up|find|google)\\b", RegexOptions.CultureInvariant);
+	}
+
+	private string RewriteInternetSearchArguments(string argumentsJson, string query, string requestBody)
+	{
+		string prompt = FirstNonEmpty(ExtractChatUiLastUserPromptText(requestBody), ExtractLastUserMessage(requestBody) ?? "");
+		int take = Math.Max(1, Math.Min(12, ExtractIntFromToolArguments(argumentsJson, "take", ExtractRequestedInternetSearchSourceCount(prompt, 8, 12))));
+		return "{\"action\":\"search\",\"query\":\"" + EscapeJson(query ?? "") + "\",\"take\":" + take.ToString(CultureInfo.InvariantCulture) + "}";
+	}
+
+	private async Task ResolveInternetSearchToolCallQueriesAsync(string requestBody, List<ToolCallData> toolCalls, CancellationToken cancellationToken)
+	{
+		if (toolCalls == null || toolCalls.Count == 0)
+		{
+			return;
+		}
+		string plannedQuery = null;
+		foreach (ToolCallData toolCall in toolCalls)
+		{
+			if (toolCall == null || !string.Equals(toolCall.Name, "internet_search", StringComparison.Ordinal))
 			{
 				continue;
 			}
-			int take = Math.Max(1, Math.Min(12, ExtractIntFromToolArguments(toolCall.ArgumentsJson, "take", ExtractRequestedInternetSearchSourceCount(prompt, 8, 12))));
-			toolCall.ArgumentsJson = "{\"action\":\"search\",\"query\":\"" + EscapeJson(fallbackQuery) + "\",\"take\":" + take.ToString(CultureInfo.InvariantCulture) + "}";
-			LogMessage("[Chat UI] Rewrote unhelpful internet_search query \"" + TruncateForLog(query, 80) + "\" to \"" + TruncateForLog(fallbackQuery, 160) + "\".");
+			string mode = FirstNonEmpty(ExtractJsonStringProperty(toolCall.ArgumentsJson, "mode"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "action"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "operation"));
+			string url = FirstNonEmpty(ExtractJsonStringProperty(toolCall.ArgumentsJson, "url"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "href"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "sourceUrl"));
+			if (string.Equals(mode, "read", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(url))
+			{
+				continue;
+			}
+			string rawQuery = FirstNonEmpty(ExtractJsonStringProperty(toolCall.ArgumentsJson, "query"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "q"), ExtractJsonStringProperty(toolCall.ArgumentsJson, "search"));
+			string normalizedQuery = NormalizeContextAwareInternetSearchQuery(rawQuery);
+			if (!InternetSearchQueryRequiresPlanning(rawQuery, normalizedQuery))
+			{
+				if (!string.Equals(rawQuery, normalizedQuery, StringComparison.Ordinal))
+				{
+					toolCall.ArgumentsJson = RewriteInternetSearchArguments(toolCall.ArgumentsJson, normalizedQuery, requestBody);
+				}
+				continue;
+			}
+			if (string.IsNullOrWhiteSpace(plannedQuery))
+			{
+				string plannerUrl = BuildLocalModelRuntimeBaseUrl().TrimEnd('/') + "/v1/chat/completions";
+				plannedQuery = await PlanInternetSearchQueryAsync(plannerUrl, requestBody, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+			}
+			toolCall.ArgumentsJson = RewriteInternetSearchArguments(toolCall.ArgumentsJson, plannedQuery, requestBody);
+			LogMessage("[Chat UI] Context-aware query planner selected internet_search query \"" + TruncateForLog(plannedQuery, 160) + "\".");
 		}
+	}
+
+	private async Task<string> PlanInternetSearchQueryAsync(string url, string requestBody, CancellationToken cancellationToken)
+	{
+		string lastFailure = "the planner returned no usable query";
+		for (int attempt = 1; attempt <= 2; attempt++)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			try
+			{
+				string plannerRequest = BuildContextAwareInternetSearchPlannerRequest(requestBody, attempt);
+				string responseBody = await PostChatUiProxyToolRoundAsync(url, plannerRequest, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
+				ChatUiCompletion completion = ExtractChatUiCompletionFromChatCompletion(responseBody);
+				if (TryParseContextAwareInternetSearchPlannerOutput(completion?.Content, out var query))
+				{
+					return query;
+				}
+				lastFailure = "the planner returned an invalid or empty query";
+			}
+			catch (OperationCanceledException)
+			{
+				throw;
+			}
+			catch (Exception ex)
+			{
+				lastFailure = ex.Message;
+			}
+			if (attempt == 1)
+			{
+				LogMessage("[Chat UI] Internet-search query planner did not return a usable query; retrying once with stricter output instructions.");
+			}
+		}
+		throw new InvalidOperationException("Internet search query planning failed after two attempts; no search was executed. " + TruncateForLog(lastFailure, 300));
+	}
+
+	private string BuildContextAwareInternetSearchPlannerRequest(string requestBody, int attempt)
+	{
+		using JsonDocument document = JsonDocument.Parse(requestBody);
+		using MemoryStream stream = new MemoryStream();
+		using Utf8JsonWriter writer = new Utf8JsonWriter(stream);
+		bool wroteMessages = false;
+		writer.WriteStartObject();
+		foreach (JsonProperty property in document.RootElement.EnumerateObject())
+		{
+			if (property.NameEquals("tools") || property.NameEquals("tool_choice") || property.NameEquals("stream") || property.NameEquals("max_tokens") || property.NameEquals("max_completion_tokens") || property.NameEquals("max_output_tokens") || property.NameEquals("temperature") || property.NameEquals("top_p") || property.NameEquals("stop") || property.NameEquals("response_format"))
+			{
+				continue;
+			}
+			if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array)
+			{
+				wroteMessages = true;
+				writer.WritePropertyName("messages");
+				writer.WriteStartArray();
+				foreach (JsonElement message in property.Value.EnumerateArray())
+				{
+					message.WriteTo(writer);
+				}
+				WriteContextAwareInternetSearchPlannerInstruction(writer, attempt);
+				writer.WriteEndArray();
+				continue;
+			}
+			property.WriteTo(writer);
+		}
+		if (!wroteMessages)
+		{
+			writer.WritePropertyName("messages");
+			writer.WriteStartArray();
+			WriteContextAwareInternetSearchPlannerInstruction(writer, attempt);
+			writer.WriteEndArray();
+		}
+		writer.WriteBoolean("stream", value: false);
+		writer.WriteString("tool_choice", "none");
+		writer.WriteNumber("temperature", 0.0);
+		writer.WriteNumber("max_tokens", attempt <= 1 ? 512 : 1024);
+		writer.WriteEndObject();
+		writer.Flush();
+		return Encoding.UTF8.GetString(stream.ToArray());
+	}
+
+	private static void WriteContextAwareInternetSearchPlannerInstruction(Utf8JsonWriter writer, int attempt)
+	{
+		string retryText = attempt <= 1 ? "" : " Your previous output was unusable. Follow the output format exactly this time.";
+		writer.WriteStartObject();
+		writer.WriteString("role", "system");
+		writer.WriteString("content", "[JackLLM internet search query planner] Use the complete conversation above to determine the single concise semantic web-search query that best represents what the user currently wants to find. Resolve pronouns, follow-up references, names, products, locations, dates, and constraints from earlier turns when relevant. Do not answer the user's question. Do not include commands such as 'search for' or 'look up'. Do not include unrelated private data, passwords, API keys, tokens, cookies, or secrets from context unless the user's current request explicitly asks to search that exact value. Return only one JSON object in this exact shape: {\"query\":\"concise semantic search terms\"}." + retryText);
+		writer.WriteEndObject();
+	}
+
+	private bool TryParseContextAwareInternetSearchPlannerOutput(string output, out string query)
+	{
+		query = "";
+		string text = (output ?? "").Trim();
+		if (text.StartsWith("```", StringComparison.Ordinal) && text.EndsWith("```", StringComparison.Ordinal))
+		{
+			text = Regex.Replace(text, "(?is)^```(?:json)?\\s*|\\s*```$", "", RegexOptions.CultureInvariant).Trim();
+		}
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(text);
+			if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("query", out var queryElement) && queryElement.ValueKind == JsonValueKind.String)
+			{
+				query = NormalizeContextAwareInternetSearchQuery(queryElement.GetString());
+			}
+		}
+		catch
+		{
+			if (text.IndexOf('\n') < 0 && text.IndexOf('\r') < 0 && text.IndexOf('{') < 0 && text.IndexOf('}') < 0)
+			{
+				query = NormalizeContextAwareInternetSearchQuery(text);
+			}
+		}
+		if (InternetSearchQueryRequiresPlanning(query, query))
+		{
+			query = "";
+			return false;
+		}
+		return true;
 	}
 
 	private string FormatVisibleReasoningText(string text)
@@ -55335,12 +55638,13 @@ except Exception as exc:
 		return toolName != null && (toolName.Equals("read_file", StringComparison.Ordinal) || toolName.Equals("vs_read_file", StringComparison.Ordinal) || toolName.Equals("vs_write_file", StringComparison.Ordinal) || toolName.Equals("vs_replace_in_file", StringComparison.Ordinal) || toolName.Equals("vs_copy_file", StringComparison.Ordinal) || toolName.Equals("vs_rename_file", StringComparison.Ordinal) || toolName.Equals("vs_delete_file", StringComparison.Ordinal) || toolName.Equals("vs_search_files", StringComparison.Ordinal) || toolName.Equals("vs_list_files", StringComparison.Ordinal));
 	}
 
-	private async Task ForwardProxyToolResultAsync(List<ToolCallData> toolCalls, string model, Stream clientStream, SemaphoreSlim writeLock, CancellationToken cancellationToken)
+	private async Task ForwardProxyToolResultAsync(List<ToolCallData> toolCalls, string model, Stream clientStream, SemaphoreSlim writeLock, string requestBody, CancellationToken cancellationToken)
 	{
 		if (toolCalls == null)
 		{
 			return;
 		}
+		await ResolveInternetSearchToolCallQueriesAsync(requestBody, toolCalls, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 		foreach (ToolCallData toolCall in toolCalls)
 		{
 			if (toolCall == null || !IsProxyOwnedResearchTool(toolCall.Name))
@@ -55642,13 +55946,14 @@ except Exception as exc:
 		return values.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 	}
 
-	private async Task<string> BuildProxyToolContinuationRequestAsync(string requestBody, List<ToolCallData> toolCalls, bool keepProxyTools = false, string ownerKey = null, string sessionId = null, Action<ChatUiToolCallStreamEvent> emitToolCall = null)
+	private async Task<string> BuildProxyToolContinuationRequestAsync(string requestBody, List<ToolCallData> toolCalls, bool keepProxyTools = false, string ownerKey = null, string sessionId = null, Action<ChatUiToolCallStreamEvent> emitToolCall = null, CancellationToken cancellationToken = default(CancellationToken))
 	{
 		List<ProxyToolExecutionResult> proxyResults = new List<ProxyToolExecutionResult>();
 		List<ToolCallData> passthroughToolCalls = new List<ToolCallData>();
 		List<string> coordinationInstructions = new List<string>();
 		bool forceFinalAnswerFromCoordination = false;
 		sessionId = EnsureChatUiSessionId(sessionId);
+		await ResolveInternetSearchToolCallQueriesAsync(requestBody, toolCalls, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
 		foreach (ToolCallData toolCall in toolCalls)
 		{
 			if (toolCall == null)
@@ -65956,11 +66261,15 @@ except Exception as exc:
 		{
 			return true;
 		}
+		if (Regex.IsMatch(text, "\\b(?:vs_(?:search|list|read|write|replace|copy|rename|delete)_files?|read_file|file_search)\\b", RegexOptions.CultureInvariant))
+		{
+			return true;
+		}
 		if (Regex.IsMatch(text, "\\b(search|browse|internet|web|website|url|download|scrape|scraping|crawl|fetch|citation|source|current|latest|today|now|price|listing|listings)\\b", RegexOptions.CultureInvariant))
 		{
 			return true;
 		}
-		if (Regex.IsMatch(text, "\\b(file|folder|directory|path|repo|repository|solution|workspace|read|write|edit|modify|replace|rename|delete|list files|open file|save)\\b", RegexOptions.CultureInvariant))
+		if (Regex.IsMatch(text, "\\b(files?|folders?|director(?:y|ies)|paths?|repos?|repositories|solutions?|workspaces?|ftp|read|write|edit|modify|replace|rename|delete|list files|open file|save)\\b", RegexOptions.CultureInvariant))
 		{
 			return true;
 		}
@@ -66182,10 +66491,10 @@ except Exception as exc:
 		}
 		if (permissions != null && permissions.internetSearch)
 		{
-			WriteProxyResearchToolSchema(writer, "internet_search", "Search or read public HTTP/HTTPS pages with a session-scoped browser client. Use action=search with query to get numbered source URLs. Then choose the relevant URL yourself and call action=read with url to read the page text, links, forms, inputs, textareas, lists, tables, headings, metadata, and optional selector matches. Cookies and logins are sandboxed by chat owner and session.", Array.Empty<string>(), new ProxyToolParameter[8]
+			WriteProxyResearchToolSchema(writer, "internet_search", "Search or read public HTTP/HTTPS pages with a session-scoped browser client. First determine the concise semantic terms needed to answer the user's request. Use action=search with only those terms in query; never copy command phrases such as 'search for', 'search the internet for', or 'look up'. Then choose the relevant URL yourself and call action=read with url to read the page text, links, forms, inputs, textareas, lists, tables, headings, metadata, and optional selector matches. Cookies and logins are sandboxed by chat owner and session.", Array.Empty<string>(), new ProxyToolParameter[8]
 			{
 				new ProxyToolParameter("action", "string", "search or read. Default search unless url is supplied without query."),
-				new ProxyToolParameter("query", "string", "Search query for action=search."),
+				new ProxyToolParameter("query", "string", "Concise semantic search terms chosen from the user's actual information need. Exclude conversational search instructions and filler."),
 				new ProxyToolParameter("url", "string", "HTTP/HTTPS URL to read for action=read. The model should choose this URL from search results or the user's request."),
 				new ProxyToolParameter("selector", "string", "Optional simple selector for action=read, such as table, input, textarea, #id, .class, or tag.class."),
 				new ProxyToolParameter("take", "integer", "For search: maximum results, default 6, max 12. For read: max links/controls/sections, default 40, max 120."),
@@ -68616,6 +68925,7 @@ except Exception as exc:
 			DisposeChatSessionSandboxes();
 			DisposeChatBrowserClientSessions();
 			_jackDirector?.Dispose();
+			DisposeDreaming();
 			_httpListener = null;
 			try
 			{

@@ -16,9 +16,8 @@ It handles framing, segmentation, serialization, compression, routing, protocol 
 |---|---:|---|---|
 | [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.8` | `.NET Standard 2.1` | Core TCP, UDP, HTTP, WebSocket, protocol multiplexing, data, file transfer, and streaming utilities. |
 | [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.4` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF live capture, remote input, and GUI remoting on top of SocketJack. |
-| `JackLLM Mobile` | `1.0` | Android | MAUI Android companion app for JackLLM Workstation chat and session management. |
 
-Companion runtime projects are documented separately, including [`LlmRuntime/README.md`](https://github.com/JackOfFates/SocketJack/blob/master/LlmRuntime/README.md) and [`SocketJack/JackLLM.Android/README.md`](https://github.com/JackOfFates/SocketJack/blob/master/SocketJack/JackLLM.Android/README.md).
+The companion runtime is documented separately in [`LlmRuntime/README.md`](https://github.com/JackOfFates/SocketJack/blob/master/LlmRuntime/README.md).
 
 ## Feature Map
 
@@ -138,20 +137,11 @@ using SocketJack.WPF;
 IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
 ```
 
-## JackLLM Mobile
-
-JackLLM Mobile is the Android client for JackLLM Workstation. It connects to a workstation endpoint, supports mobile chat, and lets you continue workstation sessions from Android.
-
-![JackLLM Mobile chat](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-chat.png)
-
-![JackLLM Mobile sessions](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-sessions.png)
-
 ## Documentation
 
 - [Examples](https://github.com/JackOfFates/SocketJack/blob/master/examples.md)
 - [SocketJack package](https://www.nuget.org/packages/SocketJack)
 - [SocketJack.WPF package](https://www.nuget.org/packages/SocketJack.WPF)
-- [JackLLM Mobile README](https://github.com/JackOfFates/SocketJack/blob/master/SocketJack/JackLLM.Android/README.md)
 - [GitHub repository](https://github.com/JackOfFates/SocketJack)
 
 ## License

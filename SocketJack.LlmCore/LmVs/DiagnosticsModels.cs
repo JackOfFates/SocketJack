@@ -465,6 +465,7 @@ namespace LmVs
         public bool AgentAccess { get; set; } = true;
         public bool FileUploads { get; set; } = true;
         public bool ImageUploads { get; set; } = true;
+        public bool PcAccess { get; set; }
         public string MutedUntilUtc { get; set; } = "";
         public string BannedUntilUtc { get; set; } = "";
         public bool MuteUntilEnabled { get; set; }

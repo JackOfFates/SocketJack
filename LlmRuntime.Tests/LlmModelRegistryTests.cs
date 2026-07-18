@@ -805,6 +805,43 @@ public sealed class LlmModelRegistryTests
     }
 
     [TestMethod]
+    public void RepositoryScanner_DedicatedVideoMemoryOversizeUsesVramWarning()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            var candidate = new ModelFileCandidate
+            {
+                Path = "large-model.gguf",
+                FileName = "large-model.gguf",
+                Repository = "owner/large-model",
+                Revision = "main",
+                SizeBytes = 16L * 1024 * 1024 * 1024,
+                Format = ModelFileFormat.Gguf,
+                Action = "download_gguf",
+                ActionLabel = "Download GGUF",
+                CanDownload = true,
+                Reason = "Ready GGUF file."
+            };
+
+            candidate.ApplyFit(new ModelFitSnapshot
+            {
+                SharedVideoMemoryBytes = 12L * 1024 * 1024 * 1024,
+                VideoMemoryIsDedicated = true,
+                DriveFreeBytes = 256L * 1024 * 1024 * 1024
+            }, root);
+
+            Assert.IsTrue(candidate.CanDownload);
+            Assert.IsTrue(candidate.IsWarning);
+            Assert.AreEqual("Larger than detected dedicated VRAM.", candidate.Reason);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [TestMethod]
     public void RepositoryScanner_LabelsLoraBundlesAsAdapters()
     {
         var scan = ModelRepositoryScanner.BuildResult("owner/image-lora", "main",

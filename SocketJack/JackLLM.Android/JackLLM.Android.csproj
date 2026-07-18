@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-android</TargetFramework>
+    <TargetFrameworks>net10.0-android;net10.0-ios</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <RootNamespace>JackLLM.Mobile</RootNamespace>
     <AssemblyName>JackLLM.Mobile</AssemblyName>
@@ -9,16 +9,26 @@
     <ApplicationIdGuid>7E8A35E6-8F5E-4D7E-82F0-4C8BEFDE1234</ApplicationIdGuid>
     <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
-    <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
+    <NoWarn>$(NoWarn);XA0141</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
     <AndroidPackageFormats>apk</AndroidPackageFormats>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifiers>ios-arm64;iossimulator-x64;iossimulator-arm64</RuntimeIdentifiers>
+    <CodesignEntitlements>Platforms\iOS\Entitlements.plist</CodesignEntitlements>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' and $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     <RunAOTCompilation>false</RunAOTCompilation>
     <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
   </PropertyGroup>
@@ -27,11 +37,32 @@
     <None Remove="**\*.html;**\*.css;**\*.js" />
   </ItemGroup>
 
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <Compile Remove="Pages\PcFileTransferPage.cs" />
+  </ItemGroup>
+
   <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg"
+              ForegroundFile="Resources\AppIcon\appiconfg.png"
+              ForegroundScale="0.72" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SocketJack.csproj" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.60" />
     <PackageReference Include="Microsoft.Maui.Controls.Core" Version="10.0.60" />
     <PackageReference Include="Microsoft.Maui.Core" Version="10.0.60" />
     <PackageReference Include="Microsoft.Maui.Essentials" Version="10.0.60" />
     <PackageReference Include="Microsoft.Maui.Graphics" Version="10.0.60" />
+    <PackageReference Include="LibVLCSharp.MAUI" Version="3.10.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <PackageReference Include="VideoLAN.LibVLC.Android" Version="3.6.5" />
+    <PackageReference Include="Xamarin.AndroidX.DocumentFile" Version="1.0.1.33" />
+  </ItemGroup>
+
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <PackageReference Include="VideoLAN.LibVLC.iOS" Version="3.6.1" />
   </ItemGroup>
 </Project>

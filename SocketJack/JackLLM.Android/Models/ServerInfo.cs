@@ -20,6 +20,7 @@ public sealed class ServerInfo
     public int HealthScore { get; set; }
     public string CertificateFingerprint { get; set; } = "";
     public bool IsSaved { get; set; }
+    public string CredentialKey { get; set; } = "";
 
     public string DisplayName => !string.IsNullOrWhiteSpace(Name)
         ? Name
