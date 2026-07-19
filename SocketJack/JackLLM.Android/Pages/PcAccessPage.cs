@@ -21,6 +21,7 @@ public sealed class PcAccessPage : ContentPage
     private readonly Label _zoomLabel = new() { Text = "1.0×", TextColor = Color.FromArgb("#67E8F9"), VerticalTextAlignment = TextAlignment.Center };
     private readonly VerticalStackLayout _files = new() { Spacing = 6 };
     private readonly Border _filesPanel;
+    private readonly RefreshView _refreshView;
     private LibVLC? _libVlc;
     private VlcMediaPlayer? _player;
     private Media? _media;
@@ -88,13 +89,21 @@ public sealed class PcAccessPage : ContentPage
         };
         Grid.SetColumnSpan(keyboardInput, 1);
 
-        Content = new Grid
+        var pageContent = new Grid
         {
             Padding = new Thickness(8),
             RowSpacing = 7,
             RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) },
             Children = { toolbar.Row(0), _surface.Row(1), _filesPanel.Row(2) }
         };
+        _refreshView = new RefreshView { Content = pageContent, RefreshColor = Color.FromArgb("#60A5FA") };
+        _refreshView.Refreshing += async (_, _) =>
+        {
+            try { await RefreshStatusAsync(); }
+            catch (Exception ex) { ShowError(ex); }
+            finally { _refreshView.IsRefreshing = false; }
+        };
+        Content = _refreshView;
 
         _surface.RemoteTap += async (_, e) => await SendPointerAsync("click", e.X, e.Y, "left");
         _surface.RemoteRightTap += async (_, e) => await SendPointerAsync("click", e.X, e.Y, "right");
@@ -183,6 +192,21 @@ public sealed class PcAccessPage : ContentPage
         _streamCancellation?.Dispose();
         _streamCancellation = new CancellationTokenSource();
         _ = PollPointerAsync(_streamCancellation.Token);
+    }
+
+    private async Task RefreshStatusAsync()
+    {
+        if (!_connected)
+        {
+            await _client.ConnectAsync(_server);
+            _connected = true;
+        }
+        using JsonDocument status = await _client.GetPcAccessStatusAsync();
+        JsonElement root = status.RootElement;
+        bool tailscale = root.TryGetProperty("tailscaleAvailable", out JsonElement value) && value.GetBoolean();
+        _status.Text = tailscale
+            ? "Workstation online · Tailscale enabled"
+            : "Workstation online · Tailscale disabled";
     }
 
     private void EnsurePlayer()

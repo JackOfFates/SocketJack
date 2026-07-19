@@ -19,6 +19,7 @@ public sealed class AndroidNotificationService : IMobileNotificationService
     internal const string ActionStart = "com.socketjack.jackllm.mobile.GENERATION_START";
     internal const string ActionStop = "com.socketjack.jackllm.mobile.GENERATION_STOP";
     internal const string ExtraServerKey = "jackllm_server_key";
+    internal const string ExtraSessionId = "jackllm_session_id";
     private const string UnreadKey = "jackllm.mobile.notifications.unread";
     private const string LatestServerKey = "jackllm.mobile.notifications.latestServer";
 
@@ -42,7 +43,7 @@ public sealed class AndroidNotificationService : IMobileNotificationService
         catch { context.StartService(intent); }
     }
 
-    public void NotifyThinkingCompleted(string serverKey)
+    public void NotifyThinkingCompleted(string serverKey, string sessionId)
     {
         if (AppVisibilityService.IsActive) return;
         Context context = Platform.AppContext;
@@ -54,7 +55,8 @@ public sealed class AndroidNotificationService : IMobileNotificationService
         Intent open = new(context, typeof(MainActivity));
         open.SetAction(Intent.ActionView);
         open.PutExtra(ExtraServerKey, serverKey ?? "");
-        open.PutExtra("open_sessions", true);
+        open.PutExtra(ExtraSessionId, sessionId ?? "");
+        open.PutExtra("open_session", true);
         open.AddFlags(ActivityFlags.SingleTop | ActivityFlags.ClearTop);
         PendingIntentFlags pendingFlags = PendingIntentFlags.UpdateCurrent;
         if (OperatingSystem.IsAndroidVersionAtLeast(23)) pendingFlags |= PendingIntentFlags.Immutable;

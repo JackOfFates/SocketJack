@@ -35,6 +35,10 @@
   <string>JackLLM Mobile accesses photos only when you choose one to attach to a chat.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>JackLLM Mobile connects to JackLLM Workstations on your local network.</string>
+  <key>LSApplicationQueriesSchemes</key>
+  <array>
+    <string>tailscale</string>
+  </array>
   <key>UIFileSharingEnabled</key>
   <true/>
   <key>LSSupportsOpeningDocumentsInPlace</key>

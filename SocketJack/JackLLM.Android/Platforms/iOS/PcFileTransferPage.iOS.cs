@@ -20,6 +20,7 @@ public sealed class PcFileTransferPage : ContentPage
     private readonly Button _upload;
     private readonly Button _download;
     private readonly Button _cancel;
+    private readonly RefreshView _refreshView;
     private SocketJack.Net.FtpClient? _ftp;
     private PcAccessFtpConnection? _connection;
     private FileResult? _selectedLocal;
@@ -87,13 +88,20 @@ public sealed class PcFileTransferPage : ContentPage
             ColumnSpacing = 6,
             Children = { localPane.Column(0), arrows.Column(1), remotePane.Column(2) }
         };
-        Content = new Grid
+        var pageContent = new Grid
         {
             Padding = 8,
             RowSpacing = 7,
             RowDefinitions = { new(GridLength.Auto), new(GridLength.Auto), new(GridLength.Star) },
             Children = { header.Row(0), _progress.Row(1), panes.Row(2) }
         };
+        _refreshView = new RefreshView { Content = pageContent, RefreshColor = Color.FromArgb("#38BDF8") };
+        _refreshView.Refreshing += async (_, _) =>
+        {
+            try { await RunUiAsync(LoadRemoteAsync); }
+            finally { _refreshView.IsRefreshing = false; }
+        };
+        Content = _refreshView;
     }
 
     protected override async void OnAppearing()

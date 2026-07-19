@@ -14,6 +14,8 @@ public sealed class ChatHostPage : ContentPage
     private readonly JackLlmClient _client;
     private readonly ServerStore _store;
     private readonly MobileGenerationCoordinator _generation;
+    private readonly RecentSessionStore _recentSessions;
+    private readonly string _requestedSessionId;
     private readonly MobileAudioService _audio = new();
     private readonly ObservableCollection<ChatMessage> _messages = new();
     private readonly List<AttachmentInfo> _attachments = new();
@@ -45,9 +47,17 @@ public sealed class ChatHostPage : ContentPage
     private ChatMessage? _activeAssistant;
     private string _sessionId = Guid.NewGuid().ToString("N");
 
-    public ChatHostPage(ServerInfo server, JackLlmClient client, ServerStore store, MobileGenerationCoordinator generation)
+    public ChatHostPage(
+        ServerInfo server,
+        JackLlmClient client,
+        ServerStore store,
+        MobileGenerationCoordinator generation,
+        RecentSessionStore recentSessions,
+        string requestedSessionId = "")
     {
         _server = server; _client = client; _store = store; _generation = generation;
+        _recentSessions = recentSessions;
+        _requestedSessionId = requestedSessionId;
         Title = "JackLLM";
         BackgroundColor = Color.FromArgb("#0B1020");
         _status = new Label { Text = "Connecting…", TextColor = Color.FromArgb("#94A3B8"), FontSize = 11, Margin = new Thickness(4, 0) };
@@ -307,6 +317,7 @@ public sealed class ChatHostPage : ContentPage
             ChatMessage planUser = requestMessages[^1];
             planUser.Content = "[PLAN MODE: read-only inspection only. Do not implement or modify files. Ask focused clarification questions with 2-3 options and accept a custom answer. Produce a decision-complete <proposed_plan> and wait for explicit approval.]\n\n" + planUser.Content;
         }
+        _recentSessions.Remember(_server.LaunchKey, _sessionId);
         bool started = await _generation.StartAsync(new MobileGenerationRequest(
             _server, _client, _sessionId, model.Id, service, EffectiveReasoningLevel,
             _sessionReasoningInherit.IsToggled ? "inherit" : EffectiveReasoningLevel,
@@ -409,6 +420,7 @@ public sealed class ChatHostPage : ContentPage
         _reasoningSlider.Value = Preferences.Default.Get(ReasoningPreferenceKey, 4d);
         UpdateReasoningUi();
         _status.Text = "New conversation";
+        _recentSessions.Remember(_server.LaunchKey, _sessionId);
     }
 
     private async Task InitializeSessionAsync()
@@ -421,7 +433,24 @@ public sealed class ChatHostPage : ContentPage
             _sessionId = active.SessionId;
             _messages.Clear();
             ApplyGenerationSnapshot(active);
+            _recentSessions.Remember(_server.LaunchKey, _sessionId);
             return;
+        }
+        string preferredSessionId = _requestedSessionId;
+        if (string.IsNullOrWhiteSpace(preferredSessionId))
+            preferredSessionId = _recentSessions.FindRecent(_server.LaunchKey, TimeSpan.FromHours(1))?.SessionId ?? "";
+        if (!string.IsNullOrWhiteSpace(preferredSessionId))
+        {
+            try
+            {
+                await LoadSessionAsync(preferredSessionId);
+                _status.Text = "Continued your recent session";
+                return;
+            }
+            catch
+            {
+                // The remembered session may have been deleted on another client.
+            }
         }
         try
         {
@@ -465,6 +494,7 @@ public sealed class ChatHostPage : ContentPage
     {
         ChatSessionDetail detail = await _client.GetSessionAsync(id);
         _sessionId = detail.Id;
+        _recentSessions.Remember(_server.LaunchKey, _sessionId);
         string savedReasoning = string.IsNullOrWhiteSpace(detail.ReasoningLevel) ? "inherit" : detail.ReasoningLevel.ToLowerInvariant();
         _sessionReasoningInherit.IsToggled = savedReasoning == "inherit";
         if (!_sessionReasoningInherit.IsToggled)

@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 namespace JackLLM.Mobile.Models;
 
@@ -21,6 +22,9 @@ public sealed class ServerInfo
     public string CertificateFingerprint { get; set; } = "";
     public bool IsSaved { get; set; }
     public string CredentialKey { get; set; } = "";
+    [JsonIgnore] public string ConnectionLine { get; set; } = "Checking Workstation status...";
+    [JsonIgnore] public string TailscaleLine { get; set; } = "Checking Tailscale...";
+    [JsonIgnore] public Color ConnectionColor { get; set; } = Color.FromArgb("#94A3B8");
 
     public string DisplayName => !string.IsNullOrWhiteSpace(Name)
         ? Name

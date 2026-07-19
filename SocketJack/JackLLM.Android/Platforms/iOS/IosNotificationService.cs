@@ -9,6 +9,7 @@ namespace JackLLM.Mobile.Platforms.iOS;
 public sealed class IosNotificationService : IMobileNotificationService
 {
     internal const string ServerKey = "jackllm_server_key";
+    internal const string SessionKey = "jackllm_session_id";
     private const string ActiveIdentifier = "jackllm-generation";
     private const string AlertIdentifier = "jackllm-response";
     private const string UnreadKey = "jackllm.mobile.notifications.unread";
@@ -32,7 +33,7 @@ public sealed class IosNotificationService : IMobileNotificationService
         // brings the user back to the matching Workstation session.
     }
 
-    public void NotifyThinkingCompleted(string serverKey)
+    public void NotifyThinkingCompleted(string serverKey, string sessionId)
     {
         if (AppVisibilityService.IsActive) return;
         int unread = MobileNotificationText.IncrementUnread(Preferences.Default.Get(UnreadKey, 0));
@@ -44,7 +45,9 @@ public sealed class IosNotificationService : IMobileNotificationService
             Body = MobileNotificationText.FormatUnread(unread),
             Badge = NSNumber.FromInt32(unread),
             Sound = UNNotificationSound.Default,
-            UserInfo = NSDictionary.FromObjectAndKey(new NSString(serverKey ?? ""), new NSString(ServerKey))
+            UserInfo = NSDictionary.FromObjectsAndKeys(
+                new NSObject[] { new NSString(serverKey ?? ""), new NSString(sessionId ?? "") },
+                new NSObject[] { new NSString(ServerKey), new NSString(SessionKey) })
         };
         var trigger = UNTimeIntervalNotificationTrigger.CreateTrigger(0.1, false);
         var request = UNNotificationRequest.FromIdentifier(AlertIdentifier, content, trigger);
@@ -79,11 +82,12 @@ internal sealed class JackLlmNotificationDelegate : UNUserNotificationCenterDele
         Action completionHandler)
     {
         string serverKey = response.Notification.Request.Content.UserInfo[new NSString(IosNotificationService.ServerKey)]?.ToString() ?? "";
+        string sessionId = response.Notification.Request.Content.UserInfo[new NSString(IosNotificationService.SessionKey)]?.ToString() ?? "";
         if (!string.IsNullOrWhiteSpace(serverKey))
         {
             NotificationNavigationService? navigation =
                 IPlatformApplication.Current?.Services.GetService(typeof(NotificationNavigationService)) as NotificationNavigationService;
-            navigation?.QueueSessions(serverKey);
+            navigation?.QueueSession(serverKey, sessionId);
         }
         completionHandler();
     }

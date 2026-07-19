@@ -15,6 +15,7 @@ public sealed class SessionsPage : ContentPage
     private readonly ActivityIndicator _loading;
     private readonly Label _syncState;
     private readonly Label _branchSummary;
+    private readonly RefreshView _refreshView;
     private bool _loaded;
 
     public SessionsPage(ServerInfo server, JackLlmClient client, Func<string, Task> openSession)
@@ -64,7 +65,7 @@ public sealed class SessionsPage : ContentPage
             Content = new VerticalStackLayout { Spacing = 4, Children = { rootHeader, endpoint } }
         };
 
-        Content = new Grid
+        var pageContent = new Grid
         {
             RowDefinitions =
             {
@@ -77,6 +78,13 @@ public sealed class SessionsPage : ContentPage
             Padding = new Thickness(12, 10, 12, 0),
             Children = { eyebrow, root.Row(1), _branchSummary.Row(2), _loading.Row(3), _list.Row(4) }
         };
+        _refreshView = new RefreshView { Content = pageContent, RefreshColor = Color.FromArgb("#60A5FA") };
+        _refreshView.Refreshing += async (_, _) =>
+        {
+            try { await LoadAsync(); }
+            finally { _refreshView.IsRefreshing = false; }
+        };
+        Content = _refreshView;
     }
 
     protected override async void OnAppearing()

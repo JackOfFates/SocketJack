@@ -4,7 +4,7 @@ public interface IMobileNotificationService
 {
     Task EnsurePermissionAsync();
     void StartGeneration(string serverKey);
-    void NotifyThinkingCompleted(string serverKey);
+    void NotifyThinkingCompleted(string serverKey, string sessionId);
     void StopGeneration();
     void ResetUnread();
 }
@@ -24,23 +24,25 @@ public static class AppVisibilityService
 public sealed class NotificationNavigationService
 {
     private readonly object _gate = new();
-    private string _pendingServerKey = "";
+    private NotificationNavigationTarget? _pending;
 
     public event EventHandler? PendingChanged;
 
-    public void QueueSessions(string serverKey)
+    public void QueueSession(string serverKey, string sessionId)
     {
-        lock (_gate) _pendingServerKey = serverKey ?? "";
+        lock (_gate) _pending = new NotificationNavigationTarget(serverKey ?? "", sessionId ?? "");
         PendingChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public string TakePendingServerKey()
+    public NotificationNavigationTarget? TakePending()
     {
         lock (_gate)
         {
-            string value = _pendingServerKey;
-            _pendingServerKey = "";
+            NotificationNavigationTarget? value = _pending;
+            _pending = null;
             return value;
         }
     }
 }
+
+public sealed record NotificationNavigationTarget(string ServerKey, string SessionId);

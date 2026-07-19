@@ -15,6 +15,7 @@
   <uses-feature android:name="android.hardware.microphone" android:required="false" />
   <uses-feature android:name="android.hardware.camera" android:required="false" />
   <queries>
+    <package android:name="com.tailscale.ipn" />
     <intent>
       <action android:name="android.media.action.IMAGE_CAPTURE" />
     </intent>

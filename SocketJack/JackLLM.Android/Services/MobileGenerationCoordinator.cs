@@ -241,7 +241,7 @@ public sealed class MobileGenerationCoordinator
         MobileGenerationSnapshot current = Current;
         if (_milestonePolicy.TryReachVisibleAnswer(!string.IsNullOrWhiteSpace(ModelOutputSanitizer.Sanitize(current.Content))))
         {
-            _notifications.NotifyThinkingCompleted(serverKey);
+            _notifications.NotifyThinkingCompleted(serverKey, current.SessionId);
         }
     }
 
@@ -318,7 +318,7 @@ public sealed class MobileGenerationCoordinator
                     bool hasVisibleAnswer = !string.IsNullOrWhiteSpace(ModelOutputSanitizer.Sanitize(content));
                     if (_milestonePolicy.TryReachVisibleAnswer(hasVisibleAnswer))
                     {
-                        _notifications.NotifyThinkingCompleted(request.Server.LaunchKey);
+                        _notifications.NotifyThinkingCompleted(request.Server.LaunchKey, request.SessionId);
                     }
                     if (hasVisibleAnswer) return true;
                 }

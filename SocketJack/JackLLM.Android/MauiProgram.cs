@@ -36,10 +36,13 @@ public static class MauiProgram
         builder.Services.AddTransient<JackLlmClient>();
         builder.Services.AddSingleton<MobileAudioService>();
         builder.Services.AddSingleton<NotificationNavigationService>();
+        builder.Services.AddSingleton<RecentSessionStore>();
 #if ANDROID
         builder.Services.AddSingleton<IMobileNotificationService, AndroidNotificationService>();
+        builder.Services.AddSingleton<IMobileConnectivityService, AndroidMobileConnectivityService>();
 #elif IOS
         builder.Services.AddSingleton<IMobileNotificationService, IosNotificationService>();
+        builder.Services.AddSingleton<IMobileConnectivityService, IosMobileConnectivityService>();
 #endif
         builder.Services.AddSingleton<MobileGenerationCoordinator>();
         builder.Services.AddSingleton<ServerListPage>();

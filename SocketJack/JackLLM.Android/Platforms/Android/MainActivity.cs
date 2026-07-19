@@ -79,10 +79,11 @@ public class MainActivity : MauiAppCompatActivity
 
     private void HandleNotificationIntent(Android.Content.Intent? intent)
     {
-        if (intent?.GetBooleanExtra("open_sessions", false) != true) return;
+        if (intent?.GetBooleanExtra("open_session", false) != true) return;
         string serverKey = intent.GetStringExtra(AndroidNotificationService.ExtraServerKey) ?? "";
-        Resolve<NotificationNavigationService>()?.QueueSessions(serverKey);
-        intent.RemoveExtra("open_sessions");
+        string sessionId = intent.GetStringExtra(AndroidNotificationService.ExtraSessionId) ?? "";
+        Resolve<NotificationNavigationService>()?.QueueSession(serverKey, sessionId);
+        intent.RemoveExtra("open_session");
     }
 
     private static T? Resolve<T>() where T : class =>
