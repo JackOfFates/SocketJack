@@ -83,4 +83,17 @@ public sealed class JackLlmSecurityTests
         StringAssert.Contains(html, "chatBrowserFrame.src = buildChatBrowserProxyUrl(url);");
         StringAssert.Contains(html, "function buildChatBrowserProxyUrl(value)");
     }
+
+    [TestMethod]
+    public void WebChatDreamManagementPersistsPermissionsAndProtectsDirtySettings()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "dreamInternetSearch: !!(data.permissions && data.permissions.dreamInternetSearch)");
+        StringAssert.Contains(html, "dreamPermInternetSearch','dreamPermVsCopilotTools");
+        StringAssert.Contains(html, "if(dreamDirty)return");
+        StringAssert.Contains(html, "Clear Resolved");
+        StringAssert.Contains(html, "/api/dream-permissions");
+        StringAssert.Contains(html, "dreamPresetValues");
+    }
 }

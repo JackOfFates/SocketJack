@@ -99,12 +99,14 @@ public sealed class ChatHostPage : ContentPage
         _voice.Clicked += async (_, _) => await RecordVoiceAsync();
 
         var workspaceItem = new ToolbarItem("▦", null, async () => await Navigation.PushAsync(new SessionsPage(_server, _client, LoadSessionAsync))) { AutomationId = "WorkspaceSessions" };
+        var dreamItem = new ToolbarItem("☾", null, async () => await Navigation.PushAsync(new DreamManagementPage(_server, _client))) { AutomationId = "DreamManagement" };
         var newItem = new ToolbarItem("＋", null, NewSession) { AutomationId = "NewSession" };
         _speakItem = new ToolbarItem("🔊", null, async () => await SpeakLastAsync()) { AutomationId = "SpeakResponse" };
         AutomationProperties.SetHelpText(workspaceItem, "Workspace and synchronized sessions");
         AutomationProperties.SetHelpText(newItem, "New session");
         AutomationProperties.SetHelpText(_speakItem, "Read the latest response aloud");
         ToolbarItems.Add(workspaceItem);
+        ToolbarItems.Add(dreamItem);
         ToolbarItems.Add(newItem);
         ToolbarItems.Add(_speakItem);
 

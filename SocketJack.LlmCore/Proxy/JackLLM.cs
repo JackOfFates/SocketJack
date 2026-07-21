@@ -27631,6 +27631,16 @@ except Exception as exc:
 			fileUploads = source.fileUploads,
 			imageUploads = source.imageUploads,
 			pcAccess = source.pcAccess,
+			dreamInternetSearch = source.dreamInternetSearch,
+			dreamVsCopilotTools = source.dreamVsCopilotTools,
+			dreamFileDownloads = source.dreamFileDownloads,
+			dreamFtpServer = source.dreamFtpServer,
+			dreamSqlAdmin = source.dreamSqlAdmin,
+			dreamTerminalCommands = source.dreamTerminalCommands,
+			dreamAgentAccess = source.dreamAgentAccess,
+			dreamFileUploads = source.dreamFileUploads,
+			dreamImageUploads = source.dreamImageUploads,
+			dreamPcAccess = source.dreamPcAccess,
 			mutedUntilUtc = source.mutedUntilUtc ?? "",
 			bannedUntilUtc = source.bannedUntilUtc ?? "",
 			muteUntilEnabled = source.muteUntilEnabled,
@@ -27820,6 +27830,7 @@ except Exception as exc:
 		{
 			permissions.bannedUntilUtc = bannedUntil;
 		}
+		ApplyDreamPermissionJson(root, permissions);
 		return permissions;
 	}
 
@@ -27837,6 +27848,16 @@ except Exception as exc:
 		permissions.terminalCommands = snapshot.TerminalCommands;
 		permissions.terminalForeverApproved = snapshot.TerminalForeverApproved;
 		permissions.pcAccess = snapshot.PcAccess;
+		permissions.dreamInternetSearch = snapshot.DreamInternetSearch && permissions.internetSearch;
+		permissions.dreamVsCopilotTools = snapshot.DreamVsCopilotTools && permissions.vsCopilotTools;
+		permissions.dreamFileDownloads = snapshot.DreamFileDownloads && permissions.fileDownloads;
+		permissions.dreamFtpServer = snapshot.DreamFtpServer && permissions.ftpServer;
+		permissions.dreamSqlAdmin = snapshot.DreamSqlAdmin && permissions.sqlAdmin;
+		permissions.dreamTerminalCommands = snapshot.DreamTerminalCommands && permissions.terminalCommands && permissions.terminalForeverApproved;
+		permissions.dreamAgentAccess = snapshot.DreamAgentAccess && permissions.agentAccess;
+		permissions.dreamFileUploads = snapshot.DreamFileUploads && permissions.fileUploads;
+		permissions.dreamImageUploads = snapshot.DreamImageUploads && permissions.imageUploads;
+		permissions.dreamPcAccess = snapshot.DreamPcAccess && permissions.pcAccess;
 		permissions.mutedUntilUtc = snapshot.MutedUntilUtc ?? "";
 		permissions.bannedUntilUtc = snapshot.BannedUntilUtc ?? "";
 		permissions.muteUntilEnabled = snapshot.MuteUntilEnabled;
@@ -27861,6 +27882,16 @@ except Exception as exc:
 			TerminalCommands = permissions.terminalCommands,
 			TerminalForeverApproved = permissions.terminalForeverApproved,
 			PcAccess = permissions.pcAccess,
+			DreamInternetSearch = permissions.dreamInternetSearch && permissions.internetSearch,
+			DreamVsCopilotTools = permissions.dreamVsCopilotTools && permissions.vsCopilotTools,
+			DreamFileDownloads = permissions.dreamFileDownloads && permissions.fileDownloads,
+			DreamFtpServer = permissions.dreamFtpServer && permissions.ftpServer,
+			DreamSqlAdmin = permissions.dreamSqlAdmin && permissions.sqlAdmin,
+			DreamTerminalCommands = permissions.dreamTerminalCommands && permissions.terminalCommands && permissions.terminalForeverApproved,
+			DreamAgentAccess = permissions.dreamAgentAccess && permissions.agentAccess,
+			DreamFileUploads = permissions.dreamFileUploads && permissions.fileUploads,
+			DreamImageUploads = permissions.dreamImageUploads && permissions.imageUploads,
+			DreamPcAccess = permissions.dreamPcAccess && permissions.pcAccess,
 			MutedUntilUtc = (permissions.mutedUntilUtc ?? ""),
 			BannedUntilUtc = (permissions.bannedUntilUtc ?? ""),
 			MuteUntilEnabled = permissions.muteUntilEnabled,

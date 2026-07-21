@@ -29,6 +29,7 @@ public partial class LmVsProxy
         server.Map("POST", "/api/mobile/pairing/start", (connection, request, cancellationToken) => HandleMobilePairingStart(connection, request));
         server.Map("POST", "/api/mobile/pairing/complete", (connection, request, cancellationToken) => HandleMobilePairingComplete(connection, request));
         server.Map("GET", "/api/mobile/devices", (connection, request, cancellationToken) => HandleMobileDevices(connection, request));
+        server.Map("PUT", "/api/mobile/devices/*", (connection, request, cancellationToken) => HandleMobileDeviceUpdate(connection, request));
         server.Map("DELETE", "/api/mobile/devices/*", (connection, request, cancellationToken) => HandleMobileDeviceDelete(connection, request));
         RegisterPcAccessRoutes(server);
     }
@@ -128,6 +129,9 @@ load().catch(e=>setNote(e.message,true));
             enabled = MobileAccessEnabled,
             paired = device != null,
             deviceId = device?.Id ?? "",
+            ownerKey = device?.OwnerKey ?? "",
+            scopes = device?.Scopes ?? Array.Empty<string>(),
+            dreamAdmin = device?.Scopes?.Contains("dream.admin", StringComparer.OrdinalIgnoreCase) == true,
             serverName = Environment.MachineName,
             pairingAvailable = MobileAccessEnabled && IsLocalAdmin(connection, request)
         });
@@ -200,7 +204,7 @@ load().catch(e=>setNote(e.message,true));
                     TokenHash = HashSecret(token),
                     CreatedAtUtc = now,
                     LastSeenAtUtc = now,
-                    Scopes = new[] { "chat", "models", "sessions", "files", "media", "voice", "share" }
+                    Scopes = new[] { "chat", "models", "sessions", "files", "media", "voice", "share", "dream" }
                 };
                 device.OwnerKey = string.IsNullOrWhiteSpace(pairing.OwnerKey) ? "mobile:" + device.Id : pairing.OwnerKey;
                 state.Devices.Add(device);
@@ -218,7 +222,47 @@ load().catch(e=>setNote(e.message,true));
         lock (_mobilePairingLock)
         {
             MobileAccessState state = GetMobileAccessState();
-            return JsonSerializer.Serialize(new { ok = true, enabled = MobileAccessEnabled, devices = state.Devices.Select(item => new { item.Id, item.Name, item.Platform, item.CreatedAtUtc, item.LastSeenAtUtc, item.Scopes }) });
+            return JsonSerializer.Serialize(new { ok = true, enabled = MobileAccessEnabled, devices = state.Devices.Select(item => new { item.Id, item.Name, item.Platform, item.OwnerKey, item.CreatedAtUtc, item.LastSeenAtUtc, item.Scopes, dreamAdmin = item.Scopes?.Contains("dream.admin", StringComparer.OrdinalIgnoreCase) == true }) });
+        }
+    }
+
+    private string HandleMobileDeviceUpdate(NetworkConnection connection, HttpRequest request)
+    {
+        if (!IsLocalAdmin(connection, request))
+            return BuildJsonError(request, 403, "Forbidden", "Paired-device Dream administration can only be changed locally.");
+        string id = request?.PathVariables?.LastOrDefault() ?? "";
+        if (string.IsNullOrWhiteSpace(id) && request?.QueryParameters != null) request.QueryParameters.TryGetValue("id", out id);
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
+            bool dreamAdmin = document.RootElement.TryGetProperty("dreamAdmin", out JsonElement value) && value.ValueKind == JsonValueKind.True;
+            LmVs.MobileDreamDeviceSnapshot updated = SetMobileDreamAdminDiagnostics(id, dreamAdmin);
+            return JsonSerializer.Serialize(new { ok = true, device = updated });
+        }
+        catch (Exception ex) { return BuildJsonError(request, 400, "Bad Request", ex.Message); }
+    }
+
+    public IReadOnlyList<LmVs.MobileDreamDeviceSnapshot> GetMobileDreamDevicesDiagnostics()
+    {
+        lock (_mobilePairingLock)
+            return GetMobileAccessState().Devices.Select(item => new LmVs.MobileDreamDeviceSnapshot {
+                Id = item.Id, Name = item.Name, Platform = item.Platform, OwnerKey = item.OwnerKey,
+                DreamAdmin = item.Scopes?.Contains("dream.admin", StringComparer.OrdinalIgnoreCase) == true,
+                LastSeenUtc = item.LastSeenAtUtc.ToString("O")
+            }).ToList();
+    }
+
+    public LmVs.MobileDreamDeviceSnapshot SetMobileDreamAdminDiagnostics(string id, bool enabled)
+    {
+        lock (_mobilePairingLock)
+        {
+            MobileAccessState state = GetMobileAccessState();
+            MobileDeviceRecord device = state.Devices.FirstOrDefault(item => item.Id.Equals(id ?? "", StringComparison.OrdinalIgnoreCase)) ?? throw new InvalidOperationException("Paired device was not found.");
+            HashSet<string> scopes = new(device.Scopes ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase) { "dream" };
+            if (enabled) scopes.Add("dream.admin"); else scopes.Remove("dream.admin");
+            device.Scopes = scopes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+            SaveMobileAccessState(state);
+            return GetMobileDreamDevicesDiagnostics().First(item => item.Id == device.Id);
         }
     }
 

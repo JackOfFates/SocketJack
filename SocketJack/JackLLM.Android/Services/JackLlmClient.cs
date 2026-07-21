@@ -8,6 +8,7 @@ namespace JackLLM.Mobile.Services;
 
 public sealed class JackLlmClient : IDisposable
 {
+    private static readonly JsonSerializerOptions WireJson = new() { PropertyNameCaseInsensitive = true };
     private readonly SecureCredentialStore _credentials;
     private HttpClient? _http;
     private ServerInfo? _server;
@@ -179,6 +180,68 @@ public sealed class JackLlmClient : IDisposable
         }
         return result;
     }
+
+    public async Task<MobileDreamSettingsEnvelope> GetDreamSettingsAsync(string ownerKey = "", CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/dream-settings" + OwnerQuery(ownerKey), cancellationToken);
+        return JsonSerializer.Deserialize<MobileDreamSettingsEnvelope>(json.RootElement.GetRawText(), WireJson) ?? new MobileDreamSettingsEnvelope();
+    }
+
+    public async Task<MobileDreamSettingsEnvelope> SaveDreamSettingsAsync(string ownerKey, MobileDreamSettings settings, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await SendJsonAsync(HttpMethod.Put, "/api/dream-settings", MergeOwner(settings, ownerKey), cancellationToken);
+        return JsonSerializer.Deserialize<MobileDreamSettingsEnvelope>(json.RootElement.GetRawText(), WireJson) ?? new MobileDreamSettingsEnvelope { Settings = settings };
+    }
+
+    public async Task ResetDreamSettingsAsync(string ownerKey, CancellationToken cancellationToken = default) =>
+        _ = await SendJsonAsync(HttpMethod.Delete, "/api/dream-settings" + OwnerQuery(ownerKey), null, cancellationToken);
+
+    public async Task<MobileDreamStatus> GetDreamStatusAsync(string ownerKey = "", CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/dream-status" + OwnerQuery(ownerKey), cancellationToken);
+        return JsonSerializer.Deserialize<MobileDreamStatus>(json.RootElement.GetRawText(), WireJson) ?? new MobileDreamStatus();
+    }
+
+    public async Task<IReadOnlyList<MobileDreamOwner>> GetDreamOwnersAsync(CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/dream-owners", cancellationToken);
+        return json.RootElement.TryGetProperty("owners", out JsonElement owners)
+            ? JsonSerializer.Deserialize<List<MobileDreamOwner>>(owners.GetRawText(), WireJson) ?? new List<MobileDreamOwner>()
+            : Array.Empty<MobileDreamOwner>();
+    }
+
+    public async Task<IReadOnlyList<MobileDreamJournalEntry>> GetDreamJournalAsync(string ownerKey = "", string status = "", CancellationToken cancellationToken = default)
+    {
+        string query = OwnerQuery(ownerKey);
+        query += (query.Length == 0 ? "?" : "&") + "status=" + Uri.EscapeDataString(status ?? "");
+        using JsonDocument json = await GetJsonAsync("/api/dream-journal" + query, cancellationToken);
+        return json.RootElement.TryGetProperty("journal", out JsonElement journal)
+            ? JsonSerializer.Deserialize<List<MobileDreamJournalEntry>>(journal.GetRawText(), WireJson) ?? new List<MobileDreamJournalEntry>()
+            : Array.Empty<MobileDreamJournalEntry>();
+    }
+
+    public async Task<(MobileDreamPermissionSnapshot Permissions, bool CanManageOwners)> GetDreamPermissionsAsync(string ownerKey = "", CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/dream-permissions" + OwnerQuery(ownerKey), cancellationToken);
+        MobileDreamPermissionSnapshot permissions = json.RootElement.TryGetProperty("permissions", out JsonElement p) ? JsonSerializer.Deserialize<MobileDreamPermissionSnapshot>(p.GetRawText(), WireJson) ?? new() : new();
+        bool canManage = json.RootElement.TryGetProperty("canManageOwners", out JsonElement manage) && manage.ValueKind == JsonValueKind.True;
+        return (permissions, canManage);
+    }
+
+    public async Task SaveDreamPermissionsAsync(string ownerKey, object permissions, CancellationToken cancellationToken = default) =>
+        _ = await SendJsonAsync(HttpMethod.Put, "/api/dream-permissions", MergeOwner(permissions, ownerKey), cancellationToken);
+
+    public async Task ControlDreamAsync(string ownerKey, string action, CancellationToken cancellationToken = default) =>
+        _ = await PostJsonAsync("/api/dream-runs", new { ownerKey, action }, cancellationToken);
+
+    public async Task DecideDreamCandidateAsync(string ownerKey, string id, string action, CancellationToken cancellationToken = default) =>
+        _ = await PostJsonAsync("/api/dream-candidates", new { ownerKey, id, action }, cancellationToken);
+
+    public async Task DeleteDreamJournalAsync(string ownerKey, string id, CancellationToken cancellationToken = default) =>
+        _ = await SendJsonAsync(HttpMethod.Delete, "/api/dream-journal" + OwnerQuery(ownerKey) + (string.IsNullOrWhiteSpace(ownerKey) ? "?" : "&") + "id=" + Uri.EscapeDataString(id), null, cancellationToken);
+
+    public async Task ClearResolvedDreamJournalAsync(string ownerKey, CancellationToken cancellationToken = default) =>
+        _ = await PostJsonAsync("/api/dream-journal/clear", new { ownerKey }, cancellationToken);
 
     public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string sessionId, string reasoningLevel, string sessionReasoningLevel, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -462,6 +525,26 @@ public sealed class JackLlmClient : IDisposable
         string body = await response.Content.ReadAsStringAsync(cancellationToken);
         response.EnsureSuccessStatusCode();
         return JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+    }
+
+    private async Task<JsonDocument> SendJsonAsync(HttpMethod method, string path, object? payload, CancellationToken cancellationToken)
+    {
+        EnsureConnected();
+        using var request = new HttpRequestMessage(method, path);
+        if (payload is not null) request.Content = Json(payload);
+        using HttpResponseMessage response = await _http!.SendAsync(request, cancellationToken);
+        string body = await response.Content.ReadAsStringAsync(cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+    }
+
+    private static string OwnerQuery(string ownerKey) => string.IsNullOrWhiteSpace(ownerKey) ? "" : "?ownerKey=" + Uri.EscapeDataString(ownerKey);
+
+    private static Dictionary<string, object?> MergeOwner(object value, string ownerKey)
+    {
+        var result = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(value), WireJson) ?? new Dictionary<string, object?>();
+        result["ownerKey"] = string.IsNullOrWhiteSpace(ownerKey) ? null : ownerKey;
+        return result;
     }
 
     private static StringContent Json(object value) => new(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");

@@ -466,6 +466,16 @@ namespace LmVs
         public bool FileUploads { get; set; } = true;
         public bool ImageUploads { get; set; } = true;
         public bool PcAccess { get; set; }
+        public bool DreamInternetSearch { get; set; }
+        public bool DreamVsCopilotTools { get; set; }
+        public bool DreamFileDownloads { get; set; }
+        public bool DreamFtpServer { get; set; }
+        public bool DreamSqlAdmin { get; set; }
+        public bool DreamTerminalCommands { get; set; }
+        public bool DreamAgentAccess { get; set; }
+        public bool DreamFileUploads { get; set; }
+        public bool DreamImageUploads { get; set; }
+        public bool DreamPcAccess { get; set; }
         public string MutedUntilUtc { get; set; } = "";
         public string BannedUntilUtc { get; set; } = "";
         public bool MuteUntilEnabled { get; set; }

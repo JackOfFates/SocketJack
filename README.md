@@ -244,6 +244,20 @@ With JackLLM Workstation you can:
 - Use SocketJack.com to generate images and videos, ask AI questions, research the web, or work on a Visual Studio project through a Copilot MCP server tunnel to SocketJack.com agents.
 - Manage sessions, permissions, files, tools, SQL admin, payments, diagnostics, and remote WPF control from the workstation/web console.
 
+### Dream Mode
+
+Dream Mode is JackLLM's resource-aware background reflection system. It processes changed owner conversations only when CPU, RAM, GPU, VRAM, disk, and foreground model activity are below the configured thresholds, then writes grounded memory proposals to an owner-specific Dream journal.
+
+- It is disabled by default and can be managed from **Web Chat > View > Dreaming**, **Workstation > Server Management > Dreaming**, or the moon button in JackLLM Mobile.
+- Conservative, Balanced, and Aggressive presets configure start/pause hysteresis; custom settings control recurrence, duration, output/source token budgets, and sessions per pass.
+- **Dream Now** requests one pass even when automation is disabled. Pause affects scheduled work; Cancel Run stops only the active pass.
+- Every tool requires its normal permission plus a separate Dream permission. Terminal also requires permanent Terminal Trust.
+- Only grounded, explicit, non-sensitive, non-conflicting facts at 90% or higher confidence auto-save. Other facts and all conflicts remain reviewable.
+- Global settings are inherited until an owner override is saved. Journals, processing watermarks, and memories remain owner-specific.
+- Paired devices manage their linked owner unless a local Workstation administrator explicitly grants that device **Dream Admin**.
+
+Pending journal reviews are never automatically pruned. **Clear Resolved** removes resolved history while preserving pending candidates and conflicts.
+
 | Project | Version | Purpose |
 |---|---:|---|
 | `JackLLM/` | `2026.0` | Windows WPF JackLLM Workstation app. |

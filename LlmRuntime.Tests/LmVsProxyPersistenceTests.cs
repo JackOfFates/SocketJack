@@ -26,6 +26,10 @@ public sealed class LmVsProxyPersistenceTests
                 snapshot.SqlAdmin = true;
                 snapshot.TerminalCommands = false;
                 snapshot.PcAccess = true;
+                snapshot.DreamInternetSearch = true;
+                snapshot.DreamFileDownloads = true;
+                snapshot.DreamFtpServer = true;
+                snapshot.DreamPcAccess = true;
                 first.SaveChatClientPermissionsDiagnostics(snapshot);
             }
 
@@ -38,6 +42,10 @@ public sealed class LmVsProxyPersistenceTests
                 Assert.IsTrue(reloaded.SqlAdmin);
                 Assert.IsFalse(reloaded.TerminalCommands);
                 Assert.IsTrue(reloaded.PcAccess);
+                Assert.IsTrue(reloaded.DreamInternetSearch);
+                Assert.IsTrue(reloaded.DreamFileDownloads);
+                Assert.IsTrue(reloaded.DreamFtpServer);
+                Assert.IsTrue(reloaded.DreamPcAccess);
                 Assert.IsTrue(File.Exists(Path.Combine(dataRoot, "SocketJack", "JackLLMChat", "SocketJackDatabase.json")));
             }
         }
@@ -46,6 +54,51 @@ public sealed class LmVsProxyPersistenceTests
             if (Directory.Exists(dataRoot))
                 Directory.Delete(dataRoot, recursive: true);
         }
+    }
+
+    [TestMethod]
+    public void DreamPermissionRequiresBasePermissionAndTerminalTrust()
+    {
+        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-dream-permissions-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var proxy = CreateProxy(dataRoot);
+            ChatClientPermissionSnapshot snapshot = proxy.GetChatClientPermissionsDiagnostics("webauth:dream-test");
+            snapshot.InternetSearch = false;
+            snapshot.DreamInternetSearch = true;
+            snapshot.TerminalCommands = true;
+            snapshot.TerminalForeverApproved = false;
+            snapshot.DreamTerminalCommands = true;
+            ChatClientPermissionSnapshot saved = proxy.SaveChatClientPermissionsDiagnostics(snapshot);
+            Assert.IsFalse(saved.DreamInternetSearch);
+            Assert.IsFalse(saved.DreamTerminalCommands);
+        }
+        finally { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true); }
+    }
+
+    [TestMethod]
+    public void DreamSettingsInheritGlobalUntilOwnerOverrideIsCreated()
+    {
+        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-dream-settings-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var proxy = CreateProxy(dataRoot);
+            DreamSettingsSnapshot global = proxy.GetDreamSettingsDiagnostics("global");
+            global.Enabled = true;
+            global.Preset = "balanced";
+            proxy.SaveDreamSettingsDiagnostics("global", global);
+            Assert.IsTrue(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
+            Assert.AreEqual("balanced", proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Preset);
+
+            DreamSettingsSnapshot owner = proxy.GetDreamSettingsDiagnostics("webauth:dream-owner");
+            owner.Enabled = false;
+            owner.Preset = "custom";
+            proxy.SaveDreamSettingsDiagnostics("webauth:dream-owner", owner);
+            Assert.IsFalse(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
+            proxy.ResetDreamSettingsDiagnostics("webauth:dream-owner");
+            Assert.IsTrue(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
+        }
+        finally { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true); }
     }
 
     [TestMethod]

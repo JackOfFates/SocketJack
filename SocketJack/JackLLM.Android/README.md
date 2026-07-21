@@ -17,6 +17,13 @@ JackLLM Mobile is the shared Android and iOS companion app for JackLLM Workstati
 | Voice hooks | Native microphone recording and generated-speech playback on Android and iOS. |
 | PC Access | Stream the Workstation desktop, send touch/pointer input, and transfer approved files. |
 | Workstation telemetry | Show model, token, context, GPU, CPU, VRAM, and RAM status when the workstation reports it. |
+| Dream management | Enable or pause Dream Mode, tune presets and resource thresholds, inspect live pressure, manage Dream tool grants, and review or clean up the Dream journal. |
+
+## Dream Mode
+
+Open a connected Workstation chat and tap the moon toolbar button. The shared Android/iOS page provides automatic enable/disable, presets and advanced thresholds, Dream Now/Pause/Resume/Cancel controls, live resource state, permission-dependent Dream tool toggles, candidate and conflict review, and resolved-journal cleanup.
+
+A paired device normally manages only its linked owner's Dream state. A local Workstation administrator can explicitly grant **Dream Admin** under **Server Management > Dreaming**; only then does the mobile owner picker expose global defaults and other owners. Existing devices are not silently granted cross-owner administration.
 
 ## Project
 

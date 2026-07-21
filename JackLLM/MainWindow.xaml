@@ -3415,6 +3415,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="0"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <StackPanel Grid.Row="0" Margin="0,0,0,12">
@@ -3743,6 +3744,16 @@
                                                                       Content="PC Access"
                                                                       ToolTip="Allows a permitted JackLLM Mobile device to view/control Windows and access approved filesystem roots."
                                                                       Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamAgentAccessCheckBox" Content="Dream: Agent access" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamVsToolsCheckBox" Content="Dream: VS tools" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamInternetSearchCheckBox" Content="Dream: Internet search" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamFileUploadsCheckBox" Content="Dream: File uploads" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamImageUploadsCheckBox" Content="Dream: Image uploads" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamFileDownloadsCheckBox" Content="Dream: File downloads" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamFtpServerCheckBox" Content="Dream: FTP server" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamSqlAdminCheckBox" Content="Dream: SQL admin" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamTerminalCommandsCheckBox" Content="Dream: Terminal" Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserDreamPcAccessCheckBox" Content="Dream: PC Access" Margin="0,0,8,7"/>
                                                         </UniformGrid>
                                                         <WrapPanel Margin="0,4,0,0">
                                                             <Button Content="Load Permissions"
@@ -4157,6 +4168,46 @@
                                                    Margin="0,8,0,0"/>
                                     </Grid>
                                 </Grid>
+                            </Border>
+
+                            <Border Grid.Row="3" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,9">
+                                        <Button Content="Refresh" DockPanel.Dock="Right" Click="RefreshDreamManagementButton_Click" Padding="9,4"/>
+                                        <StackPanel><TextBlock Text="Dreaming" FontSize="18" FontWeight="SemiBold"/><TextBlock Text="Resource-aware background reflection, memory review, and paired-device administration." Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap"/></StackPanel>
+                                    </DockPanel>
+                                    <WrapPanel Margin="0,0,0,8">
+                                        <ComboBox x:Name="DreamOwnerComboBox" Width="270" DisplayMemberPath="DisplayName" SelectedValuePath="OwnerKey" SelectionChanged="DreamOwnerComboBox_SelectionChanged" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="DreamEnabledCheckBox" Content="Automatic Dreaming" VerticalAlignment="Center" Margin="0,0,12,8"/>
+                                        <ComboBox x:Name="DreamPresetComboBox" Width="130" Margin="0,0,8,8"><ComboBoxItem Content="Conservative" Tag="conservative"/><ComboBoxItem Content="Balanced" Tag="balanced"/><ComboBoxItem Content="Aggressive" Tag="aggressive"/><ComboBoxItem Content="Custom" Tag="custom"/></ComboBox>
+                                        <Button Content="Save" Click="SaveDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
+                                        <Button Content="Reset to Global" Click="ResetDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
+                                    </WrapPanel>
+                                    <WrapPanel Margin="0,0,0,8">
+                                        <Button Content="Dream Now" Click="DreamNowManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
+                                        <Button Content="Pause" Click="PauseDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
+                                        <Button Content="Resume" Click="ResumeDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
+                                        <Button Content="Cancel Run" Click="CancelDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
+                                        <Button Content="Clear Resolved" Click="ClearResolvedDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
+                                    </WrapPanel>
+                                    <TextBlock x:Name="DreamManagementStatusText" Text="Dream management is loading." Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="1.25*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <TextBlock Text="Journal" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                            <ListBox x:Name="DreamJournalListBox" MaxHeight="240" SelectionChanged="DreamJournalListBox_SelectionChanged"><ListBox.ItemTemplate><DataTemplate><StackPanel Margin="4"><TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold"/><TextBlock Text="{Binding Status}" Foreground="{StaticResource SubtleTextBrush}"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+                                            <TextBlock Text="Pending candidate" FontWeight="SemiBold" Margin="0,8,0,5"/>
+                                            <ComboBox x:Name="DreamCandidateComboBox" DisplayMemberPath="Text" Margin="0,0,0,6"/>
+                                            <WrapPanel><Button Content="Approve" Click="ApproveDreamCandidateButton_Click" Padding="8,3" Margin="0,0,6,6"/><Button Content="Overwrite" Click="OverwriteDreamCandidateButton_Click" Padding="8,3" Margin="0,0,6,6"/><Button Content="Delete stale" Click="DeleteStaleDreamCandidateButton_Click" Padding="8,3" Margin="0,0,6,6"/><Button Content="Reject" Click="RejectDreamCandidateButton_Click" Padding="8,3" Margin="0,0,6,6"/><Button Content="Delete entry" Click="DeleteDreamJournalButton_Click" Padding="8,3" Margin="0,0,6,6"/></WrapPanel>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="Paired mobile Dream administrators" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                            <ListBox x:Name="DreamMobileDevicesListBox" DisplayMemberPath="Name" MaxHeight="150"/>
+                                            <WrapPanel Margin="0,6,0,10"><Button Content="Grant Dream Admin" Click="GrantMobileDreamAdminButton_Click" Padding="8,3" Margin="0,0,6,6"/><Button Content="Remove Dream Admin" Click="RevokeMobileDreamAdminButton_Click" Padding="8,3" Margin="0,0,6,6"/></WrapPanel>
+                                            <TextBlock Text="Dream permissions for the selected owner are managed in the Permissions section above. Dream grants remain subordinate to their base permission and Terminal Trust." Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
                             </Border>
                         </Grid>
                     </ScrollViewer>

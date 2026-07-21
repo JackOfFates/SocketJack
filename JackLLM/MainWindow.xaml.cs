@@ -105,6 +105,7 @@ public partial class MainWindow : Window {
     private DispatcherTimer _metricsTimer = null!;
     private DispatcherTimer _masterServerRefreshTimer = null!;
     private DispatcherTimer _updaterStatusTimer = null!;
+    private DispatcherTimer _dreamManagementTimer = null!;
     private DispatcherTimer? _remoteCursorDiagnosticsTimer;
     private readonly ObservableCollection<ChatSessionListItem> _sessionItems = new();
     private readonly ObservableCollection<ChatSessionListItem> _serverSessionItems = new();
@@ -128,6 +129,7 @@ public partial class MainWindow : Window {
     private readonly ObservableCollection<WebAuthUserItem> _webAuthUserItems = new();
     private readonly ObservableCollection<TrustAbuseCaseItem> _trustAbuseCaseItems = new();
     private ChatClientPermissionSnapshot? _selectedWebAuthUserPermissions;
+    private bool _refreshingDreamManagement;
     private readonly ObservableCollection<ShellRelayItem> _shellRelayItems = new();
     private readonly ObservableCollection<ServerBrowserItem> _serverPickerItems = new();
     private readonly ObservableCollection<RemoteSessionFileCloneItem> _remoteCloneItems = new();
@@ -735,6 +737,9 @@ public partial class MainWindow : Window {
             Interval = UpdaterStatusRefreshInterval
         };
         _updaterStatusTimer.Tick += (_, _) => HandleUpdaterStatusTimerTick();
+        _dreamManagementTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        _dreamManagementTimer.Tick += (_, _) => { if (IsServerManagementTabSelected()) RefreshDreamManagement(false); };
+        _dreamManagementTimer.Start();
         _trayTooltipDelayTimer = new DispatcherTimer {
             Interval = TimeSpan.FromMilliseconds(50)
         };
@@ -1282,6 +1287,7 @@ public partial class MainWindow : Window {
             RefreshServerManagementRequestsPanel(true);
             RefreshWebAuthUsersPanel(true);
             RefreshWorkspaceExplorer(true);
+            RefreshDreamManagement(true);
         }
         if (WebUiTabItem?.IsSelected == true)
             _ = OpenWebUiTabAsync(false, false);
@@ -13704,6 +13710,16 @@ public partial class MainWindow : Window {
             UserPermTerminalTrustCheckBox.IsChecked = enabled;
         if (UserPermPcAccessCheckBox != null)
             UserPermPcAccessCheckBox.IsChecked = enabled;
+        if (UserDreamAgentAccessCheckBox != null) UserDreamAgentAccessCheckBox.IsChecked = enabled;
+        if (UserDreamVsToolsCheckBox != null) UserDreamVsToolsCheckBox.IsChecked = enabled;
+        if (UserDreamInternetSearchCheckBox != null) UserDreamInternetSearchCheckBox.IsChecked = enabled;
+        if (UserDreamFileUploadsCheckBox != null) UserDreamFileUploadsCheckBox.IsChecked = enabled;
+        if (UserDreamImageUploadsCheckBox != null) UserDreamImageUploadsCheckBox.IsChecked = enabled;
+        if (UserDreamFileDownloadsCheckBox != null) UserDreamFileDownloadsCheckBox.IsChecked = enabled;
+        if (UserDreamFtpServerCheckBox != null) UserDreamFtpServerCheckBox.IsChecked = enabled;
+        if (UserDreamSqlAdminCheckBox != null) UserDreamSqlAdminCheckBox.IsChecked = enabled;
+        if (UserDreamTerminalCommandsCheckBox != null) UserDreamTerminalCommandsCheckBox.IsChecked = enabled;
+        if (UserDreamPcAccessCheckBox != null) UserDreamPcAccessCheckBox.IsChecked = enabled;
     }
 
     private void ApplyUserPermissionsSnapshot(ChatClientPermissionSnapshot snapshot) {
@@ -13730,6 +13746,26 @@ public partial class MainWindow : Window {
             UserPermTerminalTrustCheckBox.IsChecked = snapshot.TerminalForeverApproved;
         if (UserPermPcAccessCheckBox != null)
             UserPermPcAccessCheckBox.IsChecked = snapshot.PcAccess;
+        UserDreamAgentAccessCheckBox.IsChecked = snapshot.DreamAgentAccess;
+        UserDreamVsToolsCheckBox.IsChecked = snapshot.DreamVsCopilotTools;
+        UserDreamInternetSearchCheckBox.IsChecked = snapshot.DreamInternetSearch;
+        UserDreamFileUploadsCheckBox.IsChecked = snapshot.DreamFileUploads;
+        UserDreamImageUploadsCheckBox.IsChecked = snapshot.DreamImageUploads;
+        UserDreamFileDownloadsCheckBox.IsChecked = snapshot.DreamFileDownloads;
+        UserDreamFtpServerCheckBox.IsChecked = snapshot.DreamFtpServer;
+        UserDreamSqlAdminCheckBox.IsChecked = snapshot.DreamSqlAdmin;
+        UserDreamTerminalCommandsCheckBox.IsChecked = snapshot.DreamTerminalCommands;
+        UserDreamPcAccessCheckBox.IsChecked = snapshot.DreamPcAccess;
+        UserDreamAgentAccessCheckBox.IsEnabled = snapshot.AgentAccess;
+        UserDreamVsToolsCheckBox.IsEnabled = snapshot.VsCopilotTools;
+        UserDreamInternetSearchCheckBox.IsEnabled = snapshot.InternetSearch;
+        UserDreamFileUploadsCheckBox.IsEnabled = snapshot.FileUploads;
+        UserDreamImageUploadsCheckBox.IsEnabled = snapshot.ImageUploads;
+        UserDreamFileDownloadsCheckBox.IsEnabled = snapshot.FileDownloads;
+        UserDreamFtpServerCheckBox.IsEnabled = snapshot.FtpServer;
+        UserDreamSqlAdminCheckBox.IsEnabled = snapshot.SqlAdmin;
+        UserDreamTerminalCommandsCheckBox.IsEnabled = snapshot.TerminalCommands && snapshot.TerminalForeverApproved;
+        UserDreamPcAccessCheckBox.IsEnabled = snapshot.PcAccess;
     }
 
     private ChatClientPermissionSnapshot ReadSelectedUserPermissionsSnapshot(WebAuthUserItem? user) {
@@ -13751,6 +13787,16 @@ public partial class MainWindow : Window {
         snapshot.TerminalCommands = UserPermTerminalCommandsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.TerminalForeverApproved = UserPermTerminalTrustCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.PcAccess = UserPermPcAccessCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamAgentAccess = UserDreamAgentAccessCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamVsCopilotTools = UserDreamVsToolsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamInternetSearch = UserDreamInternetSearchCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamFileUploads = UserDreamFileUploadsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamImageUploads = UserDreamImageUploadsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamFileDownloads = UserDreamFileDownloadsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamFtpServer = UserDreamFtpServerCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamSqlAdmin = UserDreamSqlAdminCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamTerminalCommands = UserDreamTerminalCommandsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.DreamPcAccess = UserDreamPcAccessCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         return snapshot;
     }
 
@@ -13826,6 +13872,105 @@ public partial class MainWindow : Window {
                 ServerManagementStatusText.Text = "User update failed: " + TrimForDisplay(ex.Message, 160);
         }
     }
+
+    private string SelectedDreamOwnerKey() => DreamOwnerComboBox?.SelectedValue as string ?? "global";
+
+    private void RefreshDreamManagement(bool refreshOwners) {
+        if (_proxy == null || DreamManagementStatusText == null || _refreshingDreamManagement)
+            return;
+        try {
+            _refreshingDreamManagement = true;
+            string selectedOwner = SelectedDreamOwnerKey();
+            if (refreshOwners || DreamOwnerComboBox.ItemsSource == null) {
+                IReadOnlyList<DreamOwnerSnapshot> owners = _proxy.GetDreamOwnersDiagnostics();
+                DreamOwnerComboBox.ItemsSource = owners;
+                DreamOwnerComboBox.SelectedValue = owners.Any(item => item.OwnerKey == selectedOwner) ? selectedOwner : "global";
+            }
+            string owner = SelectedDreamOwnerKey();
+            DreamSettingsSnapshot settings = _proxy.GetDreamSettingsDiagnostics(owner);
+            DreamStatusSnapshot status = _proxy.GetDreamStatusDiagnostics(owner);
+            DreamEnabledCheckBox.IsChecked = settings.Enabled;
+            string preset = settings.Preset ?? "custom";
+            DreamPresetComboBox.SelectedItem = DreamPresetComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => string.Equals(item.Tag as string, preset, StringComparison.OrdinalIgnoreCase));
+            if (DreamPresetComboBox.SelectedItem == null) DreamPresetComboBox.SelectedIndex = 3;
+            DreamJournalListBox.ItemsSource = _proxy.GetDreamJournalDiagnostics(owner);
+            DreamMobileDevicesListBox.ItemsSource = _proxy.GetMobileDreamDevicesDiagnostics();
+            DreamManagementStatusText.Text = status.Status + " | " + status.Phase +
+                (string.IsNullOrWhiteSpace(status.LimitingResource) ? "" : " | limited by " + status.LimitingResource) +
+                " | CPU " + status.Resources.CpuPercent.ToString("0", CultureInfo.InvariantCulture) + "%" +
+                " | RAM " + status.Resources.RamPercent.ToString("0", CultureInfo.InvariantCulture) + "%" +
+                " | GPU " + status.Resources.GpuPercent.ToString("0", CultureInfo.InvariantCulture) + "%" +
+                " | " + status.ProcessedSessions + " sessions / " + status.ProcessedMessages + " messages" +
+                (string.IsNullOrWhiteSpace(status.NextRunUtc) ? "" : " | next " + status.NextRunUtc);
+        } catch (Exception ex) {
+            DreamManagementStatusText.Text = "Dream management refresh failed: " + TrimForDisplay(ex.Message, 180);
+        } finally {
+            _refreshingDreamManagement = false;
+        }
+    }
+
+    private void RefreshDreamManagementButton_Click(object sender, RoutedEventArgs e) => RefreshDreamManagement(true);
+    private void DreamOwnerComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (!_refreshingDreamManagement) RefreshDreamManagement(false); }
+
+    private void SaveDreamManagementButton_Click(object sender, RoutedEventArgs e) {
+        try {
+            string owner = SelectedDreamOwnerKey();
+            DreamSettingsSnapshot settings = _proxy.GetDreamSettingsDiagnostics(owner);
+            settings.Enabled = DreamEnabledCheckBox.IsChecked == true;
+            settings.Preset = (DreamPresetComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "custom";
+            _proxy.SaveDreamSettingsDiagnostics(owner, settings);
+            RefreshDreamManagement(true);
+        } catch (Exception ex) { DreamManagementStatusText.Text = "Dream settings save failed: " + TrimForDisplay(ex.Message, 180); }
+    }
+
+    private void ResetDreamManagementButton_Click(object sender, RoutedEventArgs e) {
+        try { _proxy.ResetDreamSettingsDiagnostics(SelectedDreamOwnerKey()); RefreshDreamManagement(true); }
+        catch (Exception ex) { DreamManagementStatusText.Text = "Dream reset failed: " + TrimForDisplay(ex.Message, 180); }
+    }
+
+    private void RunDreamManagementAction(string action) {
+        try { _proxy.ControlDreamDiagnostics(SelectedDreamOwnerKey(), action); RefreshDreamManagement(false); }
+        catch (Exception ex) { DreamManagementStatusText.Text = "Dream control failed: " + TrimForDisplay(ex.Message, 180); }
+    }
+    private void DreamNowManagementButton_Click(object sender, RoutedEventArgs e) => RunDreamManagementAction("start");
+    private void PauseDreamManagementButton_Click(object sender, RoutedEventArgs e) => RunDreamManagementAction("pause");
+    private void ResumeDreamManagementButton_Click(object sender, RoutedEventArgs e) => RunDreamManagementAction("resume");
+    private void CancelDreamManagementButton_Click(object sender, RoutedEventArgs e) => RunDreamManagementAction("cancel");
+
+    private void ClearResolvedDreamManagementButton_Click(object sender, RoutedEventArgs e) {
+        if (MessageBox.Show(this, "Clear resolved Dream journal entries while preserving pending reviews?", "Dream journal", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        try { int removed = _proxy.ClearResolvedDreamJournalDiagnostics(SelectedDreamOwnerKey()); DreamManagementStatusText.Text = "Cleared " + removed + " resolved Dream entries."; RefreshDreamManagement(false); }
+        catch (Exception ex) { DreamManagementStatusText.Text = "Dream journal cleanup failed: " + TrimForDisplay(ex.Message, 180); }
+    }
+
+    private void DreamJournalListBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+        DreamJournalSnapshot? entry = DreamJournalListBox.SelectedItem as DreamJournalSnapshot;
+        DreamCandidateComboBox.ItemsSource = entry?.Candidates.Where(item => item.Disposition == "review").ToList() ?? new List<DreamCandidateSnapshot>();
+        if (DreamCandidateComboBox.Items.Count > 0) DreamCandidateComboBox.SelectedIndex = 0;
+    }
+
+    private void DecideSelectedDreamCandidate(string action) {
+        if (DreamCandidateComboBox.SelectedItem is not DreamCandidateSnapshot candidate) { DreamManagementStatusText.Text = "Select a pending Dream candidate first."; return; }
+        try { _proxy.DecideDreamCandidateDiagnostics(SelectedDreamOwnerKey(), candidate.Id, action); RefreshDreamManagement(false); }
+        catch (Exception ex) { DreamManagementStatusText.Text = "Dream candidate update failed: " + TrimForDisplay(ex.Message, 180); }
+    }
+    private void ApproveDreamCandidateButton_Click(object sender, RoutedEventArgs e) => DecideSelectedDreamCandidate("approve");
+    private void OverwriteDreamCandidateButton_Click(object sender, RoutedEventArgs e) => DecideSelectedDreamCandidate("overwrite");
+    private void DeleteStaleDreamCandidateButton_Click(object sender, RoutedEventArgs e) => DecideSelectedDreamCandidate("delete-stale");
+    private void RejectDreamCandidateButton_Click(object sender, RoutedEventArgs e) => DecideSelectedDreamCandidate("reject");
+    private void DeleteDreamJournalButton_Click(object sender, RoutedEventArgs e) {
+        if (DreamJournalListBox.SelectedItem is not DreamJournalSnapshot entry) { DreamManagementStatusText.Text = "Select a Dream journal entry first."; return; }
+        try { _proxy.DeleteDreamJournalDiagnostics(SelectedDreamOwnerKey(), entry.Id); RefreshDreamManagement(false); }
+        catch (Exception ex) { DreamManagementStatusText.Text = "Dream journal delete failed: " + TrimForDisplay(ex.Message, 180); }
+    }
+
+    private void SetSelectedMobileDreamAdmin(bool enabled) {
+        if (DreamMobileDevicesListBox.SelectedItem is not MobileDreamDeviceSnapshot device) { DreamManagementStatusText.Text = "Select a paired mobile device first."; return; }
+        try { _proxy.SetMobileDreamAdminDiagnostics(device.Id, enabled); RefreshDreamManagement(false); }
+        catch (Exception ex) { DreamManagementStatusText.Text = "Mobile Dream Admin update failed: " + TrimForDisplay(ex.Message, 180); }
+    }
+    private void GrantMobileDreamAdminButton_Click(object sender, RoutedEventArgs e) => SetSelectedMobileDreamAdmin(true);
+    private void RevokeMobileDreamAdminButton_Click(object sender, RoutedEventArgs e) => SetSelectedMobileDreamAdmin(false);
 
     private void ApplySelectedOwnerPermissionUpdate(Func<WebAuthUserItem, ChatClientPermissionSnapshot> update, string actionText) {
         WebAuthUserItem? user = GetSelectedWebAuthUser();
