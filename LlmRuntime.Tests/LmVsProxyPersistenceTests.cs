@@ -82,21 +82,66 @@ public sealed class LmVsProxyPersistenceTests
         string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-dream-settings-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using var proxy = CreateProxy(dataRoot);
-            DreamSettingsSnapshot global = proxy.GetDreamSettingsDiagnostics("global");
-            global.Enabled = true;
-            global.Preset = "balanced";
-            proxy.SaveDreamSettingsDiagnostics("global", global);
-            Assert.IsTrue(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
-            Assert.AreEqual("balanced", proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Preset);
+            using (var proxy = CreateProxy(dataRoot))
+            {
+                DreamSettingsSnapshot global = proxy.GetDreamSettingsDiagnostics("global");
+                global.Enabled = true;
+                global.Preset = "balanced";
+                proxy.SaveDreamSettingsDiagnostics("global", global);
+                Assert.IsTrue(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
+                Assert.AreEqual("balanced", proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Preset);
 
-            DreamSettingsSnapshot owner = proxy.GetDreamSettingsDiagnostics("webauth:dream-owner");
-            owner.Enabled = false;
-            owner.Preset = "custom";
-            proxy.SaveDreamSettingsDiagnostics("webauth:dream-owner", owner);
-            Assert.IsFalse(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
-            proxy.ResetDreamSettingsDiagnostics("webauth:dream-owner");
-            Assert.IsTrue(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
+                DreamSettingsSnapshot owner = proxy.GetDreamSettingsDiagnostics("webauth:dream-owner");
+                owner.Enabled = false;
+                owner.Preset = "custom";
+                proxy.SaveDreamSettingsDiagnostics("webauth:dream-owner", owner);
+                Assert.IsFalse(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
+                proxy.ResetDreamSettingsDiagnostics("webauth:dream-owner");
+                Assert.IsTrue(proxy.GetDreamSettingsDiagnostics("webauth:dream-owner").Enabled);
+            }
+
+            using (var reloaded = CreateProxy(dataRoot))
+            {
+                DreamSettingsSnapshot inherited = reloaded.GetDreamSettingsDiagnostics("webauth:dream-owner");
+                Assert.IsTrue(inherited.Enabled, "Reset to Global must survive a Workstation restart.");
+                Assert.AreEqual("balanced", inherited.Preset);
+                Assert.AreEqual("auto", inherited.Model);
+            }
+        }
+        finally { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true); }
+    }
+
+    [TestMethod]
+    public void NewDreamDefaultsUseAndPersistHardwareRecommendation()
+    {
+        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-dream-hardware-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            DreamSettingsSnapshot firstSettings;
+            using (var first = CreateProxy(dataRoot))
+            {
+                firstSettings = first.GetDreamSettingsDiagnostics("global");
+                DreamHardwareRecommendationSnapshot recommendation = first.GetDreamHardwareRecommendationDiagnostics();
+                if (recommendation.Pending)
+                {
+                    recommendation = first.ResolveDreamHardwareRecommendationDiagnostics("apply");
+                    firstSettings = first.GetDreamSettingsDiagnostics("global");
+                }
+                Assert.IsFalse(recommendation.Pending);
+                Assert.AreEqual("recommended", firstSettings.Preset);
+                Assert.AreEqual(recommendation.RecommendedSettings.StartCpuPercent, firstSettings.StartCpuPercent);
+                Assert.AreEqual(recommendation.RecommendedSettings.PauseVramPercent, firstSettings.PauseVramPercent);
+                Assert.IsTrue(firstSettings.StartCpuPercent < firstSettings.PauseCpuPercent);
+                Assert.IsFalse(string.IsNullOrWhiteSpace(recommendation.CurrentHardware));
+            }
+
+            using (var reloaded = CreateProxy(dataRoot))
+            {
+                DreamSettingsSnapshot persisted = reloaded.GetDreamSettingsDiagnostics("global");
+                Assert.AreEqual(firstSettings.Preset, persisted.Preset);
+                Assert.AreEqual(firstSettings.StartRamPercent, persisted.StartRamPercent);
+                Assert.IsFalse(reloaded.GetDreamHardwareRecommendationDiagnostics().Pending);
+            }
         }
         finally { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true); }
     }

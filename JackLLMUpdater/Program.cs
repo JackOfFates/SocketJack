@@ -1172,15 +1172,6 @@ internal static class Program {
                extension.Equals(".xml", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string GetFileMd5(string path) {
-        try {
-            using FileStream stream = File.OpenRead(path);
-            return Convert.ToHexString(MD5.HashData(stream)).ToLowerInvariant();
-        } catch {
-            return "";
-        }
-    }
-
     private static string GetFileSha256(string path) {
         try {
             using FileStream stream = File.OpenRead(path);
@@ -1195,17 +1186,13 @@ internal static class Program {
             return file.Hash;
         if (!string.IsNullOrWhiteSpace(file.Sha256))
             return file.Sha256;
-        if (!string.IsNullOrWhiteSpace(file.Hash))
+        if (!string.IsNullOrWhiteSpace(file.Hash) && file.Hash.Length == 64)
             return file.Hash;
-        return file.Md5;
+        return "";
     }
 
     private static string GetPreferredFileHash(string path, UpdateFile file) {
-        if (!string.IsNullOrWhiteSpace(file.Sha256) ||
-            file.HashAlgorithm.Equals("sha256", StringComparison.OrdinalIgnoreCase) ||
-            (!string.IsNullOrWhiteSpace(file.Hash) && file.Hash.Length == 64))
-            return GetFileSha256(path);
-        return GetFileMd5(path);
+        return GetFileSha256(path);
     }
 
     private static void ApplyRemoteLastWriteTime(string path, UpdateFile file) {
@@ -1532,9 +1519,9 @@ internal static class ProgramHash {
             return file.Hash;
         if (!string.IsNullOrWhiteSpace(file.Sha256))
             return file.Sha256;
-        if (!string.IsNullOrWhiteSpace(file.Hash))
+        if (!string.IsNullOrWhiteSpace(file.Hash) && file.Hash.Length == 64)
             return file.Hash;
-        return file.Md5;
+        return "";
     }
 }
 

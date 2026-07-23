@@ -69,6 +69,13 @@ public sealed class JackLlmClient : IDisposable
         return true;
     }
 
+    public async Task<MobileAlignmentSnapshot> GetAlignmentAsync(CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/alignment", cancellationToken);
+        JsonElement alignment = TryProperty(json.RootElement, "alignment", out JsonElement value) ? value : json.RootElement;
+        return JsonSerializer.Deserialize<MobileAlignmentSnapshot>(alignment.GetRawText(), WireJson) ?? new MobileAlignmentSnapshot();
+    }
+
     public async Task<JsonDocument> GetPcAccessStatusAsync(CancellationToken cancellationToken = default) => await GetJsonAsync("/api/pc-access/status", cancellationToken);
 
     public async Task<PcAccessStreamSession> StartPcAccessStreamAsync(int width = 1280, int height = 720, int fps = 20, CancellationToken cancellationToken = default)
@@ -243,7 +250,7 @@ public sealed class JackLlmClient : IDisposable
     public async Task ClearResolvedDreamJournalAsync(string ownerKey, CancellationToken cancellationToken = default) =>
         _ = await PostJsonAsync("/api/dream-journal/clear", new { ownerKey }, cancellationToken);
 
-    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string sessionId, string reasoningLevel, string sessionReasoningLevel, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string sessionId, string projectId, string reasoningLevel, string sessionReasoningLevel, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         EnsureConnected();
         var uploaded = new List<object>();
@@ -256,6 +263,7 @@ public sealed class JackLlmClient : IDisposable
             ["model"] = model,
             ["service"] = string.IsNullOrWhiteSpace(service) ? "chat" : service,
             ["sessionId"] = sessionId,
+            ["projectId"] = string.IsNullOrWhiteSpace(projectId) ? "unsorted" : projectId,
             ["streamId"] = streamId,
             ["reasoningLevel"] = string.IsNullOrWhiteSpace(reasoningLevel) ? "auto" : reasoningLevel,
             ["sessionReasoningLevel"] = string.IsNullOrWhiteSpace(sessionReasoningLevel) ? "inherit" : sessionReasoningLevel,
@@ -289,7 +297,7 @@ public sealed class JackLlmClient : IDisposable
 
     public async Task<IReadOnlyList<ChatSessionInfo>> GetSessionsAsync(CancellationToken cancellationToken = default)
     {
-        using JsonDocument json = await GetJsonAsync("/api/chat-sessions?take=40", cancellationToken);
+        using JsonDocument json = await GetJsonAsync("/api/chat-sessions?take=all", cancellationToken);
         JsonElement root = json.RootElement;
         JsonElement list = root.ValueKind == JsonValueKind.Array ? root : TryProperty(root, "sessions", out var sessions) ? sessions : default;
         var result = new List<ChatSessionInfo>();
@@ -302,6 +310,10 @@ public sealed class JackLlmClient : IDisposable
                 UpdatedAt = ReadDate(item, "updatedUtc", "updatedAt", "savedUtc"),
                 Model = ReadString(item, "model"),
                 Runtime = ReadString(item, "runtime"),
+                ProjectId = ReadString(item, "projectId", "project_id"),
+                ProjectName = ReadString(item, "projectName", "project_name"),
+                Pinned = ReadBool(item, "pinned"),
+                PinnedUtc = ReadString(item, "pinnedUtc"),
                 MessageCount = (int)ReadLong(item, "messageCount"),
                 FileCount = (int)ReadLong(item, "fileCount"),
                 CommentCount = (int)ReadLong(item, "commentCount"),
@@ -349,6 +361,10 @@ public sealed class JackLlmClient : IDisposable
             Model = ReadString(session, "model")
         };
         detail.ReasoningLevel = ReadString(session, "reasoningLevel", "reasoning_level");
+        detail.ProjectId = ReadString(session, "projectId", "project_id");
+        detail.ProjectName = ReadString(session, "projectName", "project_name");
+        detail.Pinned = ReadBool(session, "pinned");
+        if (string.IsNullOrWhiteSpace(detail.ProjectId)) detail.ProjectId = "unsorted";
         if (string.IsNullOrWhiteSpace(detail.Id)) detail.Id = id;
         if (string.IsNullOrWhiteSpace(detail.Title)) detail.Title = "New chat";
         if (TryProperty(session, "messages", out JsonElement messages) && messages.ValueKind == JsonValueKind.Array)
@@ -378,6 +394,27 @@ public sealed class JackLlmClient : IDisposable
     public Task RenameSessionAsync(string id, string title, CancellationToken cancellationToken = default) => PostAsync("/api/chat-session-rename", new { id, sessionId = id, title, name = title }, cancellationToken);
     public Task DeleteSessionAsync(string id, CancellationToken cancellationToken = default) => PostAsync("/api/chat-sessions/delete", new { ids = new[] { id }, sessionIds = new[] { id } }, cancellationToken);
     public Task ShareSessionAsync(string id, CancellationToken cancellationToken = default) => PostAsync("/api/chat-session-share-link", new { id, sessionId = id }, cancellationToken);
+    public Task PinSessionAsync(string id, bool pinned, CancellationToken cancellationToken = default) => PostAsync("/api/chat-session-action", new { id, action = pinned ? "pin" : "unpin" }, cancellationToken);
+    public Task MoveSessionAsync(string id, string projectId, CancellationToken cancellationToken = default) => PostAsync("/api/chat-session-action", new { id, action = "assign-project", projectId }, cancellationToken);
+
+    public async Task<IReadOnlyList<ChatProjectInfo>> GetProjectsAsync(bool includeArchived = true, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/chat-projects?includeArchived=" + (includeArchived ? "true" : "false"), cancellationToken);
+        JsonElement list = TryProperty(json.RootElement, "projects", out JsonElement projects) ? projects : default;
+        var result = new List<ChatProjectInfo>();
+        if (list.ValueKind == JsonValueKind.Array) foreach (JsonElement item in list.EnumerateArray()) result.Add(new ChatProjectInfo
+        {
+            Id = ReadString(item, "id", "projectId"), Name = ReadString(item, "name"), WorkspaceRoot = ReadString(item, "workspaceRoot"),
+            UpdatedAt = ReadDate(item, "updatedUtc"), LastActivityAt = ReadDate(item, "lastActivityUtc"), SessionCount = (int)ReadLong(item, "sessionCount"),
+            Pinned = ReadBool(item, "pinned"), Archived = ReadBool(item, "archived"), BuiltIn = ReadBool(item, "builtIn")
+        });
+        return result;
+    }
+
+    public Task CreateProjectAsync(string name, CancellationToken cancellationToken = default) => PostAsync("/api/chat-project", new { action = "create", name }, cancellationToken);
+    public Task RenameProjectAsync(string id, string name, CancellationToken cancellationToken = default) => PostAsync("/api/chat-project", new { action = "rename", projectId = id, name }, cancellationToken);
+    public Task PinProjectAsync(string id, bool pinned, CancellationToken cancellationToken = default) => PostAsync("/api/chat-project", new { action = pinned ? "pin" : "unpin", projectId = id }, cancellationToken);
+    public Task ArchiveProjectAsync(string id, bool archived, CancellationToken cancellationToken = default) => PostAsync("/api/chat-project", new { action = archived ? "archive" : "restore", projectId = id }, cancellationToken);
 
     public async Task<string> CompletePairingAsync(string endpoint, string code, string deviceName, CancellationToken cancellationToken = default)
     {
@@ -423,6 +460,9 @@ public sealed class JackLlmClient : IDisposable
             JsonElement root = json.RootElement;
             string type = ReadString(root, "type");
             JsonElement routing = TryProperty(root, "routing", out JsonElement routeElement) ? routeElement : root;
+            MobileAlignmentSnapshot? alignment = TryProperty(root, "alignment", out JsonElement alignmentElement)
+                ? JsonSerializer.Deserialize<MobileAlignmentSnapshot>(alignmentElement.GetRawText(), WireJson)
+                : null;
             return new ChatStreamEvent
             {
                 Type = string.IsNullOrWhiteSpace(type) ? "delta" : type,
@@ -444,6 +484,7 @@ public sealed class JackLlmClient : IDisposable
                 ReasoningLevel = ReadString(routing, "effectiveReasoning", "effective_reasoning", "reasoningLevel"),
                 RouteReason = ReadString(routing, "reasonCode", "reason_code"),
                 PromptFingerprint = ReadString(routing, "promptFingerprint", "prompt_fingerprint"),
+                Alignment = alignment,
                 RawJson = line
             };
         }

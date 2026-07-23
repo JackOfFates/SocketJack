@@ -234,6 +234,8 @@ namespace LmVs
         public string updatedUtc { get; set; } = "";
         public string deletedUtc { get; set; } = "";
         public string category { get; set; } = "";
+        public string topic { get; set; } = "General";
+        public bool needsContext { get; set; }
     }
 
     internal sealed class ActivePromptSessionState

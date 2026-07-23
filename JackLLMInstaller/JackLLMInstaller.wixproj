@@ -6,16 +6,25 @@
     <InstallerPlatform>x64</InstallerPlatform>
     <ProductVersion Condition="'$(ProductVersion)' == ''">1.0.5</ProductVersion>
     <PayloadDir Condition="'$(PayloadDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\JackLLM\publish</PayloadDir>
-    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir)</DefineConstants>
+    <PublisherCertificateSha256 Condition="'$(PublisherCertificateSha256)' == ''"></PublisherCertificateSha256>
+    <ManifestPublicKeyBase64 Condition="'$(ManifestPublicKeyBase64)' == ''"></ManifestPublicKeyBase64>
+    <PublishPayloadOnBuild Condition="'$(PublishPayloadOnBuild)' == ''">true</PublishPayloadOnBuild>
+    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir);PublisherCertificateSha256=$(PublisherCertificateSha256);ManifestPublicKeyBase64=$(ManifestPublicKeyBase64)</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
     <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
   </ItemGroup>
-  <Target Name="PublishJackLLMPayload" BeforeTargets="BeforeBuild">
+  <Target Name="PublishJackLLMPayload" BeforeTargets="BeforeBuild" Condition="'$(PublishPayloadOnBuild)' == 'true'">
     <RemoveDir Directories="$(PayloadDir)" Condition="Exists('$(PayloadDir)')" />
     <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\JackLLM\JackLLM.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
     <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\JackLLMUpdater\JackLLMUpdater.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
     <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\JackLLMCompanion\JackLLMCompanion.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\JackLLM.SecurityBroker\JackLLM.SecurityBroker.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+  </Target>
+
+  <Target Name="ValidateOfficialSecurityConfiguration" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release'">
+    <Error Condition="'$(PublisherCertificateSha256)' == ''" Text="Release installers require PublisherCertificateSha256." />
+    <Error Condition="'$(ManifestPublicKeyBase64)' == ''" Text="Release installers require ManifestPublicKeyBase64." />
   </Target>
 </Project>

@@ -85,6 +85,17 @@ public sealed class JackLlmSecurityTests
     }
 
     [TestMethod]
+    public void WebChatVoiceModeStaysClosedUntilUserOpensIt()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "id=\"personaPlexPanel\" class=\"personaplex-panel\" aria-live=\"polite\" hidden");
+        StringAssert.Contains(html, "setPersonaPlexPanelOpen(!personaPlexPanel || personaPlexPanel.hidden)");
+        Assert.IsFalse(html.Contains("setPersonaPlexPanelOpen(true)", StringComparison.Ordinal));
+        Assert.IsFalse(html.Contains("autoOpenPersonaPlex", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void WebChatDreamManagementPersistsPermissionsAndProtectsDirtySettings()
     {
         string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
@@ -95,5 +106,54 @@ public sealed class JackLlmSecurityTests
         StringAssert.Contains(html, "Clear Resolved");
         StringAssert.Contains(html, "/api/dream-permissions");
         StringAssert.Contains(html, "dreamPresetValues");
+        StringAssert.Contains(html, "class=\"memory-panel dream-panel\"");
+        StringAssert.Contains(html, "class=\"dream-scroll-body\"");
+        StringAssert.Contains(html, "class=\"dream-permission-grid\"");
+        StringAssert.Contains(html, "renderDreamJournalStable");
+        StringAssert.Contains(html, "refreshDreamStatus()");
+        StringAssert.Contains(html, "dream-settings-scroll");
+        StringAssert.Contains(html, "dream-journal-list");
+        StringAssert.Contains(html, "Resource Thresholds");
+        StringAssert.Contains(html, "class=\"dream-slider-field\"");
+        StringAssert.Contains(html, "data-dream-step=\"-1\"");
+        StringAssert.Contains(html, "syncDreamSliderOutputs");
+        StringAssert.Contains(html, "Recommended for this PC");
+        StringAssert.Contains(html, "dream-recommendation-marker");
+        StringAssert.Contains(html, "dream-quality-perfect");
+        StringAssert.Contains(html, "/api/dream-hardware-recommendation");
+        StringAssert.Contains(html, "maybePromptDreamHardwareRecommendation");
+        StringAssert.Contains(html, "id=\"dreamResourceToggle\"");
+        StringAssert.Contains(html, "body.hidden=open");
+        StringAssert.Contains(html, "dreamPermissionEdits.has(dream)");
+        StringAssert.Contains(html, "dreamPermissionSaveChain=dreamPermissionSaveChain.then");
+    }
+
+    [TestMethod]
+    public void WebChatMemoryManagementGroupsTopicsAndManagesBlacklistRules()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "id=\"memoryTopic\"");
+        StringAssert.Contains(html, "Memory Blacklist");
+        StringAssert.Contains(html, "id=\"memoryPolicyInput\"");
+        StringAssert.Contains(html, "action: 'add-blacklist'");
+        StringAssert.Contains(html, "chatMemoryBlacklist");
+        StringAssert.Contains(html, "memory-topic-group");
+        StringAssert.Contains(html, "groups.get(topic)");
+        StringAssert.Contains(html, "Needs context · excluded from LLM recall");
+    }
+
+    [TestMethod]
+    public void WebChatShowsIconAttachmentsOnlyInAgentMode()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "aria-label=\"Agent attachments\"");
+        StringAssert.Contains(html, "class=\"composer-attach-icon\"");
+        StringAssert.Contains(html, "const agentMode = selectedService() === 'agent' && !sharedView;");
+        StringAssert.Contains(html, "const showImages = agentMode && permissionState.imageUploads !== false;");
+        StringAssert.Contains(html, "const showFiles = agentMode && permissionState.fileUploads !== false;");
+        StringAssert.Contains(html, "body:not(.agent-mode) .composer-attach-stack");
+        StringAssert.Contains(html, "body.agent-mode .composer.mobile-compact-composer > #composerAttachStack:not([hidden])");
     }
 }

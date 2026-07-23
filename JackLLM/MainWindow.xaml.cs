@@ -621,7 +621,7 @@ public partial class MainWindow : Window {
         });
 
         _webUiFallbackStatusText = new TextBlock {
-            Text = "Start the proxy to load the local Web UI.",
+            Text = "Start JACK to load the local Web UI.",
             Foreground = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
             FontFamily = new FontFamily("Consolas"),
             FontSize = 12,
@@ -676,7 +676,7 @@ public partial class MainWindow : Window {
         ReportStartup(startupProgress, 6, "Preparing JackLLM Workstation...", "Loading WPF controls and startup state.");
         await YieldStartupAsync(cancellationToken);
 
-        ReportStartup(startupProgress, 14, "Loading SocketJack services", "Creating the local proxy and web chat services.");
+        ReportStartup(startupProgress, 14, "Loading SocketJack services", "Creating JACK and web chat services.");
         _proxy = await Task.Run(() => {
             cancellationToken.ThrowIfCancellationRequested();
             var proxy = new SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort) {
@@ -701,6 +701,7 @@ public partial class MainWindow : Window {
         _settings = await LoadSettingsAsync(cancellationToken);
         ApplyModelsLocationEnvironment(_settings);
         WriteModelsLocationEnvironmentHint(_settings);
+        PromptForDreamHardwareRecommendation();
         await YieldStartupAsync(cancellationToken);
 
         ReportStartup(startupProgress, 28, "Loading JackONNX providers", "Preparing CPU, DirectML, and CUDA provider discovery.");
@@ -825,9 +826,9 @@ public partial class MainWindow : Window {
             await StartImageRuntimeBootstrapAsync(startupProgress, cancellationToken, waitForCompletion: true);
         }
         if (IsWineSafeWpfMode()) {
-            ReportStartup(startupProgress, 98, "Proxy start deferred", "Wine-safe startup opens the workstation window before starting local services.");
-            SetStatus("Ready. Proxy start deferred for Wine-safe startup.");
-            AppendLog("Wine-safe startup deferred proxy autostart so the workstation window can open first.");
+            ReportStartup(startupProgress, 98, "JACK start deferred", "Wine-safe startup opens the workstation window before starting local services.");
+            SetStatus("Ready. JACK start deferred for Wine-safe startup.");
+            AppendLog("Wine-safe startup deferred JACK autostart so the workstation window can open first.");
         } else {
             await StartProxyDuringStartupAsync(startupProgress, cancellationToken);
         }
@@ -1053,13 +1054,13 @@ public partial class MainWindow : Window {
     private async Task StartProxyDuringStartupAsync(IProgress<StartupLoadingProgress>? startupProgress, CancellationToken cancellationToken) {
         cancellationToken.ThrowIfCancellationRequested();
         if (!StartByDefaultCheckBox.IsChecked.GetValueOrDefault(true)) {
-            ReportStartup(startupProgress, 98, "Proxy start disabled", "JackLLM Workstation will open with the proxy stopped.");
-            SetStatus("Ready. Proxy is stopped.");
+            ReportStartup(startupProgress, 98, "JACK start disabled", "JackLLM Workstation will open with JACK stopped.");
+            SetStatus("Ready. JACK is stopped.");
             return;
         }
 
-        ReportStartup(startupProgress, 97, "Starting LmVsProxy", "Starting the local proxy before opening the workstation.");
-        AppendLog("Start by default enabled. Starting LmVsProxy.");
+        ReportStartup(startupProgress, 97, "Starting JACK", "Starting JACK before opening the workstation.");
+        AppendLog("Start by default enabled. Starting JACK.");
         await StartProxyAsync(startupProgress, cancellationToken);
     }
 
@@ -1158,8 +1159,8 @@ public partial class MainWindow : Window {
         if (!StartByDefaultCheckBox.IsChecked.GetValueOrDefault(true) && !_proxy.IsListening)
             _ = ProbeLmStudioAsync();
         if (IsWineSafeWpfMode() && StartByDefaultCheckBox.IsChecked.GetValueOrDefault(true) && !_proxy.IsListening) {
-            SetStatus("Ready. Starting proxy after Wine-safe GUI load.");
-            TryBeginOnUi(() => _ = StartProxyAsync(), "Wine-safe proxy startup", DispatcherPriority.ApplicationIdle);
+            SetStatus("Ready. Starting JACK after Wine-safe GUI load.");
+            TryBeginOnUi(() => _ = StartProxyAsync(), "Wine-safe JACK startup", DispatcherPriority.ApplicationIdle);
         }
         if (IsWineSafeWpfMode())
             TryBeginOnUi(StartWineSafeDeferredImageBootstrap, "Wine-safe deferred image bootstrap", DispatcherPriority.ApplicationIdle);
@@ -1884,7 +1885,7 @@ public partial class MainWindow : Window {
 
     private void OpenSocketChatWindow() {
         if (!_proxy.IsChatServerCreated || !_proxy.ChatServer.IsListening) {
-            SetStatus("Start the proxy to open SocketChat.");
+            SetStatus("Start JACK to open SocketChat.");
             return;
         }
 
@@ -1920,7 +1921,7 @@ public partial class MainWindow : Window {
             MainTabs.SelectedItem = WebUiTabItem;
 
         if (!_proxy.IsChatServerCreated || !_proxy.ChatServer.IsListening) {
-            SetWebUiStatus("Start the proxy to load the local Web UI.");
+            SetWebUiStatus("Start JACK to load the local Web UI.");
             SetStatus("Web UI is not running.");
             return;
         }
@@ -2167,7 +2168,7 @@ public partial class MainWindow : Window {
             return;
 
         _webUiFallbackStatusText.Text = string.IsNullOrWhiteSpace(displayUrl)
-            ? "Start the proxy to load the local Web UI."
+            ? "Start JACK to load the local Web UI."
             : "Local URL: " + displayUrl;
     }
 
@@ -3107,7 +3108,7 @@ public partial class MainWindow : Window {
         if (!_proxy.IsListening || !_proxy.ChatServer.IsListening)
             await StartProxyAsync();
         if (!_proxy.IsListening || !_proxy.ChatServer.IsListening) {
-            WpfChatStatusText.Text = "Start LmVsProxy before sending chat messages.";
+            WpfChatStatusText.Text = "Start JACK before sending chat messages.";
             return;
         }
 
@@ -5435,7 +5436,7 @@ public partial class MainWindow : Window {
     }
 
     private void ApplyHostProfileSettingsToUi(JackLLMSettings settings) {
-        HostServerNameTextBox.Text = FirstNonEmpty(settings.HostServerName, Environment.MachineName + " LmVsProxy");
+        HostServerNameTextBox.Text = FirstNonEmpty(settings.HostServerName, Environment.MachineName + " JACK");
         HostPublicHostTextBox.Text = settings.HostPublicHost ?? "";
         if (HostCostFactorSlider != null)
             HostCostFactorSlider.Value = ClampServerCostFactor(settings.HostCostFactor <= 0 ? 1 : settings.HostCostFactor);
@@ -7170,7 +7171,7 @@ public partial class MainWindow : Window {
         _settings.AutoPublishCoachmarkShown = true;
         SaveSettingsIfReady();
         PulseElement(AutoPublishHighlightBorder ?? (FrameworkElement)AutoPublishCheckBox, Color.FromRgb(111, 242, 209));
-        ShowElementToolTip(AutoPublishCheckBox, "Auto-Publish is on. This PC publishes automatically when LmVsProxy starts.", TimeSpan.FromSeconds(5));
+        ShowElementToolTip(AutoPublishCheckBox, "Auto-Publish is on. This PC publishes automatically when JACK starts.", TimeSpan.FromSeconds(5));
     }
 
     private void HighlightPublishedToggleWithLiveTooltip() {
@@ -7281,7 +7282,7 @@ public partial class MainWindow : Window {
             return;
 
         var steps = new[] {
-            new CoachmarkStep(StartStopButton, "Start the proxy", "Starts the local HTTP, chat, FTP, and SocketJack surfaces."),
+            new CoachmarkStep(StartStopButton, "Start JACK", "Starts the local HTTP, chat, FTP, and SocketJack surfaces."),
             new CoachmarkStep(SocketJackUserTextBox, "Sign in once", "Uploads, listings, storage, and paid usage are tied to this SocketJack.com username."),
             new CoachmarkStep(ModelsTabItem, "Models tab", "Browse, download, enable, and load local models here. If no models are installed yet, this is where you can download more."),
             new CoachmarkStep(OpenChatButton, "Web UI", "Opens the local web interface for shared sessions, uploads, downloads, and agent tools."),
@@ -7388,7 +7389,7 @@ public partial class MainWindow : Window {
         if (ShellPublishedTitleTextBox == null || ShellProxyUrlPreviewTextBox == null || ShellLocalApiTextBox == null)
             return;
 
-        string title = FirstNonEmpty(HostServerNameTextBox?.Text, Environment.MachineName + " LmVsProxy");
+        string title = FirstNonEmpty(HostServerNameTextBox?.Text, Environment.MachineName + " JACK");
         ShellPublishedTitleTextBox.Text = title;
         ShellProxyUrlPreviewTextBox.Text = BuildShellProxyPreviewUrl(title);
         ShellLocalApiTextBox.Text = "127.0.0.1:" + ChatServerPort.ToString(CultureInfo.InvariantCulture);
@@ -7422,7 +7423,7 @@ public partial class MainWindow : Window {
     private static string NormalizeShellRouteTitle(string value) {
         value = (value ?? "").Trim();
         if (string.IsNullOrWhiteSpace(value))
-            return "LmVsProxy";
+            return "JACK";
 
         var builder = new StringBuilder(value.Length);
         bool lastWasSpace = false;
@@ -7438,7 +7439,7 @@ public partial class MainWindow : Window {
         }
 
         string result = builder.ToString().Trim();
-        return string.IsNullOrWhiteSpace(result) ? "LmVsProxy" : result;
+        return string.IsNullOrWhiteSpace(result) ? "JACK" : result;
     }
 
     private async Task<List<ShellRelayItem>> RefreshShellInstancesAsync() {
@@ -7463,7 +7464,7 @@ public partial class MainWindow : Window {
                 _shellRelayItems.Add(item);
             ShellInstancesListBox.SelectedItem = _shellRelayItems.FirstOrDefault(item => string.Equals(item.Id, selectedId, StringComparison.OrdinalIgnoreCase)) ??
                                                  _shellRelayItems.FirstOrDefault();
-            ShellStatusText.Text = "Loaded " + _shellRelayItems.Count.ToString(CultureInfo.InvariantCulture) + " LmVsProxy shell route(s).";
+            ShellStatusText.Text = "Loaded " + _shellRelayItems.Count.ToString(CultureInfo.InvariantCulture) + " JACK shell route(s).";
             UpdateSelectedShellDebugText();
             return _shellRelayItems.ToList();
         } catch (Exception ex) {
@@ -7686,7 +7687,7 @@ public partial class MainWindow : Window {
             }
             if (ServerBrowserStatusText != null) {
                 ServerBrowserStatusText.Text = item.DisplayName + (item.PublishEnabled
-                    ? " will be published when the proxy runs."
+                    ? " will be published when JACK runs."
                     : " was removed from the public master-list website.");
             }
             if (!requestedPublish) {
@@ -8254,7 +8255,7 @@ public partial class MainWindow : Window {
                 entry.OwnerUserName = GetSocketJackUserName();
                 entry.PublishEnabled = false;
                 entry.IsOnline = false;
-                entry.LastStatus = "Proxy stopped";
+                entry.LastStatus = "JACK stopped";
                 entry.UpdatedUtc = DateTimeOffset.UtcNow.ToString("O");
                 return entry;
             })
@@ -8351,7 +8352,7 @@ public partial class MainWindow : Window {
             StatusText = GetLocalHostingStatusText(),
             UpdatedUtc = DateTimeOffset.UtcNow.ToString("O")
         };
-        profile.Normalize(Environment.MachineName + " LmVsProxy");
+        profile.Normalize(Environment.MachineName + " JACK");
         return profile;
     }
 
@@ -8431,7 +8432,7 @@ public partial class MainWindow : Window {
 
     private string GetLocalHostingStatusText() {
         if (_shellModeRunning)
-            return "Shell proxy online";
+            return "JACK shell online";
         if (IsLocalHostingOnline())
             return "Hosting";
         return IsMyListingPublished() ? "Ready to publish" : "Configured";
@@ -8453,7 +8454,7 @@ public partial class MainWindow : Window {
         entry.ChatPort = publicPort;
         entry.ProxyPort = publicPort;
         entry.LmStudioPort = publicPort;
-        entry.LastStatus = _shellModeRunning ? "Shell proxy online" : entry.LastStatus;
+        entry.LastStatus = _shellModeRunning ? "JACK shell online" : entry.LastStatus;
         entry.IsOnline = _shellModeRunning || entry.IsOnline;
     }
 
@@ -9575,7 +9576,7 @@ public partial class MainWindow : Window {
         menu.Items.Add(CreateWpfTrayMenuItem("Show Dashboard", ShowFromTray));
         menu.Items.Add(CreateWpfTrayMenuItem("Open Web UI", () => OpenChatButton_Click(this, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
         menu.Items.Add(CreateWpfTrayMenuItem("Chat", OpenSocketChatWindow, _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
-        menu.Items.Add(CreateWpfTrayMenuItem(_proxy.IsListening ? "Stop Proxy" : "Start Proxy", () => {
+        menu.Items.Add(CreateWpfTrayMenuItem(_proxy.IsListening ? "Stop JACK" : "Start JACK", () => {
             if (_proxy.IsListening)
                 _ = StopProxyAsync();
             else
@@ -9635,7 +9636,7 @@ public partial class MainWindow : Window {
         var socketChatItem = CreateTrayMenuItem("Chat", OpenSocketChatWindow);
         socketChatItem.Enabled = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
         menu.Items.Add(socketChatItem);
-        var startStopItem = CreateTrayMenuItem(_proxy.IsListening ? "Stop Proxy" : "Start Proxy", () => {
+        var startStopItem = CreateTrayMenuItem(_proxy.IsListening ? "Stop JACK" : "Start JACK", () => {
             if (_proxy.IsListening)
                 _ = StopProxyAsync();
             else
@@ -9645,7 +9646,7 @@ public partial class MainWindow : Window {
         menu.Items.Add(CreateTrayMenuItem("Refresh Master List", () => _ = RefreshMasterServerListIfDueAsync(true)));
         menu.Items.Add(CreateTrayMenuItem("Check for Updates", CheckUpdaterNow));
         var forceUpdateItem = CreateTrayMenuItem("Force JackLLM Workstation Update", ForceUpdaterApply);
-        forceUpdateItem.ToolTipText = "Downloads any missing or MD5-mismatched GUI files from SocketJack.com.";
+        forceUpdateItem.ToolTipText = "Downloads any missing or SHA-256-mismatched GUI files from SocketJack.com.";
         menu.Items.Add(forceUpdateItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(CreateTrayMenuItem("Exit", ExitFromTray));
@@ -9669,7 +9670,7 @@ public partial class MainWindow : Window {
     }
 
     private void PopulateTrayServerStatusMenu(Forms.ToolStripMenuItem parent) {
-        parent.DropDownItems.Add(CreateTrayInfoItem("Proxy: " + (_proxy.IsListening ? "running" : "stopped")));
+        parent.DropDownItems.Add(CreateTrayInfoItem("JACK: " + (_proxy.IsListening ? "running" : "stopped")));
         parent.DropDownItems.Add(CreateTrayInfoItem(GetModelRuntimeServiceName() + ": " + _lmStatusText + " | " + _lmLatencyText));
         parent.DropDownItems.Add(CreateTrayInfoItem("JackONNX: " + _jackOnnxCapabilityStatus + " | " + _jackOnnxCapabilityCountLine));
         parent.DropDownItems.Add(CreateTrayInfoItem(GetChatServerClientText()));
@@ -9744,7 +9745,7 @@ public partial class MainWindow : Window {
     }
 
     private string BuildTrayPrimaryStatusLine() {
-        string proxy = _proxy.IsListening ? "proxy running" : "proxy stopped";
+        string proxy = _proxy.IsListening ? "JACK running" : "JACK stopped";
         return proxy + " | " + GetTrayWebClientCountText();
     }
 
@@ -10006,26 +10007,26 @@ public partial class MainWindow : Window {
     private async Task StartProxyAsync(IProgress<StartupLoadingProgress>? startupProgress = null, CancellationToken cancellationToken = default) {
         StartStopButton.IsEnabled = false;
         StartStopButton.Content = "Starting...";
-        SetStatus("Starting LmVsProxy.");
+        SetStatus("Starting JACK.");
         ResetChatBandwidthMetrics();
 
         try {
             cancellationToken.ThrowIfCancellationRequested();
-            ReportStartup(startupProgress, 97.2, "Starting LmVsProxy", "Applying the selected model runtime provider.");
+            ReportStartup(startupProgress, 97.2, "Starting JACK", "Applying the selected model runtime provider.");
             string selectedProvider = GetSelectedModelRuntimeProvider();
             ApplyModelRuntimeProviderToProxy(selectedProvider, startEmbeddedRuntime: false);
             if (string.Equals(NormalizeModelRuntimeProvider(selectedProvider), RuntimeProviderLlmRuntime, StringComparison.OrdinalIgnoreCase))
                 await EnsureSelectedEmbeddedLlmRuntimeStartedAsync("gui-start", cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            ReportStartup(startupProgress, 97.5, "Starting LmVsProxy", "Opening remote LM Studio proxy support if enabled.");
+            ReportStartup(startupProgress, 97.5, "Starting JACK", "Opening remote LM Studio support if enabled.");
             StartRemoteLmStudioProxyIfEnabled();
 
             cancellationToken.ThrowIfCancellationRequested();
-            ReportStartup(startupProgress, 97.8, "Starting LmVsProxy", "Binding local proxy endpoints.");
+            ReportStartup(startupProgress, 97.8, "Starting JACK", "Binding local JACK endpoints.");
             bool proxyStarted = _proxy.Start();
             if (!proxyStarted) {
-                ReportStartup(startupProgress, 98.0, "LmVsProxy already running", "Existing local proxy endpoints are active; verifying shell publishing.");
-                AppendLog("LmVsProxy was already running. Verifying chat UI and shell publishing.");
+                ReportStartup(startupProgress, 98.0, "JACK already running", "Existing local JACK endpoints are active; verifying shell publishing.");
+                AppendLog("JACK was already running. Verifying chat UI and shell publishing.");
             }
 
             ReportStartup(startupProgress, 98.1, "Starting chat UI", "Binding the local web chat endpoint.");
@@ -10038,16 +10039,16 @@ public partial class MainWindow : Window {
             AppendLog("VS chat-completions endpoint: http://localhost:" + ServerPort + "/v1/chat/completions");
             AppendLog("Model runtime provider: " + _proxy.LocalModelRuntime.DisplayName + " at " + _proxy.LocalModelRuntime.OpenAiBaseUrl);
             AppendLog("Chat UI: " + _proxy.ChatServerUrl);
-            SetStatus(proxyStarted ? "LmVsProxy is running." : "LmVsProxy is already running.");
+            SetStatus(proxyStarted ? "JACK is running." : "JACK is already running.");
             if (IsAutoPublishEnabled() && !IsMyListingPublished())
                 SetPublishedToggleSilently(true);
             cancellationToken.ThrowIfCancellationRequested();
             if (IsMyListingPublished()) {
-                ReportStartup(startupProgress, 98.4, "Publishing host listing", "Syncing the started proxy with the master server.");
+                ReportStartup(startupProgress, 98.4, "Publishing host listing", "Syncing JACK with the master server.");
                 await PublishEnabledHostsToMasterServerAsync(true, "proxy start");
             }
             if (IsShellPublishingEnabled()) {
-                ReportStartup(startupProgress, 98.4, "Starting SocketJack shell mode", "Preparing shell publishing for the local proxy.");
+                ReportStartup(startupProgress, 98.4, "Starting SocketJack shell mode", "Preparing shell publishing for JACK.");
                 await StartShellModeAsync();
             }
             cancellationToken.ThrowIfCancellationRequested();
@@ -10203,7 +10204,7 @@ public partial class MainWindow : Window {
         ShellForwardValidationText.Foreground = Brushes.LimeGreen;
         ShellForwardValidationDetailText.Text = "Published listings use SocketJack Shell automatically. Direct router forwarding is disabled for this flow.";
         ShellSuggestionText.Text = HasSocketJackAuthentication()
-            ? "When the proxy starts, this PC publishes through your SocketJack.com username and is removed when the proxy stops."
+            ? "When JACK starts, this PC publishes through your SocketJack.com username and is removed when JACK stops."
             : "Sign in to SocketJack.com before publishing so the master list can attach this PC to your username.";
         SetShellPromptAnimation(false);
     }
@@ -10263,7 +10264,7 @@ public partial class MainWindow : Window {
     private async Task StopProxyAsync() {
         StartStopButton.IsEnabled = false;
         StartStopButton.Content = "Stopping...";
-        SetStatus("Stopping LmVsProxy.");
+        SetStatus("Stopping JACK.");
 
         try {
             if (_proxy.IsListening || (_proxy.IsChatServerCreated && _proxy.ChatServer.IsListening))
@@ -10274,7 +10275,7 @@ public partial class MainWindow : Window {
             StopEmbeddedLlmRuntime();
             _startedAt = null;
             ResetChatBandwidthMetrics();
-            SetStatus("LmVsProxy stopped.");
+            SetStatus("JACK stopped.");
         } catch (Exception ex) {
             AppendLog("Stop error: " + ex.Message);
             SetStatus("Stop failed: " + ex.Message);
@@ -10311,14 +10312,14 @@ public partial class MainWindow : Window {
                 StartShellRelay(started, proxy.Instance, masterHost, poolSize);
 
             if (started.Count == 0)
-                throw new InvalidOperationException("The master server did not return an enabled LmVsProxy shell proxy.");
+                throw new InvalidOperationException("The master server did not return an enabled JACK shell.");
 
             _shellRelays.AddRange(started);
             _shellModeRunning = true;
             _startedAt ??= DateTimeOffset.UtcNow;
             _shellModeStatusText = webSocketTunnelEnabled
-                ? "Shell enabled with WebSocket tunnel. LmVsProxy session available at " + proxy.Endpoint + "."
-                : "Shell enabled. LmVsProxy session available at " + proxy.Endpoint + ".";
+                ? "Shell enabled with WebSocket tunnel. JACK session available at " + proxy.Endpoint + "."
+                : "Shell enabled. JACK session available at " + proxy.Endpoint + ".";
             SetShellEnabledCheckBox(true);
             ShellStatusText.Text = _shellModeStatusText;
             if (ShellModeStatusText != null)
@@ -10412,8 +10413,8 @@ public partial class MainWindow : Window {
             publishEnabled = IsMyListingPublished(),
             visibleOnWebsite = IsMyListingPublished(),
             online = true,
-            status = "Shell proxy online",
-            lastStatus = "Shell proxy online",
+            status = "JACK shell online",
+            lastStatus = "JACK shell online",
             transportMode = IsShellWebSocketTunnelEnabled() ? "websocketPreferred" : "tcp",
             fallbackTcpEnabled = true,
             ownerTokenHash = HashMasterServerOwnerToken(GetMasterServerOwnerToken()),
@@ -10463,7 +10464,7 @@ public partial class MainWindow : Window {
             ShellProxyRequestResult? recovered = await TryRecoverExistingShellProxyRouteAsync(entry, uri, ex.Message);
             if (recovered != null)
                 return recovered;
-            throw new InvalidOperationException("Shell proxy registration timed out and no reusable master route was found: " + ex.Message, ex);
+            throw new InvalidOperationException("JACK shell registration timed out and no reusable master route was found: " + ex.Message, ex);
         }
 
         using (response) {
@@ -10478,7 +10479,7 @@ public partial class MainWindow : Window {
             using JsonDocument document = JsonDocument.Parse(body);
             JsonElement root = document.RootElement;
             if (!TryGetJsonProperty(root, "instance", out JsonElement instanceElement) || instanceElement.ValueKind != JsonValueKind.Object)
-                throw new InvalidOperationException("Master server did not return a shell proxy instance.");
+                throw new InvalidOperationException("Master server did not return a JACK shell instance.");
 
             ShellRelayItem instance = ShellRelayItem.FromJson(instanceElement);
             instance.Endpoint = GetJsonString(root, "endpoint", instance.Endpoint);
@@ -10581,7 +10582,7 @@ public partial class MainWindow : Window {
         entry.ProxyPort = publicPort;
         entry.LmStudioPort = publicPort;
         entry.FtpPort = FtpServerPort;
-        entry.LastStatus = IsMyListingPublished() ? "Shell proxy online" : "Shell proxy ready (unlisted)";
+        entry.LastStatus = IsMyListingPublished() ? "JACK shell online" : "JACK shell ready (unlisted)";
         entry.StartedUtc = GetProxyStartedUtcText();
         entry.UptimeSeconds = GetProxyUptimeSeconds();
         entry.IsOnline = true;
@@ -10625,7 +10626,7 @@ public partial class MainWindow : Window {
         client.Log += ShellRelayClient_Log;
         client.Start();
         item.ClientStatus = "Connected";
-        item.AppendDebug("Routing master public " + item.PublicPort.ToString(CultureInfo.InvariantCulture) + " to local LmVsProxy " + localShellHost + ":" + localShellPort.ToString(CultureInfo.InvariantCulture) + ".");
+        item.AppendDebug("Routing master public " + item.PublicPort.ToString(CultureInfo.InvariantCulture) + " to local JACK " + localShellHost + ":" + localShellPort.ToString(CultureInfo.InvariantCulture) + ".");
         started.Add(new ShellRelay(item.Id, item.Name, masterHost, item.PublicPort, item.AgentPort, localShellHost, localShellPort, poolSize, client, null, ShellRelayClient_Log));
     }
 
@@ -10681,7 +10682,7 @@ public partial class MainWindow : Window {
             client.Start();
 
         item.ClientStatus = "WebSocket connecting";
-        item.AppendDebug("Routing public proxy through WebSocket tunnel " + tunnelUrl + " -> local LmVsProxy " + localShellHost + ":" + localShellPort.ToString(CultureInfo.InvariantCulture) + ".");
+        item.AppendDebug("Routing public JACK access through WebSocket tunnel " + tunnelUrl + " -> local JACK " + localShellHost + ":" + localShellPort.ToString(CultureInfo.InvariantCulture) + ".");
         started.Add(relay);
     }
 
@@ -12833,7 +12834,7 @@ public partial class MainWindow : Window {
             }
             RecordDiagnostics(e.Message);
             RefreshMetrics();
-        }, "Proxy output log");
+        }, "JACK output log");
     }
 
     private void OnEmbeddedLlmRuntimeServiceLog(string message) {
@@ -13875,6 +13876,27 @@ public partial class MainWindow : Window {
 
     private string SelectedDreamOwnerKey() => DreamOwnerComboBox?.SelectedValue as string ?? "global";
 
+    private void PromptForDreamHardwareRecommendation() {
+        if (_startHiddenRequested || _proxy == null)
+            return;
+        try {
+            DreamHardwareRecommendationSnapshot recommendation = _proxy.GetDreamHardwareRecommendationDiagnostics();
+            if (!recommendation.Pending)
+                return;
+            string title = recommendation.Reason == "hardware-changed" ? "Dream Mode hardware changed" : "Dream Mode recommended settings";
+            string message = (recommendation.Reason == "hardware-changed"
+                    ? "JackLLM detected a hardware change."
+                    : "JackLLM can tune Dream Mode for this PC.") +
+                "\n\n" + (string.IsNullOrWhiteSpace(recommendation.PreviousHardware) ? "" : "Previous: " + recommendation.PreviousHardware + "\n") +
+                "Current: " + recommendation.CurrentHardware +
+                "\n\nApply the recommended resource thresholds? Choose No to keep your current thresholds.";
+            MessageBoxResult answer = MessageBox.Show(this, message, title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
+            _proxy.ResolveDreamHardwareRecommendationDiagnostics(answer == MessageBoxResult.Yes ? "apply" : "keep");
+        } catch (Exception ex) {
+            AppendLog("Dream hardware recommendation prompt failed: " + TrimForDisplay(ex.Message, 180));
+        }
+    }
+
     private void RefreshDreamManagement(bool refreshOwners) {
         if (_proxy == null || DreamManagementStatusText == null || _refreshingDreamManagement)
             return;
@@ -13892,7 +13914,7 @@ public partial class MainWindow : Window {
             DreamEnabledCheckBox.IsChecked = settings.Enabled;
             string preset = settings.Preset ?? "custom";
             DreamPresetComboBox.SelectedItem = DreamPresetComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => string.Equals(item.Tag as string, preset, StringComparison.OrdinalIgnoreCase));
-            if (DreamPresetComboBox.SelectedItem == null) DreamPresetComboBox.SelectedIndex = 3;
+            if (DreamPresetComboBox.SelectedItem == null) DreamPresetComboBox.SelectedIndex = 4;
             DreamJournalListBox.ItemsSource = _proxy.GetDreamJournalDiagnostics(owner);
             DreamMobileDevicesListBox.ItemsSource = _proxy.GetMobileDreamDevicesDiagnostics();
             DreamManagementStatusText.Text = status.Status + " | " + status.Phase +
@@ -14183,7 +14205,7 @@ public partial class MainWindow : Window {
             RebuildServerManagementRequests();
             ShowRegistrationRequestToast(item);
             AppendLog("Registration request: " + item.Title + Environment.NewLine + item.Detail);
-            PulseService("Web Client UI", "LmVsProxy");
+            PulseService("Web Client UI", "JACK");
             RefreshMetrics();
         }, "Web auth registration request");
     }
@@ -14198,7 +14220,7 @@ public partial class MainWindow : Window {
                 _tokenRateRequestItems.Insert(0, item);
             RebuildServerManagementRequests();
             AppendLog("Token-rate request: " + item.Title + Environment.NewLine + item.Detail);
-            PulseService("Web Client UI", "LmVsProxy");
+            PulseService("Web Client UI", "JACK");
             RefreshMetrics();
         }, "Token-rate request");
     }
@@ -14214,7 +14236,7 @@ public partial class MainWindow : Window {
             var item = FilesystemPermissionRequestItem.FromSnapshot(e.Request);
             _filesystemPermissionRequests.Insert(0, item);
             AppendLog("RUN filesystem permission request: " + item.Title + Environment.NewLine + item.Detail);
-            PulseService("Session Files", "LmVsProxy");
+            PulseService("Session Files", "JACK");
             RefreshMetrics();
         }, "Filesystem permission request");
     }
@@ -14232,7 +14254,7 @@ public partial class MainWindow : Window {
             ShowTerminalPermissionToast(item);
             AppendLog("RUN terminal permission request: " + item.Title + Environment.NewLine + item.Detail);
             _terminalServiceEventCount++;
-            PulseService("Terminal", "LmVsProxy");
+            PulseService("Terminal", "JACK");
             RefreshSessionsPanel(true);
             RefreshMetrics();
         }, "Terminal permission request");
@@ -14983,7 +15005,7 @@ public partial class MainWindow : Window {
     private void RefreshMetrics() {
         bool proxyRunning = _proxy.IsListening;
         bool running = proxyRunning;
-        StartStopButton.Content = proxyRunning ? "Stop Proxy" : "Start Proxy";
+        StartStopButton.Content = proxyRunning ? "Stop JACK" : "Start JACK";
         StartStopButton.Background = running ? new SolidColorBrush(Color.FromRgb(137, 52, 66)) : new SolidColorBrush(Color.FromRgb(31, 122, 104));
         bool chatRunning = _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening;
         OpenChatButton.IsEnabled = chatRunning;
@@ -14993,7 +15015,7 @@ public partial class MainWindow : Window {
         if (WebUiOpenExternalButton != null)
             WebUiOpenExternalButton.IsEnabled = chatRunning;
         if (!chatRunning && WebUiTabItem?.IsSelected == true)
-            SetWebUiStatus("Start the proxy to load the local Web UI.");
+            SetWebUiStatus("Start JACK to load the local Web UI.");
         if (chatRunning && string.IsNullOrWhiteSpace(_pendingWebUiUrl))
             SetWebUiStatus("Web UI: " + BuildWebUiDisplayUrl(BuildChatServerEndpoint("/")));
         if (OpenMagicWorkflowButton != null)
@@ -16829,7 +16851,7 @@ public partial class MainWindow : Window {
         AddServiceConfigRow("Chat service", GetSelectedWpfChatService());
         AddServiceActionRow(
             CreateServiceActionButton("Open Web UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), chatRunning),
-            CreateServiceActionButton(_proxy.IsListening ? "Stop proxy" : "Start proxy", () => StartStopButton_Click(null, new RoutedEventArgs())),
+            CreateServiceActionButton(_proxy.IsListening ? "Stop JACK" : "Start JACK", () => StartStopButton_Click(null, new RoutedEventArgs())),
             CreateServiceActionButton("Open FTP config", () => OpenServiceUrl(BuildChatServerEndpoint("/FTP")), chatRunning));
     }
 
@@ -16843,7 +16865,7 @@ public partial class MainWindow : Window {
         AddServiceConfigRow("Shell publishing", FormatEnabled(IsShellPublishingEnabled()) + " | " + _shellModeStatusText);
         AddServiceConfigRow("Port forwarding", PortForwardStatusText?.Text ?? "-");
         AddServiceActionRow(
-            CreateServiceActionButton(_proxy.IsListening ? "Stop proxy" : "Start proxy", () => StartStopButton_Click(null, new RoutedEventArgs())),
+            CreateServiceActionButton(_proxy.IsListening ? "Stop JACK" : "Start JACK", () => StartStopButton_Click(null, new RoutedEventArgs())),
             CreateServiceAsyncActionButton("Probe runtime", async () => await ProbeLmStudioAsync()),
             CreateServiceActionButton("Open Web UI", () => OpenChatButton_Click(null, new RoutedEventArgs()), _proxy.IsChatServerCreated && _proxy.ChatServer.IsListening));
     }
@@ -16980,7 +17002,7 @@ public partial class MainWindow : Window {
             AddServiceConfigRow("Remote selection", "unavailable: " + TrimForDisplay(ex.Message, 120), Brushes.Orange);
         }
         AddServiceActionRow(
-            CreateServiceActionButton(_proxy.IsListening ? "Stop proxy" : "Start proxy", () => StartStopButton_Click(null, new RoutedEventArgs())),
+            CreateServiceActionButton(_proxy.IsListening ? "Stop JACK" : "Start JACK", () => StartStopButton_Click(null, new RoutedEventArgs())),
             CreateServiceActionButton("Clear remote selection", () => {
                 _proxy.ClearRemoteModelServerSelection();
                 RefreshMetrics();
@@ -18324,7 +18346,7 @@ public partial class MainWindow : Window {
         _chatBandwidthOutSnapshot = _chatBandwidthOutTracker.Update(outboundKbps, sent);
 
         if (receivedDelta > 0 || sentDelta > 0)
-            PulseService("Web Client UI", "LmVsProxy");
+            PulseService("Web Client UI", "JACK");
     }
 
     private void ResetChatBandwidthMetrics() {
@@ -19090,7 +19112,7 @@ public partial class MainWindow : Window {
 
     private void InitializeStaticText() {
         _lmEndpointText = "Endpoint: http://localhost:" + LocalLmStudioProxyPort + "/v1/chat/completions";
-        _proxyEndpointText = "Proxy: http://localhost:" + ServerPort + "/v1/chat/completions";
+        _proxyEndpointText = "JACK: http://localhost:" + ServerPort + "/v1/chat/completions";
         _chatUiEndpointText = "Web UI: http://localhost:" + ChatServerPort + "/";
         _vsEndpointText = "Endpoint: http://localhost:" + ServerPort + "/v1/responses";
     }
@@ -21913,7 +21935,7 @@ public partial class MainWindow : Window {
 
         public string TitleText => (string.IsNullOrWhiteSpace(Name) ? Id : Name) + (Enabled ? " | enabled" : " | disabled");
         public string DetailText => FirstNonEmpty(Endpoint, ProxyPath, "SocketJack public " + PublicPort.ToString(CultureInfo.InvariantCulture)) +
-                                    " | reverse LmVsProxy agent " + AgentPort.ToString(CultureInfo.InvariantCulture) +
+                                    " | reverse JACK agent " + AgentPort.ToString(CultureInfo.InvariantCulture) +
                                     " -> local API " + ChatServerPort.ToString(CultureInfo.InvariantCulture);
         public string RuntimeText => (string.IsNullOrWhiteSpace(Status) ? "Unknown" : Status) +
                                      " | ws " + (WebSocketTunnelConnected ? WebSocketTunnelCount.ToString(CultureInfo.InvariantCulture) : "0") +
@@ -22519,7 +22541,7 @@ public partial class MainWindow : Window {
             if (string.IsNullOrWhiteSpace(ConnectHost))
                 ConnectHost = NormalizeServerBrowserHost(Endpoint);
             if (string.IsNullOrWhiteSpace(DisplayName))
-                DisplayName = string.IsNullOrWhiteSpace(ConnectHost) ? "LmVsProxy Host" : ConnectHost;
+                DisplayName = string.IsNullOrWhiteSpace(ConnectHost) ? "JACK Host" : ConnectHost;
             if (ChatPort <= 0 || ChatPort > 65535)
                 ChatPort = ChatServerPort;
             if (ProxyPort <= 0 || ProxyPort > 65535)
@@ -22749,7 +22771,7 @@ public partial class MainWindow : Window {
         public bool IsLocalHost => _entry.IsLocalHost;
 
         public override string ToString() {
-            return string.IsNullOrWhiteSpace(DisplayName) ? "LmVsProxy Host" : DisplayName;
+            return string.IsNullOrWhiteSpace(DisplayName) ? "JACK Host" : DisplayName;
         }
 
         public bool Matches(ServerBrowserEntry entry) {

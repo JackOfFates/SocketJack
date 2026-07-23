@@ -1,6 +1,6 @@
 # JackLLM Workstation
 
-`JackLLM.Workstation` is the cross-platform backend host for JackLLM Workstation. It runs the SocketJack/LmVsProxy backend, serves the browser workstation UI, and can start an embedded `LlmRuntime`.
+`JackLLM.Workstation` is the cross-platform backend host for JackLLM Workstation. It runs the SocketJack/JACK backend, serves the browser workstation UI, and can start an embedded `LlmRuntime`.
 
 The Windows `JackLLM/` project remains the WPF tray/window application. This project is a headless service/terminal host and does not create a native desktop GUI.
 
@@ -41,7 +41,7 @@ dotnet run --project ./JackLLM.Workstation/JackLLM.Workstation.csproj -- --runti
 dotnet run --project ./JackLLM.Workstation/JackLLM.Workstation.csproj -- --no-copilot-duplicator --chat-port 11436
 ```
 
-WPF remote-admin screen capture/input is not available in this Linux host. The browser workstation, chat, proxy, model runtime, sessions, files, permissions, and diagnostics APIs are hosted by the shared backend.
+WPF remote-admin screen capture/input is not available in this Linux host. The browser workstation, chat, JACK, model runtime, sessions, files, permissions, and diagnostics APIs are hosted by the shared backend.
 
 <!-- LINECOUNTER-OUTPUT:START -->
 <details>

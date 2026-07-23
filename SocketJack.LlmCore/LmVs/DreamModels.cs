@@ -41,6 +41,16 @@ public sealed class DreamResourceSnapshot
     public string SampledUtc { get; set; } = "";
 }
 
+public sealed class DreamHardwareRecommendationSnapshot
+{
+    public bool Pending { get; set; }
+    public string Reason { get; set; } = "";
+    public string PreviousHardware { get; set; } = "";
+    public string CurrentHardware { get; set; } = "";
+    public string DetectedUtc { get; set; } = "";
+    public DreamSettingsSnapshot RecommendedSettings { get; set; } = new();
+}
+
 public sealed class DreamStatusSnapshot
 {
     public string OwnerKey { get; set; } = "global";
@@ -70,6 +80,7 @@ public sealed class DreamCandidateSnapshot
 {
     public string Id { get; set; } = "";
     public string Text { get; set; } = "";
+    public string Topic { get; set; } = "General";
     public string Disposition { get; set; } = "review";
     public double Confidence { get; set; }
     public bool ExplicitFact { get; set; }

@@ -24,24 +24,14 @@ public partial class App : System.Windows.Application {
         bool startHidden = e.Args.Any(arg => string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase));
         _startupCancellation = new CancellationTokenSource();
         if (wineSafeWpf) {
-            try {
-                IProgress<StartupLoadingProgress> wineProgress = new Progress<StartupLoadingProgress>();
-                _mainWindow = await JackLLM.MainWindow.CreateAsync(startHidden, wineProgress, _startupCancellation.Token);
-                _startupCancellation.Token.ThrowIfCancellationRequested();
-                MainWindow = _mainWindow;
-                _mainWindow.Show();
-            } catch (Exception ex) {
-                MessageBox.Show(
-                    "JackLLM Workstation failed to start: " + ex.Message,
-                    "Startup failed",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-                Shutdown(-1);
-            }
+            MessageBox.Show("JackLLM Workstation now requires TPM-backed Windows Hello and cannot run through Wine.",
+                "Hardware authentication required", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(-1);
             return;
         }
 
-        var loadingWindow = new StartupLoadingWindow();
+        bool recoveryRequested = e.Args.Any(arg => string.Equals(arg, "--security-recovery", StringComparison.OrdinalIgnoreCase));
+        var loadingWindow = new StartupLoadingWindow(recoveryRequested);
         _startupWindow = loadingWindow;
         loadingWindow.CancelRequested += OnStartupCancelRequested;
         MainWindow = loadingWindow;
@@ -49,6 +39,13 @@ public partial class App : System.Windows.Application {
         IProgress<StartupLoadingProgress> progress = new Progress<StartupLoadingProgress>(loadingWindow.UpdateProgress);
 
         try {
+            string? unlockGrant = await loadingWindow.AuthenticateAsync(_startupCancellation.Token);
+            if (string.IsNullOrWhiteSpace(unlockGrant)) {
+                loadingWindow.CompleteAndClose();
+                Shutdown();
+                return;
+            }
+            loadingWindow.ShowLoadingProgress();
             progress.Report(new StartupLoadingProgress(2, "Preparing JackLLM Workstation...", "Starting the loading surface."));
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
 

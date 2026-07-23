@@ -8,6 +8,7 @@ public sealed record MobileGenerationRequest(
     ServerInfo Server,
     JackLlmClient Client,
     string SessionId,
+    string ProjectId,
     string Model,
     string Service,
     string ReasoningLevel,
@@ -54,6 +55,7 @@ public sealed class MobileGenerationCoordinator
     public MobileGenerationCoordinator(IMobileNotificationService notifications) => _notifications = notifications;
 
     public event EventHandler<MobileGenerationSnapshot>? SnapshotChanged;
+    public event EventHandler<MobileAlignmentSnapshot>? AlignmentChanged;
 
     public MobileGenerationSnapshot Current
     {
@@ -113,7 +115,7 @@ public sealed class MobileGenerationCoordinator
         {
             SetState(snapshot => snapshot with { Status = RunningStatus(request.Service), Progress = 0 });
             await foreach (ChatStreamEvent item in request.Client.StreamChatAsync(
-                request.Model, request.Service, request.SessionId, request.ReasoningLevel,
+                request.Model, request.Service, request.SessionId, request.ProjectId, request.ReasoningLevel,
                 request.SessionReasoningLevel, request.Messages, request.Attachments, streamId, cancellationToken))
             {
                 ApplyStreamEvent(item, request.Server.LaunchKey);
@@ -188,6 +190,11 @@ public sealed class MobileGenerationCoordinator
 
     private void ApplyStreamEvent(ChatStreamEvent item, string serverKey)
     {
+        if (item.Type.Equals("alignment", StringComparison.OrdinalIgnoreCase) && item.Alignment is not null)
+        {
+            AlignmentChanged?.Invoke(this, item.Alignment);
+            return;
+        }
         string eventType = item.Type.Replace("_", "", StringComparison.Ordinal).Replace("-", "", StringComparison.Ordinal).ToLowerInvariant();
         switch (eventType)
         {

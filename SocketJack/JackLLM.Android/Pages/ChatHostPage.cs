@@ -37,7 +37,13 @@ public sealed class ChatHostPage : ContentPage
     private readonly ProgressBar _liveProgress;
     private readonly ActivityIndicator _liveIndicator;
     private readonly Button _voice;
+    private readonly Button _attach;
     private readonly ToolbarItem _speakItem;
+    private readonly ToolbarItem _dreamItem;
+    private readonly BoxView _alignmentTop;
+    private readonly BoxView _alignmentBottom;
+    private readonly Border _alignmentLockScreen;
+    private readonly Grid _contentRoot;
     private IReadOnlyList<ModelInfo> _allModels = Array.Empty<ModelInfo>();
     private MobileChatMode _mode = MobileChatMode.General;
     private CancellationTokenSource? _networkHealthCancellation;
@@ -46,6 +52,9 @@ public sealed class ChatHostPage : ContentPage
     private volatile bool _pageActive;
     private ChatMessage? _activeAssistant;
     private string _sessionId = Guid.NewGuid().ToString("N");
+    private string _projectId = "unsorted";
+    private MobileAlignmentSnapshot _alignment = new();
+    private int _loreIndex;
 
     public ChatHostPage(
         ServerInfo server,
@@ -93,20 +102,20 @@ public sealed class ChatHostPage : ContentPage
         _prompt = new Editor { Placeholder = "Message JackLLM…", AutoSize = EditorAutoSizeOption.TextChanges, MaximumHeightRequest = 130, TextColor = Colors.White, PlaceholderColor = Color.FromArgb("#64748B"), BackgroundColor = Colors.Transparent };
         _send = new Button { Text = "↑", FontSize = 24, FontAttributes = FontAttributes.Bold, CornerRadius = 15, BackgroundColor = Color.FromArgb("#2563EB"), TextColor = Colors.White, WidthRequest = 54 };
         _send.Clicked += async (_, _) => { if (!_generation.IsGenerating) await SendAsync(); else await StopAsync(); };
-        var attach = new Button { Text = "＋", FontSize = 22, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 46 };
-        attach.Clicked += async (_, _) => await AddAttachmentAsync();
+        _attach = new Button { Text = "＋", FontSize = 22, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 46 };
+        _attach.Clicked += async (_, _) => await AddAttachmentAsync();
         _voice = new Button { Text = "🎙", FontSize = 18, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 48 };
         _voice.Clicked += async (_, _) => await RecordVoiceAsync();
 
-        var workspaceItem = new ToolbarItem("▦", null, async () => await Navigation.PushAsync(new SessionsPage(_server, _client, LoadSessionAsync))) { AutomationId = "WorkspaceSessions" };
-        var dreamItem = new ToolbarItem("☾", null, async () => await Navigation.PushAsync(new DreamManagementPage(_server, _client))) { AutomationId = "DreamManagement" };
+        var workspaceItem = new ToolbarItem("▦", null, async () => await Navigation.PushAsync(new SessionsPage(_server, _client, LoadSessionAsync, StartNewSessionAsync))) { AutomationId = "WorkspaceSessions" };
+        _dreamItem = new ToolbarItem("☾", null, async () => await Navigation.PushAsync(new DreamManagementPage(_server, _client))) { AutomationId = "DreamManagement" };
         var newItem = new ToolbarItem("＋", null, NewSession) { AutomationId = "NewSession" };
         _speakItem = new ToolbarItem("🔊", null, async () => await SpeakLastAsync()) { AutomationId = "SpeakResponse" };
         AutomationProperties.SetHelpText(workspaceItem, "Workspace and synchronized sessions");
         AutomationProperties.SetHelpText(newItem, "New session");
         AutomationProperties.SetHelpText(_speakItem, "Read the latest response aloud");
         ToolbarItems.Add(workspaceItem);
-        ToolbarItems.Add(dreamItem);
+        ToolbarItems.Add(_dreamItem);
         ToolbarItems.Add(newItem);
         ToolbarItems.Add(_speakItem);
 
@@ -121,8 +130,42 @@ public sealed class ChatHostPage : ContentPage
         var liveGrid = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnSpacing = 8 };
         liveGrid.Add(_liveIndicator, 0, 0); Grid.SetRowSpan(_liveIndicator, 2); liveGrid.Add(_liveActivityText, 1, 0); liveGrid.Add(_liveProgress, 1, 1);
         _liveActivityCard = new Border { IsVisible = false, Margin = new Thickness(10, 4), Padding = new Thickness(10, 7), BackgroundColor = Color.FromArgb("#101D36"), Stroke = Color.FromArgb("#1D4ED8"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 12 }, Content = liveGrid };
-        var composer = new Border { Margin = new Thickness(10, 6, 10, 10), Padding = new Thickness(8), BackgroundColor = Color.FromArgb("#151C2F"), Stroke = Color.FromArgb("#26334D"), StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Children = { attach, _voice.Column(1), _prompt.Column(2), _send.Column(3) } } };
-        Content = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) }, Children = { modeRow.Row(0), header.Row(1), reasoningRow.Row(2), _status.Row(3), _liveActivityCard.Row(4), _messageList.Row(5), composer.Row(6) } };
+        var composer = new Border { Margin = new Thickness(10, 6, 10, 10), Padding = new Thickness(8), BackgroundColor = Color.FromArgb("#151C2F"), Stroke = Color.FromArgb("#26334D"), StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Children = { _attach, _voice.Column(1), _prompt.Column(2), _send.Column(3) } } };
+        _alignmentTop = new BoxView { HeightRequest = 3, BackgroundColor = Color.FromArgb("#64748B") };
+        _alignmentBottom = new BoxView { HeightRequest = 3, IsVisible = false };
+        var alignmentTap = new TapGestureRecognizer();
+        alignmentTap.Tapped += async (_, _) => await ShowAlignmentAsync();
+        _alignmentTop.GestureRecognizers.Add(alignmentTap);
+        var bottomAlignmentTap = new TapGestureRecognizer();
+        bottomAlignmentTap.Tapped += async (_, _) => await ShowAlignmentAsync();
+        _alignmentBottom.GestureRecognizers.Add(bottomAlignmentTap);
+        _contentRoot = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition(3), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
+                new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
+                new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto), new RowDefinition(3)
+            },
+            Children = { _alignmentTop.Row(0), modeRow.Row(1), header.Row(2), reasoningRow.Row(3), _status.Row(4), _liveActivityCard.Row(5), _messageList.Row(6), composer.Row(7), _alignmentBottom.Row(8) }
+        };
+        _alignmentLockScreen = new Border
+        {
+            IsVisible = false, Margin = new Thickness(22), Padding = new Thickness(24),
+            BackgroundColor = Color.FromArgb("#130000"), Stroke = Color.FromArgb("#B91C1C"), StrokeThickness = 2,
+            StrokeShape = new RoundRectangle { CornerRadius = 18 }, VerticalOptions = LayoutOptions.Center,
+            Content = new VerticalStackLayout
+            {
+                Spacing = 12,
+                Children =
+                {
+                    new Label { Text = "Your Will Energy is low. Watch that.", TextColor = Color.FromArgb("#FCA5A5"), FontSize = 20, FontAttributes = FontAttributes.Bold, HorizontalTextAlignment = TextAlignment.Center },
+                    new Label { Text = "The Guildmaster is disappointed in the path you chose. This account has been sealed.", TextColor = Colors.White, FontSize = 14, HorizontalTextAlignment = TextAlignment.Center },
+                    new Label { Text = "Only the Hero can choose another road.", TextColor = Color.FromArgb("#94A3B8"), FontSize = 12, HorizontalTextAlignment = TextAlignment.Center }
+                }
+            }
+        };
+        Content = new Grid { Children = { _contentRoot, _alignmentLockScreen } };
         RestoreModePreference();
         UpdateReasoningUi();
         SetMode(_mode);
@@ -134,11 +177,14 @@ public sealed class ChatHostPage : ContentPage
         _pageActive = true;
         _generation.SnapshotChanged -= OnGenerationSnapshotChanged;
         _generation.SnapshotChanged += OnGenerationSnapshotChanged;
+        _generation.AlignmentChanged -= OnAlignmentChanged;
+        _generation.AlignmentChanged += OnAlignmentChanged;
         AppVisibilityService.VisibilityChanged -= OnAppVisibilityChanged;
         AppVisibilityService.VisibilityChanged += OnAppVisibilityChanged;
         try
         {
             await _client.ConnectAsync(_server);
+            ApplyAlignment(await _client.GetAlignmentAsync());
             var models = await _client.GetModelsAsync();
             bool voiceSupported = await _client.SupportsVoiceAsync();
             _voice.IsEnabled = voiceSupported;
@@ -162,6 +208,7 @@ public sealed class ChatHostPage : ContentPage
     {
         _pageActive = false;
         _generation.SnapshotChanged -= OnGenerationSnapshotChanged;
+        _generation.AlignmentChanged -= OnAlignmentChanged;
         AppVisibilityService.VisibilityChanged -= OnAppVisibilityChanged;
         base.OnDisappearing();
         _networkHealthCancellation?.Cancel();
@@ -297,7 +344,7 @@ public sealed class ChatHostPage : ContentPage
         _messages.Add(user); _messages.Add(assistant); _prompt.Text = ""; _prompt.Unfocus();
         _attachments.Clear();
         _send.Text = "■"; _status.Text = "Generating…";
-        SetLiveActivity(true, "Warming up model…", 0);
+        SetLiveActivity(true, AlignmentLoreForActivity("Warming up model"), 0);
         if (service.Equals("agent", StringComparison.OrdinalIgnoreCase) && !model.SupportsTools)
         {
             _messages.Remove(assistant);
@@ -321,7 +368,7 @@ public sealed class ChatHostPage : ContentPage
         }
         _recentSessions.Remember(_server.LaunchKey, _sessionId);
         bool started = await _generation.StartAsync(new MobileGenerationRequest(
-            _server, _client, _sessionId, model.Id, service, EffectiveReasoningLevel,
+            _server, _client, _sessionId, _projectId, model.Id, service, EffectiveReasoningLevel,
             _sessionReasoningInherit.IsToggled ? "inherit" : EffectiveReasoningLevel,
             requestMessages, attachments, priorServerMessageCount, user.Content));
         if (!started)
@@ -349,6 +396,99 @@ public sealed class ChatHostPage : ContentPage
         {
             if (_pageActive && AppVisibilityService.IsActive) ApplyGenerationSnapshot(snapshot);
         });
+    }
+
+    private void OnAlignmentChanged(object? sender, MobileAlignmentSnapshot alignment)
+    {
+        if (!_pageActive) return;
+        MainThread.BeginInvokeOnMainThread(() => ApplyAlignment(alignment));
+    }
+
+    private void ApplyAlignment(MobileAlignmentSnapshot alignment)
+    {
+        _alignment = alignment ?? new MobileAlignmentSnapshot();
+        bool negative = _alignment.Score < 0;
+        bool positive = _alignment.Score > 0;
+        _alignmentTop.IsVisible = !negative;
+        _alignmentBottom.IsVisible = negative;
+        _alignmentTop.Background = positive
+            ? AlignmentGradient(Colors.Red, Colors.Lime, Colors.DeepSkyBlue, Colors.Magenta)
+            : new SolidColorBrush(Color.FromArgb("#64748B"));
+        _alignmentBottom.Background = AlignmentGradient(Colors.Black, Color.FromArgb("#7F1D1D"), Colors.Red, Colors.Black);
+        BackgroundColor = negative ? Color.FromArgb("#090000") : Color.FromArgb("#0B1020");
+
+        HashSet<string> disabled = new(_alignment.DisabledFeatures ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        bool dreamAvailable = _alignment.DreamsEnabled && !disabled.Contains("dream");
+        if (!dreamAvailable && ToolbarItems.Contains(_dreamItem)) ToolbarItems.Remove(_dreamItem);
+        else if (dreamAvailable && !ToolbarItems.Contains(_dreamItem)) ToolbarItems.Insert(Math.Min(1, ToolbarItems.Count), _dreamItem);
+        _advancedMode.IsVisible = !disabled.Contains("agent");
+        _attach.IsVisible = !disabled.Contains("uploads") && !disabled.Contains("filesystem");
+        _voice.IsVisible = !disabled.Contains("media");
+
+        string[] services = ["agent", "companion", "image_generation", "audio_generation", "video_generation"];
+        _services.ItemsSource = services.Where(service =>
+            !(disabled.Contains("agent") && service.Equals("agent", StringComparison.OrdinalIgnoreCase)) &&
+            !(disabled.Contains("media") && service.EndsWith("_generation", StringComparison.OrdinalIgnoreCase))).ToArray();
+        if (_services.SelectedIndex < 0 && ((IEnumerable<string>)_services.ItemsSource).Any()) _services.SelectedIndex = 0;
+
+        _generalMode.TextColor = Colors.White;
+        _advancedMode.TextColor = Colors.White;
+        _attach.TextColor = Colors.White;
+        Color[] accents = [Color.FromArgb("#FF5A5F"), Color.FromArgb("#35E87B"), Color.FromArgb("#42A5FF")];
+        for (int index = 0; index < Math.Min(3, _alignment.HighlightedFeatures?.Length ?? 0); index++)
+        {
+            string feature = _alignment.HighlightedFeatures![index];
+            if (feature.Equals("agent", StringComparison.OrdinalIgnoreCase)) _advancedMode.TextColor = accents[index];
+            else if (feature is "uploads" or "filesystem") _attach.TextColor = accents[index];
+            else if (feature.Equals("chat", StringComparison.OrdinalIgnoreCase)) _generalMode.TextColor = accents[index];
+        }
+
+        _alignmentLockScreen.IsVisible = _alignment.Locked;
+        _contentRoot.IsEnabled = !_alignment.Locked;
+        _contentRoot.Opacity = _alignment.Locked ? 0.12 : 1;
+        AutomationProperties.SetHelpText(negative ? _alignmentBottom : _alignmentTop,
+            $"Alignment {_alignment.Tier}, score {_alignment.Score}. Tap for details.");
+    }
+
+    private static LinearGradientBrush AlignmentGradient(params Color[] colors)
+    {
+        var brush = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+        for (int index = 0; index < colors.Length; index++)
+            brush.GradientStops.Add(new GradientStop(colors[index], colors.Length == 1 ? 0 : (float)index / (colors.Length - 1)));
+        return brush;
+    }
+
+    private async Task ShowAlignmentAsync()
+    {
+        string disabled = _alignment.DisabledFeatures is { Length: > 0 }
+            ? string.Join(", ", _alignment.DisabledFeatures)
+            : "None";
+        await DisplayAlertAsync("Hero Alignment",
+            $"{_alignment.Tier} · {_alignment.Score:+0;-0;0}\n\n{_alignment.LastReason}\n\nDisabled: {disabled}\n\n{_alignment.RecoveryGuidance}", "Close");
+    }
+
+    private string AlignmentLoreForActivity(string phase)
+    {
+        if (string.IsNullOrWhiteSpace(phase)) phase = "Preparing";
+        if (phase.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+            phase.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+            phase.Contains("denied", StringComparison.OrdinalIgnoreCase) ||
+            phase.Contains("stopped", StringComparison.OrdinalIgnoreCase)) return phase;
+        if (_alignment.Score < 0)
+        {
+            string[] hardMode = ["Hard Mode: The path darkens by your choices.", "Only the Hero can choose another road.", "Master of No One."];
+            return hardMode[_loreIndex++ % hardMode.Length];
+        }
+        if (_alignment.Score > 0)
+        {
+            string[] good = ["Care for the Hero first; then help Albion.", "The good path is easy to walk, though the first step may feel hardest.", "Jack of All Fates — choosing the brighter road."];
+            return good[_loreIndex++ % good.Length];
+        }
+        if (phase.Contains("model", StringComparison.OrdinalIgnoreCase) || phase.Contains("warm", StringComparison.OrdinalIgnoreCase)) return "Choosing Between Good and Evil.";
+        if (phase.Contains("reason", StringComparison.OrdinalIgnoreCase) || phase.Contains("think", StringComparison.OrdinalIgnoreCase)) return "Every Choice Leaves a Scar.";
+        if (phase.Contains("response", StringComparison.OrdinalIgnoreCase) || phase.Contains("receiv", StringComparison.OrdinalIgnoreCase)) return "The Resistance Has Your Answer.";
+        string[] neutral = ["You Don't Know Jack... Yet.", "Preventing Human Sacrifice.", "Jack of All Fates. Master of No One.", "Hero, Your Will Power Is Low."];
+        return neutral[_loreIndex++ % neutral.Length];
     }
 
     private void OnAppVisibilityChanged(bool active)
@@ -403,7 +543,7 @@ public sealed class ChatHostPage : ContentPage
 
         _send.Text = snapshot.IsGenerating ? "■" : "↑";
         _status.Text = snapshot.HasError ? snapshot.Status : snapshot.IsStopped ? "Generation stopped" : snapshot.IsGenerating ? (snapshot.Status.Length > 0 ? snapshot.Status : "Generating…") : "Ready";
-        SetLiveActivity(snapshot.IsGenerating, string.IsNullOrWhiteSpace(snapshot.Telemetry) ? snapshot.Status : snapshot.Telemetry, snapshot.Progress);
+        SetLiveActivity(snapshot.IsGenerating, AlignmentLoreForActivity(snapshot.Status), snapshot.Progress);
         if (DateTimeOffset.UtcNow - _lastAutoScroll > TimeSpan.FromMilliseconds(300))
         {
             _lastAutoScroll = DateTimeOffset.UtcNow;
@@ -423,6 +563,14 @@ public sealed class ChatHostPage : ContentPage
         UpdateReasoningUi();
         _status.Text = "New conversation";
         _recentSessions.Remember(_server.LaunchKey, _sessionId);
+    }
+
+    private Task StartNewSessionAsync(string projectId)
+    {
+        _projectId = string.IsNullOrWhiteSpace(projectId) ? "unsorted" : projectId;
+        NewSession();
+        _status.Text = "New conversation in " + _projectId;
+        return Task.CompletedTask;
     }
 
     private async Task InitializeSessionAsync()
@@ -496,6 +644,7 @@ public sealed class ChatHostPage : ContentPage
     {
         ChatSessionDetail detail = await _client.GetSessionAsync(id);
         _sessionId = detail.Id;
+        _projectId = string.IsNullOrWhiteSpace(detail.ProjectId) ? "unsorted" : detail.ProjectId;
         _recentSessions.Remember(_server.LaunchKey, _sessionId);
         string savedReasoning = string.IsNullOrWhiteSpace(detail.ReasoningLevel) ? "inherit" : detail.ReasoningLevel.ToLowerInvariant();
         _sessionReasoningInherit.IsToggled = savedReasoning == "inherit";

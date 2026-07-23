@@ -695,7 +695,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type TabItem}">
-                        <Grid Margin="0,3,0,3"
+                        <Grid Margin="0,3,8,3"
                               ClipToBounds="False"
                               SnapsToDevicePixels="True">
                             <Border x:Name="SelectedGlow"

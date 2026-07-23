@@ -66,6 +66,10 @@ private sealed class ChatSessionSummary
             public long promptTokenBudget { get; set; }
             public string runtime { get; set; } = "";
             public string reasoningLevel { get; set; } = "inherit";
+            public string projectId { get; set; } = "unsorted";
+            public string projectName { get; set; } = "Unsorted";
+            public bool pinned { get; set; }
+            public string pinnedUtc { get; set; } = "";
             public int commentCount { get; set; }
             public long tokensUsed { get; set; }
             public double gpuSeconds { get; set; }
@@ -103,6 +107,10 @@ private sealed class ChatSessionCompatibilityPayload
             public string model { get; set; } = "";
             public string runtime { get; set; } = "";
             public string reasoningLevel { get; set; } = "inherit";
+            public string projectId { get; set; } = "unsorted";
+            public string projectName { get; set; } = "Unsorted";
+            public bool pinned { get; set; }
+            public string pinnedUtc { get; set; } = "";
             public string state { get; set; } = "";
             public bool titleLocked { get; set; }
             public bool locked { get; set; }
@@ -117,7 +125,7 @@ private sealed class ChatSessionCompatibilityPayload
             public long promptTokenBudget { get; set; }
             public int promptTokenPercent { get; set; }
             public ChatSessionCompatibilityCapabilities capabilities { get; set; } = new ChatSessionCompatibilityCapabilities();
-            public string[] supportedActions { get; set; } = new[] { "save", "checkpoint", "rename", "lock", "unlock", "clone", "delete" };
+            public string[] supportedActions { get; set; } = new[] { "save", "checkpoint", "rename", "lock", "unlock", "clone", "pin", "unpin", "assign-project", "delete" };
         }
 
 private sealed class ChatPrivatePayloadCacheEntry

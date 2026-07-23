@@ -3,9 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="JackLLM Workstation"
         Width="560"
-        Height="248"
+        Height="520"
         MinWidth="520"
-        MinHeight="230"
+        MinHeight="500"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="NoResize"
@@ -136,7 +136,92 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1" Margin="28,22,28,26">
+            <Grid x:Name="AuthenticationPanel" Grid.Row="1" Margin="34,22,34,28">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="AuthenticationTitleText"
+                                       Text="Securing JackLLM Workstation"
+                                       FontSize="20" FontWeight="SemiBold" Foreground="#F7FBFF"/>
+                            <Border x:Name="DevelopmentBadge" Margin="12,1,0,0" Padding="8,3"
+                                    CornerRadius="8" Background="#44FFB35A" BorderBrush="#AAFFB35A" BorderThickness="1"
+                                    Visibility="Collapsed">
+                                <TextBlock Text="DEVELOPMENT CREDENTIALS" FontSize="10" FontWeight="Bold" Foreground="#FFFFD19A"/>
+                            </Border>
+                        </StackPanel>
+                        <TextBlock x:Name="AuthenticationDetailText" Margin="0,8,0,14" TextWrapping="Wrap"
+                                   Text="Checking the hardware-bound security broker." FontSize="12.5" Foreground="#AFC1D6"/>
+                        <Border Padding="12,8" Margin="0,0,0,14" CornerRadius="8" Background="#44263448" BorderBrush="#554E6A8B" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="HARDWARE ID" FontSize="10" FontWeight="Bold" Foreground="#7F93AB"/>
+                                <TextBlock x:Name="HardwareIdText" Margin="0,3,0,0" Text="Checking..." FontFamily="Consolas"
+                                           FontSize="11.5" Foreground="#CFE3FF" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Border>
+                        <StackPanel x:Name="CurrentPasswordPanel" Visibility="Collapsed">
+                            <TextBlock Text="Current workstation password" FontSize="11.5" Foreground="#CFE3FF"/>
+                            <PasswordBox x:Name="CurrentPasswordBox" Margin="0,5,0,12" Height="36" Padding="10,7"
+                                         Background="#AA263448" Foreground="#F1F7FF" BorderBrush="#554E6A8B" BorderThickness="1" PasswordChar="●"/>
+                        </StackPanel>
+                        <TextBlock x:Name="PasswordLabelText" Text="Workstation password" FontSize="11.5" Foreground="#CFE3FF"/>
+                        <PasswordBox x:Name="AuthenticationPasswordBox" Margin="0,5,0,12" Height="36" Padding="10,7"
+                                     Background="#AA263448" Foreground="#F1F7FF" BorderBrush="#554E6A8B" BorderThickness="1"
+                                     PasswordChar="●" KeyDown="AuthenticationPasswordBox_KeyDown"/>
+                        <StackPanel x:Name="ConfirmPasswordPanel" Visibility="Collapsed">
+                            <TextBlock Text="Confirm password" FontSize="11.5" Foreground="#CFE3FF"/>
+                            <PasswordBox x:Name="ConfirmPasswordBox" Margin="0,5,0,10" Height="36" Padding="10,7"
+                                         Background="#AA263448" Foreground="#F1F7FF" BorderBrush="#554E6A8B" BorderThickness="1" PasswordChar="●"/>
+                            <TextBlock Text="Use 16–128 characters. Use three character types, or a four-word passphrase of at least 24 characters."
+                                       Margin="0,0,0,10" TextWrapping="Wrap" FontSize="11" Foreground="#7F93AB"/>
+                        </StackPanel>
+                        <StackPanel x:Name="RecoveryInputPanel" Visibility="Collapsed">
+                            <TextBlock Text="Recovery key" FontSize="11.5" Foreground="#CFE3FF"/>
+                            <Grid Margin="0,5,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="RecoveryKeyInput" Height="36" Padding="10,7"
+                                     Background="#AA263448" Foreground="#F1F7FF" BorderBrush="#554E6A8B" BorderThickness="1"/>
+                                <Button Grid.Column="1" Content="IMPORT BACKUP FILE" Margin="8,0,0,0" Padding="12,0"
+                                        Foreground="#CFE3FF" Background="#66324761" BorderBrush="#554E6A8B" BorderThickness="1"
+                                        Click="ImportRecoveryFileButton_Click"/>
+                            </Grid>
+                        </StackPanel>
+                        <Border x:Name="RecoveryKeyPanel" Visibility="Collapsed" Padding="12" Margin="0,2,0,12"
+                                CornerRadius="8" Background="#3329DFFF" BorderBrush="#7729DFFF" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="SAVE THIS ONE-TIME RECOVERY KEY" FontSize="10" FontWeight="Bold" Foreground="#FF7EE9FF"/>
+                                <TextBox x:Name="GeneratedRecoveryKeyText" Margin="0,6,0,8" IsReadOnly="True" FontFamily="Consolas"
+                                         FontSize="12" Background="Transparent" Foreground="#FFFFFFFF" BorderThickness="0"/>
+                                <Button x:Name="SaveRecoveryFileButton" Content="SAVE BACKUP KEY FILE" Height="32" Margin="0,0,0,9"
+                                        HorizontalAlignment="Left" Padding="12,0" Foreground="White" Background="#AA267F91"
+                                        BorderBrush="#AA5CEBFF" BorderThickness="1" Click="SaveRecoveryFileButton_Click"/>
+                                <CheckBox x:Name="RecoveryKeySavedCheckBox" Content="I saved this recovery key somewhere safe."
+                                          Foreground="#CFE3FF"/>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="AuthenticationErrorText" Margin="0,0,0,10" TextWrapping="Wrap"
+                                   FontSize="11.5" Foreground="#FFFF8FA5"/>
+                        <Grid>
+                            <Button x:Name="AuthenticationActionButton" Content="CONTINUE" Height="38" MinWidth="180"
+                                    HorizontalAlignment="Left" Padding="18,0" FontWeight="Bold" Foreground="White"
+                                    Background="#CC267F91" BorderBrush="#AA5CEBFF" BorderThickness="1"
+                                    Click="AuthenticationActionButton_Click"/>
+                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                                <Button x:Name="ChangePasswordButton" Content="CHANGE PASSWORD" Height="34" Margin="0,0,8,0"
+                                        Padding="14,0" Foreground="#CFE3FF" Background="#66324761" BorderBrush="#554E6A8B"
+                                        BorderThickness="1" Visibility="Collapsed" Click="ChangePasswordButton_Click"/>
+                                <Button x:Name="RecoveryButton" Content="RECOVER OR REBIND" Height="34"
+                                        Padding="14,0" Foreground="#CFE3FF" Background="#66324761" BorderBrush="#554E6A8B"
+                                        BorderThickness="1" Visibility="Collapsed" Click="RecoveryButton_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <Grid x:Name="LoadingPanel" Grid.Row="1" Margin="28,22,28,26" Visibility="Collapsed">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>

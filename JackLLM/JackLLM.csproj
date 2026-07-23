@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\JackONNX\JackONNX.csproj" />
+    <ProjectReference Include="..\JackLLM.Security\JackLLM.Security.csproj" />
+    <ProjectReference Include="..\JackLLM.SecurityBroker\JackLLM.SecurityBroker.csproj" ReferenceOutputAssembly="false" Condition="'$(Configuration)' == 'Debug'" />
     <ProjectReference Include="..\LlmRuntime\LlmRuntime.csproj" />
     <ProjectReference Include="..\LlmRuntime.Wpf\LlmRuntime.Wpf.csproj" />
     <ProjectReference Include="..\SocketJack\SocketJack.csproj" />
@@ -59,7 +61,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows7.0</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

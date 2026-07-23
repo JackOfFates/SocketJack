@@ -2850,6 +2850,12 @@ body.agent-mode .filesystem-item:hover {
     backdrop-filter: blur(24px) saturate(1.16);
     padding: 14px;
 }
+.memory-management-panel {
+    height: min(860px, calc(100dvh - 36px));
+    max-height: calc(100dvh - 36px);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    overflow: hidden;
+}
 .memory-head,
 .memory-actions,
 .memory-row-actions {
@@ -2891,6 +2897,57 @@ body.agent-mode .filesystem-item:hover {
     padding: 10px;
     font: 0.84rem var(--ui-font);
 }
+.memory-topic-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+    color: var(--muted);
+    font: 0.76rem var(--ui-font);
+}
+.memory-topic-field input {
+    min-width: 0;
+    border: 1px solid rgba(125, 211, 252, 0.24);
+    border-radius: 8px;
+    color: var(--text);
+    background: rgba(2, 6, 23, 0.72);
+    padding: 7px 9px;
+    font: 0.8rem var(--ui-font);
+}
+.memory-policy-panel {
+    min-height: 0;
+    border: 1px solid rgba(251, 146, 60, 0.28);
+    border-radius: 10px;
+    background: rgba(124, 45, 18, 0.10);
+    padding: 9px 10px;
+    overflow: auto;
+}
+.memory-policy-panel > summary {
+    cursor: pointer;
+    color: #fed7aa;
+    font: 800 0.82rem var(--ui-font);
+}
+.memory-policy-panel > summary span,
+.memory-policy-panel > p {
+    color: var(--muted);
+    font: 0.72rem var(--ui-font);
+}
+.memory-policy-panel > p { margin: 8px 0; }
+.memory-policy-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.memory-policy-compose .memory-input { min-height: 58px; }
+.memory-policy-list { display: grid; gap: 7px; margin-top: 8px; }
+.memory-topic-group { display: grid; gap: 7px; }
+.memory-topic-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin: 0;
+    padding: 5px 7px;
+    border-radius: 7px;
+    color: #bae6fd;
+    background: rgba(3, 7, 18, 0.94);
+    font: 850 0.78rem var(--ui-font);
+}
 .memory-actions {
     justify-content: space-between;
     flex-wrap: wrap;
@@ -2902,6 +2959,243 @@ body.agent-mode .filesystem-item:hover {
     gap: 8px;
     overflow: auto;
     padding-right: 3px;
+}
+#dreamBackdrop {
+    padding: clamp(8px, 2vw, 20px);
+    box-sizing: border-box;
+    overflow: hidden;
+}
+.dream-panel {
+    width: min(920px, calc(100vw - 32px));
+    height: min(860px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+.dream-scroll-body {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(190px, 3fr) auto minmax(140px, 2fr);
+    gap: 12px;
+    overflow: hidden;
+    overscroll-behavior: contain;
+}
+.dream-settings-scroll,
+.dream-journal-list {
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(125, 211, 252, 0.72) rgba(2, 6, 23, 0.34);
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    border-radius: 11px;
+    background: rgba(2, 6, 23, 0.22);
+    padding: 10px;
+}
+.dream-settings-scroll::-webkit-scrollbar,
+.dream-journal-list::-webkit-scrollbar {
+    width: 10px;
+}
+.dream-settings-scroll::-webkit-scrollbar-track,
+.dream-journal-list::-webkit-scrollbar-track {
+    border-radius: 999px;
+    background: rgba(2, 6, 23, 0.34);
+}
+.dream-settings-scroll::-webkit-scrollbar-thumb,
+.dream-journal-list::-webkit-scrollbar-thumb {
+    border: 2px solid rgba(2, 6, 23, 0.34);
+    border-radius: 999px;
+    background: rgba(125, 211, 252, 0.72);
+}
+.dream-permission-grid {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+.dream-permission-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    margin-top: 8px;
+}
+.dream-permission-grid .permission-row {
+    min-width: 0;
+    margin: 0;
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    border-radius: 9px;
+    background: rgba(2, 6, 23, 0.32);
+    padding: 8px 9px;
+}
+.dream-resource-expander {
+    min-width: 0;
+    border: 1px solid rgba(125, 211, 252, 0.22);
+    border-radius: 11px;
+    background: rgba(2, 6, 23, 0.30);
+    overflow: hidden;
+}
+.dream-resource-summary {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    color: #d8f3ff;
+    font: 900 0.82rem var(--ui-font);
+    padding: 10px 12px;
+    user-select: none;
+}
+.dream-resource-summary::before { content: '▸'; display: inline-block; margin-right: 7px; transition: transform 120ms ease; }
+.dream-resource-summary[aria-expanded="true"]::before { transform: rotate(90deg); }
+.dream-resource-summary[aria-expanded="true"] {
+    border-bottom: 1px solid rgba(125, 211, 252, 0.16);
+}
+.dream-resource-body[hidden] { display: none; }
+.dream-threshold-stack,
+.dream-number-stack {
+    min-width: 0;
+    display: grid;
+    gap: 11px;
+    padding: 12px;
+}
+.dream-number-stack {
+    border-top: 1px solid rgba(148, 163, 184, 0.13);
+}
+.dream-slider-field,
+.dream-number-field {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+    color: var(--muted);
+    font: 0.72rem var(--ui-font);
+}
+.dream-field-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.dream-field-head output {
+    min-width: 210px;
+    color: #d8f3ff;
+    text-align: right;
+    font-weight: 900;
+}
+.dream-range-wrap {
+    position: relative;
+    display: block;
+    padding-top: 13px;
+}
+.dream-range-wrap input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    min-width: 0;
+    margin: 0;
+    box-sizing: border-box;
+    border-radius: 0;
+    background: var(--dream-threshold-color, #f59e0b);
+    accent-color: var(--dream-threshold-color, #f59e0b);
+}
+.dream-range-wrap input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 0; background: var(--dream-threshold-color, #f59e0b); }
+.dream-range-wrap input[type="range"]::-moz-range-track { height: 6px; border-radius: 0; background: var(--dream-threshold-color, #f59e0b); }
+.dream-range-wrap input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5px; border: 2px solid #e0f2fe; border-radius: 50%; background: #07111f; }
+.dream-range-wrap input[type="range"]::-moz-range-thumb { width: 13px; height: 13px; border: 2px solid #e0f2fe; border-radius: 50%; background: #07111f; }
+.dream-recommendation-marker {
+    position: absolute;
+    top: -7px;
+    left: var(--dream-recommended-position, 50%);
+    transform: translateX(-50%);
+    color: #38bdf8;
+    font: 900 15px/1 var(--ui-font);
+    pointer-events: none;
+}
+.dream-slider-field.dream-quality-perfect { --dream-threshold-color: #22c55e; }
+.dream-slider-field.dream-quality-reasonable { --dream-threshold-color: #f59e0b; }
+.dream-slider-field.dream-quality-outside { --dream-threshold-color: #ef4444; }
+.dream-slider-field.dream-quality-perfect output { color: #86efac; }
+.dream-slider-field.dream-quality-reasonable output { color: #fcd34d; }
+.dream-slider-field.dream-quality-outside output { color: #fca5a5; }
+.dream-hardware-note {
+    color: #bae6fd;
+    font: 0.72rem/1.4 var(--ui-font);
+}
+.dream-number-field {
+    grid-template-columns: minmax(120px, 1fr) minmax(150px, 240px);
+    align-items: center;
+}
+.dream-number-control {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 34px minmax(72px, 1fr) 34px;
+    align-items: stretch;
+}
+.dream-number-control input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    border-radius: 0;
+    text-align: center;
+    -moz-appearance: textfield;
+}
+.dream-number-control input::-webkit-inner-spin-button,
+.dream-number-control input::-webkit-outer-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
+}
+.dream-step-button {
+    min-width: 34px;
+    min-height: 32px;
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    color: #d8f3ff;
+    background: rgba(15, 23, 42, 0.82);
+    font: 900 1rem var(--ui-font);
+    cursor: pointer;
+}
+.dream-step-button:first-child {
+    border-radius: 8px 0 0 8px;
+}
+.dream-step-button:last-child {
+    border-radius: 0 8px 8px 0;
+}
+.dream-step-button:hover {
+    background: rgba(14, 116, 144, 0.48);
+}
+.dream-journal-actions {
+    z-index: 2;
+    padding: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 10px;
+    background: rgba(3, 7, 18, 0.92);
+    backdrop-filter: blur(12px);
+}
+.dream-journal-list {
+    align-content: start;
+}
+#dreamResources {
+    overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+    .dream-panel {
+        width: calc(100vw - 16px);
+        height: calc(100dvh - 16px);
+        max-height: calc(100dvh - 16px);
+        padding: 11px;
+    }
+    .dream-permission-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .dream-number-field {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+@media (max-width: 380px) {
+    .dream-permission-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 .memory-empty,
 .memory-row {
@@ -2930,6 +3224,10 @@ body.agent-mode .filesystem-item:hover {
 }
 .memory-status.error {
     color: #fca5a5;
+}
+@media (max-width: 640px) {
+    .memory-policy-compose { grid-template-columns: minmax(0, 1fr); }
+    .memory-topic-field { grid-template-columns: minmax(0, 1fr); }
 }
 .token-rate-backdrop {
     position: fixed;
@@ -4072,6 +4370,28 @@ body.agent-mode .session-item.recent .session-activity-dot {
     opacity: 0.82;
     transition: clip-path 220ms var(--surface-ease);
 }
+.project-group {
+    display: grid;
+    gap: 6px;
+    margin: 0 0 10px;
+    padding: 7px;
+    border: 1px solid rgba(125, 211, 252, 0.16);
+    border-radius: 12px;
+    background: rgba(2, 8, 18, 0.32);
+}
+.project-group.archived { opacity: 0.72; border-style: dashed; }
+.project-group.selected { border-color: rgba(56, 189, 248, 0.58); box-shadow: 0 0 0 1px rgba(56,189,248,.12); }
+.project-header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 7px; }
+.project-toggle,.project-action { min-height: 29px; height: 29px; padding: 0 7px; border-radius: 8px; font-size: 11px; }
+.project-title-wrap { min-width: 0; display: grid; gap: 2px; cursor: pointer; }
+.project-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e0f2fe; font-weight: 900; font-size: 13px; }
+.project-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
+.project-actions { display: flex; gap: 4px; }
+.project-session-list { display: grid; gap: 3px; min-width: 0; }
+.project-session-list[hidden] { display: none; }
+.project-empty { padding: 10px; color: var(--muted); font-size: 11px; text-align: center; }
+.session-item.pinned { border-color: rgba(250, 204, 21, 0.48); }
+.session-project-pin { color: #fde68a !important; }
 body.agent-mode .session-depth span {
     background: linear-gradient(90deg, var(--agent-red), #f97316);
 }
@@ -12948,6 +13268,24 @@ body.shared-view .composer-attach-stack {
     height: 100%;
 }
 
+.composer-attach-stack .attach {
+    display: grid;
+    place-items: center;
+    padding: 0;
+    cursor: pointer;
+}
+
+.composer-attach-icon {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+}
+
 .composer-model-controls {
     grid-area: model;
     position: relative;
@@ -14203,10 +14541,580 @@ body.shared-view .comments-panel-toggle {
     .jackdirector-launcher { padding: 6px 8px; font-size: 0.62rem; }
     .jackdirector-feature-toast { top: auto; bottom: max(14px, env(safe-area-inset-bottom)); }
 }
+
+/* Windows 11 / Fluent refresh: restrained Mica-like surfaces and low-cost effects. */
+body {
+    --fluent-radius: 10px;
+    --fluent-radius-small: 6px;
+    --fluent-surface: rgba(17, 24, 33, 0.90);
+    --fluent-surface-strong: rgba(12, 18, 26, 0.96);
+    --fluent-surface-soft: rgba(255, 255, 255, 0.045);
+    --fluent-line: rgba(255, 255, 255, 0.12);
+    --fluent-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+    --fluent-accent-text: #ffffff;
+    background: var(--bg);
+}
+body.media-generation-mode,
+body.browser-skill-mode {
+    --fluent-accent-text: #071713;
+}
+
+/* One static wash preserves each mode's palette without the former animated blur stack. */
+.bg-swirl {
+    inset: 0 !important;
+    opacity: 1 !important;
+    filter: none !important;
+    transform: none !important;
+    animation: none !important;
+    background: radial-gradient(circle at 12% 0%, rgba(64, 201, 162, 0.13), transparent 36%), var(--bg) !important;
+    background-size: auto !important;
+    background-position: 0 0 !important;
+    transition: background-color 180ms ease !important;
+}
+body.agent-mode .bg-swirl {
+    background: radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.20), transparent 38%), var(--bg) !important;
+}
+body.companion-mode .bg-swirl {
+    background: radial-gradient(circle at 12% 0%, rgba(168, 85, 247, 0.18), transparent 38%), var(--bg) !important;
+}
+body.media-generation-mode .bg-swirl {
+    background: radial-gradient(circle at 12% 0%, rgba(250, 204, 21, 0.16), transparent 38%), var(--bg) !important;
+}
+body.browser-skill-mode .bg-swirl {
+    background: radial-gradient(circle at 12% 0%, rgba(20, 184, 166, 0.18), transparent 38%), var(--bg) !important;
+}
+.bg-swirl::before,
+.bg-swirl::after,
+.glass-parallax {
+    display: none !important;
+}
+
+.shell {
+    width: min(1560px, calc(100vw - 20px));
+    height: calc(100vh - 20px);
+    margin: 10px auto;
+    gap: 8px;
+    transition: opacity 140ms ease;
+}
+.shell * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.shell :is(.topbar, .session-sidebar, .solution-explorer, .messages, .composer, .share-comments,
+    .file-preview-panel, .artifact-panel, .personaplex-panel, .server-hardware-panel, .usage-panel,
+    .header-controls, .model-picker, .topbar-actions, .runtime-chat-panel) {
+    border-color: var(--fluent-line) !important;
+    border-radius: var(--fluent-radius) !important;
+    background: var(--fluent-surface) !important;
+    box-shadow: var(--fluent-shadow) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+.shell :is(.session-sidebar, .solution-explorer, .messages, .share-comments)::before,
+.shell :is(.session-sidebar, .solution-explorer, .messages, .share-comments)::after {
+    display: none !important;
+}
+
+.topbar {
+    padding: 8px 10px !important;
+}
+.topbar h1 {
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+}
+.topbar .meta,
+.session-kicker,
+.model-picker::before,
+.header-controls::before,
+.topbar-actions::before {
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+}
+
+.workspace {
+    gap: 8px !important;
+}
+.session-sidebar,
+.solution-explorer,
+.share-comments {
+    padding: 10px !important;
+}
+.chat-column {
+    gap: 8px !important;
+}
+.messages {
+    padding: 14px clamp(12px, 2vw, 24px) !important;
+}
+
+.session-item,
+.solution-node-row,
+.context-message,
+.tool-activity-row,
+.memory-row,
+.terminal-approval-card {
+    border-radius: var(--fluent-radius-small) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+.session-item::before,
+.session-item::after {
+    display: none !important;
+}
+.session-item:hover,
+.solution-node-row:hover,
+.solution-node-row:focus-visible {
+    background: var(--fluent-surface-soft) !important;
+}
+.session-item.active,
+.solution-node-row.active-file {
+    border-color: var(--adaptive-line) !important;
+    background: var(--adaptive-panel-b) !important;
+    box-shadow: inset 3px 0 0 var(--adaptive-button-b) !important;
+}
+
+.message {
+    max-width: min(820px, 88%) !important;
+    padding: 12px 14px !important;
+    border: 1px solid transparent !important;
+    border-radius: var(--fluent-radius) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transition: border-color 120ms ease, background-color 120ms ease !important;
+}
+.message:hover {
+    border-color: rgba(255, 255, 255, 0.07) !important;
+    background: rgba(255, 255, 255, 0.025) !important;
+}
+.message.user,
+body.agent-mode .message.user {
+    border-color: var(--adaptive-line) !important;
+    border-left: 3px solid var(--adaptive-button-a) !important;
+    background: var(--adaptive-panel-a) !important;
+    box-shadow: none !important;
+}
+.message.assistant {
+    border-left: 3px solid rgba(148, 163, 184, 0.24) !important;
+}
+.message.error {
+    border-color: rgba(251, 113, 133, 0.42) !important;
+    background: rgba(127, 29, 29, 0.18) !important;
+}
+
+.composer {
+    padding: 8px !important;
+    gap: 7px !important;
+}
+#prompt {
+    min-height: 66px;
+    padding: 12px 14px;
+    border: 1px solid var(--fluent-line) !important;
+    border-radius: var(--fluent-radius-small) !important;
+    background: rgba(0, 0, 0, 0.22) !important;
+    box-shadow: none !important;
+}
+#prompt:focus,
+.composer.llmruntime-ready #prompt,
+.composer.llmruntime-ready #prompt:focus,
+body.agent-mode #prompt:focus {
+    border-color: var(--adaptive-line) !important;
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.12) !important;
+    animation: none !important;
+}
+
+.shell :is(button, .attach, .retry-toggle, .voice-button, .voice-toggle, .chat-mode-button, .session-open,
+    .session-panel-toggle, .solution-panel-toggle, .comments-panel-toggle):not(.stop):not(.terminal-approval-forever) {
+    border: 1px solid var(--fluent-line) !important;
+    border-radius: var(--fluent-radius-small) !important;
+    background: var(--fluent-surface-soft) !important;
+    background-size: auto !important;
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+    transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease !important;
+}
+body.agent-mode .shell :is(button, .attach, .retry-toggle, .voice-button, .voice-toggle, .chat-mode-button,
+    .session-panel-toggle, .solution-panel-toggle, .comments-panel-toggle):not(.stop):not(.terminal-approval-forever) {
+    background: var(--fluent-surface-soft) !important;
+}
+.shell button:not(:disabled):hover,
+.shell .attach:hover,
+.shell .retry-toggle:hover {
+    border-color: var(--adaptive-line) !important;
+    background: rgba(255, 255, 255, 0.09) !important;
+    box-shadow: none !important;
+    filter: none !important;
+    transform: translateY(-1px) !important;
+}
+.shell button:not(:disabled):active {
+    transform: none !important;
+}
+.shell .session-list .session-item {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    filter: none !important;
+}
+.shell .session-list .session-item:hover {
+    border-color: var(--fluent-line) !important;
+    background: var(--fluent-surface-soft) !important;
+}
+.shell .session-list .session-item.active {
+    border-color: var(--adaptive-line) !important;
+    background: var(--adaptive-panel-b) !important;
+    box-shadow: inset 3px 0 0 var(--adaptive-button-b) !important;
+}
+#send,
+.stream-action,
+.chat-mode-button[aria-pressed='true'],
+.context-toggle[aria-expanded='true'],
+.shell button.primary {
+    color: var(--fluent-accent-text) !important;
+    -webkit-text-fill-color: var(--fluent-accent-text) !important;
+    border-color: var(--adaptive-button-border) !important;
+    border-radius: var(--fluent-radius-small) !important;
+    background: var(--adaptive-button-b) !important;
+    background-size: auto !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+}
+.composer button.stop {
+    color: #fff !important;
+    border-color: rgba(251, 113, 133, 0.54) !important;
+    background: #be123c !important;
+}
+
+.shell :is(input, select, textarea),
+.context-expander,
+.view-menu,
+.filesystem-menu,
+.token-rate-admin-panel,
+.goal-panel,
+.confirm-dialog,
+.login-card,
+.api-markdown-window,
+.jackdirector-feature-toast {
+    border-radius: var(--fluent-radius-small) !important;
+    background: var(--fluent-surface-strong) !important;
+    box-shadow: var(--fluent-shadow) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+.shell :is(input, select, textarea):focus {
+    border-color: var(--adaptive-line) !important;
+    outline: 2px solid rgba(125, 211, 252, 0.10) !important;
+    outline-offset: 0;
+}
+.jackdirector-launcher,
+.jackdirector-new-badge {
+    background: var(--adaptive-button-a) !important;
+    border-radius: var(--fluent-radius-small) !important;
+    box-shadow: none !important;
+}
+
+/* Minimal, inexpensive startup throbber. Progress remains available to assistive technology. */
+.startup-loader {
+    padding: 24px;
+    background: #070b10 !important;
+    clip-path: none !important;
+    transition: opacity 140ms ease !important;
+}
+body:not(.app-loading) .startup-loader {
+    clip-path: none !important;
+}
+.startup-loader-card {
+    width: auto;
+    min-width: 180px;
+    gap: 9px;
+    padding: 20px;
+    filter: none;
+}
+.startup-throbber {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 3px;
+}
+.startup-throbber::before,
+.startup-throbber::after,
+.startup-throbber span:not(:first-child) {
+    display: none !important;
+}
+.startup-throbber span:first-child {
+    position: absolute;
+    inset: 0;
+    border-width: 2px;
+    border-color: rgba(125, 211, 252, 0.20);
+    border-top-color: #40c9a2;
+    border-right-color: #7dd3fc;
+    box-shadow: none;
+    animation: fluent-throbber-spin 850ms linear infinite;
+}
+.startup-loader-progress {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+.startup-loader-text {
+    color: rgba(248, 250, 252, 0.92);
+    font: 600 0.78rem/1.2 var(--ui-font);
+}
+.startup-loader-detail {
+    min-height: 1em;
+    color: rgba(203, 213, 225, 0.58);
+    font: 400 0.67rem/1.2 var(--ui-font);
+    transform: none;
+}
+.startup-loader-detail.falling {
+    animation: none !important;
+}
+@keyframes fluent-throbber-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .startup-throbber span:first-child {
+        animation-duration: 1600ms;
+    }
+}
+
+/* Composer essentials stay visible; modes and secondary controls expand on demand. */
+.composer.mobile-compact-composer,
+.composer.mobile-compact-composer.no-image-attach,
+.composer.mobile-compact-composer.no-file-attach,
+.composer.mobile-compact-composer.no-media-source,
+.composer.mobile-compact-composer.no-attach-controls,
+.composer.mobile-compact-composer.voice-hidden,
+body.shared-view .composer.mobile-compact-composer,
+body.portrait-layout .composer.mobile-compact-composer {
+    --compact-settings-width: 118px;
+    --compact-send-width: 72px;
+    grid-template-columns: minmax(0, 1fr) var(--compact-settings-width) var(--compact-send-width) !important;
+    grid-template-rows: minmax(66px, auto) auto !important;
+    grid-template-areas:
+        "prompt settings send"
+        "preview preview preview" !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+}
+.composer.mobile-compact-composer > :is(.composer-attach-stack, #mediaSourceAttach, .voice-controls, #composerModelControls, #chatModeDock, .retry-controls, #contextToggle, #contextExpander) {
+    display: none !important;
+}
+
+body.agent-mode .composer.mobile-compact-composer:not(.no-attach-controls) {
+    --compact-attach-width: 40px;
+    grid-template-columns: var(--compact-attach-width) minmax(0, 1fr) var(--compact-settings-width) var(--compact-send-width) !important;
+    grid-template-areas:
+        "attach prompt settings send"
+        "preview preview preview preview" !important;
+}
+
+body.agent-mode .composer.mobile-compact-composer > #composerAttachStack:not([hidden]) {
+    display: grid !important;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+    width: var(--compact-attach-width);
+    min-height: 66px;
+}
+
+body:not(.agent-mode) .composer-attach-stack {
+    display: none !important;
+}
+.composer.mobile-compact-composer .prompt-wrap {
+    min-width: 0;
+    min-height: 66px;
+    height: auto;
+}
+.composer.mobile-compact-composer #prompt {
+    width: 100%;
+    height: 100% !important;
+    min-height: 66px !important;
+    max-height: min(36vh, 260px) !important;
+    resize: vertical;
+}
+.composer.mobile-compact-composer .generation-settings {
+    align-self: stretch;
+    min-width: 0;
+}
+.composer.mobile-compact-composer .generation-settings-toggle,
+.composer.mobile-compact-composer #send {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 66px !important;
+    height: 100% !important;
+    padding: 0 10px !important;
+}
+.generation-settings-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--text);
+    font: 700 0.72rem/1 var(--ui-font) !important;
+}
+.generation-settings-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.generation-settings-chevron {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-right: 1.7px solid currentColor;
+    border-bottom: 1.7px solid currentColor;
+    transform: rotate(45deg) translate(-1px, -1px);
+    transition: transform 140ms ease;
+}
+.generation-settings-toggle[aria-expanded="true"] .generation-settings-chevron {
+    transform: rotate(225deg) translate(-1px, -1px);
+}
+.composer.mobile-compact-composer .generation-settings-panel {
+    right: 0;
+    bottom: calc(100% + 9px);
+    width: min(760px, calc(100vw - 28px));
+    max-height: min(72vh, 650px);
+    overflow: auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 12px;
+    border-radius: 12px !important;
+}
+.composer.mobile-compact-composer .generation-settings-panel[hidden] {
+    display: none !important;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    min-width: 0;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls[hidden] {
+    display: none !important;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls > * {
+    grid-area: auto !important;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-dock {
+    order: 1;
+    grid-column: 1 / -1 !important;
+    display: grid !important;
+    gap: 7px;
+    overflow: visible;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-dock::before {
+    content: 'Mode';
+    color: var(--muted);
+    font: 700 0.68rem/1 var(--ui-font);
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-strip {
+    min-height: 42px;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(64px, 1fr));
+    grid-auto-rows: 42px;
+    gap: 6px;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-button {
+    min-height: 42px;
+    padding: 0 8px;
+    font: 750 0.68rem/1 var(--ui-font);
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .composer-model-controls {
+    order: 2;
+    grid-column: 1 / -1 !important;
+    display: grid !important;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .composer-attach-stack,
+.composer.mobile-compact-composer .mobile-composer-more-controls .voice-controls {
+    display: grid !important;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .composer-attach-stack { order: 3; grid-column: span 2 !important; }
+.composer.mobile-compact-composer .mobile-composer-more-controls #mediaSourceAttach { order: 4; }
+.composer.mobile-compact-composer .mobile-composer-more-controls .voice-controls { order: 5; grid-column: span 2 !important; }
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-controls { order: 6; display: grid !important; }
+.composer.mobile-compact-composer .mobile-composer-more-controls #contextToggle { order: 7; display: grid !important; }
+.composer.mobile-compact-composer .mobile-composer-more-controls #contextExpander,
+.composer.mobile-compact-composer .mobile-composer-more-controls #previewTray {
+    order: 8;
+    grid-column: 1 / -1 !important;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls #contextExpander {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    max-height: min(46vh, 420px);
+    box-sizing: border-box;
+    overflow: auto;
+    margin: 2px 0 0;
+    z-index: auto;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls #contextExpander[hidden] {
+    display: none !important;
+}
+.composer.mobile-compact-composer .generation-settings-panel .param-field {
+    min-width: 0;
+    grid-template-columns: 54px minmax(0, 1fr);
+}
+@media (max-width: 760px) {
+    .composer.mobile-compact-composer,
+    body.portrait-layout .composer.mobile-compact-composer {
+        --compact-settings-width: 52px;
+        --compact-send-width: 62px;
+        grid-template-rows: minmax(58px, auto) auto !important;
+    }
+    .composer.mobile-compact-composer .generation-settings-label { display: none; }
+    .composer.mobile-compact-composer .generation-settings-toggle,
+    .composer.mobile-compact-composer #send { min-height: 58px !important; padding: 0 6px !important; }
+    .composer.mobile-compact-composer .prompt-wrap,
+    .composer.mobile-compact-composer #prompt { min-height: 58px !important; }
+    .composer.mobile-compact-composer .generation-settings-panel {
+        position: fixed;
+        left: 8px;
+        right: 8px;
+        bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+        width: auto;
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .composer.mobile-compact-composer .mobile-composer-more-controls {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .composer.mobile-compact-composer .mobile-composer-more-controls .chat-mode-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: 42px;
+    }
+    .composer.mobile-compact-composer .mobile-composer-more-controls .composer-attach-stack,
+    .composer.mobile-compact-composer .mobile-composer-more-controls .voice-controls {
+        grid-column: span 1 !important;
+    }
+}
 .goal-panel{position:absolute;left:12px;bottom:calc(100% + 10px);z-index:180;width:min(440px,calc(100% - 24px));box-sizing:border-box;padding:16px;border:1px solid rgba(125,211,252,.34);border-radius:16px;background:rgba(8,18,36,.97);box-shadow:0 24px 70px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(20px) saturate(1.18);display:grid;gap:10px}.goal-panel[hidden]{display:none}.goal-panel-head,.goal-options,.goal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.goal-panel-head{justify-content:space-between}.goal-panel-title{display:flex;align-items:center;gap:9px}.goal-panel-close{width:30px;height:30px;min-height:30px;padding:0;border-radius:8px}.goal-panel textarea{width:100%;min-height:58px;resize:vertical;box-sizing:border-box;border:1px solid var(--border);border-radius:9px;padding:9px;background:rgba(2,6,23,.78);color:inherit}.goal-options small,.goal-stage-summary{color:var(--muted);font-size:12px}.goal-actions button{min-width:92px}.chat-mode-button.goal-mode-button[aria-expanded="true"]{border-color:#7dd3fc;background:rgba(14,165,233,.24);box-shadow:0 0 0 1px rgba(125,211,252,.18),0 8px 24px rgba(2,132,199,.2)}.plan-mode .goal-panel{border-color:#a78bfa}@media(max-width:720px){.goal-panel{position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;max-height:calc(100dvh - 24px);overflow:auto}}.plan-clarification{padding:12px;border:1px solid #8b5cf6;border-radius:12px;margin:8px 0}.plan-clarification button{margin:4px}.plan-card{padding:14px;border:1px solid #8b5cf6;border-radius:14px;background:rgba(76,29,149,.15)}
+.alignment-strip{position:fixed;left:0;right:0;top:0;height:3px;z-index:10020;border:0;padding:0;background:#64748b;cursor:pointer;transition:top .35s ease,bottom .35s ease,background .35s ease,box-shadow .35s ease}.alignment-strip.good{background:linear-gradient(90deg,#ff315f,#ffcf3f,#35e27a,#20c8ff,#875cff,#ff45d4,#ff315f);background-size:240% 100%;animation:alignment-rgb 8s linear infinite;box-shadow:0 0 12px rgba(70,220,255,.7)}.alignment-strip.evil,.alignment-strip.locked{top:auto;bottom:0;background:linear-gradient(90deg,#050000,#6f0000,#ef233c,#250000,#050000);box-shadow:0 -2px 14px rgba(255,0,30,.52)}.alignment-strip.locked{height:5px}@keyframes alignment-rgb{to{background-position:240% 0}}.alignment-panel{position:fixed;z-index:10030;top:12px;right:12px;width:min(360px,calc(100vw - 24px));display:grid;gap:8px;padding:12px;border:1px solid rgba(148,163,184,.28);border-radius:13px;background:rgba(4,10,22,.96);box-shadow:0 18px 60px rgba(0,0,0,.55);font:12px var(--ui-font)}.alignment-panel[hidden]{display:none}.alignment-panel.evil,.alignment-panel.locked{top:auto;bottom:12px;border-color:rgba(239,35,60,.42);background:linear-gradient(145deg,rgba(31,0,4,.98),rgba(4,0,0,.98))}.alignment-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.alignment-score{font-weight:900;letter-spacing:.05em}.alignment-copy,.alignment-features{color:var(--muted);line-height:1.45}.alignment-feature-highlight{outline:1px solid rgba(80,220,255,.72)!important;box-shadow:0 0 14px rgba(125,92,255,.28)!important}.alignment-hidden{display:none!important}body.alignment-evil .shell{filter:saturate(.62)}body.alignment-evil{background-color:#090000}body.alignment-locked .shell,body.alignment-locked>.remote-admin-sticker{visibility:hidden;pointer-events:none}.alignment-lock-screen{position:fixed;inset:0;z-index:10010;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 35%,#410008 0,#100002 42%,#020000 100%);color:#fff}.alignment-lock-screen[hidden]{display:none}.alignment-lock-card{width:min(620px,100%);padding:28px;border:1px solid rgba(255,54,81,.55);border-radius:18px;background:rgba(8,0,1,.9);box-shadow:0 28px 90px #000;text-align:center}.alignment-lock-quote{font:900 clamp(1.2rem,3vw,2rem)/1.25 var(--ui-font);color:#ff8798}.alignment-lock-message{margin-top:12px;color:#f1c9cf;line-height:1.55}@media(prefers-reduced-motion:reduce){.alignment-strip.good{animation:none}}
 </style>
 </head>
 <body class="app-loading">
+<button id="alignmentStrip" class="alignment-strip neutral" type="button" aria-label="Alignment: Neutral" aria-expanded="false" aria-controls="alignmentPanel"></button>
+<section id="alignmentPanel" class="alignment-panel" aria-live="polite" hidden>
+    <div class="alignment-panel-head"><strong>Hero Alignment</strong><span id="alignmentScore" class="alignment-score">Neutral · 0</span></div>
+    <div id="alignmentReason" class="alignment-copy">Every Hero chooses a path.</div>
+    <div id="alignmentFeatures" class="alignment-features">All granted Guild privileges remain available.</div>
+    <div id="alignmentRecovery" class="alignment-copy">You can only help others after you help yourself.</div>
+</section>
+<section id="alignmentLockScreen" class="alignment-lock-screen" role="alertdialog" aria-modal="true" aria-labelledby="alignmentLockQuote" hidden>
+    <div class="alignment-lock-card"><div id="alignmentLockQuote" class="alignment-lock-quote">Your Will Energy is low. Watch that.</div><div class="alignment-lock-message">The Guildmaster is disappointed in the path you chose. This account has been sealed.</div></div>
+</section>
 <div class="bg-swirl" aria-hidden="true"></div>
 <div class="glass-parallax" aria-hidden="true"></div>
 <button id="remoteAdminToggle" class="remote-admin-sticker" type="button" title="Remote Admin" aria-label="Remote Admin">
@@ -14219,8 +15127,8 @@ body.shared-view .comments-panel-toggle {
         <div id="startupLoaderProgress" class="startup-loader-progress" style="--startup-loader-progress-percent: 4%;" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="4">
             <div id="startupLoaderProgressFill" class="startup-loader-progress-fill"></div>
         </div>
-        <div id="startupLoaderText" class="startup-loader-text">Loading proxy 4%</div>
-        <div id="startupLoaderDetail" class="startup-loader-detail">Preparing tunnel</div>
+        <div id="startupLoaderText" class="startup-loader-text">Jack of All Fates — 4%</div>
+        <div id="startupLoaderDetail" class="startup-loader-detail">You Don't Know Jack... Yet.</div>
     </div>
 </div>
 <div id="loginGate" class="login-gate" role="dialog" aria-modal="true" aria-labelledby="loginTitle" hidden>
@@ -14256,11 +15164,11 @@ body.shared-view .comments-panel-toggle {
     <div id="portraitDrawerBackdrop" class="portrait-drawer-backdrop" hidden></div>
     <nav id="portraitPullTabs" class="portrait-pull-tabs" aria-label="Mobile panels">
         <button id="portraitRuntimeTab" class="portrait-pull-tab" type="button" aria-controls="runtimeControls" aria-expanded="false" aria-label="Runtime controls" title="Runtime controls">Runtime</button>
-        <button id="portraitSessionsTab" class="portrait-pull-tab" type="button" aria-controls="sessionSidebar" aria-expanded="false">Sessions</button>
+        <button id="portraitSessionsTab" class="portrait-pull-tab" type="button" aria-controls="sessionSidebar" aria-expanded="false">Projects</button>
         <button id="portraitFilesTab" class="portrait-pull-tab" type="button" aria-controls="solutionExplorer" aria-expanded="false">Files</button>
         <button id="portraitShareTab" class="portrait-pull-tab" type="button" aria-controls="shareComments" aria-expanded="false">Share</button>
     </nav>
-    <button id="sessionPanelEdgeToggle" class="edge-panel-toggle session-panel-toggle" type="button" aria-controls="sessionSidebar" aria-expanded="false" aria-label="Show sessions" title="Show sessions">
+    <button id="sessionPanelEdgeToggle" class="edge-panel-toggle session-panel-toggle" type="button" aria-controls="sessionSidebar" aria-expanded="false" aria-label="Show projects" title="Show projects">
         <svg class="edge-panel-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="5" rx="1.5"></rect><rect x="4" y="14" width="16" height="5" rx="1.5"></rect><path d="M8 7.5h8M8 16.5h8"></path></svg>
     </button>
     <button id="solutionPanelEdgeToggle" class="edge-panel-toggle solution-panel-toggle" type="button" aria-controls="solutionExplorer" aria-expanded="false" aria-label="Show files" title="Show files">
@@ -14425,29 +15333,32 @@ body.shared-view .comments-panel-toggle {
         </div>
     </header>
     <section class="workspace">
-        <aside id="sessionSidebar" class="session-sidebar" aria-label="Chat sessions">
+        <aside id="sessionSidebar" class="session-sidebar" aria-label="Projects and chat sessions">
             <div class="session-head">
                 <div class="session-heading">
-                    <span class="session-kicker">Saved chats</span>
-                    <span class="session-titlebar">Sessions</span>
+                    <span class="session-kicker">Saved work</span>
+                    <span class="session-titlebar">Projects</span>
                 </div>
                 <div class="session-head-actions">
                     <span id="sessionLoadingThrobber" class="rgb-panel-throbber" aria-hidden="true" hidden></span>
-                    <span id="sessionCountPill" class="session-count-pill" title="Saved session count">0</span>
-                    <button id="refreshSessions" class="ghost panel-refresh" type="button" title="Refresh sessions" aria-label="Refresh sessions">R</button>
-                    <button id="newSession" class="ghost" type="button" title="New chat">+</button>
+                    <span id="sessionCountPill" class="session-count-pill" title="Saved project count">0</span>
+                    <button id="refreshSessions" class="ghost panel-refresh" type="button" title="Refresh projects" aria-label="Refresh projects">R</button>
+                    <button id="showArchivedProjects" class="ghost" type="button" title="Show archived projects">A</button>
+                    <button id="newProject" class="ghost" type="button" title="New project">P+</button>
+                    <button id="newSession" class="ghost" type="button" title="New chat in selected project">+</button>
                 </div>
             </div>
             <div class="session-tools">
-                <label class="session-search-label" for="sessionSearch">Search sessions</label>
+                <label class="session-search-label" for="sessionSearch">Search projects and chats</label>
                 <div class="session-search-shell">
-                    <input id="sessionSearch" class="session-search" type="search" placeholder="Search sessions" autocomplete="off" spellcheck="false">
+                    <input id="sessionSearch" class="session-search" type="search" placeholder="Search projects or chats" autocomplete="off" spellcheck="false">
                     <button id="sessionRegexToggle" class="session-regex-toggle" type="button" aria-pressed="false" title="Use regex search">.*</button>
                 </div>
                 <div id="sessionSearchStatus" class="session-search-status" aria-live="polite"></div>
                 <div id="sessionBulkBar" class="session-bulk-bar" hidden>
                     <span id="sessionSelectedCount">0 selected</span>
                     <button id="selectAllSessions" class="ghost session-bulk-select-all" type="button" disabled>Select All</button>
+                    <button id="moveSelectedSessions" class="ghost" type="button" disabled>Move</button>
                     <button id="deleteSelectedSessions" class="ghost session-bulk-delete" type="button" disabled>Delete Selected</button>
                     <button id="clearSelectedSessions" class="ghost session-bulk-clear" type="button" disabled>Clear</button>
                 </div>
@@ -14689,7 +15600,7 @@ body.shared-view .comments-panel-toggle {
             <pre id="artifactSource" class="artifact-source"></pre>
         </aside>
     </section>
-    <form id="composer" class="composer no-media-source">
+    <form id="composer" class="composer no-media-source mobile-compact-composer">
         <section id="goalPanel" class="goal-panel" hidden>
             <div class="goal-panel-head">
                 <div class="goal-panel-title"><strong>Goal</strong><span id="goalStatus">Active</span></div>
@@ -14706,13 +15617,13 @@ body.shared-view .comments-panel-toggle {
             <div id="goalStageSummary" class="goal-stage-summary"></div>
         </section>
         <span id="mobileComposerControlsAnchor" hidden></span>
-        <div id="composerAttachStack" class="composer-attach-stack" aria-label="Attachment controls">
-            <label id="imageAttach" class="attach" title="Load images">
-                IMG
+        <div id="composerAttachStack" class="composer-attach-stack" aria-label="Agent attachments">
+            <label id="imageAttach" class="attach" title="Attach images" aria-label="Attach images">
+                <svg class="composer-attach-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="m5.5 17 4.3-4.3 3.1 3.1 2.1-2.1 3.5 3.3"></path></svg>
                 <input id="imageInput" type="file" accept="image/*" multiple>
             </label>
-            <label id="fileAttach" class="attach" title="Load files">
-                FILE
+            <label id="fileAttach" class="attach" title="Attach files" aria-label="Attach files">
+                <svg class="composer-attach-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h6.5L18.5 8v12.5H7z"></path><path d="M13.5 3.5V8h5M9.5 12h6M9.5 15.5h6"></path></svg>
                 <input id="fileInput" type="file" multiple>
             </label>
         </div>
@@ -14747,9 +15658,9 @@ body.shared-view .comments-panel-toggle {
         <div class="retry-controls" aria-label="Prompt retry controls">
             <label class="retry-toggle" title="Retry the prompt until the selected model runtime returns a successful response."><input id="retryPrompt" type="checkbox" checked>Retry</label>
         </div>
-        <button id="contextToggle" class="context-toggle" type="button" aria-controls="contextExpander" aria-expanded="false" aria-label="Show context" title="Show context">CTX</button>
+        <button id="contextToggle" class="context-toggle" type="button" aria-controls="contextExpander" aria-expanded="false" aria-label="Show context" title="Show context">Context</button>
         <div id="generationSettings" class="generation-settings">
-            <button id="generationSettingsToggle" class="generation-settings-toggle" type="button" aria-controls="generationSettingsPanel" aria-expanded="false" aria-label="Generation settings" title="Generation settings">...</button>
+            <button id="generationSettingsToggle" class="generation-settings-toggle" type="button" aria-controls="generationSettingsPanel" aria-expanded="false" aria-label="Open composer settings" title="Open settings"><svg class="generation-settings-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.25A3.75 3.75 0 1 0 12 15.75 3.75 3.75 0 0 0 12 8.25Z"></path><path d="M19.4 13.5a7.7 7.7 0 0 0 .05-1.5 7.7 7.7 0 0 0-.05-1.5l1.7-1.33-1.8-3.12-2 .8a7.5 7.5 0 0 0-2.6-1.5L14.4 3h-3.6l-.32 2.35a7.5 7.5 0 0 0-2.6 1.5l-2-.8-1.8 3.12 1.7 1.33a7.7 7.7 0 0 0-.05 1.5c0 .5.02 1 .05 1.5l-1.7 1.33 1.8 3.12 2-.8a7.5 7.5 0 0 0 2.6 1.5L10.8 21h3.6l.32-2.35a7.5 7.5 0 0 0 2.6-1.5l2 .8 1.8-3.12-1.72-1.33Z"></path></svg><span class="generation-settings-label">Settings</span><span class="generation-settings-chevron" aria-hidden="true"></span></button>
             <div id="generationSettingsPanel" class="generation-settings-panel" hidden>
                 <div id="mobileComposerMoreControls" class="mobile-composer-more-controls" aria-label="More composer controls" hidden></div>
                 <label class="param-field">Temp <input id="temperatureInput" type="number" min="0" max="2" step="0.05" value="0.7"><span class="param-hint" role="tooltip"><strong>Temperature</strong><span>Controls randomness. Lower values like 0.1 make answers steadier and more repeatable. Higher values make the model more exploratory, creative, and occasionally less predictable.</span></span></label>
@@ -14803,7 +15714,7 @@ body.shared-view .comments-panel-toggle {
     </div>
 </div>
 <div id="memoryBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="memoryTitle">
-    <section class="memory-panel">
+    <section class="memory-panel memory-management-panel">
         <div class="memory-head">
             <div class="memory-title">
                 <strong id="memoryTitle">Memory</strong>
@@ -14813,6 +15724,7 @@ body.shared-view .comments-panel-toggle {
         </div>
         <div class="memory-compose">
             <textarea id="memoryInput" class="memory-input" maxlength="1000" placeholder="Save something JackLLM should remember"></textarea>
+            <label class="memory-topic-field"><span>Topic</span><input id="memoryTopic" list="memoryTopicSuggestions" maxlength="120" placeholder="Automatic topic"><datalist id="memoryTopicSuggestions"><option value="People and relationships"><option value="Preferences"><option value="Work and projects"><option value="Health and wellbeing"><option value="Vehicles"><option value="General"></datalist></label>
             <div class="memory-actions">
                 <div id="memoryStatus" class="memory-status" aria-live="polite"></div>
                 <div class="memory-row-actions">
@@ -14821,22 +15733,54 @@ body.shared-view .comments-panel-toggle {
                 </div>
             </div>
         </div>
+        <details class="memory-policy-panel">
+            <summary>Memory Blacklist <span>Rules Dreaming must never retain</span></summary>
+            <p>Use plain-language rules, such as “Do not remember people's names, but remember their character.” These rules are added to the LLM system prompt.</p>
+            <div class="memory-policy-compose"><textarea id="memoryPolicyInput" class="memory-input" maxlength="1000" placeholder="Do not remember..."></textarea><button id="memoryPolicyAdd" class="ghost" type="button">Add Blacklist Rule</button></div>
+            <div id="memoryPolicyList" class="memory-policy-list"></div>
+        </details>
         <div id="memoryList" class="memory-list"></div>
     </section>
 </div>
 <div id="dreamBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="dreamTitle">
-    <section class="memory-panel">
+    <section class="memory-panel dream-panel">
         <div class="memory-head"><div class="memory-title"><strong id="dreamTitle">Dreaming</strong><span id="dreamStatus">Loading resource state</span><span id="dreamSaveStatus" class="memory-meta"></span></div><button id="dreamClose" class="ghost" type="button">Close</button></div>
-        <div class="memory-compose">
-            <div class="memory-actions"><label>Owner <select id="dreamOwner"><option value="">Current owner</option></select></label><button id="dreamReset" class="ghost" type="button">Reset to Global</button></div>
-            <label class="permission-row"><input id="dreamEnabled" type="checkbox">Enable resource-aware dreaming</label>
-            <div class="memory-actions"><select id="dreamPreset"><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option><option value="custom">Custom</option></select><button id="dreamSave" class="ghost" type="button">Save</button><button id="dreamNow" class="ghost" type="button">Dream Now</button><button id="dreamPause" class="ghost" type="button">Pause</button><button id="dreamResume" class="ghost" type="button">Resume</button><button id="dreamCancel" class="ghost" type="button">Cancel Run</button></div>
-            <div id="dreamResources" class="memory-meta">Resources have not been sampled.</div>
-            <div><strong>Dream tool permissions</strong><div id="dreamPermissions" class="param-grid"></div></div>
-            <div class="param-grid"><label>Start CPU %<input id="dreamStartCpu" type="number" min="1" max="99"></label><label>Pause CPU %<input id="dreamPauseCpu" type="number" min="2" max="100"></label><label>Start RAM %<input id="dreamStartRam" type="number" min="1" max="99"></label><label>Pause RAM %<input id="dreamPauseRam" type="number" min="2" max="100"></label><label>Start GPU %<input id="dreamStartGpu" type="number" min="1" max="99"></label><label>Pause GPU %<input id="dreamPauseGpu" type="number" min="2" max="100"></label><label>Start VRAM %<input id="dreamStartVram" type="number" min="1" max="99"></label><label>Pause VRAM %<input id="dreamPauseVram" type="number" min="2" max="100"></label><label>Start disk %<input id="dreamStartDisk" type="number" min="1" max="99"></label><label>Pause disk %<input id="dreamPauseDisk" type="number" min="2" max="100"></label><label>Every minutes<input id="dreamRecurrence" type="number" min="1" max="10080"></label><label>Max run minutes<input id="dreamMaxRun" type="number" min="1" max="240"></label><label>Output tokens<input id="dreamTokenBudget" type="number" min="128" max="32768"></label><label>Source tokens<input id="dreamSourceBudget" type="number" min="1000" max="65536"></label><label>Sessions/pass<input id="dreamSessions" type="number" min="1" max="50"></label></div>
+        <div class="dream-scroll-body">
+            <div class="memory-compose dream-settings-scroll">
+                <div class="memory-actions"><label>Owner <select id="dreamOwner"><option value="">Current owner</option></select></label><button id="dreamReset" class="ghost" type="button">Reset to Global</button></div>
+                <label class="permission-row"><input id="dreamEnabled" type="checkbox">Enable resource-aware dreaming</label>
+                <div class="memory-actions"><select id="dreamPreset"><option value="recommended">Recommended for this PC</option><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option><option value="custom">Custom</option></select><button id="dreamSave" class="ghost" type="button">Save</button><button id="dreamNow" class="ghost" type="button">Dream Now</button><button id="dreamPause" class="ghost" type="button">Pause</button><button id="dreamResume" class="ghost" type="button">Resume</button><button id="dreamCancel" class="ghost" type="button">Cancel Run</button></div>
+                <div id="dreamResources" class="memory-meta">Resources have not been sampled.</div>
+                <div id="dreamHardwareNote" class="dream-hardware-note"></div>
+                <div><strong>Dream tool permissions</strong><div id="dreamPermissions" class="dream-permission-grid"></div></div>
+                <section class="dream-resource-expander">
+                    <button id="dreamResourceToggle" class="dream-resource-summary" type="button" aria-expanded="false" aria-controls="dreamResourceBody">Resource Thresholds</button>
+                    <div id="dreamResourceBody" class="dream-resource-body" hidden>
+                    <div class="dream-threshold-stack">
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Start CPU</span><output id="dreamStartCpuValue" for="dreamStartCpu">35%</output></span><input id="dreamStartCpu" type="range" min="1" max="99" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Pause CPU</span><output id="dreamPauseCpuValue" for="dreamPauseCpu">65%</output></span><input id="dreamPauseCpu" type="range" min="2" max="100" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Start RAM</span><output id="dreamStartRamValue" for="dreamStartRam">65%</output></span><input id="dreamStartRam" type="range" min="1" max="99" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Pause RAM</span><output id="dreamPauseRamValue" for="dreamPauseRam">82%</output></span><input id="dreamPauseRam" type="range" min="2" max="100" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Start GPU</span><output id="dreamStartGpuValue" for="dreamStartGpu">30%</output></span><input id="dreamStartGpu" type="range" min="1" max="99" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Pause GPU</span><output id="dreamPauseGpuValue" for="dreamPauseGpu">70%</output></span><input id="dreamPauseGpu" type="range" min="2" max="100" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Start VRAM</span><output id="dreamStartVramValue" for="dreamStartVram">55%</output></span><input id="dreamStartVram" type="range" min="1" max="99" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Pause VRAM</span><output id="dreamPauseVramValue" for="dreamPauseVram">82%</output></span><input id="dreamPauseVram" type="range" min="2" max="100" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Start disk</span><output id="dreamStartDiskValue" for="dreamStartDisk">35%</output></span><input id="dreamStartDisk" type="range" min="1" max="99" step="1"></label>
+                        <label class="dream-slider-field"><span class="dream-field-head"><span>Pause disk</span><output id="dreamPauseDiskValue" for="dreamPauseDisk">75%</output></span><input id="dreamPauseDisk" type="range" min="2" max="100" step="1"></label>
+                    </div>
+                    <div class="dream-number-stack">
+                        <label class="dream-number-field"><span>Every minutes</span><span class="dream-number-control"><button class="dream-step-button" type="button" data-dream-step="-1" data-dream-target="dreamRecurrence" aria-label="Decrease recurrence">−</button><input id="dreamRecurrence" type="number" min="1" max="10080" step="1"><button class="dream-step-button" type="button" data-dream-step="1" data-dream-target="dreamRecurrence" aria-label="Increase recurrence">+</button></span></label>
+                        <label class="dream-number-field"><span>Max run minutes</span><span class="dream-number-control"><button class="dream-step-button" type="button" data-dream-step="-1" data-dream-target="dreamMaxRun" aria-label="Decrease max run">−</button><input id="dreamMaxRun" type="number" min="1" max="240" step="1"><button class="dream-step-button" type="button" data-dream-step="1" data-dream-target="dreamMaxRun" aria-label="Increase max run">+</button></span></label>
+                        <label class="dream-number-field"><span>Output tokens</span><span class="dream-number-control"><button class="dream-step-button" type="button" data-dream-step="-1" data-dream-target="dreamTokenBudget" aria-label="Decrease output tokens">−</button><input id="dreamTokenBudget" type="number" min="128" max="32768" step="128"><button class="dream-step-button" type="button" data-dream-step="1" data-dream-target="dreamTokenBudget" aria-label="Increase output tokens">+</button></span></label>
+                        <label class="dream-number-field"><span>Source tokens</span><span class="dream-number-control"><button class="dream-step-button" type="button" data-dream-step="-1" data-dream-target="dreamSourceBudget" aria-label="Decrease source tokens">−</button><input id="dreamSourceBudget" type="number" min="1000" max="65536" step="1000"><button class="dream-step-button" type="button" data-dream-step="1" data-dream-target="dreamSourceBudget" aria-label="Increase source tokens">+</button></span></label>
+                        <label class="dream-number-field"><span>Sessions/pass</span><span class="dream-number-control"><button class="dream-step-button" type="button" data-dream-step="-1" data-dream-target="dreamSessions" aria-label="Decrease sessions per pass">−</button><input id="dreamSessions" type="number" min="1" max="50" step="1"><button class="dream-step-button" type="button" data-dream-step="1" data-dream-target="dreamSessions" aria-label="Increase sessions per pass">+</button></span></label>
+                    </div>
+                    </div>
+                </section>
+            </div>
+            <div class="memory-actions dream-journal-actions"><select id="dreamJournalFilter"><option value="">All journal entries</option><option value="pending">Pending review</option><option value="completed">Completed</option><option value="failed">Failed</option></select><button id="dreamClearResolved" class="ghost" type="button">Clear Resolved</button></div>
+            <div id="dreamJournal" class="memory-list dream-journal-list"><div class="memory-empty">No dreams recorded yet.</div></div>
         </div>
-        <div class="memory-actions"><select id="dreamJournalFilter"><option value="">All journal entries</option><option value="pending">Pending review</option><option value="completed">Completed</option><option value="failed">Failed</option></select><button id="dreamClearResolved" class="ghost" type="button">Clear Resolved</button></div>
-        <div id="dreamJournal" class="memory-list"><div class="memory-empty">No dreams recorded yet.</div></div>
     </section>
 </div>
 <div id="tokenRateRequestBackdrop" class="token-rate-backdrop" role="dialog" aria-modal="true" aria-labelledby="tokenRateRequestTitle">
@@ -14971,6 +15915,16 @@ const startupLoaderProgress = document.getElementById('startupLoaderProgress');
 const startupLoaderProgressFill = document.getElementById('startupLoaderProgressFill');
 const startupLoaderText = document.getElementById('startupLoaderText');
 const startupLoaderDetail = document.getElementById('startupLoaderDetail');
+const alignmentStrip = document.getElementById('alignmentStrip');
+const alignmentPanel = document.getElementById('alignmentPanel');
+const alignmentScore = document.getElementById('alignmentScore');
+const alignmentReason = document.getElementById('alignmentReason');
+const alignmentFeatures = document.getElementById('alignmentFeatures');
+const alignmentRecovery = document.getElementById('alignmentRecovery');
+const alignmentLockScreen = document.getElementById('alignmentLockScreen');
+let alignmentState = { score: 0, tier: 'Neutral', theme: 'neutral', edge: 'top', disabledFeatures: [], highlightedFeatures: [], dreamsEnabled: true, locked: false, lastReason: 'Every Hero chooses a path.', recoveryGuidance: 'You can only help others after you help yourself.' };
+let alignmentLoreIndex = 0;
+let activePromptLore = { key: '', text: '', changedAt: 0 };
 const loginGate = document.getElementById('loginGate');
 const loginForm = document.getElementById('loginForm');
 const loginUsername = document.getElementById('loginUsername');
@@ -15053,6 +16007,9 @@ const sessionSelectedCount = document.getElementById('sessionSelectedCount');
 const selectAllSessions = document.getElementById('selectAllSessions');
 const deleteSelectedSessions = document.getElementById('deleteSelectedSessions');
 const clearSelectedSessions = document.getElementById('clearSelectedSessions');
+const moveSelectedSessions = document.getElementById('moveSelectedSessions');
+const newProject = document.getElementById('newProject');
+const showArchivedProjects = document.getElementById('showArchivedProjects');
 const seedSession = document.getElementById('seedSession');
 const downloadSessionZip = document.getElementById('downloadSessionZip');
 const sessionCountPill = document.getElementById('sessionCountPill');
@@ -15063,11 +16020,15 @@ const memoryPanelToggle = document.getElementById('memoryPanelToggle');
 const memoryBackdrop = document.getElementById('memoryBackdrop');
 const memoryClose = document.getElementById('memoryClose');
 const memoryInput = document.getElementById('memoryInput');
+const memoryTopic = document.getElementById('memoryTopic');
 const memoryAdd = document.getElementById('memoryAdd');
 const memoryClear = document.getElementById('memoryClear');
 const memoryStatus = document.getElementById('memoryStatus');
 const memoryList = document.getElementById('memoryList');
 const memoryCountText = document.getElementById('memoryCountText');
+const memoryPolicyInput = document.getElementById('memoryPolicyInput');
+const memoryPolicyAdd = document.getElementById('memoryPolicyAdd');
+const memoryPolicyList = document.getElementById('memoryPolicyList');
 const sessionPanelToggle = document.getElementById('sessionPanelToggle');
 const solutionPanelToggle = document.getElementById('solutionPanelToggle');
 const sessionPanelEdgeToggle = document.getElementById('sessionPanelEdgeToggle');
@@ -15465,18 +16426,14 @@ function queueRuntimeViewportModeUpdate() {
 }
 
 function mobileComposerCompactActive() {
-    if (document.body && document.body.classList.contains('portrait-layout'))
-        return true;
-    const width = Math.max(0, Math.round((window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0));
-    return width > 0 && width <= 700;
+    return true;
 }
 
 function mobileComposerControlElements() {
     return [
-        composerModelControls,
-        composerAttachStack,
-        mediaSourceAttach,
         chatModeDock,
+        composerModelControls,
+        mediaSourceAttach,
         retryControls,
         contextToggle,
         contextExpander,
@@ -15559,7 +16516,13 @@ let sessionFiles = [];
 let sessionToolCalls = [];
 let recentSessionFileKeys = new Set();
 let chatSessions = [];
+let chatProjects = [];
+let selectedProjectId = 'unsorted';
+let currentProjectId = 'unsorted';
+let expandedProjectIds = new Set(['unsorted']);
+let archivedProjectsVisible = false;
 let chatMemories = [];
+let chatMemoryBlacklist = [];
 let chatMemoriesLoading = false;
 let chatSessionTotalCount = 0;
 let chatSessionsHasMore = false;
@@ -15697,7 +16660,8 @@ let runtimeModelInfos = [];
 let runtimeCompatibilityStatus = null;
 let runtimeCompatibilityStatusLoadedAt = 0;
 let runtimeCompatibilityWarningShown = false;
-let modeOpenModelRefreshInFlight = false;
+let modeOpenModelRefreshPromise = null;
+let prioritizedModeSelectionId = 0;
 let lastMissingModelWarningKey = '';
 let runtimeModelsLoading = false;
 let runtimeModelOperationId = '';
@@ -15748,7 +16712,7 @@ let serviceSelectionChangeIsAutomatic = false;
 const defaultServiceId = '';
 const baseChatMode = {
     id: '',
-    symbol: '💬',
+    symbol: 'Chat',
     label: 'Chat',
     title: 'Use Chat mode for direct conversation without forcing a service.'
 };
@@ -15795,7 +16759,6 @@ function isChatModeServiceSelectable(serviceId) {
     if (!serviceId) return true;
     const service = serviceById(serviceId);
     if (!service) return false;
-    if ((serviceRequiresToolSupport(serviceId) || isMediaGenerationService(serviceId)) && !serviceHasCompatibleModel(serviceId)) return false;
     const permission = service.permission || '';
     return !permission || permissionEnabled(permission, !!service.enabled);
 }
@@ -15851,7 +16814,7 @@ function renderChatModeStrip() {
     const planButton = document.createElement('button');
     planButton.type = 'button';
     planButton.className = 'chat-mode-button chat-mode-primary-button';
-    planButton.textContent = 'P';
+    planButton.textContent = 'Plan';
     planButton.title = 'Plan mode: inspect and clarify before implementation.';
     planButton.setAttribute('aria-pressed', interactionMode === 'plan' ? 'true' : 'false');
     planButton.addEventListener('click', () => setInteractionMode(interactionMode === 'plan' ? 'chat' : 'plan'));
@@ -15860,7 +16823,7 @@ function renderChatModeStrip() {
     goalButton.id = 'goalPanelToggle';
     goalButton.type = 'button';
     goalButton.className = 'chat-mode-button goal-mode-button';
-    goalButton.textContent = 'GOAL';
+    goalButton.textContent = 'Goal';
     goalButton.title = goalPanel && !goalPanel.hidden ? 'Close goal panel.' : 'Open goal panel.';
     goalButton.setAttribute('aria-controls', 'goalPanel');
     goalButton.setAttribute('aria-expanded', goalPanel && !goalPanel.hidden ? 'true' : 'false');
@@ -15884,21 +16847,21 @@ function renderChatModeStrip() {
             button.addEventListener('click', event => {
                 event.preventDefault();
                 event.stopPropagation();
-                if (spec.id !== current)
-                    setServiceSelection(spec.id);
+                if (spec.id !== selectedService())
+                    selectServiceWithPriority(spec.id);
             });
         }
         strip.appendChild(button);
     };
 
     [
-        { id: 'image_generation', symbol: 'IMG', title: 'Use Image generation mode.' },
-        { id: 'video_generation', symbol: 'VID', title: 'Use Video generation mode.' }
+        { id: 'image_generation', symbol: 'Image', title: 'Use Image generation mode.' },
+        { id: 'video_generation', symbol: 'Video', title: 'Use Video generation mode.' }
     ].forEach(spec => appendModeButton(spec, 'chat-mode-media-button'));
 
     [
         baseChatMode,
-        { id: 'agent', symbol: 'A', title: 'Use Agent mode for tool-driven workflow.' }
+        { id: 'agent', symbol: 'Agent', title: 'Use Agent mode for tool-driven workflow.' }
     ].forEach(spec => appendModeButton(spec, 'chat-mode-primary-button'));
 
     if (!sharedView) {
@@ -15907,7 +16870,7 @@ function renderChatModeStrip() {
         button.id = 'personaPlexToggle';
         button.type = 'button';
         button.className = 'chat-mode-button chat-mode-voice-button';
-        button.textContent = 'VOX';
+        button.textContent = 'Voice';
         button.setAttribute('aria-label', open ? 'Close Voice Mode.' : 'Open Voice Mode.');
         button.setAttribute('title', open ? 'Close Voice Mode' : 'Open Voice Mode');
         button.setAttribute('aria-controls', 'personaPlexPanel');
@@ -16752,9 +17715,109 @@ paramFields.forEach(field => {
     document.body.appendChild(hint);
 });
 
+const alignmentLore = {
+    startup: ["You Don't Know Jack... Yet.", 'Jack of All Fates. Master of No One.', 'The Guild Is Opening Its Doors.'],
+    security: ['Preventing Human Sacrifice.', 'Stopping Crimes Against Humanity.', 'The Guildmaster Guards the Innocent.'],
+    records: ['Consulting the Guild Records.', 'Gathering the Heroes of Albion.', 'Thunder Stands Guard Over His Daughter.'],
+    routing: ['Choosing Between Good and Evil.', 'Jack Has Worn Many Masks.', 'Even Jack May Yet Choose Good.'],
+    prompt: ['Hero, Your Will Power Is Low.', 'The Guildmaster Is Weighing Your Deeds.', 'Every Quest Begins With a Choice.'],
+    reasoning: ['Every Choice Leaves a Scar.', 'Good and Evil Are Watching.', 'Greed Never Earned Whisper the Crown.'],
+    tools: ['Thunder Guards What Matters.', 'No Boasting. Finish the Quest.', 'The Deed Matters More Than the Glory.'],
+    response: ['A Fate Has Been Chosen.', 'No Fate but the One We Forge.', "The Machines Do Not Choose Humanity's Future.", 'The Resistance Has Your Answer.'],
+    good: ['Care for the Hero first; then help Albion.', 'The first good choice may feel the hardest.', 'A Hero who stands can lift all Albion.'],
+    evil: ['Hard Mode: The path darkens by your choices.', 'Only the Hero can choose another road.', 'Red skies follow self-sabotage.']
+};
+
+function nextAlignmentLore(pool) {
+    const values = alignmentLore[pool] || alignmentLore.startup;
+    const offset = alignmentState.theme === 'good' ? 1 : alignmentState.theme === 'evil' || alignmentState.theme === 'locked' ? 2 : 0;
+    const value = values[(alignmentLoreIndex + offset) % values.length];
+    alignmentLoreIndex++;
+    return value;
+}
+
+function alignmentLorePoolForStatus(status) {
+    const text = String(status || '').toLowerCase();
+    if (/permission|policy|auth|security/.test(text)) return 'security';
+    if (/session|file|comment|activity|record/.test(text)) return 'records';
+    if (/model|route|select|warm/.test(text)) return 'routing';
+    if (/reason|think/.test(text)) return 'reasoning';
+    if (/tool|terminal|browser|service/.test(text)) return 'tools';
+    if (/receiv|response|complete|answer/.test(text)) return 'response';
+    if (/prompt|process|prepar/.test(text)) return 'prompt';
+    return alignmentState.theme === 'good' ? 'good' : alignmentState.theme === 'evil' || alignmentState.theme === 'locked' ? 'evil' : 'startup';
+}
+
+function alignmentLoreForStatus(status) {
+    return nextAlignmentLore(alignmentLorePoolForStatus(status));
+}
+
+function alignmentLoreForPromptStatus(status) {
+    const raw = String(status || '').trim();
+    if (/error|fail|denied|stopped|recover|interrupt|warning|token|usage/i.test(raw)) return raw;
+    const key = alignmentLorePoolForStatus(raw);
+    const now = Date.now();
+    if (activePromptLore.key !== key || !activePromptLore.text || now - activePromptLore.changedAt >= 5000)
+        activePromptLore = { key, text: nextAlignmentLore(key), changedAt: now };
+    return activePromptLore.text;
+}
+
+function applyAlignmentSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    alignmentState = Object.assign({}, alignmentState, snapshot);
+    const theme = alignmentState.locked ? 'locked' : (alignmentState.theme || 'neutral');
+    document.body.classList.toggle('alignment-good', theme === 'good');
+    document.body.classList.toggle('alignment-evil', theme === 'evil' || theme === 'locked');
+    document.body.classList.toggle('alignment-locked', theme === 'locked');
+    if (alignmentStrip) {
+        alignmentStrip.className = 'alignment-strip ' + theme;
+        alignmentStrip.setAttribute('aria-label', 'Alignment: ' + (alignmentState.tier || 'Neutral') + ', ' + Number(alignmentState.score || 0));
+    }
+    if (alignmentPanel) alignmentPanel.className = 'alignment-panel ' + theme;
+    if (alignmentScore) alignmentScore.textContent = (alignmentState.tier || 'Neutral') + ' · ' + Number(alignmentState.score || 0);
+    if (alignmentReason) alignmentReason.textContent = alignmentState.lastReason || 'Every Hero chooses a path.';
+    const disabled = Array.isArray(alignmentState.disabledFeatures) ? alignmentState.disabledFeatures : [];
+    if (alignmentFeatures) alignmentFeatures.textContent = disabled.length ? 'Withdrawn Guild privileges: ' + disabled.join(', ') + '.' : 'All granted Guild privileges remain available.';
+    if (alignmentRecovery) alignmentRecovery.textContent = alignmentState.recoveryGuidance || 'You can only help others after you help yourself.';
+    if (alignmentLockScreen) alignmentLockScreen.hidden = !alignmentState.locked;
+    const dreamToggle = document.getElementById('dreamPanelToggle');
+    if (dreamToggle) dreamToggle.classList.toggle('alignment-hidden', alignmentState.dreamsEnabled === false);
+    const featureSelectors = {
+        uploads: ['#imageAttach', '#fileAttach'],
+        media: ['#mediaSourceAttach'],
+        downloads: ['#downloadSessionZip', '#downloadFilePreview'],
+        filesystem: ['#solutionPanelEdgeToggle', '#portraitFilesTab'],
+        internet: ['#chatBrowserRailToggle'],
+        terminal: ['#terminalApprovalPanel']
+    };
+    Object.keys(featureSelectors).forEach(feature => featureSelectors[feature].forEach(selector => {
+        const node = document.querySelector(selector);
+        if (node) node.classList.toggle('alignment-hidden', disabled.includes(feature));
+    }));
+    document.querySelectorAll('.alignment-feature-highlight').forEach(node => node.classList.remove('alignment-feature-highlight'));
+    const highlightSelectors = { uploads: '#fileAttach', media: '#mediaSourceAttach', downloads: '#downloadSessionZip', filesystem: '#solutionPanelEdgeToggle', internet: '#chatBrowserRailToggle', dreams: '#dreamPanelToggle' };
+    (Array.isArray(alignmentState.highlightedFeatures) ? alignmentState.highlightedFeatures : []).forEach(feature => {
+        const selector = highlightSelectors[feature];
+        const node = selector ? document.querySelector(selector) : null;
+        if (node) node.classList.add('alignment-feature-highlight');
+    });
+}
+
+async function loadAlignment() {
+    const response = await fetchWithTimeout('/api/alignment', { credentials: 'same-origin' }, 8000);
+    const data = await readJsonResponse(response, null, 8000);
+    if (response.ok && data && data.ok && data.alignment) applyAlignmentSnapshot(data.alignment);
+}
+
+if (alignmentStrip) alignmentStrip.addEventListener('click', () => {
+    if (!alignmentPanel) return;
+    alignmentPanel.hidden = !alignmentPanel.hidden;
+    alignmentStrip.setAttribute('aria-expanded', alignmentPanel.hidden ? 'false' : 'true');
+});
+
 let startupProgressValue = 4;
 let startupProgressTimer = 0;
-let startupDetailText = 'Preparing tunnel';
+let startupDetailText = "You Don't Know Jack... Yet.";
 
 function renderStartupProgress(value, status) {
     if (!startupLoader) return;
@@ -16763,15 +17826,15 @@ function renderStartupProgress(value, status) {
     if (startupLoaderProgress) {
         startupLoaderProgress.style.setProperty('--startup-loader-progress-percent', startupProgressValue + '%');
         startupLoaderProgress.setAttribute('aria-valuenow', String(startupProgressValue));
-        if (status && status !== 'Loading proxy')
+        if (status && status !== 'Loading JACK')
             startupLoaderProgress.setAttribute('aria-valuetext', status + ', ' + startupProgressValue + '%');
     }
     if (startupLoaderProgressFill)
         startupLoaderProgressFill.style.setProperty('--startup-loader-progress-percent', startupProgressValue + '%');
     if (startupLoaderText)
-        startupLoaderText.textContent = 'Loading proxy ' + startupProgressValue + '%';
-    if (status && status !== 'Loading proxy')
-        renderStartupDetail(status);
+        startupLoaderText.textContent = 'Jack of All Fates — ' + startupProgressValue + '%';
+    if (status && status !== 'Loading JACK')
+        renderStartupDetail(alignmentLoreForStatus(status));
 }
 
 function renderStartupDetail(status) {
@@ -16795,7 +17858,7 @@ function setStartupProgress(value, status) {
 
 function startStartupProgressPulse() {
     if (!startupLoader || startupProgressTimer) return;
-    renderStartupProgress(startupProgressValue, 'Loading proxy');
+    renderStartupProgress(startupProgressValue, 'Loading JACK');
     startupProgressTimer = window.setInterval(() => {
         if (!document.body.classList.contains('app-loading')) {
             window.clearInterval(startupProgressTimer);
@@ -16804,7 +17867,7 @@ function startStartupProgressPulse() {
         }
         const cap = startupProgressValue < 70 ? 88 : 96;
         const step = startupProgressValue < 35 ? 2.1 : startupProgressValue < 70 ? 1.1 : 0.32;
-        renderStartupProgress(Math.min(cap, startupProgressValue + step), 'Loading proxy');
+        renderStartupProgress(Math.min(cap, startupProgressValue + step), 'Loading JACK');
     }, reduceMotion ? 1300 : 620);
 }
 
@@ -16813,7 +17876,7 @@ function completeStartupProgress() {
         window.clearInterval(startupProgressTimer);
         startupProgressTimer = 0;
     }
-    renderStartupProgress(100, 'Loading proxy');
+    renderStartupProgress(100, 'Loading JACK');
 }
 
 function finishStartupLoading() {
@@ -17080,7 +18143,7 @@ async function submitLogin(event) {
         loginReturnedToken = !!accessToken;
         const session = await loadAuthSession();
         if (!isSocketJackAuthenticated(session))
-            throw new Error('SocketJack.com login succeeded, but this proxy did not authorize the returned token.');
+            throw new Error('SocketJack.com login succeeded, but JACK did not authorize the returned token.');
         authSession = session;
         isServerOwner = !!(session.isOwner || session.isServerOwner);
         isDatabaseAdmin = !!session.isAdministrator || isServerOwner;
@@ -18014,7 +19077,7 @@ function buildServerApiEndpointRows(server) {
         { standard: 'LlmRuntime wrapper', method: 'POST', path: '/api/model-runtime/models/load', notes: 'Load an enabled runtime model.' },
         { standard: 'LlmRuntime wrapper', method: 'POST', path: '/api/model-runtime/models/unload', notes: 'Unload a runtime model.' },
         { standard: 'LlmRuntime native', method: 'GET', path: '/api/v1/runtime/compatibility', notes: 'Runtime compatibility and repair status.' },
-        { standard: 'MasterList discovery', method: 'GET', path: '/api/jackllm/servers', notes: 'Available JackLLM server list from this Workstation proxy.' }
+        { standard: 'MasterList discovery', method: 'GET', path: '/api/jackllm/servers', notes: 'Available JackLLM server list from this Workstation JACK service.' }
     ]));
     return rows.filter(row => row.url);
 }
@@ -20106,28 +21169,11 @@ function speechSynthesisAvailable() {
     return !!(window.speechSynthesis && window.SpeechSynthesisUtterance);
 }
 
-function selectedModelSupportsVoiceButton() {
-    if (sharedView) return false;
-    const modelId = selectedModel();
-    const runtimeModel = findRuntimeModelInfo(modelId);
-    const text = [
-        modelId,
-        modelOptionDisplayNames[modelId],
-        runtimeModel ? runtimeModelLabel(runtimeModel) : '',
-        runtimeModel ? safeStringifyModelInfo(runtimeModel) : ''
-    ].filter(Boolean).join(' ').toLowerCase();
-    return text.includes('personaplex') || (text.includes('nvidia') && /\b(voice|speech|audio)\b/.test(text));
-}
-
-function syncPersonaPlexPanelForSelectedModel() {
-    const autoOpenPersonaPlex = !sharedView && selectedModelSupportsVoiceButton();
+function syncPersonaPlexPanelVisibility() {
     if (personaPlexClose)
-        personaPlexClose.hidden = autoOpenPersonaPlex;
-    if (autoOpenPersonaPlex) {
-        setPersonaPlexPanelOpen(true);
-    } else if (sharedView) {
+        personaPlexClose.hidden = false;
+    if (sharedView)
         setPersonaPlexPanelOpen(false);
-    }
 }
 
 function updateVoiceButtonVisibility() {
@@ -20148,7 +21194,7 @@ function updateVoiceButtonVisibility() {
         ttsToggleLabel.hidden = true;
         ttsToggleLabel.setAttribute('aria-hidden', 'true');
     }
-    syncPersonaPlexPanelForSelectedModel();
+    syncPersonaPlexPanelVisibility();
 }
 
 function configureVoiceControls() {
@@ -21901,6 +22947,49 @@ function setServiceSelection(serviceId) {
     return true;
 }
 
+async function selectServiceWithPriority(serviceId) {
+    if (!serviceSelect || serviceSelect.disabled) return false;
+    const target = serviceId ? String(serviceId) : '';
+    if (!isChatModeServiceSelectable(target)) return false;
+    const requestId = ++prioritizedModeSelectionId;
+
+    // The requested mode wins immediately. Catalog refresh and model matching
+    // happen afterward and must not bounce an explicit choice back to Chat.
+    if (selectedService() !== target)
+        setServiceSelection(target);
+    else
+        rememberManualServiceSelection(target);
+
+    try {
+        await refreshModelsForModeDropdownOpen();
+    } catch { }
+    if (requestId !== prioritizedModeSelectionId) return false;
+
+    const compatibleModel = findModeCompatibleModel(target);
+    if ((serviceRequiresToolSupport(target) || isMediaGenerationService(target)) &&
+        compatibleModel && selectedModel() !== compatibleModel) {
+        modelSelect.value = compatibleModel;
+        updateModelCapabilityIcons();
+        updateImageAttachVisibility();
+        updateVoiceButtonVisibility();
+        updateLlmRuntimeReadyGlow();
+    }
+
+    // Refreshing models may infer a mode from the previously selected model.
+    // Reassert the user's choice against the fresh catalog.
+    rememberManualServiceSelection(target);
+    if (selectedService() !== target) {
+        serviceSelect.value = target;
+        serviceSelect.dispatchEvent(new Event('change'));
+    } else {
+        setInteractionMode(target || 'chat');
+        renderChatModeStrip();
+        saveSettings();
+    }
+    scheduleDraftSessionSave();
+    return true;
+}
+
 function renderServiceList() {
     if (!serviceList || !serviceSelect) return;
     const active = selectedService();
@@ -22081,6 +23170,9 @@ function setGenerationSettingsOpen(open) {
     const allowed = !!open;
     generationSettingsPanel.hidden = !allowed;
     generationSettingsToggle.setAttribute('aria-expanded', allowed ? 'true' : 'false');
+    generationSettingsToggle.setAttribute('aria-label', allowed ? 'Close composer settings' : 'Open composer settings');
+    generationSettingsToggle.title = allowed ? 'Close settings' : 'Open settings';
+    if (form) form.classList.toggle('composer-settings-open', allowed);
 }
 
 function toggleGenerationSettings() {
@@ -22584,7 +23676,7 @@ function updateServiceLabels() {
         const requiresCompatibleModel = serviceRequiresToolSupport(option.value) || isMediaGenerationService(option.value);
         const compatibleModel = requiresCompatibleModel ? serviceCompatibleModelLabel(option.value) : '';
         const blockedByModelCapability = requiresCompatibleModel && !compatibleModel;
-        option.disabled = blockedByPermission || blockedByModelCapability;
+        option.disabled = blockedByPermission;
         option.textContent = service.name || service.id;
         if (compatibleModel)
             option.dataset.compatibleModel = compatibleModel;
@@ -22592,8 +23684,8 @@ function updateServiceLabels() {
             delete option.dataset.compatibleModel;
         option.title = [
             blockedByPermission ? 'Disabled: this service permission is off.' : '',
-            serviceRequiresToolSupport(option.value) && blockedByModelCapability ? 'Disabled: no enabled or loaded model advertises tool support.' : '',
-            isMediaGenerationService(option.value) && blockedByModelCapability ? 'Disabled: no enabled or loaded model supports ' + (mediaTypeByService[option.value] || 'this') + ' generation.' : '',
+            serviceRequiresToolSupport(option.value) && blockedByModelCapability ? 'Select this mode, then choose or load a model that advertises tool support.' : '',
+            isMediaGenerationService(option.value) && blockedByModelCapability ? 'Select this mode, then choose or load a model that supports ' + (mediaTypeByService[option.value] || 'this') + ' generation.' : '',
             compatibleModel ? 'Compatible model: ' + compatibleModel : '',
             service.description || '',
             service.source ? 'Source: ' + service.source : '',
@@ -22631,6 +23723,7 @@ function applyAgentVisualMode() {
     document.body.classList.toggle('browser-skill-mode', false);
     document.body.classList.toggle('companion-mode', service === 'companion');
     document.body.classList.toggle('media-generation-mode', isMediaGenerationService(service));
+    updateImageAttachVisibility();
     updateMediaSourceAttachVisibility();
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
 }
@@ -26620,7 +27713,7 @@ function buildPromptProgressStatusText(parts, status, progress) {
         text = 'Receiving response...';
     if (typeof progress === 'number' && Number.isFinite(progress))
         text = text.replace(/\s+\d+(?:\.\d+)?%\s*$/, '');
-    return text;
+    return alignmentLoreForPromptStatus(text);
 }
 
 function formatProgressPercent(progress) {
@@ -27566,7 +28659,7 @@ function trimRunawayUnpunctuatedTail(text) {
     const words = tail.match(/\b[\p{L}\p{N}][\p{L}\p{N}'-]*\b/gu) || [];
     const punctuation = tail.match(/[.!?;:]/g) || [];
     if (words.length < 140 || punctuation.length > 2 || /[{}=;<>]{3,}/.test(tail)) return value;
-    return value.slice(0, boundaryEnd).trimEnd() + '\n\n[Response shortened by proxy after runaway output.]';
+    return value.slice(0, boundaryEnd).trimEnd() + '\n\n[Response shortened by JACK after runaway output.]';
 }
 
 function sanitizeFinalAnswerMarkupForDisplay(text) {
@@ -29960,6 +31053,10 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             }
             event = unwrapChatStreamControlEvent(event);
             if (event.type === 'ignored-control-event') return false;
+            if (event.type === 'alignment' && event.alignment) {
+                applyAlignmentSnapshot(event.alignment);
+                return false;
+            }
             if (event.type === 'error') throw new Error(event.content || event.body || 'Model runtime streaming request failed.');
             if (event.type === 'route' || event.routing) {
                 renderAutoRouteBadge(streamState, event.routing || event);
@@ -30251,12 +31348,21 @@ function updateContextToggleMeta() {
 
 function setContextExpanderOpen(open) {
     contextExpanderOpen = !!open;
+    if (contextExpanderOpen)
+        setGenerationSettingsOpen(true);
     if (contextExpander)
         contextExpander.hidden = !contextExpanderOpen;
     if (contextToggle)
         contextToggle.setAttribute('aria-expanded', contextExpanderOpen ? 'true' : 'false');
+    if (contextToggle) {
+        contextToggle.setAttribute('aria-label', contextExpanderOpen ? 'Hide context' : 'Show context');
+        if (contextExpanderOpen)
+            contextToggle.title = 'Hide current chat context';
+    }
     if (contextExpanderOpen)
         renderContextExpander();
+    else
+        updateContextToggleMeta();
 }
 
 function createSessionId() {
@@ -30492,7 +31598,7 @@ function localWebSocketUrl(path) {
 
 function requestLocalJsonViaWebSocket(path, timeoutMs) {
     if (!localApiPrefix || typeof WebSocket === 'undefined')
-        return Promise.reject(new Error('WebSocket proxy is unavailable.'));
+        return Promise.reject(new Error('JACK WebSocket service is unavailable.'));
     return new Promise((resolve, reject) => {
         const started = performance.now();
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -30912,10 +32018,21 @@ function memoryDateLabel(value) {
 function renderChatMemories() {
     if (!memoryList) return;
     memoryList.textContent = '';
+    if (memoryPolicyList) memoryPolicyList.textContent = '';
     const active = Array.isArray(chatMemories) ? chatMemories.filter(memory => memory && !memory.deletedUtc) : [];
+    const policies = Array.isArray(chatMemoryBlacklist) ? chatMemoryBlacklist.filter(memory => memory && !memory.deletedUtc) : [];
     if (memoryCountText)
         memoryCountText.textContent = chatMemoriesLoading ? 'Loading memories' : (active.length === 1 ? '1 saved memory' : active.length + ' saved memories');
     if (memoryClear) memoryClear.disabled = chatMemoriesLoading || active.length === 0;
+    if (memoryPolicyList) {
+        if (!policies.length) {
+            const emptyPolicy = document.createElement('div');
+            emptyPolicy.className = 'memory-empty';
+            emptyPolicy.textContent = 'No blacklist rules. Dreaming may consider any otherwise safe, relevant fact.';
+            memoryPolicyList.appendChild(emptyPolicy);
+        }
+        policies.forEach(policy => memoryPolicyList.appendChild(buildMemoryRow(policy, true)));
+    }
     if (!active.length) {
         const empty = document.createElement('div');
         empty.className = 'memory-empty';
@@ -30923,29 +32040,28 @@ function renderChatMemories() {
         memoryList.appendChild(empty);
         return;
     }
-    active.forEach(memory => {
-        const row = document.createElement('div');
-        row.className = 'memory-row';
-        const text = document.createElement('div');
-        text.className = 'memory-text';
-        text.textContent = memory.text || '';
-        const actions = document.createElement('div');
-        actions.className = 'memory-row-actions';
-        const meta = document.createElement('div');
-        meta.className = 'memory-meta';
-        const updated = memoryDateLabel(memory.updatedUtc || memory.createdUtc);
-        meta.textContent = updated ? 'Saved ' + updated : 'Saved memory';
-        const remove = document.createElement('button');
-        remove.className = 'ghost';
-        remove.type = 'button';
-        remove.textContent = 'Delete';
-        remove.addEventListener('click', () => deleteChatMemory(memory.id));
-        actions.appendChild(meta);
-        actions.appendChild(remove);
-        row.appendChild(text);
-        row.appendChild(actions);
-        memoryList.appendChild(row);
+    const groups = new Map();
+    active.forEach(memory => { const topic=(memory.topic||'General').trim()||'General'; if(!groups.has(topic))groups.set(topic,[]); groups.get(topic).push(memory); });
+    Array.from(groups.keys()).sort((a,b)=>a.localeCompare(b)).forEach(topic => {
+        const group = document.createElement('section');
+        group.className = 'memory-topic-group';
+        const heading = document.createElement('h3');
+        heading.className = 'memory-topic-heading';
+        heading.textContent = topic + ' (' + groups.get(topic).length + ')';
+        group.appendChild(heading);
+        groups.get(topic).forEach(memory => group.appendChild(buildMemoryRow(memory, false)));
+        memoryList.appendChild(group);
     });
+}
+
+function buildMemoryRow(memory, isPolicy) {
+    const row = document.createElement('div'); row.className = 'memory-row';
+    const text = document.createElement('div'); text.className = 'memory-text'; text.textContent = memory.text || '';
+    const actions = document.createElement('div'); actions.className = 'memory-row-actions';
+    const meta = document.createElement('div'); meta.className = 'memory-meta';
+    const updated = memoryDateLabel(memory.updatedUtc || memory.createdUtc); meta.textContent = memory.needsContext ? 'Needs context · excluded from LLM recall' + (updated ? ' · saved ' + updated : '') : (updated ? (isPolicy ? 'Rule added ' : 'Saved ') + updated : (isPolicy ? 'Blacklist rule' : 'Saved memory'));
+    const remove = document.createElement('button'); remove.className = 'ghost'; remove.type = 'button'; remove.textContent = 'Delete'; remove.addEventListener('click', () => deleteChatMemory(memory.id));
+    actions.appendChild(meta); actions.appendChild(remove); row.appendChild(text); row.appendChild(actions); return row;
 }
 
 async function loadChatMemories() {
@@ -30959,6 +32075,7 @@ async function loadChatMemories() {
         if (!response.ok || !data || !data.ok)
             throw new Error((data && data.error) || 'Memory list failed.');
         chatMemories = Array.isArray(data.memories) ? data.memories : [];
+        chatMemoryBlacklist = Array.isArray(data.blacklist) ? data.blacklist : [];
         setMemoryStatus(chatMemories.length ? '' : 'No memories saved yet.', false);
     } catch (error) {
         setMemoryStatus(error && error.message ? error.message : String(error), true);
@@ -30993,13 +32110,15 @@ async function addChatMemoryFromInput() {
         const response = await fetchWithTimeout('/api/chat-memories', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'add', text, sessionId: currentSessionId || '' })
+            body: JSON.stringify({ action: 'add', text, topic: memoryTopic ? memoryTopic.value.trim() : '', sessionId: currentSessionId || '' })
         }, 10000);
         const data = await readJsonResponse(response, {});
         if (!response.ok || !data || !data.ok)
             throw new Error((data && data.error) || 'Memory save failed.');
         chatMemories = Array.isArray(data.memories) ? data.memories : (data.memory ? [data.memory].concat(chatMemories || []) : chatMemories);
+        chatMemoryBlacklist = Array.isArray(data.blacklist) ? data.blacklist : chatMemoryBlacklist;
         memoryInput.value = '';
+        if (memoryTopic) memoryTopic.value = '';
         setMemoryStatus('Memory saved.', false);
         renderChatMemories();
     } catch (error) {
@@ -31007,6 +32126,28 @@ async function addChatMemoryFromInput() {
     } finally {
         if (memoryAdd) memoryAdd.disabled = false;
     }
+}
+
+async function addChatMemoryBlacklistRule() {
+    if (!memoryPolicyInput) return;
+    const text = memoryPolicyInput.value.trim();
+    if (!text) { setMemoryStatus('Type a blacklist rule to add.', true); return; }
+    if (memoryPolicyAdd) memoryPolicyAdd.disabled = true;
+    setMemoryStatus('Adding blacklist rule...', false);
+    try {
+        const response = await fetchWithTimeout('/api/chat-memories', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'add-blacklist', text, sessionId: currentSessionId || '' })
+        }, 10000);
+        const data = await readJsonResponse(response, {});
+        if (!response.ok || !data || !data.ok) throw new Error((data && data.error) || 'Blacklist rule save failed.');
+        chatMemories = Array.isArray(data.memories) ? data.memories : chatMemories;
+        chatMemoryBlacklist = Array.isArray(data.blacklist) ? data.blacklist : (data.policy ? [data.policy].concat(chatMemoryBlacklist || []) : chatMemoryBlacklist);
+        memoryPolicyInput.value = '';
+        setMemoryStatus('Blacklist rule added to the memory system prompt.', false);
+        renderChatMemories();
+    } catch (error) { setMemoryStatus(error && error.message ? error.message : String(error), true); }
+    finally { if (memoryPolicyAdd) memoryPolicyAdd.disabled = false; }
 }
 
 async function deleteChatMemory(id) {
@@ -31022,6 +32163,7 @@ async function deleteChatMemory(id) {
         if (!response.ok || !data || !data.ok)
             throw new Error((data && data.error) || 'Memory delete failed.');
         chatMemories = Array.isArray(data.memories) ? data.memories : chatMemories.filter(memory => memory && memory.id !== id);
+        chatMemoryBlacklist = Array.isArray(data.blacklist) ? data.blacklist : chatMemoryBlacklist.filter(memory => memory && memory.id !== id);
         setMemoryStatus('Memory deleted.', false);
         renderChatMemories();
     } catch (error) {
@@ -31044,6 +32186,7 @@ async function clearChatMemories() {
         if (!response.ok || !data || !data.ok)
             throw new Error((data && data.error) || 'Memory clear failed.');
         chatMemories = Array.isArray(data.memories) ? data.memories : [];
+        chatMemoryBlacklist = Array.isArray(data.blacklist) ? data.blacklist : chatMemoryBlacklist;
         setMemoryStatus('Memories cleared.', false);
         renderChatMemories();
     } catch (error) {
@@ -32317,7 +33460,10 @@ function upsertLocalSessionSummary(title) {
             savedUtc: now,
             locked: false,
             promptTokenCount: estimateLocalPromptTokens(messages, getPromptDraftText()),
-            promptTokenBudget: 8192
+            promptTokenBudget: 8192,
+            projectId: currentProjectId || selectedProjectId || 'unsorted',
+            projectName: (projectById(currentProjectId || selectedProjectId) || {}).name || 'Unsorted',
+            pinned: false
         };
         chatSessions.unshift(session);
     } else {
@@ -32525,7 +33671,10 @@ async function saveSessionSnapshot(sessionId, title, model, sessionMessages, fil
         promptTokenCount: estimateLocalPromptTokens(normalizedMessages, draftText),
         promptTokenBudget: 8192,
         runtime: selectedService() || 'LM Studio',
+        service: selectedService(),
         reasoningLevel: sessionReasoningInherit && sessionReasoningInherit.checked ? 'inherit' : effectiveReasoningLevel()
+        ,projectId: currentProjectId || selectedProjectId || 'unsorted'
+        ,workspaceRoot: activeWorkspaceRootForProject()
         ,interactionMode: interactionMode
         ,goal: activeGoal
         ,plan: activePlan
@@ -32623,6 +33772,85 @@ function setSessionListRefreshStatus(message, isError) {
     sessionSearchStatus.classList.toggle('error', sessionListStatusIsError);
 }
 
+function projectById(projectId) {
+    const id = String(projectId || 'unsorted');
+    return chatProjects.find(project => project && project.id === id) || (id === 'unsorted' ? { id: 'unsorted', name: 'Unsorted', workspaceRoot: '', builtIn: true, sessionCount: 0 } : null);
+}
+
+function activeWorkspaceRootForProject() {
+    return String((projectWorkflowState && projectWorkflowState.activeProject && projectWorkflowState.activeProject.workspaceRoot) || '').trim();
+}
+
+async function loadChatProjects() {
+    const response = await fetchWithTimeout('/api/chat-projects?includeArchived=true', null, 30000);
+    const data = await readJsonResponse(response, null, 30000);
+    if (!response.ok || !data || !data.ok) throw new Error(data && data.error ? data.error : 'Project list failed: HTTP ' + response.status);
+    chatProjects = Array.isArray(data.projects) ? data.projects : [];
+    const available = new Set(chatProjects.filter(project => project && !project.archived).map(project => project.id));
+    if (!available.has(selectedProjectId)) selectedProjectId = 'unsorted';
+    return data;
+}
+
+async function mutateChatProject(action, project, extra) {
+    const payload = Object.assign({ action, projectId: project && project.id ? project.id : '' }, extra || {});
+    const response = await fetch('/api/chat-project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await readJsonResponse(response, null, 15000);
+    if (!response.ok || !data || !data.ok) throw new Error(data && data.error ? data.error : 'Project update failed: HTTP ' + response.status);
+    await loadChatProjects();
+    renderSessionList();
+    return data.project;
+}
+
+async function createChatProject() {
+    const workspaceRoot = activeWorkspaceRootForProject();
+    const fallbackName = workspaceRoot ? workspaceRoot.split(/[\\/]/).filter(Boolean).pop() : 'New Project';
+    const name = window.prompt('Project name', fallbackName || 'New Project');
+    if (!name || !name.trim()) return;
+    const created = await mutateChatProject('create', null, { name: name.trim(), workspaceRoot });
+    if (created && created.id) {
+        selectedProjectId = created.id;
+        expandedProjectIds.add(created.id);
+        renderSessionList();
+    }
+}
+
+async function runProjectAction(project, action) {
+    if (!project || project.builtIn) return;
+    if (action === 'rename') {
+        const name = window.prompt('Project name', project.name || 'Project');
+        if (!name || !name.trim()) return;
+        await mutateChatProject('rename', project, { name: name.trim() });
+        return;
+    }
+    if (action === 'archive' && !window.confirm('Archive "' + (project.name || 'Project') + '"? Its chats will remain available in Archived Projects.')) return;
+    await mutateChatProject(action, project);
+}
+
+async function moveSessionsToProject(ids) {
+    const choices = chatProjects.filter(project => project && !project.archived);
+    const summary = choices.map((project, index) => (index + 1) + '. ' + project.name + (project.workspaceRoot ? ' — ' + project.workspaceRoot : '')).join('\n');
+    const selected = window.prompt('Move to which project? Enter a number:\n' + summary, '1');
+    const index = Number(selected) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= choices.length) return;
+    const target = choices[index];
+    for (const id of ids) {
+        const session = chatSessions.find(item => item && item.id === id);
+        if (!session) continue;
+        await runSessionAction(session, 'assign-project', { projectId: target.id });
+    }
+    selectedProjectId = target.id;
+    expandedProjectIds.add(target.id);
+    await loadSessions(false);
+}
+
+function startNewChatInProject(projectId) {
+    selectedProjectId = projectId || 'unsorted';
+    currentProjectId = selectedProjectId;
+    expandedProjectIds.add(selectedProjectId);
+    clearConversation();
+    prompt.focus();
+}
+
 async function loadSessions(selectLatest) {
     if (sessionsLoading && sessionsLoadPromise)
         return sessionsLoadPromise;
@@ -32676,7 +33904,11 @@ async function loadSessionsInternal(selectLatest) {
         renderSessionList();
     let response;
     try {
-        response = await fetchWithTimeout('/api/chat-sessions?take=40', null, 30000);
+        const results = await Promise.all([
+            fetchWithTimeout('/api/chat-sessions?take=all', null, 30000),
+            loadChatProjects()
+        ]);
+        response = results[0];
     } catch (error) {
         setSessionListRefreshStatus(error && error.message ? error.message : 'Session list refresh delayed.', true);
         scheduleSessionsLoadRetry(selectLatest);
@@ -33365,6 +34597,8 @@ function sessionSearchText(session) {
     const tokenCount = promptTokenCountForSession(session);
     return [
         session && session.title,
+        session && session.projectName,
+        (projectById(session && session.projectId) || {}).workspaceRoot,
         session && session.model,
         session && session.ownerKey,
         session && session.runtime,
@@ -33372,6 +34606,7 @@ function sessionSearchText(session) {
         session && session.titleLocked ? 'renamed' : '',
         session && session.shareEnabled ? 'public shared' : 'private',
         session && session.clonedFromSessionId ? 'clone copy duplicate' : '',
+        session && session.pinned ? 'pinned favorite' : '',
         formatSessionRelativeTime(session && session.updatedUtc),
         formatPromptTokens(tokenCount) + ' tokens',
         String(Math.round(tokenCount)) + ' prompt tokens',
@@ -33481,6 +34716,9 @@ function sessionRenderFingerprint(session) {
         session && session.locked ? 'locked' : '',
         session && session.savedUtc ? session.savedUtc : '',
         session && session.clonedFromSessionId ? session.clonedFromSessionId : '',
+        session && session.projectId ? session.projectId : 'unsorted',
+        session && session.pinned ? 'pinned' : '',
+        session && session.pinnedUtc ? session.pinnedUtc : '',
         promptTokenCountForSession(session),
         promptTokenBudgetForSession(session),
         Number(session && session.commentCount || 0),
@@ -33509,6 +34747,8 @@ function updateSessionBulkBar() {
     }
     if (deleteSelectedSessions)
         deleteSelectedSessions.disabled = count === 0;
+    if (moveSelectedSessions)
+        moveSelectedSessions.disabled = count === 0;
     if (clearSelectedSessions)
         clearSelectedSessions.disabled = count === 0;
 }
@@ -33642,12 +34882,54 @@ function endSessionDragSelection(event) {
     sessionDragSelectState = null;
 }
 
+function buildProjectGroups(visibleSessions, sessionItems, query) {
+    const itemById = new Map(sessionItems.filter(Boolean).map(item => [item.dataset.sessionId, item]));
+    const sessionsByProject = new Map();
+    visibleSessions.forEach(session => {
+        const projectId = session && session.projectId ? session.projectId : 'unsorted';
+        if (!sessionsByProject.has(projectId)) sessionsByProject.set(projectId, []);
+        sessionsByProject.get(projectId).push(session);
+    });
+    const projects = chatProjects.filter(project => project && (archivedProjectsVisible || !project.archived));
+    if (!projects.some(project => project.id === 'unsorted')) projects.push({ id: 'unsorted', name: 'Unsorted', workspaceRoot: '', builtIn: true });
+    return projects.filter(project => !query || sessionsByProject.has(project.id) || [project.name, project.workspaceRoot].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase())).map(project => {
+        const group = document.createElement('section');
+        group.className = 'project-group' + (project.archived ? ' archived' : '') + (selectedProjectId === project.id ? ' selected' : '');
+        group.dataset.projectId = project.id;
+        const sessions = sessionsByProject.get(project.id) || [];
+        const expanded = !!query || expandedProjectIds.has(project.id) || sessions.some(session => session.id === currentSessionId);
+        const header = document.createElement('div'); header.className = 'project-header';
+        const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'ghost project-toggle'; toggle.textContent = expanded ? '▾' : '▸'; toggle.title = expanded ? 'Collapse project' : 'Expand project';
+        const titleWrap = document.createElement('div'); titleWrap.className = 'project-title-wrap'; titleWrap.title = project.workspaceRoot || project.name || 'Project';
+        const title = document.createElement('span'); title.className = 'project-title'; title.textContent = (project.pinned ? '★ ' : '') + (project.name || 'Project') + ' · ' + sessions.length;
+        const path = document.createElement('span'); path.className = 'project-path'; path.textContent = project.workspaceRoot || (project.builtIn ? 'Chats without a project' : 'Organizational project');
+        titleWrap.append(title, path);
+        const actions = document.createElement('div'); actions.className = 'project-actions';
+        const add = document.createElement('button'); add.type = 'button'; add.className = 'ghost project-action'; add.textContent = '+'; add.title = 'New chat in project'; add.disabled = !!project.archived;
+        add.addEventListener('click', event => { event.stopPropagation(); startNewChatInProject(project.id); }); actions.appendChild(add);
+        if (!project.builtIn) {
+            [['pin', project.pinned ? '★' : '☆', project.pinned ? 'unpin' : 'pin'], ['rename', '✎', 'rename'], ['archive', project.archived ? '↺' : '⌂', project.archived ? 'restore' : 'archive']].forEach(spec => {
+                const button = document.createElement('button'); button.type = 'button'; button.className = 'ghost project-action'; button.textContent = spec[1]; button.title = spec[0] === 'archive' ? (project.archived ? 'Restore project' : 'Archive project') : spec[0] + ' project';
+                button.addEventListener('click', event => { event.stopPropagation(); runProjectAction(project, spec[2]).catch(error => addMessage('error', error.message || String(error))); }); actions.appendChild(button);
+            });
+        }
+        titleWrap.addEventListener('click', () => { selectedProjectId = project.id; expandedProjectIds.add(project.id); renderSessionList(); });
+        toggle.addEventListener('click', () => { if (expandedProjectIds.has(project.id)) expandedProjectIds.delete(project.id); else expandedProjectIds.add(project.id); selectedProjectId = project.id; renderSessionList(); });
+        header.append(toggle, titleWrap, actions);
+        const body = document.createElement('div'); body.className = 'project-session-list'; body.hidden = !expanded;
+        sessions.forEach(session => { const item = itemById.get(session.id); if (item) body.appendChild(item); });
+        if (!sessions.length) { const empty = document.createElement('div'); empty.className = 'project-empty'; empty.textContent = 'No chats yet. Use + to start one.'; body.appendChild(empty); }
+        group.append(header, body);
+        return group;
+    });
+}
+
 function renderSessionList() {
     if (!sessionList) return;
     updateSessionsLoadingUi();
     updateSessionDownloadButton();
     const reusableItems = new Map();
-    Array.from(sessionList.children).forEach(child => {
+    Array.from(sessionList.querySelectorAll('.session-item[data-session-id]')).forEach(child => {
         if (child && child.dataset && child.dataset.sessionId)
             reusableItems.set(child.dataset.sessionId, child);
     });
@@ -33674,12 +34956,9 @@ function renderSessionList() {
             sessionCountPill.textContent = '...';
             sessionCountPill.title = 'Sessions are loading';
         } else {
-            const totalSessions = Math.max(chatSessionTotalCount || 0, chatSessions.length);
-            const loadedLabel = chatSessionsHasMore && totalSessions > chatSessions.length ? (chatSessions.length + '+') : String(chatSessions.length);
-            sessionCountPill.textContent = query ? (visibleSessions.length + '/' + loadedLabel) : loadedLabel;
-            sessionCountPill.title = query
-                ? visibleSessions.length + ' matching ' + (visibleSessions.length === 1 ? 'session' : 'sessions') + ' out of ' + loadedLabel + (chatSessionsHasMore ? ' loaded recent sessions' : '')
-                : (chatSessionsHasMore ? ('Showing latest ' + chatSessions.length + ' of ' + totalSessions + ' saved sessions') : (chatSessions.length === 1 ? '1 saved session' : chatSessions.length + ' saved sessions'));
+            const visibleProjects = chatProjects.filter(project => project && (archivedProjectsVisible || !project.archived));
+            sessionCountPill.textContent = String(visibleProjects.length);
+            sessionCountPill.title = visibleProjects.length + ' projects · ' + chatSessions.length + ' chats';
         }
     }
     if (!sessionsLoaded) {
@@ -33688,7 +34967,7 @@ function renderSessionList() {
         sessionList.replaceChildren(createPanelLoadingRow(message, 'session-empty loading'));
         return;
     }
-    if (!chatSessions.length) {
+    if (!chatSessions.length && !chatProjects.length) {
         updateSessionBulkBar();
         const empty = document.createElement('div');
         empty.className = 'session-empty';
@@ -33701,7 +34980,8 @@ function renderSessionList() {
         sessionList.replaceChildren(empty);
         return;
     }
-    if (!visibleSessions.length) {
+    const projectQueryMatch = query && chatProjects.some(project => project && (archivedProjectsVisible || !project.archived) && [project.name, project.workspaceRoot].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()));
+    if (!visibleSessions.length && !projectQueryMatch && chatSessions.length) {
         updateSessionBulkBar();
         const empty = document.createElement('div');
         empty.className = 'session-empty';
@@ -33740,6 +35020,7 @@ function renderSessionList() {
             ' has-selection' +
             (updatedAgeMs < 10 * 60 * 1000 ? ' recent' : '') +
             (isStreaming ? ' streaming' : '') +
+            (session && session.pinned ? ' pinned' : '') +
             (session && session.locked ? ' locked' : '') +
             (canUseAdminTools() ? ' admin-enabled' : '');
         item.style.setProperty('--session-index', String(index));
@@ -33836,11 +35117,13 @@ function renderSessionList() {
 
         const actions = document.createElement('div');
         actions.className = 'session-actions';
+        const pin = createSessionActionButton(session && session.pinned ? '★' : '☆', session && session.pinned ? 'Unpin chat' : 'Pin chat', 'session-project-pin');
+        const move = createSessionActionButton('↪', 'Move chat to another project', 'session-move');
         const save = createSessionActionButton('S', 'Save session', 'session-save');
         const lock = createSessionActionButton(session && session.locked ? 'U' : 'L', session && session.locked ? 'Unlock session' : 'Lock session', 'session-lock');
         const clone = createSessionActionButton('C', 'Clone session', 'session-clone');
-        const rename = createSessionActionButton('T', 'Rename session', 'session-rename');
-        const remove = createSessionActionButton('X', 'Delete session', 'session-delete');
+        const rename = createSessionActionButton('✎', 'Rename session', 'session-rename');
+        const remove = createSessionActionButton('×', 'Delete session', 'session-delete');
         const admin = createSessionActionButton('...', 'Administrative options', 'session-admin');
         open.appendChild(top);
         open.appendChild(meta);
@@ -33859,6 +35142,16 @@ function renderSessionList() {
             event.preventDefault();
             event.stopPropagation();
             saveSessionAction(session).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+        });
+        pin.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            runSessionAction(session, session && session.pinned ? 'unpin' : 'pin').catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+        });
+        move.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            moveSessionsToProject([session.id]).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
         });
         lock.addEventListener('click', event => {
             event.preventDefault();
@@ -33881,6 +35174,8 @@ function renderSessionList() {
         });
         item.appendChild(checkbox);
         item.appendChild(open);
+        actions.appendChild(pin);
+        actions.appendChild(move);
         actions.appendChild(save);
         actions.appendChild(lock);
         actions.appendChild(clone);
@@ -33890,7 +35185,7 @@ function renderSessionList() {
         item.appendChild(actions);
         nextItems.push(item);
     });
-    sessionList.replaceChildren(...nextItems);
+    sessionList.replaceChildren(...buildProjectGroups(visibleSessions, nextItems, query));
     syncSessionSelectionUi();
 }
 
@@ -34162,10 +35457,12 @@ async function loadSession(id) {
         return;
     }
     currentSessionId = data.session.id;
+    currentProjectId = data.session.projectId || 'unsorted';
+    selectedProjectId = currentProjectId;
+    expandedProjectIds.add(currentProjectId);
     activeGoal = data.session.goal && typeof data.session.goal === 'object' ? data.session.goal : {};
     activePlan = data.session.plan && typeof data.session.plan === 'object' ? data.session.plan : {};
-    interactionMode = data.session.interactionMode || 'chat';
-    setInteractionMode(interactionMode);
+    const sessionInteractionMode = data.session.interactionMode || 'chat';
     renderGoalPanel();
     forgetSessionOwnershipSaveConflict(currentSessionId);
     applySessionActionResult(data.session);
@@ -34191,6 +35488,19 @@ async function loadSession(id) {
             updateImageAttachVisibility();
         }
     }
+    const storedSessionService = String(data.session.service || '').trim();
+    const storedRuntimeService = String(data.session.runtime || '').trim();
+    const interactionService = sessionInteractionMode !== 'chat' && sessionInteractionMode !== 'plan'
+        ? sessionInteractionMode
+        : '';
+    const sessionService = [storedSessionService, interactionService, storedRuntimeService]
+        .find(value => value && isServiceOptionSelectable(value)) || '';
+    if (sessionService && selectedService() !== sessionService) {
+        rememberManualServiceSelection(sessionService);
+        serviceSelect.value = sessionService;
+        serviceSelect.dispatchEvent(new Event('change'));
+    }
+    setInteractionMode(sessionInteractionMode === 'plan' ? 'plan' : (sessionService || 'chat'));
     const savedReasoningLevel = String(data.session.reasoningLevel || data.session.reasoning_level || 'inherit').toLowerCase();
     if (sessionReasoningInherit) sessionReasoningInherit.checked = savedReasoningLevel === 'inherit';
     if (savedReasoningLevel !== 'inherit' && reasoningLevelInput) reasoningLevelInput.value = String(Math.max(0, reasoningLevelNames.indexOf(savedReasoningLevel)));
@@ -34827,11 +36137,12 @@ async function loadModels() {
 }
 
 function refreshModelsForModeDropdownOpen() {
-    if (!serviceSelect || serviceSelect.disabled || modeOpenModelRefreshInFlight) return;
-    modeOpenModelRefreshInFlight = true;
-    Promise.resolve(loadModels())
+    if (!serviceSelect || serviceSelect.disabled) return Promise.resolve();
+    if (modeOpenModelRefreshPromise) return modeOpenModelRefreshPromise;
+    modeOpenModelRefreshPromise = Promise.resolve(loadModels())
         .catch(error => addMessage('error', error && error.message ? error.message : String(error)))
-        .finally(() => { modeOpenModelRefreshInFlight = false; });
+        .finally(() => { modeOpenModelRefreshPromise = null; });
+    return modeOpenModelRefreshPromise;
 }
 
 function setRuntimeModelsStatus(text, isError) {
@@ -35640,10 +36951,18 @@ function updateComposerAttachStackLayout() {
 }
 
 function updateImageAttachVisibility() {
-    if (!imageAttach) return;
-    const showImages = permissionState.imageUploads !== false;
+    const agentMode = selectedService() === 'agent' && !sharedView;
+    const showImages = agentMode && permissionState.imageUploads !== false;
+    const showFiles = agentMode && permissionState.fileUploads !== false;
+    if (!imageAttach || !fileAttach) return;
     imageAttach.style.display = showImages ? 'grid' : 'none';
+    fileAttach.style.display = showFiles ? 'grid' : 'none';
+    imageAttach.classList.toggle('disabled', !showImages);
+    fileAttach.classList.toggle('disabled', !showFiles);
+    if (imageInput) imageInput.disabled = !showImages;
+    if (fileInput) fileInput.disabled = !showFiles;
     if (form) form.classList.toggle('no-image-attach', !showImages);
+    if (form) form.classList.toggle('no-file-attach', !showFiles);
     updateComposerAttachStackLayout();
     updateMediaSourceAttachVisibility();
     updateVoiceButtonVisibility();
@@ -35844,9 +37163,17 @@ if (portraitDrawerBackdrop) {
 }
 
 newSession.addEventListener('click', () => {
-    clearConversation();
-    prompt.focus();
+    startNewChatInProject(selectedProjectId || currentProjectId || 'unsorted');
 });
+if (newProject)
+    newProject.addEventListener('click', () => createChatProject().catch(error => addMessage('error', error && error.message ? error.message : String(error))));
+if (showArchivedProjects)
+    showArchivedProjects.addEventListener('click', () => {
+        archivedProjectsVisible = !archivedProjectsVisible;
+        showArchivedProjects.classList.toggle('active', archivedProjectsVisible);
+        showArchivedProjects.title = archivedProjectsVisible ? 'Hide archived projects' : 'Show archived projects';
+        renderSessionList();
+    });
 if (refreshSessions) {
     refreshSessions.addEventListener('click', () => {
         if (sessionsLoading) return;
@@ -35907,6 +37234,8 @@ if (memoryClose)
     memoryClose.addEventListener('click', () => setMemoryPanelVisible(false));
 if (memoryAdd)
     memoryAdd.addEventListener('click', addChatMemoryFromInput);
+if (memoryPolicyAdd)
+    memoryPolicyAdd.addEventListener('click', addChatMemoryBlacklistRule);
 if (memoryInput) {
     memoryInput.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -35946,6 +37275,8 @@ if (commentsPanelEdgeToggle)
     });
 if (deleteSelectedSessions)
     deleteSelectedSessions.addEventListener('click', () => deleteSelectedSessionIds().catch(error => addMessage('error', error && error.message ? error.message : String(error))));
+if (moveSelectedSessions)
+    moveSelectedSessions.addEventListener('click', () => moveSessionsToProject(Array.from(selectedSessionIds)).catch(error => addMessage('error', error && error.message ? error.message : String(error))));
 if (selectAllSessions)
     selectAllSessions.addEventListener('click', selectAllVisibleSessions);
 if (clearSelectedSessions)
@@ -36043,6 +37374,7 @@ modelSelect.addEventListener('change', () => {
         serviceSelect.addEventListener('change', () => {
             if (!serviceSelectionChangeIsAutomatic)
                 rememberManualServiceSelection(selectedService());
+            setInteractionMode(selectedService() || 'chat');
             enforceSelectedServiceModelSupport();
             setExpandedService(selectedService());
             refreshServiceDetailsPanel();
@@ -36159,15 +37491,10 @@ if (generationSettingsToggle) {
     });
 }
 if (generationSettingsWrap) {
-    generationSettingsWrap.addEventListener('mouseleave', () => {
-        if (!generationSettingsWrap.matches(':focus-within'))
-            setGenerationSettingsOpen(false);
-    });
-    generationSettingsWrap.addEventListener('focusout', () => {
-        window.setTimeout(() => {
-            if (generationSettingsWrap && !generationSettingsWrap.matches(':hover, :focus-within'))
-                setGenerationSettingsOpen(false);
-        }, 0);
+    generationSettingsWrap.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        setGenerationSettingsOpen(false);
+        if (generationSettingsToggle) generationSettingsToggle.focus();
     });
 }
 if (modelSectionToggle) {
@@ -36700,6 +38027,7 @@ let chatAppBootstrapped = false;
 async function refreshChatIdentityState() {
     await loadServerIdentity().catch(() => { });
     await loadSessionOwner().catch(() => { });
+    await loadAlignment().catch(() => { });
     await loadPermissions().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     await loadSessions(false).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     await loadFilesystemAccess().catch(() => { });
@@ -36725,6 +38053,7 @@ async function bootstrapChatApp() {
     startServerHardwareMetrics();
     try {
         await withTimeout('server identity', loadServerIdentity().catch(() => { }), 6000);
+        await withTimeout('alignment', loadAlignment().catch(() => { }), 8000);
         setStartupProgress(28, 'Loading permissions');
         await withTimeout('permissions', loadPermissions(15000), 8000).catch(() => {
             if (permissionNote)
@@ -36757,6 +38086,7 @@ async function bootstrapChatApp() {
     } finally {
         releaseStartupUi();
         showJackDirectorFeatureToast();
+        maybePromptDreamHardwareRecommendation().catch(() => { });
     }
 }
 
@@ -36815,13 +38145,13 @@ startHeartbeat();
 if (sharedSessionKey) {
     bootstrapSharedSession();
 } else {
-    setStartupProgress(12, 'Checking proxy');
+    setStartupProgress(12, 'Checking JACK');
     loadAuthSession()
         .then(session => {
             if (isSocketJackAuthenticated(session) || canUseChatWithoutLogin(session)) {
                 if (!isSocketJackAuthenticated(session))
                     clearSocketJackToken();
-                setStartupProgress(16, 'Opening proxy');
+                setStartupProgress(16, 'Opening JACK');
                 setLoginGateVisible(false);
                 return bootstrapChatApp().then(() => finalizeTokenCheckoutFromUrl().catch(error => setTokenPurchaseStatus(error && error.message ? error.message : String(error), true)));
             }
@@ -36847,7 +38177,8 @@ const dreamUi = {
     owner: document.getElementById('dreamOwner'), enabled: document.getElementById('dreamEnabled'), preset: document.getElementById('dreamPreset'), resources: document.getElementById('dreamResources'), permissions: document.getElementById('dreamPermissions'),
     fields: { startCpuPercent:'dreamStartCpu', pauseCpuPercent:'dreamPauseCpu', startRamPercent:'dreamStartRam', pauseRamPercent:'dreamPauseRam', startGpuPercent:'dreamStartGpu', pauseGpuPercent:'dreamPauseGpu', startVramPercent:'dreamStartVram', pauseVramPercent:'dreamPauseVram', startDiskPercent:'dreamStartDisk', pauseDiskPercent:'dreamPauseDisk', recurrenceMinutes:'dreamRecurrence', maxRunMinutes:'dreamMaxRun', tokenBudget:'dreamTokenBudget', sourceTokenBudget:'dreamSourceBudget', sessionsPerPass:'dreamSessions' }
 };
-let dreamSettings = null, dreamDirty = false, dreamPollTimer = 0, dreamLoadInFlight = false;
+let dreamSettings = null, dreamRecommendedSettings = null, dreamDirty = false, dreamPollTimer = 0, dreamLoadInFlight = false, dreamPermissionSaveChain = Promise.resolve(), dreamHardwarePromptShown = false;
+const dreamPermissionEdits = new Map();
 const dreamPresetValues = {
     conservative:{startCpuPercent:35,pauseCpuPercent:65,startRamPercent:65,pauseRamPercent:82,startGpuPercent:30,pauseGpuPercent:70,startVramPercent:55,pauseVramPercent:82,startDiskPercent:35,pauseDiskPercent:75},
     balanced:{startCpuPercent:50,pauseCpuPercent:75,startRamPercent:72,pauseRamPercent:88,startGpuPercent:45,pauseGpuPercent:80,startVramPercent:65,pauseVramPercent:88,startDiskPercent:50,pauseDiskPercent:82},
@@ -36857,19 +38188,49 @@ function dreamOwnerQuery(){ const owner=dreamUi.owner&&dreamUi.owner.value; retu
 function dreamOwnerBody(extra){ return Object.assign({ownerKey:(dreamUi.owner&&dreamUi.owner.value)||undefined},extra||{}); }
 async function dreamFetch(url, options) { const response = await fetch(url, Object.assign({credentials:'same-origin'},options||{})); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.error || 'Dream request failed.'); return data; }
 function setDreamSaved(text,error){ dreamUi.saveStatus.textContent=text||''; dreamUi.saveStatus.style.color=error?'#fca5a5':''; }
-function renderDreamSettings(settings, meta) { if(dreamDirty)return; dreamSettings=settings; dreamUi.enabled.checked=!!settings.enabled; dreamUi.preset.value=settings.preset||'custom'; Object.entries(dreamUi.fields).forEach(([key,id])=>{const field=document.getElementById(id);if(field)field.value=settings[key]??'';}); document.getElementById('dreamReset').disabled=!meta||!meta.hasOverride||meta.ownerKey==='global'; }
+function prepareDreamSliderMarkers(){document.querySelectorAll('.dream-slider-field input[type="range"]').forEach(input=>{if(input.parentElement?.classList.contains('dream-range-wrap'))return;const wrap=document.createElement('span');wrap.className='dream-range-wrap';input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);const marker=document.createElement('span');marker.className='dream-recommendation-marker';marker.textContent='▼';marker.setAttribute('aria-hidden','true');wrap.appendChild(marker);});}
+function syncDreamSliderOutputs(){
+    document.querySelectorAll('.dream-slider-field input[type="range"]').forEach(input=>{
+        const output=document.getElementById(input.id+'Value'), entry=Object.entries(dreamUi.fields).find(([,id])=>id===input.id), key=entry&&entry[0], recommended=Number(dreamRecommendedSettings&&dreamRecommendedSettings[key]);
+        const value=Number(input.value), field=input.closest('.dream-slider-field'), wrap=input.closest('.dream-range-wrap');
+        if(!Number.isFinite(recommended)){if(output)output.textContent=String(input.value)+'%';return;}
+        const difference=value-recommended, distance=Math.abs(difference), quality=distance<=3?'perfect':distance<=12?'reasonable':'outside';
+        field?.classList.remove('dream-quality-perfect','dream-quality-reasonable','dream-quality-outside');field?.classList.add('dream-quality-'+quality);
+        const min=Number(input.min||0),max=Number(input.max||100),position=Math.max(0,Math.min(100,(recommended-min)*100/(max-min)));
+        if(wrap){wrap.style.setProperty('--dream-recommended-position',position+'%');wrap.title='Recommended for this PC: '+recommended+'%';}
+        const rating=quality==='perfect'?'Perfect':quality==='reasonable'?'Within reason':difference>0?'Too high':'Too low';
+        if(output)output.textContent=value+'% · Recommended '+recommended+'% · '+rating;
+    });
+}
+function renderDreamSettings(settings, meta) { if(dreamDirty)return; dreamSettings=settings; dreamRecommendedSettings=meta&&meta.recommendedSettings||dreamRecommendedSettings; dreamUi.enabled.checked=!!settings.enabled; dreamUi.preset.value=settings.preset==='hardware-recommended'?'recommended':(settings.preset||'custom'); Object.entries(dreamUi.fields).forEach(([key,id])=>{const field=document.getElementById(id);if(field)field.value=settings[key]??'';}); const hardware=meta&&meta.hardwareRecommendation;document.getElementById('dreamHardwareNote').textContent=hardware&&hardware.currentHardware?'Recommended thresholds for '+hardware.currentHardware+'. The arrow marks the recommended value. Green is perfect, yellow is within reason, and red is too high or low.':''; syncDreamSliderOutputs(); document.getElementById('dreamReset').disabled=!meta||!meta.hasOverride||meta.ownerKey==='global'; }
+async function maybePromptDreamHardwareRecommendation(){
+    if(dreamHardwarePromptShown)return;dreamHardwarePromptShown=true;
+    try{
+        const data=await dreamFetch('/api/dream-settings');const hardware=data.hardwareRecommendation;
+        if(!hardware||!hardware.pending||!data.canManageOwners)return;
+        const changed=hardware.reason==='hardware-changed';
+        const detail=(hardware.previousHardware?'Previous: '+hardware.previousHardware+'\n':'')+'Current: '+(hardware.currentHardware||'detected hardware');
+        const apply=window.confirm((changed?'Dream Mode detected a hardware change.':'Dream Mode can now tune itself for this PC.')+'\n\n'+detail+'\n\nSelect OK to apply the recommended resource thresholds. Select Cancel to keep the current thresholds.');
+        await dreamFetch('/api/dream-hardware-recommendation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:apply?'apply':'keep'})});
+        if(dreamUi.backdrop.classList.contains('visible')&&!dreamDirty)await loadDreamUi(true);
+    }catch{dreamHardwarePromptShown=false;}
+}
 function renderDreamStatus(status){ const bits=[status.status||'unknown',status.phase||'',status.limitingResource||'',status.queuePosition?'queue '+status.queuePosition:'',status.nextRunUtc?'next '+new Date(status.nextRunUtc).toLocaleString():''].filter(Boolean); dreamUi.status.textContent=bits.join(' · '); const r=status.resources||{}; dreamUi.resources.textContent='CPU '+Number(r.cpuPercent||0).toFixed(0)+'% · RAM '+Number(r.ramPercent||0).toFixed(0)+'% · GPU '+Number(r.gpuPercent||0).toFixed(0)+'% · VRAM '+Number(r.vramPercent||0).toFixed(0)+'% · Disk '+Number(r.diskPercent||0).toFixed(0)+'% · processed '+Number(status.processedSessions||0)+' sessions / '+Number(status.processedMessages||0)+' messages'+(status.lastError?' · '+status.lastError:''); }
-function renderDreamPermissions(data){ dreamUi.permissions.textContent=''; const p=data&&data.permissions||{}; const rows=[['Internet search','internetSearch','dreamInternetSearch'],['VS tools','vsCopilotTools','dreamVsCopilotTools'],['Agent','agentAccess','dreamAgentAccess'],['Terminal','terminalCommands','dreamTerminalCommands'],['Uploads','fileUploads','dreamFileUploads'],['Images','imageUploads','dreamImageUploads'],['Downloads','fileDownloads','dreamFileDownloads'],['FTP','ftpServer','dreamFtpServer'],['PC Access','pcAccess','dreamPcAccess']]; rows.forEach(([label,base,dream])=>{const wrap=document.createElement('label');wrap.className='permission-row';const box=document.createElement('input');box.type='checkbox';box.checked=!!p[dream];box.disabled=!data.canManageOwners||!p[base]||(base==='terminalCommands'&&!p.terminalForeverApproved);box.addEventListener('change',async()=>{try{await dreamFetch('/api/dream-permissions',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(dreamOwnerBody({[dream]:box.checked}))});setDreamSaved('Permissions saved',false);}catch(error){box.checked=!box.checked;setDreamSaved(error.message,true);}});wrap.append(box,document.createTextNode(label+(p[base]?'':' (base permission off)')));dreamUi.permissions.appendChild(wrap);}); }
+function renderDreamPermissions(data){ dreamUi.permissions.textContent=''; const p=data&&data.permissions||{}; const rows=[['Internet search','internetSearch','dreamInternetSearch'],['VS tools','vsCopilotTools','dreamVsCopilotTools'],['Agent','agentAccess','dreamAgentAccess'],['Terminal','terminalCommands','dreamTerminalCommands'],['Uploads','fileUploads','dreamFileUploads'],['Images','imageUploads','dreamImageUploads'],['Downloads','fileDownloads','dreamFileDownloads'],['FTP','ftpServer','dreamFtpServer'],['PC Access','pcAccess','dreamPcAccess']]; rows.forEach(([label,base,dream])=>{const wrap=document.createElement('label');wrap.className='permission-row';const box=document.createElement('input');box.type='checkbox';box.checked=dreamPermissionEdits.has(dream)?!!dreamPermissionEdits.get(dream):!!p[dream];box.disabled=!data.canManageOwners||!p[base]||(base==='terminalCommands'&&!p.terminalForeverApproved);box.addEventListener('change',()=>{const next=box.checked;dreamPermissionEdits.set(dream,next);setDreamSaved('Saving permissions...',false);dreamPermissionSaveChain=dreamPermissionSaveChain.then(()=>dreamFetch('/api/dream-permissions',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(dreamOwnerBody({[dream]:next}))})).then(()=>setDreamSaved('Permissions saved',false)).catch(error=>{if(dreamPermissionEdits.get(dream)===next){dreamPermissionEdits.delete(dream);box.checked=!!p[dream];}setDreamSaved(error.message,true);});});wrap.append(box,document.createTextNode(label+(p[base]?'':' (base permission off)')));dreamUi.permissions.appendChild(wrap);}); }
 function renderDreamJournal(entries) { dreamUi.journal.textContent=''; if(!entries.length){dreamUi.journal.innerHTML='<div class="memory-empty">No dreams recorded yet.</div>';return;} entries.forEach(entry=>{const row=document.createElement('div');row.className='memory-row';const details=document.createElement('details');const summary=document.createElement('summary');summary.className='memory-text';summary.textContent=(entry.summary||'Dream')+' ('+(entry.status||'unknown')+') · '+Number(entry.processedSessions||0)+' sessions / '+Number(entry.processedMessages||0)+' messages';details.appendChild(summary);const meta=document.createElement('div');meta.className='memory-meta';meta.textContent=(entry.createdUtc?new Date(entry.createdUtc).toLocaleString():'')+(entry.rawReflection?' · Reflection retained':'');details.appendChild(meta);if(entry.rawReflection){const raw=document.createElement('pre');raw.className='memory-meta';raw.textContent=entry.rawReflection;details.appendChild(raw);} (entry.toolAudit||[]).forEach(tool=>{const audit=document.createElement('div');audit.className='memory-meta';audit.textContent=tool;details.appendChild(audit);});(entry.candidates||[]).forEach(candidate=>{const text=document.createElement('div');text.className='memory-text';text.textContent=candidate.text+' · '+candidate.disposition+' · '+Math.round(Number(candidate.confidence||0)*100)+'%';details.appendChild(text);if(candidate.candidateType==='memory-conflict'){const stale=document.createElement('div');stale.className='memory-meta';stale.textContent='Stale: '+(candidate.staleMemoryText||'');details.appendChild(stale);}if(candidate.disposition==='review'){const actions=document.createElement('div');actions.className='memory-row-actions';(candidate.candidateType==='memory-conflict'?['approve','overwrite','delete-stale','reject']:['approve','reject']).forEach(action=>{const button=document.createElement('button');button.className='ghost';button.textContent=action==='delete-stale'?'Delete stale':action;button.onclick=async()=>{try{await dreamFetch('/api/dream-candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dreamOwnerBody({id:candidate.id,action}))});await loadDreamUi(false);}catch(error){setDreamSaved(error.message,true);}};actions.appendChild(button);});details.appendChild(actions);}});if(!(entry.candidates||[]).some(x=>x.disposition==='review')&&entry.status!=='running'){const del=document.createElement('button');del.className='ghost';del.textContent='Delete entry';del.onclick=async()=>{if(!window.confirm('Delete this resolved Dream journal entry?'))return;await dreamFetch('/api/dream-journal'+dreamOwnerQuery()+(dreamOwnerQuery()?'&':'?')+'id='+encodeURIComponent(entry.id),{method:'DELETE'});await loadDreamUi(false);};details.appendChild(del);}row.appendChild(details);dreamUi.journal.appendChild(row);}); }
+function renderDreamJournalStable(entries) { const expanded=new Set(Array.from(dreamUi.journal.querySelectorAll('details[open] summary')).map(summary=>summary.textContent||'')); renderDreamJournal(entries); dreamUi.journal.querySelectorAll('details').forEach(details=>{const summary=details.querySelector('summary');if(summary&&expanded.has(summary.textContent||''))details.open=true;}); }
 async function loadDreamOwners(){try{const data=await dreamFetch('/api/dream-owners');const selected=dreamUi.owner.value;dreamUi.owner.innerHTML='<option value="">Current owner</option>';(data.owners||[]).forEach(owner=>{const option=document.createElement('option');option.value=owner.ownerKey;option.textContent=(owner.displayName||owner.ownerKey)+(owner.hasOverride?' · custom':' · global');dreamUi.owner.appendChild(option);});dreamUi.owner.value=selected;}catch{dreamUi.owner.innerHTML='<option value="">Current owner</option>';}}
-async function loadDreamUi(includeSettings=true){if(dreamLoadInFlight)return;dreamLoadInFlight=true;try{const suffix=dreamOwnerQuery();const filter=document.getElementById('dreamJournalFilter').value;const requests=[dreamFetch('/api/dream-status'+suffix),dreamFetch('/api/dream-journal'+suffix+(suffix?'&':'?')+'status='+encodeURIComponent(filter)),dreamFetch('/api/dream-permissions'+suffix)];if(includeSettings&&!dreamDirty)requests.unshift(dreamFetch('/api/dream-settings'+suffix));const result=await Promise.all(requests);let offset=0;if(includeSettings&&!dreamDirty){renderDreamSettings(result[0].settings,result[0]);offset=1;}renderDreamStatus(result[offset]);renderDreamJournal(result[offset+1].journal||[]);renderDreamPermissions(result[offset+2]);}catch(error){dreamUi.status.textContent=error.message;}finally{dreamLoadInFlight=false;}}
-function startDreamPolling(){window.clearInterval(dreamPollTimer);dreamPollTimer=window.setInterval(()=>{if(dreamUi.backdrop.classList.contains('visible'))loadDreamUi(false);},2500);}
-document.getElementById('dreamPanelToggle')?.addEventListener('click',async()=>{dreamUi.backdrop.classList.add('visible');await loadDreamOwners();await loadDreamUi(true);startDreamPolling();});
+async function loadDreamUi(includeSettings=true){if(dreamLoadInFlight)return;dreamLoadInFlight=true;try{const suffix=dreamOwnerQuery();const filter=document.getElementById('dreamJournalFilter').value;const requests=[dreamFetch('/api/dream-status'+suffix),dreamFetch('/api/dream-journal'+suffix+(suffix?'&':'?')+'status='+encodeURIComponent(filter)),dreamFetch('/api/dream-permissions'+suffix)];if(includeSettings&&!dreamDirty)requests.unshift(dreamFetch('/api/dream-settings'+suffix));const result=await Promise.all(requests);let offset=0;if(includeSettings&&!dreamDirty){renderDreamSettings(result[0].settings,result[0]);offset=1;}renderDreamStatus(result[offset]);renderDreamJournalStable(result[offset+1].journal||[]);renderDreamPermissions(result[offset+2]);}catch(error){dreamUi.status.textContent=error.message;}finally{dreamLoadInFlight=false;}}
+async function refreshDreamStatus(){if(dreamLoadInFlight)return;dreamLoadInFlight=true;try{renderDreamStatus(await dreamFetch('/api/dream-status'+dreamOwnerQuery()));}catch(error){dreamUi.status.textContent=error.message;}finally{dreamLoadInFlight=false;}}
+function startDreamPolling(){window.clearInterval(dreamPollTimer);dreamPollTimer=window.setInterval(()=>{if(dreamUi.backdrop.classList.contains('visible'))refreshDreamStatus();},2500);}
+prepareDreamSliderMarkers();
+document.getElementById('dreamPanelToggle')?.addEventListener('click',async()=>{dreamUi.backdrop.classList.add('visible');const resourceToggle=document.getElementById('dreamResourceToggle');if(resourceToggle&&!resourceToggle.dataset.bound){resourceToggle.dataset.bound='true';let lastPointerToggle=0;const toggleResource=button=>{const body=document.getElementById('dreamResourceBody'),open=button.getAttribute('aria-expanded')==='true';button.setAttribute('aria-expanded',open?'false':'true');if(body)body.hidden=open;};const pointerToggle=event=>{const now=Date.now();event.preventDefault();if(now-lastPointerToggle<250)return;lastPointerToggle=now;toggleResource(event.currentTarget);};resourceToggle.addEventListener('pointerdown',pointerToggle);resourceToggle.addEventListener('click',pointerToggle);resourceToggle.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleResource(event.currentTarget);}});}await loadDreamOwners();await loadDreamUi(true);startDreamPolling();});
 document.getElementById('dreamClose')?.addEventListener('click',()=>{dreamUi.backdrop.classList.remove('visible');window.clearInterval(dreamPollTimer);});
-dreamUi.owner?.addEventListener('change',()=>{dreamDirty=false;loadDreamUi(true);});
-dreamUi.preset?.addEventListener('change',()=>{const values=dreamPresetValues[dreamUi.preset.value];if(values)Object.entries(values).forEach(([key,value])=>{document.getElementById(dreamUi.fields[key]).value=value;});dreamDirty=true;});
+dreamUi.owner?.addEventListener('change',()=>{dreamDirty=false;dreamPermissionEdits.clear();loadDreamUi(true);});
+dreamUi.preset?.addEventListener('change',()=>{const values=dreamUi.preset.value==='recommended'?dreamRecommendedSettings:dreamPresetValues[dreamUi.preset.value];if(values)Object.entries(values).forEach(([key,value])=>{const id=dreamUi.fields[key];if(id&&document.getElementById(id))document.getElementById(id).value=value;});syncDreamSliderOutputs();dreamDirty=true;setDreamSaved('Unsaved changes',false);});
 dreamUi.enabled?.addEventListener('change',()=>{dreamDirty=true;setDreamSaved('Unsaved changes',false);});
-Object.values(dreamUi.fields).map(id=>document.getElementById(id)).forEach(input=>input?.addEventListener('change',()=>{dreamUi.preset.value='custom';dreamDirty=true;setDreamSaved('Unsaved changes',false);}));
+Object.values(dreamUi.fields).map(id=>document.getElementById(id)).forEach(input=>{if(!input)return;const markDreamDirty=()=>{if(input.type==='range')syncDreamSliderOutputs();dreamUi.preset.value='custom';dreamDirty=true;setDreamSaved('Unsaved changes',false);};input.addEventListener('change',markDreamDirty);if(input.type==='range')input.addEventListener('input',markDreamDirty);});
+document.querySelectorAll('[data-dream-step][data-dream-target]').forEach(button=>button.addEventListener('click',()=>{const input=document.getElementById(button.dataset.dreamTarget);if(!input)return;if(Number(button.dataset.dreamStep)<0)input.stepDown();else input.stepUp();input.dispatchEvent(new Event('change',{bubbles:true}));}));
 async function dreamAction(action){try{await dreamFetch('/api/dream-runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dreamOwnerBody({action}))});await loadDreamUi(false);}catch(error){setDreamSaved(error.message,true);}}
 document.getElementById('dreamNow')?.addEventListener('click',()=>dreamAction('start'));document.getElementById('dreamPause')?.addEventListener('click',()=>dreamAction('pause'));document.getElementById('dreamResume')?.addEventListener('click',()=>dreamAction('resume'));document.getElementById('dreamCancel')?.addEventListener('click',()=>dreamAction('cancel'));
 document.getElementById('dreamSave')?.addEventListener('click',async()=>{try{const next=Object.assign({},dreamSettings||{},{enabled:dreamUi.enabled.checked,preset:dreamUi.preset.value},dreamOwnerBody());Object.entries(dreamUi.fields).forEach(([key,id])=>next[key]=Number(document.getElementById(id).value));const data=await dreamFetch('/api/dream-settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)});dreamDirty=false;dreamSettings=data.settings;setDreamSaved('Saved',false);await loadDreamUi(true);}catch(error){setDreamSaved(error.message,true);}});

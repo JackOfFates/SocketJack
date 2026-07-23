@@ -69,6 +69,23 @@ public sealed class ChatStreamEvent
     public string ReasoningLevel { get; init; } = "";
     public string RouteReason { get; init; } = "";
     public string PromptFingerprint { get; init; } = "";
+    public MobileAlignmentSnapshot? Alignment { get; init; }
+}
+
+public sealed class MobileAlignmentSnapshot
+{
+    public int Score { get; set; }
+    public string Tier { get; set; } = "Neutral";
+    public string Edge { get; set; } = "top";
+    public string Theme { get; set; } = "neutral";
+    public string LastReason { get; set; } = "Every Hero chooses a path.";
+    public string[] DisabledFeatures { get; set; } = Array.Empty<string>();
+    public string[] HighlightedFeatures { get; set; } = Array.Empty<string>();
+    public bool DreamsEnabled { get; set; } = true;
+    public bool PendingReview { get; set; }
+    public bool Locked { get; set; }
+    public string RecoveryGuidance { get; set; } = "You can only help others after you help yourself.";
+    public string UpdatedUtc { get; set; } = "";
 }
 
 public sealed class ChatSessionInfo
@@ -79,6 +96,10 @@ public sealed class ChatSessionInfo
     public DateTimeOffset CreatedAt { get; set; }
     public string Model { get; set; } = "";
     public string Runtime { get; set; } = "";
+    public string ProjectId { get; set; } = "unsorted";
+    public string ProjectName { get; set; } = "Unsorted";
+    public bool Pinned { get; set; }
+    public string PinnedUtc { get; set; } = "";
     public int MessageCount { get; set; }
     public int FileCount { get; set; }
     public int CommentCount { get; set; }
@@ -103,8 +124,25 @@ public sealed class ChatSessionDetail
     public string Title { get; set; } = "New chat";
     public string Model { get; set; } = "";
     public string ReasoningLevel { get; set; } = "inherit";
+    public string ProjectId { get; set; } = "unsorted";
+    public string ProjectName { get; set; } = "Unsorted";
+    public bool Pinned { get; set; }
     public List<ChatMessage> Messages { get; } = new();
     public List<AttachmentInfo> Files { get; } = new();
+}
+
+public sealed class ChatProjectInfo
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "Project";
+    public string WorkspaceRoot { get; set; } = "";
+    public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset LastActivityAt { get; set; }
+    public int SessionCount { get; set; }
+    public bool Pinned { get; set; }
+    public bool Archived { get; set; }
+    public bool BuiltIn { get; set; }
+    public string Subtitle => string.IsNullOrWhiteSpace(WorkspaceRoot) ? $"{SessionCount:N0} chats" : WorkspaceRoot;
 }
 
 public sealed class PcAccessStreamSession

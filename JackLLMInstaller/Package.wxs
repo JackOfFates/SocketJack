@@ -21,6 +21,8 @@
       <ComponentRef Id="ApplicationStartMenuShortcut" />
       <ComponentRef Id="RuntimeSessionsFolderComponent" />
       <ComponentRef Id="RuntimeSessionFilesFolderComponent" />
+      <ComponentRef Id="SecurityBrokerService" />
+      <ComponentRef Id="SecurityEnrollmentMarker" />
     </Feature>
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -34,8 +36,32 @@
 
   <Fragment>
     <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
-      <Files Include="$(var.PayloadDir)\**\*.*" />
+      <Files Include="$(var.PayloadDir)\**\*.*">
+        <Exclude Files="$(var.PayloadDir)\JackLLM.SecurityBroker.exe" />
+      </Files>
     </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="SecurityBrokerService" Guid="{7040DD97-E9A4-47DD-92C7-B97321A066F1}" Bitness="always64">
+        <File Id="SecurityBrokerExecutable" Source="$(var.PayloadDir)\JackLLM.SecurityBroker.exe" KeyPath="yes" />
+        <ServiceInstall Id="SecurityBrokerInstaller"
+                        Name="JackLLMSecurityBroker"
+                        DisplayName="JackLLM Security Broker"
+                        Description="Hardware-bound authentication broker for JackLLM Workstation."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem" />
+        <ServiceControl Id="SecurityBrokerControl" Name="JackLLMSecurityBroker" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM\Security" Name="PublisherCertificateSha256" Type="string" Value="$(var.PublisherCertificateSha256)" />
+        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM\Security" Name="ManifestPublicKeyBase64" Type="string" Value="$(var.ManifestPublicKeyBase64)" />
+      </Component>
+      <Component Id="SecurityEnrollmentMarker" Guid="{1EE70EBB-9232-482F-883F-F003B10BD4B8}" Bitness="always64" NeverOverwrite="yes">
+        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM\Security" Name="EnrollmentState" Type="string" Value="Pending" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
   </Fragment>
 
   <Fragment>

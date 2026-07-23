@@ -239,9 +239,9 @@
                             <Button x:Name="ApplyMagicWorkflowControlButton" Content="Apply Workflow" Click="ApplyMagicWorkflowControlButton_Click" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
                             <Button x:Name="StartCompanionButton" Content="Start Companion" Click="StartCompanionButton_Click" Margin="0,0,8,0" Visibility="Collapsed"/>
                             <Button x:Name="OpenCompanionButton" Content="Open Companion" Click="OpenCompanionButton_Click" Margin="0,0,8,0"/>
-                            <Button x:Name="StartStopButton" Content="Start Proxy" Click="StartStopButton_Click" Background="#1F7A68"/>
+                            <Button x:Name="StartStopButton" Content="Start JACK" Click="StartStopButton_Click" Background="#1F7A68"/>
                             <TextBlock x:Name="MagicWorkflowStatusText"
-                                       Text="Magic workflow: start proxy"
+                                       Text="Magic workflow: start JACK"
                                        Foreground="{StaticResource SubtleTextBrush}"
                                        FontFamily="Consolas"
                                        FontSize="11"
@@ -278,7 +278,7 @@
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
                                     <CheckBox x:Name="StartByDefaultCheckBox"
-                                          Content="Start proxy on open"
+                                          Content="Start JACK on open"
                                           IsChecked="True"
                                           Checked="StartByDefaultCheckBox_Changed"
                                           Unchecked="StartByDefaultCheckBox_Changed"/>
@@ -1684,55 +1684,37 @@
                     </Grid>
                 </TabItem>
 
-                <TabItem x:Name="WebUiTabItem" Header="Web UI">
-                    <Grid Margin="14,12,14,14">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-
-                        <Border Grid.Row="0"
-                                Background="{StaticResource PanelBrush}"
-                                BorderBrush="{StaticResource PanelBorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="8"
-                                Padding="12"
-                                Margin="0,0,0,10">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="Web UI"
-                                               FontSize="20"
-                                               FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="WebUiStatusText"
-                                               Text="Start the proxy to load the local Web UI."
-                                               Foreground="{StaticResource SubtleTextBrush}"
-                                               TextWrapping="Wrap"
-                                               Margin="0,4,0,0"/>
-                                </StackPanel>
-                                <WrapPanel Grid.Column="1"
-                                           VerticalAlignment="Center"
-                                           Margin="12,0,0,0">
-                                    <Button x:Name="WebUiReloadButton"
-                                            Content="Reload"
-                                            Click="WebUiReloadButton_Click"
-                                            Padding="10,4"
-                                            Margin="0,0,8,0"
-                                            IsEnabled="False"/>
-                                    <Button x:Name="WebUiOpenExternalButton"
-                                            Content="Open External"
-                                            Click="WebUiOpenExternalButton_Click"
-                                            Padding="10,4"
-                                            IsEnabled="False"/>
-                                </WrapPanel>
-                            </Grid>
-                        </Border>
-
-                        <Border Grid.Row="1"
-                                Background="#070A10"
+                <TabItem x:Name="WebUiTabItem">
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Web UI"
+                                       VerticalAlignment="Center"/>
+                            <Button x:Name="WebUiReloadButton"
+                                    Content="&#x21BB;"
+                                    Click="WebUiReloadButton_Click"
+                                    Width="24"
+                                    Height="22"
+                                    Padding="0"
+                                    Margin="8,0,4,0"
+                                    FontSize="13"
+                                    ToolTip="Reload Web UI"
+                                    IsEnabled="False"/>
+                            <Button x:Name="WebUiOpenExternalButton"
+                                    Content="&#x2197;"
+                                    Click="WebUiOpenExternalButton_Click"
+                                    Width="24"
+                                    Height="22"
+                                    Padding="0"
+                                    FontSize="13"
+                                    ToolTip="Open Web UI in the default browser"
+                                    IsEnabled="False"/>
+                            <TextBlock x:Name="WebUiStatusText"
+                                       Text="Start JACK to load the local Web UI."
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Grid Margin="14,6,14,14">
+                        <Border Background="#070A10"
                                 BorderBrush="{StaticResource PanelBorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8"
@@ -2589,7 +2571,7 @@
                                                            TextWrapping="Wrap"
                                                            Margin="0,4,0,0"/>
                                                 <TextBlock x:Name="ShellSuggestionText"
-                                                           Text="Start the proxy to publish; stop the proxy to remove it from the master list."
+                                                           Text="Start JACK to publish; stop JACK to remove it from the master list."
                                                            Foreground="{StaticResource SubtleTextBrush}"
                                                            TextWrapping="Wrap"
                                                            Margin="0,6,0,0"/>
@@ -2644,7 +2626,7 @@
                                                               FontWeight="SemiBold"
                                                               VerticalAlignment="Center"
                                                               Margin="0,0,12,0"
-                                                              ToolTip="Use one persistent WebSocket transport for the public proxy; TCP agents remain as fallback."/>
+                                                              ToolTip="Use one persistent WebSocket transport for public JACK access; TCP agents remain as fallback."/>
                                                     <Button Grid.Column="1"
                                                             Content="Routes"
                                                             Click="RefreshShellInstancesButton_Click"
@@ -2697,7 +2679,7 @@
                                                     <StackPanel Grid.Row="3"
                                                                 Grid.ColumnSpan="2"
                                                                 Margin="0,8,0,0">
-                                                        <TextBlock Text="Proxy URL" Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
+                                                        <TextBlock Text="JACK URL" Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
                                                         <TextBox x:Name="ShellProxyUrlPreviewTextBox"
                                                                  Height="42"
                                                                  IsReadOnly="True"
@@ -4179,7 +4161,7 @@
                                     <WrapPanel Margin="0,0,0,8">
                                         <ComboBox x:Name="DreamOwnerComboBox" Width="270" DisplayMemberPath="DisplayName" SelectedValuePath="OwnerKey" SelectionChanged="DreamOwnerComboBox_SelectionChanged" Margin="0,0,8,8"/>
                                         <CheckBox x:Name="DreamEnabledCheckBox" Content="Automatic Dreaming" VerticalAlignment="Center" Margin="0,0,12,8"/>
-                                        <ComboBox x:Name="DreamPresetComboBox" Width="130" Margin="0,0,8,8"><ComboBoxItem Content="Conservative" Tag="conservative"/><ComboBoxItem Content="Balanced" Tag="balanced"/><ComboBoxItem Content="Aggressive" Tag="aggressive"/><ComboBoxItem Content="Custom" Tag="custom"/></ComboBox>
+                                        <ComboBox x:Name="DreamPresetComboBox" Width="190" Margin="0,0,8,8"><ComboBoxItem Content="Recommended for this PC" Tag="recommended"/><ComboBoxItem Content="Conservative" Tag="conservative"/><ComboBoxItem Content="Balanced" Tag="balanced"/><ComboBoxItem Content="Aggressive" Tag="aggressive"/><ComboBoxItem Content="Custom" Tag="custom"/></ComboBox>
                                         <Button Content="Save" Click="SaveDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
                                         <Button Content="Reset to Global" Click="ResetDreamManagementButton_Click" Padding="9,4" Margin="0,0,8,8"/>
                                     </WrapPanel>
@@ -4281,7 +4263,7 @@
                                        FontSize="28"
                                        FontWeight="SemiBold"
                                        Foreground="{StaticResource TextBrush}"/>
-                            <TextBlock Text="JackLLM Workstation is the WPF control room for local model hosting: start the local proxy, chat with local or remote LM services, publish this PC to SocketJack.com, watch runtime health, manage sessions, and review file or terminal permissions from one place."
+                            <TextBlock Text="JackLLM Workstation is the WPF control room for local model hosting: start JACK, chat with local or remote LM services, publish this PC to SocketJack.com, watch runtime health, manage sessions, and review file or terminal permissions from one place."
                                        Foreground="{StaticResource SubtleTextBrush}"
                                        TextWrapping="Wrap"
                                        FontSize="14"
