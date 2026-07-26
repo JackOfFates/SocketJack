@@ -437,3 +437,5 @@ log_sess*.txt
 /LlmRuntime.VisualStudio2026/Build/RestrictVsixManifestToAmd64.ps1
 /build-check/JackLLM-model-move/install/linux/install-jackllm-cuda-pytorch.sh
 /build-check
+/tools/Publish-JackLLMUpdate.ps1
+/SocketJack.Update/Fix-DeployedChannels.ps1
