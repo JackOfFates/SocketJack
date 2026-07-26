@@ -1,62 +1,21 @@
 namespace LlmRuntime.VisualStudio2026;
 
-using LlmRuntime.VisualStudio;
 using Microsoft.VisualStudio.Extensibility;
 using Microsoft.VisualStudio.Extensibility.Commands;
 
 internal abstract class SocketJackAuthenticatedCommand : Command
 {
-    private readonly SocketJackVisualStudioAuthService authService = new();
-
     public override Task InitializeAsync(CancellationToken cancellationToken)
     {
         SocketJackLocalProxySupervisor.StartBestEffortFromStoredSelection();
-        SocketJackVisualStudioAuthService.AuthStateChanged += this.OnAuthStateChanged;
-        this.UpdateAuthState();
+        this.SetEnabledState(true);
         return base.InitializeAsync(cancellationToken);
     }
 
     public sealed override async Task ExecuteCommandAsync(IClientContext context, CancellationToken cancellationToken)
     {
-        if (await SocketJackLocalWorkstationDiscovery.IsAvailableAsync(cancellationToken).ConfigureAwait(false))
-        {
-            this.SetEnabledState(true);
-            await this.ExecuteAuthenticatedCommandAsync(context, cancellationToken);
-            return;
-        }
-
-        if (!this.authService.HasStoredToken())
-        {
-            this.UpdateAuthState();
-            await this.Extensibility.Shell().ShowToolWindowAsync<SocketJackSignInToolWindow>(activate: true, cancellationToken);
-            return;
-        }
-
-        try
-        {
-            SocketJackAuthState state = this.authService.Load();
-            await this.authService.ValidateAsync(state, cancellationToken);
-        }
-        catch (SocketJackAuthRequiredException)
-        {
-            this.UpdateAuthState();
-            await this.Extensibility.Shell().ShowToolWindowAsync<SocketJackSignInToolWindow>(activate: true, cancellationToken);
-            return;
-        }
-
         await this.ExecuteAuthenticatedCommandAsync(context, cancellationToken);
     }
 
     protected abstract Task ExecuteAuthenticatedCommandAsync(IClientContext context, CancellationToken cancellationToken);
-
-    private void OnAuthStateChanged(object? sender, EventArgs e)
-    {
-        this.UpdateAuthState();
-    }
-
-    private void UpdateAuthState()
-    {
-        bool canRun = this.authService.HasStoredToken() || SocketJackLocalWorkstationDiscovery.IsLikelyAvailable();
-        this.SetEnabledState(canRun);
-    }
 }

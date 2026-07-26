@@ -215,7 +215,7 @@ Add structured JSON logs for connect, disconnect, request, response, rate-limit,
 
 ## LLM-related project suggestions
 
-This pass covered `LlmRuntime`, `LlmRuntime.Tests`, `LlmRuntime.Wpf`, `LlmRuntime.VisualStudio`, `JackONNX`, `JackONNX.Tests`, `JackLLM`, `JackLLMCompanion`, `SocketJack.LlmCore`, `SocketJack-MagicMasterList`, and `SocketJack/JackLLM.Android`. Updater, installer, and publisher projects were intentionally skipped except where a reviewed app directly depends on them.
+This pass covered `LlmRuntime`, `LlmRuntime.Tests`, `LlmRuntime.Wpf`, `LlmRuntime.VisualStudio`, `JackONNX`, `JackONNX.Tests`, `JackLLM`, `JackLLMCompanion`, `SocketJack.LlmCore`, `SocketJack-MagicMasterList`, and `JackLLM.Android`. Updater, installer, and publisher projects were intentionally skipped except where a reviewed app directly depends on them.
 
 Additional checks run:
 
@@ -227,14 +227,14 @@ Additional checks run:
 - `dotnet build SocketJack-MagicMasterList/SocketJack-MagicMasterList.csproj --no-restore -v:minimal` passed.
 - `dotnet build JackLLM/JackLLM.csproj --no-restore -v:minimal` passed.
 - `dotnet build LlmRuntime.VisualStudio/LlmRuntime.VisualStudio.csproj --no-restore -v:minimal` passed and produced the VSIX output.
-- `dotnet build SocketJack/JackLLM.Android/JackLLM.Android.csproj --no-restore -v:minimal` failed under the installed .NET 10 SDK because `net8.0-android` is out of support, and Android/MAUI types did not resolve.
+- `dotnet build JackLLM.Android/JackLLM.Android.csproj --no-restore -v:minimal` failed under the installed .NET 10 SDK because `net8.0-android` is out of support, and Android/MAUI types did not resolve.
 - Vulnerability scans reported no vulnerable packages for `LlmRuntime`, `JackONNX`, `JackLLM`, `JackLLMCompanion`, `LlmRuntime.Wpf`, `LlmRuntime.VisualStudio`, `SocketJack.LlmCore`, and `SocketJack-MagicMasterList`. `JackLLM.Android` could not complete the vulnerable-package command because the unsupported Android workload error stops evaluation.
 
 ## LLM high-priority bug fixes
 
 ### Repair `JackLLM.Android` build and support baseline
 
-`SocketJack/JackLLM.Android/JackLLM.Android.csproj` targets `net8.0-android` while referencing MAUI `10.0.60` packages. Under the installed .NET 10 SDK, the build fails with `NETSDK1202`, then fails to resolve Android and MAUI types such as `ActivityAttribute`, `MauiAppCompatActivity`, and `MauiApplication`.
+`JackLLM.Android/JackLLM.Android.csproj` targets `net8.0-android` while referencing MAUI `10.0.60` packages. Under the installed .NET 10 SDK, the build fails with `NETSDK1202`, then fails to resolve Android and MAUI types such as `ActivityAttribute`, `MauiAppCompatActivity`, and `MauiApplication`.
 
 Suggested fix: either retarget the app to a supported Android TFM and matching MAUI package set, or add a `global.json` and documented workload install path that pins a supported SDK for this project. Also move `android:usesCleartextTraffic="true"` and `UsesCleartextTraffic = true` behind a debug-only or localhost-only network-security config.
 

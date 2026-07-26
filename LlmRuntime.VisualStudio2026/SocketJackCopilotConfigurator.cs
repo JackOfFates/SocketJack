@@ -29,6 +29,24 @@ internal sealed class SocketJackCopilotConfigurator
         this.httpClient = httpClient;
     }
 
+    public void SetWorkstationAuth(string accessToken, string userName)
+    {
+        this.httpClient.DefaultRequestHeaders.Authorization = string.IsNullOrWhiteSpace(accessToken)
+            ? null
+            : new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken.Trim());
+        this.httpClient.DefaultRequestHeaders.Remove("X-SocketJack-Auth");
+        this.httpClient.DefaultRequestHeaders.Remove("X-SocketJack-User");
+        if (!string.IsNullOrWhiteSpace(accessToken))
+        {
+            this.httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-SocketJack-Auth", accessToken.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(userName))
+        {
+            this.httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-SocketJack-User", userName.Trim());
+        }
+    }
+
     public async Task<IReadOnlyList<SocketJackServerCandidate>> GetServersAsync(CancellationToken cancellationToken)
     {
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -51,7 +69,13 @@ internal sealed class SocketJackCopilotConfigurator
 
     public IReadOnlyList<SocketJackServerCandidate> GetCachedServers()
     {
-        return this.browserCache.LoadServers();
+        return this.browserCache.LoadServers()
+            .Where(server =>
+                Uri.TryCreate(server.EffectiveEndpoint, UriKind.Absolute, out Uri? uri) &&
+                (uri.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+                 uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) &&
+                uri.Port == 11436)
+            .ToArray();
     }
 
     public bool TryGetCachedModels(SocketJackServerCandidate server, out SocketJackModelDiscoveryResult result)
@@ -628,6 +652,14 @@ internal static class SocketJackLocalProxySupervisor
             return false;
         }
 
+        if (!Uri.TryCreate(selection.ServerEndpoint, UriKind.Absolute, out Uri? storedEndpoint) ||
+            (!storedEndpoint.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) &&
+             !storedEndpoint.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) ||
+            storedEndpoint.Port != 11436)
+        {
+            return false;
+        }
+
         int port = selection.LocalProxyPort;
         if (port <= 0)
         {
@@ -651,7 +683,7 @@ internal static class SocketJackLocalProxySupervisor
             return false;
         }
 
-        SocketJackAuthState authState = new SocketJackVisualStudioAuthService().Load();
+        JackLlmWorkstationAuthState authState = new JackLlmWorkstationAuthService().Load();
         var server = new SocketJackServerCandidate
         {
             Id = string.IsNullOrWhiteSpace(selection.ServerId) ? selection.ServerName : selection.ServerId,

@@ -2,7 +2,6 @@ namespace LlmRuntime.VisualStudio2026;
 
 using System.Diagnostics;
 using System.Globalization;
-using System.Net.Http.Headers;
 using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using System.Text;
@@ -14,7 +13,7 @@ using Microsoft.VisualStudio.Extensibility.UI;
 using Microsoft.VisualStudio.ProjectSystem.Query;
 
 [DataContract]
-internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
+internal sealed class SessionSyncViewModel : JackLlmLocalViewModel
 {
     private const string GlyphOk = "\u2713";
     private const string GlyphPending = "\u25CF";
@@ -60,7 +59,6 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
     private SessionSyncBridgeSelection bridgeSelection = new();
 
     public SessionSyncViewModel(VisualStudioExtensibility extensibility)
-        : base(new SocketJackVisualStudioAuthService())
     {
         this.extensibility = extensibility;
         this.service = new SessionSyncService(new HttpClient());
@@ -82,7 +80,6 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         this.RemoveSelectedIgnoreCommand = new AsyncCommand(this.RemoveSelectedIgnoreAsync);
         this.AddIgnoreGlobCommand = new AsyncCommand(this.AddIgnoreGlobAsync);
         this.AddIgnoreRegexCommand = new AsyncCommand(this.AddIgnoreRegexAsync);
-        this.UseLocalWorkstationSessionMode();
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
@@ -374,10 +371,7 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     this.ImportRepoError = ex.Message;
-                    if (!this.HandleAuthException(ex))
-                    {
-                        this.Status = "GitHub import failed: " + ex.Message;
-                    }
+                    this.Status = "GitHub import failed: " + ex.Message;
                 }
             }, cancellationToken);
         }
@@ -922,16 +916,6 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         this.CreateSessionButtonText = "Create Local Workstation Session";
     }
 
-    private void UseLocalWorkstationSessionMode()
-    {
-        this.IsLocalWorkstationMode = true;
-        this.IsSignedIn = true;
-        this.IsSignInOverlayVisible = false;
-        this.IsInlineSignInVisible = false;
-        this.SignInError = "";
-        this.AuthStatus = "Session Sync uses the local JackLLM Workstation at " + SessionSyncBridgeSelection.LocalWorkstationEndpoint + ". No hosted account is required.";
-    }
-
     private string BuildEndpointSummary()
     {
         if (!this.bridgeSelection.HasRemoteApi)
@@ -942,6 +926,13 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         string sessionPart = this.HasSessionFile ? ".vs\\" + SessionFileName : "create .vs\\" + SessionFileName + " first";
         string modelPart = string.IsNullOrWhiteSpace(this.bridgeSelection.ModelId) ? "local model" : this.bridgeSelection.ModelId;
         return this.bridgeSelection.DisplayServerName + " / " + modelPart + " / " + this.bridgeSelection.AutoApiBase + " / " + sessionPart;
+    }
+
+    private void UseLocalWorkstationSessionMode()
+    {
+        this.IsWorkstationUnavailable = false;
+        this.WorkstationStatus =
+            "Session Sync uses JackLLM Workstation at " + SessionSyncBridgeSelection.LocalWorkstationEndpoint + ".";
     }
 
     private void ThrowIfSessionFileMissing()
@@ -1447,14 +1438,12 @@ internal sealed class SessionSyncViewModel : SocketJackAuthenticatedViewModel
         this.Status = busyStatus;
         try
         {
+            await this.EnsureWorkstationAvailableAsync(cancellationToken);
             await action(cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (!this.HandleAuthException(ex))
-            {
-                this.Status = "Session Sync failed: " + ex.Message;
-            }
+            this.Status = "Session Sync failed: " + ex.Message;
         }
         finally
         {
@@ -1824,7 +1813,7 @@ internal sealed class SessionSyncService
         selection.ThrowIfMissing();
         Uri uri = selection.BuildAutoUri("/api/session-sync/files?sessionId=" + Uri.EscapeDataString(sessionId));
         using HttpRequestMessage request = new(HttpMethod.Get, uri);
-        ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         string json = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -1854,7 +1843,7 @@ internal sealed class SessionSyncService
         };
 
         using HttpRequestMessage request = new(HttpMethod.Post, selection.BuildAutoUri("/api/session-sync/files"));
-        ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         string json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -1883,7 +1872,7 @@ internal sealed class SessionSyncService
         }
 
         using HttpRequestMessage request = new(HttpMethod.Post, selection.BuildAutoUri("/api/session-sync/github-import"));
-        ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         string json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -1928,7 +1917,7 @@ internal sealed class SessionSyncService
         }
 
         using HttpRequestMessage request = new(HttpMethod.Get, uri);
-        ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -1944,27 +1933,12 @@ internal sealed class SessionSyncService
         selection.ThrowIfMissing();
         Uri uri = selection.BuildAutoUri("/api/session-sync/file?sessionId=" + Uri.EscapeDataString(sessionId) + "&name=" + Uri.EscapeDataString(relativePath));
         using HttpRequestMessage request = new(HttpMethod.Delete, uri);
-        ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
         {
             string error = await response.Content.ReadAsStringAsync(cancellationToken);
             throw new InvalidOperationException("Local Workstation delete returned HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + ": " + ExtractError(error));
-        }
-    }
-
-    private static void ApplyAuth(HttpRequestMessage request, string authToken, string authUserName)
-    {
-        if (!string.IsNullOrWhiteSpace(authToken))
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authToken);
-            request.Headers.TryAddWithoutValidation("X-SocketJack-Auth", authToken.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(authUserName))
-        {
-            request.Headers.TryAddWithoutValidation("X-SocketJack-User", authUserName.Trim());
-            request.Headers.TryAddWithoutValidation("X-SocketJack-Username", authUserName.Trim());
         }
     }
 
@@ -2208,63 +2182,13 @@ internal sealed class SessionSyncBridgeSelection
 
     public static SessionSyncBridgeSelection Load(string solutionRoot)
     {
-        string mcpPath = Path.Combine(solutionRoot, ".vs", "mcp.json");
-        if (!File.Exists(mcpPath))
-        {
-            return FromEnvironment();
-        }
-
-        try
-        {
-            JsonObject? root = JsonNode.Parse(File.ReadAllText(mcpPath)) as JsonObject;
-            JsonObject? servers = root?["servers"] as JsonObject;
-            if (servers == null)
-            {
-                return FromEnvironment();
-            }
-
-            foreach (KeyValuePair<string, JsonNode?> pair in servers)
-            {
-                if (!pair.Key.StartsWith("socketjack-", StringComparison.OrdinalIgnoreCase) || pair.Value is not JsonObject entry)
-                {
-                    continue;
-                }
-
-                List<string> args = ReadArgs(entry);
-                string endpoint = ReadArg(args, "--server-endpoint");
-                string localWebChatEndpoint = ReadArg(args, "--local-webchat-endpoint");
-                string model = FirstNonEmpty(ReadArg(args, "--model"), ReadArg(args, "--model-id"));
-                string serverId = ReadArg(args, "--server-id");
-                string serverName = ReadArg(args, "--server-name");
-                string token = FirstNonEmpty(ReadArg(args, "--auth-token"), Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_AUTH_TOKEN"));
-                string userName = FirstNonEmpty(ReadArg(args, "--auth-user"), ReadArg(args, "--auth-username"), Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_AUTH_USER"));
-                if (string.IsNullOrWhiteSpace(endpoint) && entry["url"] != null)
-                {
-                    endpoint = entry["url"]!.ToString();
-                }
-
-                return Create(SelectSessionEndpoint(endpoint, localWebChatEndpoint), serverId, serverName, model, token, userName);
-            }
-        }
-        catch
-        {
-        }
-
-        return FromEnvironment();
+        return Create(LocalWorkstationEndpoint, LocalWorkstationServerId, LocalWorkstationServerName, "", "", "");
     }
 
     public static SessionSyncBridgeSelection FromSnapshot(SessionSyncSnapshot snapshot, SessionSyncBridgeSelection fallback)
     {
-        string endpoint = FirstNonEmpty(snapshot.ServerEndpoint, snapshot.AutoApiBase, fallback.ServerEndpoint);
-        if (IsHostedSocketJackEndpoint(endpoint) || IsLocalProxyEndpoint(endpoint))
-        {
-            endpoint = FirstNonEmpty(fallback.ServerEndpoint, LocalWorkstationEndpoint);
-        }
-
-        string serverId = FirstNonEmpty(snapshot.ServerId, fallback.ServerId);
-        string serverName = FirstNonEmpty(snapshot.ServerName, fallback.ServerName, serverId);
         string modelId = FirstNonEmpty(snapshot.ModelId, fallback.ModelId);
-        return Create(endpoint, serverId, serverName, modelId, fallback.AuthToken, fallback.AuthUserName);
+        return Create(LocalWorkstationEndpoint, LocalWorkstationServerId, LocalWorkstationServerName, modelId, "", "");
     }
 
     public string GetDefaultSessionId(string solutionRoot)
@@ -2294,21 +2218,19 @@ internal sealed class SessionSyncBridgeSelection
     private static SessionSyncBridgeSelection FromEnvironment()
     {
         return Create(
-            Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_SERVER_ENDPOINT") ?? LocalWorkstationEndpoint,
-            Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_SERVER_ID") ?? LocalWorkstationServerId,
-            Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_SERVER_NAME") ?? LocalWorkstationServerName,
+            LocalWorkstationEndpoint,
+            LocalWorkstationServerId,
+            LocalWorkstationServerName,
             Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_MODEL_ID") ?? "",
-            Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_AUTH_TOKEN") ?? "",
-            Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_AUTH_USER") ?? "");
+            "",
+            "");
     }
 
     private static SessionSyncBridgeSelection Create(string endpoint, string serverId, string serverName, string modelId, string authToken, string authUserName)
     {
-        endpoint = NormalizeEndpoint(string.IsNullOrWhiteSpace(endpoint) ? LocalWorkstationEndpoint : endpoint);
-        if (IsHostedSocketJackEndpoint(endpoint) || IsLocalProxyEndpoint(endpoint))
-        {
-            endpoint = LocalWorkstationEndpoint;
-        }
+        endpoint = LocalWorkstationEndpoint;
+        serverId = LocalWorkstationServerId;
+        serverName = LocalWorkstationServerName;
 
         string autoBase = BuildAutoApiBase(endpoint);
         bool isLocalWorkstation = IsLocalWorkstationEndpoint(endpoint);
@@ -2319,8 +2241,8 @@ internal sealed class SessionSyncBridgeSelection
             ServerId = isLocalWorkstation ? LocalWorkstationServerId : (string.IsNullOrWhiteSpace(serverId) ? InferServerId(endpoint) : serverId.Trim()),
             ServerName = isLocalWorkstation ? LocalWorkstationServerName : (string.IsNullOrWhiteSpace(serverName) ? serverId.Trim() : serverName.Trim()),
             ModelId = modelId.Trim(),
-            AuthToken = authToken.Trim(),
-            AuthUserName = authUserName.Trim()
+            AuthToken = "",
+            AuthUserName = ""
         };
     }
 
@@ -2393,11 +2315,6 @@ internal sealed class SessionSyncBridgeSelection
             return "";
         }
 
-        if (uri.Host.EndsWith("socketjack.com", StringComparison.OrdinalIgnoreCase))
-        {
-            return uri.GetLeftPart(UriPartial.Authority);
-        }
-
         return uri.GetLeftPart(UriPartial.Authority);
     }
 
@@ -2417,8 +2334,7 @@ internal sealed class SessionSyncBridgeSelection
 
     private static bool IsHostedSocketJackEndpoint(string endpoint)
     {
-        return Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri) &&
-            uri.Host.EndsWith("socketjack.com", StringComparison.OrdinalIgnoreCase);
+        return !IsLocalWorkstationEndpoint(endpoint);
     }
 
     private static string InferServerId(string endpoint)

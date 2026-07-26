@@ -3,8 +3,8 @@
 JackLLM Mobile is the shared Android and iOS companion app for JackLLM Workstation. It gives a phone or tablet a direct chat and session-management surface for a workstation running JackLLM, while keeping the same model, tool, and session context available on the desktop side.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-chat.png" alt="JackLLM Mobile chat UI" width="360">
-  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-sessions.png" alt="JackLLM Mobile sessions UI" width="360">
+  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-chat.png" alt="JackLLM Mobile chat UI" width="360">
+  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-sessions.png" alt="JackLLM Mobile sessions UI" width="360">
 </p>
 
 ## Features
@@ -29,7 +29,7 @@ A paired device normally manages only its linked owner's Dream state. A local Wo
 
 | Item | Value |
 |---|---|
-| Path | `SocketJack/JackLLM.Android/` |
+| Path | `JackLLM.Android/` |
 | App title | `JackLLM Mobile` |
 | Assembly | `JackLLM.Mobile` |
 | Target frameworks | `net10.0-android`; `net10.0-ios` |

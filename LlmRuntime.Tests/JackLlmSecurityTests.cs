@@ -183,4 +183,16 @@ public sealed class JackLlmSecurityTests
         StringAssert.Contains(html, "Your Workstation session expired. Sign in again to reconnect; your chat will resume automatically.");
         StringAssert.Contains(html, "isNoisySessionOwnershipSaveMessage(content) || isWorkstationAuthError(content)");
     }
+
+    [TestMethod]
+    public void WebChatLoginDoesNotStealFocusFromThePasswordField()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "const wasHidden = loginGate.hidden;");
+        StringAssert.Contains(html, "if (visible && wasHidden && loginUsername)");
+        StringAssert.Contains(html, "loginGate.contains(document.activeElement)");
+        StringAssert.Contains(html, "const initialField = loginUsername.value && loginPassword ? loginPassword : loginUsername;");
+        Assert.IsFalse(html.Contains("window.setTimeout(() => loginUsername.focus()", StringComparison.Ordinal));
+    }
 }

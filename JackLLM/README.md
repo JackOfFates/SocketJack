@@ -247,11 +247,11 @@ JackLLM.settings.json
 JackLLM Mobile is the shared native Android and iOS companion for JackLLM Workstation. Connect it to a Workstation to chat from a phone or tablet, inspect runtime telemetry, use permission-gated PC Access, and browse or resume Workstation sessions while the desktop continues to provide the models, tools, permissions, and session state.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-chat.png" alt="JackLLM Mobile chat UI" width="360">
-  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-sessions.png" alt="JackLLM Mobile sessions UI" width="360">
+  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-chat.png" alt="JackLLM Mobile chat UI" width="360">
+  <img src="https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-sessions.png" alt="JackLLM Mobile sessions UI" width="360">
 </p>
 
-See the [JackLLM Mobile README](https://github.com/JackOfFates/SocketJack/blob/master/SocketJack/JackLLM.Android/README.md) for app features and project details.
+See the [JackLLM Mobile README](https://github.com/JackOfFates/SocketJack/blob/master/JackLLM.Android/README.md) for app features and project details.
 
 ## Web Console Highlights
 

@@ -16,6 +16,7 @@ namespace SocketJack.Net
         public Action<string> CompanionInput { get; set; }
         public Func<string, string> CompanionLaunchApplication { get; set; }
         public event EventHandler CompanionEmergencyStopRequested;
+        public event Action<bool> CompanionControlStateChanged;
 
         private readonly object _companionGate = new object();
         private readonly Dictionary<string, CompanionConfirmation> _companionConfirmations =
@@ -24,6 +25,7 @@ namespace SocketJack.Net
         private string _companionTaskOwner = "";
         private string _companionTaskStatus = "idle";
         private string _companionLastAction = "";
+        private bool _companionEmergencyStopped;
 
         private const string CompanionFinancialConfirmationPhrase =
             "I UNDERSTAND THIS CAN CAUSE FINANCIAL LOSS";
@@ -73,6 +75,7 @@ namespace SocketJack.Net
                 using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
                 string action = CompanionJsonString(document.RootElement, "action").ToLowerInvariant();
                 string goal = CompanionJsonString(document.RootElement, "goal").Trim();
+                bool controlActive;
                 lock (_companionGate)
                 {
                     if (action is "stop" or "cancel")
@@ -81,6 +84,7 @@ namespace SocketJack.Net
                         _companionTaskGoal = "";
                         _companionTaskOwner = "";
                         _companionConfirmations.Clear();
+                        controlActive = false;
                     }
                     else
                     {
@@ -90,8 +94,11 @@ namespace SocketJack.Net
                         _companionTaskOwner = ownerKey;
                         _companionTaskStatus = "ready";
                         _companionLastAction = "";
+                        _companionEmergencyStopped = false;
+                        controlActive = true;
                     }
                 }
+                CompanionControlStateChanged?.Invoke(controlActive);
                 return HandleCompanionStatus(connection, request);
             }
             catch (JsonException ex)
@@ -103,9 +110,26 @@ namespace SocketJack.Net
         private string HandleCompanionAction(NetworkConnection connection, HttpRequest request)
         {
             string ownerKey = GetChatSessionOwnerKey(connection, request);
+            return ExecuteCompanionAction(ownerKey, request);
+        }
+
+        private string ExecuteCompanionToolAction(string ownerKey, string argumentsJson)
+        {
+            return ExecuteCompanionAction(
+                NormalizeChatFilesystemOwnerKey(ownerKey),
+                new HttpRequest { Body = string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson });
+        }
+
+        private string ExecuteCompanionAction(string ownerKey, HttpRequest request)
+        {
             ChatPermissionState permissions = GetChatPermissions(ownerKey);
             if (!permissions.companionEnabled)
                 return BuildJsonError(request, 403, "Forbidden", "Companion mode is disabled.");
+            lock (_companionGate)
+            {
+                if (_companionEmergencyStopped)
+                    return BuildJsonError(request, 423, "Companion Stopped", "Companion control was cancelled locally. Start a new Companion task to resume.");
+            }
 
             try
             {
@@ -114,7 +138,7 @@ namespace SocketJack.Net
                 string type = CompanionJsonString(root, "type").Trim().ToLowerInvariant();
                 string value = CompanionJsonString(root, "value");
                 string confirmationToken = CompanionJsonString(root, "confirmationToken");
-                string actionMaterial = type + "\n" + value;
+                string actionMaterial = type + "\n" + (request?.Body ?? value);
 
                 if (IsCompanionFinancialAction(actionMaterial))
                 {
@@ -197,6 +221,7 @@ namespace SocketJack.Net
                     _companionTaskStatus = "active";
                     _companionLastAction = permissions.companionActivityTranscriptStorage ? RedactCompanionSensitiveText(type + ": " + value) : type;
                 }
+                CompanionControlStateChanged?.Invoke(true);
                 RecordObservabilityEvent("companion", type, "accepted", "", ownerKey, "/api/companion/action", 0L);
                 return result;
             }
@@ -208,6 +233,148 @@ namespace SocketJack.Net
             {
                 return BuildJsonError(request, 500, "Companion Action Failed", RedactCompanionSensitiveText(ex.Message));
             }
+        }
+
+        private string AddCompanionTools(string requestBody, ChatPermissionState permissions, string ownerKey)
+        {
+            if (permissions == null || !permissions.companionEnabled || string.IsNullOrWhiteSpace(requestBody))
+                return requestBody;
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(requestBody);
+                using var stream = new System.IO.MemoryStream();
+                using var writer = new Utf8JsonWriter(stream);
+                writer.WriteStartObject();
+                bool wroteTools = false;
+                bool wroteMessages = false;
+                foreach (JsonProperty property in document.RootElement.EnumerateObject())
+                {
+                    if (property.NameEquals("tools") && property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        wroteTools = true;
+                        writer.WritePropertyName("tools");
+                        writer.WriteStartArray();
+                        foreach (JsonElement tool in property.Value.EnumerateArray())
+                            tool.WriteTo(writer);
+                        WriteCompanionToolSchema(writer);
+                        writer.WriteEndArray();
+                    }
+                    else if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        wroteMessages = true;
+                        writer.WritePropertyName("messages");
+                        writer.WriteStartArray();
+                        foreach (JsonElement message in property.Value.EnumerateArray())
+                            message.WriteTo(writer);
+                        writer.WriteStartObject();
+                        writer.WriteString("role", "system");
+                        writer.WriteString("content", "Companion tools are active for owner " + NormalizeChatFilesystemOwnerKey(ownerKey) + ". Call companion_action with type=observe before desktop actions and after state changes. Permission denials are final. Never attempt to approve financial or sensitive-memory confirmations yourself.");
+                        writer.WriteEndObject();
+                        writer.WriteEndArray();
+                    }
+                    else
+                    {
+                        property.WriteTo(writer);
+                    }
+                }
+                if (!wroteTools)
+                {
+                    writer.WritePropertyName("tools");
+                    writer.WriteStartArray();
+                    WriteCompanionToolSchema(writer);
+                    writer.WriteEndArray();
+                }
+                if (!wroteMessages)
+                {
+                    writer.WritePropertyName("messages");
+                    writer.WriteStartArray();
+                    writer.WriteStartObject();
+                    writer.WriteString("role", "system");
+                    writer.WriteString("content", "Companion tools are active. Observe before acting and honor every permission denial.");
+                    writer.WriteEndObject();
+                    writer.WriteEndArray();
+                }
+                writer.WriteEndObject();
+                writer.Flush();
+                return Encoding.UTF8.GetString(stream.ToArray());
+            }
+            catch (Exception ex)
+            {
+                LogMessage("[Companion] Could not add Companion tool schema: " + RedactCompanionSensitiveText(ex.Message));
+                return requestBody;
+            }
+        }
+
+        private void WriteCompanionToolSchema(Utf8JsonWriter writer)
+        {
+            WriteProxyResearchToolSchema(
+                writer,
+                "companion_action",
+                "Observe or operate the Windows desktop through integrated JackLLM Companion. Every action is independently permissioned. Use observe before and after state-changing actions.",
+                new[] { "type" },
+                new[]
+                {
+                    new ProxyToolParameter("type", "string", "One of observe, move, click, key, text, scroll, clipboard, launch, terminal, or save-sensitive-memory."),
+                    new ProxyToolParameter("value", "string", "Application target, terminal command, sensitive-memory value, or fallback action payload."),
+                    new ProxyToolParameter("x", "integer", "Absolute screen X coordinate for move/click."),
+                    new ProxyToolParameter("y", "integer", "Absolute screen Y coordinate for move/click."),
+                    new ProxyToolParameter("normalizedX", "number", "Optional horizontal position from 0 to 1."),
+                    new ProxyToolParameter("normalizedY", "number", "Optional vertical position from 0 to 1."),
+                    new ProxyToolParameter("button", "string", "Mouse button: left or right."),
+                    new ProxyToolParameter("delta", "integer", "Scroll-wheel delta."),
+                    new ProxyToolParameter("keyCode", "integer", "Windows virtual key code for a key action."),
+                    new ProxyToolParameter("down", "boolean", "Whether a key action presses rather than releases the key."),
+                    new ProxyToolParameter("text", "string", "Text for text or clipboard actions."),
+                    new ProxyToolParameter("confirmationToken", "string", "Short-lived exact-action token returned only after a local Workstation confirmation.")
+                });
+        }
+
+        private bool WriteCompanionChatUserMessage(Utf8JsonWriter writer, JsonElement originalMessage, ChatPermissionState permissions)
+        {
+            if (writer == null)
+                return false;
+            BeginCompanionControlSession();
+            string text = ExtractChatUiMessageContentText(originalMessage);
+            if (string.IsNullOrWhiteSpace(text))
+                text = "Observe the current desktop and continue the user's Companion request.";
+
+            writer.WriteStartObject();
+            writer.WriteString("role", "user");
+            writer.WritePropertyName("content");
+            writer.WriteStartArray();
+            writer.WriteStartObject();
+            writer.WriteString("type", "text");
+            writer.WriteString("text", text);
+            writer.WriteEndObject();
+
+            if (permissions != null && permissions.companionEnabled && permissions.companionScreenView && CompanionCaptureJpeg != null)
+            {
+                byte[] jpeg = CompanionCaptureJpeg(1280, 720, 65);
+                if (jpeg != null && jpeg.Length > 0)
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("type", "image_url");
+                    writer.WritePropertyName("image_url");
+                    writer.WriteStartObject();
+                    writer.WriteString("url", "data:image/jpeg;base64," + Convert.ToBase64String(jpeg));
+                    writer.WriteEndObject();
+                    writer.WriteEndObject();
+                }
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            return true;
+        }
+
+        private void BeginCompanionControlSession()
+        {
+            lock (_companionGate)
+            {
+                _companionEmergencyStopped = false;
+                if (_companionTaskStatus is "idle" or "stopped" or "emergency-stopped")
+                    _companionTaskStatus = "ready";
+            }
+            CompanionControlStateChanged?.Invoke(true);
         }
 
         private string HandleCompanionConfirm(NetworkConnection connection, HttpRequest request)
@@ -258,17 +425,24 @@ namespace SocketJack.Net
 
         private string HandleCompanionEmergencyStop(NetworkConnection connection, HttpRequest request)
         {
+            EmergencyStopCompanionControl();
+            CompanionEmergencyStopRequested?.Invoke(this, EventArgs.Empty);
+            RecordObservabilityEvent("companion", "emergency stop", "stopped", "", GetChatSessionOwnerKey(connection, request), "/api/companion/emergency-stop", 0L);
+            return JsonSerializer.Serialize(new { ok = true, status = "emergency-stopped" });
+        }
+
+        public void EmergencyStopCompanionControl()
+        {
             lock (_companionGate)
             {
                 _companionTaskGoal = "";
                 _companionTaskOwner = "";
                 _companionTaskStatus = "emergency-stopped";
                 _companionLastAction = "";
+                _companionEmergencyStopped = true;
                 _companionConfirmations.Clear();
             }
-            CompanionEmergencyStopRequested?.Invoke(this, EventArgs.Empty);
-            RecordObservabilityEvent("companion", "emergency stop", "stopped", "", GetChatSessionOwnerKey(connection, request), "/api/companion/emergency-stop", 0L);
-            return JsonSerializer.Serialize(new { ok = true, status = "emergency-stopped" });
+            CompanionControlStateChanged?.Invoke(false);
         }
 
         private bool ConsumeCompanionConfirmation(string ownerKey, string action, string kind, string token)

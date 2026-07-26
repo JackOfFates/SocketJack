@@ -83,6 +83,8 @@
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DefineConstants>$(DefineConstants);JACKLLM_SECURE_RELEASE</DefineConstants>
+    <OutputPath>bin\Release\net8.0-windows10.0.17763.0\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
 
   <ItemGroup>

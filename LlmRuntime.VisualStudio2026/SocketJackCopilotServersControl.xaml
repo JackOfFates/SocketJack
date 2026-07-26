@@ -215,7 +215,7 @@
           <Style TargetType="{x:Type Grid}">
             <Setter Property="Visibility" Value="Collapsed" />
             <Style.Triggers>
-              <DataTrigger Binding="{Binding IsSignInOverlayVisible}" Value="True">
+              <DataTrigger Binding="{Binding IsWorkstationUnavailable}" Value="True">
                 <Setter Property="Visibility" Value="Visible" />
               </DataTrigger>
             </Style.Triggers>
@@ -229,60 +229,37 @@
                 BorderThickness="1"
                 Padding="16">
           <StackPanel>
-            <TextBlock Text="SocketJack.com Sign-in"
+            <TextBlock Text="Local Workstation Required"
                        FontSize="18"
                        FontWeight="SemiBold"
                        Margin="0,0,0,10" />
-            <TextBlock Text="Sign in to load SocketJack Copilot servers and configure Visual Studio Copilot."
+            <TextBlock Text="Start JackLLM Workstation at 127.0.0.1:11436 to load local models and configure Visual Studio Copilot."
                        TextWrapping="Wrap"
                        Margin="0,0,0,12" />
-            <Button Content="Sign in with browser"
-                    MinWidth="144"
+            <TextBlock Text="Workstation user name" />
+            <TextBox MinHeight="26"
+                     Margin="0,4,0,10"
+                     Text="{Binding SignInUserName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+            <TextBlock Text="Workstation password" />
+            <TextBox MinHeight="26"
+                     Margin="0,4,0,10"
+                     Text="{Binding SignInPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     FontFamily="Wingdings"
+                     Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+            <CheckBox Content="Remember this Workstation sign-in"
+                      Margin="0,0,0,10"
+                      IsChecked="{Binding RememberSignIn, Mode=TwoWay}" />
+            <Button Content="Sign in to JackLLM Workstation"
+                    MinWidth="190"
                     HorizontalAlignment="Left"
                     Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
-                    Command="{Binding BrowserSignInCommand}" />
-            <Button Content="That didn't work, let me log in here."
-                    MinWidth="220"
-                    HorizontalAlignment="Left"
-                    Margin="0,8,0,12"
-                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
-                    Command="{Binding ShowInlineSignInCommand}" />
-            <StackPanel>
-              <StackPanel.Style>
-                <Style TargetType="{x:Type StackPanel}">
-                  <Setter Property="Visibility" Value="Collapsed" />
-                  <Style.Triggers>
-                    <DataTrigger Binding="{Binding IsInlineSignInVisible}" Value="True">
-                      <Setter Property="Visibility" Value="Visible" />
-                    </DataTrigger>
-                  </Style.Triggers>
-                </Style>
-              </StackPanel.Style>
-              <TextBlock Text="User name" />
-              <TextBox MinHeight="26"
-                       Margin="0,4,0,10"
-                       Text="{Binding SignInUserName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                       Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
-              <TextBlock Text="Password" />
-              <TextBox MinHeight="26"
-                       Margin="0,4,0,10"
-                       Text="{Binding SignInPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                       FontFamily="Wingdings"
-                       Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
-              <CheckBox Content="Remember this sign-in"
-                        Margin="0,0,0,12"
-                        IsChecked="{Binding RememberSignIn, Mode=TwoWay}" />
-              <Button Content="Sign in here"
-                      MinWidth="96"
-                      HorizontalAlignment="Left"
-                      Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
-                      Command="{Binding SignInCommand}" />
-            </StackPanel>
+                    Command="{Binding SignInCommand}" />
             <TextBlock Text="{Binding SignInError}"
                        Foreground="#FFB4A9"
                        TextWrapping="Wrap"
-                       Margin="0,12,0,0" />
-            <TextBlock Text="{Binding AuthStatus}"
+                       Margin="0,10,0,0" />
+            <TextBlock Text="{Binding WorkstationStatus}"
                        Foreground="#CFCFCF"
                        TextWrapping="Wrap"
                        Margin="0,8,0,0" />

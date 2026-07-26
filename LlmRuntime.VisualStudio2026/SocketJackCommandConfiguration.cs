@@ -22,7 +22,6 @@ internal static class SocketJackCommandConfiguration
     {
         Children =
         [
-            GroupChild.Command<SocketJackSignInCommand>(),
             GroupChild.Command<SocketJackCopilotServersCommand>(),
             GroupChild.Command<SessionSyncCommand>(),
             GroupChild.Command<CreateSocketJackMcpConfigCommand>(),

@@ -7,7 +7,7 @@ using Microsoft.VisualStudio.Extensibility;
 using Microsoft.VisualStudio.Extensibility.UI;
 
 [DataContract]
-internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticatedViewModel
+internal sealed class SocketJackCopilotServersViewModel : JackLlmLocalViewModel
 {
     private readonly SocketJackCopilotConfigurator configurator;
     private readonly List<SocketJackServerDisplayItem> allServers = new();
@@ -24,7 +24,6 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
     private bool isBusy;
 
     public SocketJackCopilotServersViewModel(VisualStudioExtensibility extensibility)
-        : base(new SocketJackVisualStudioAuthService())
     {
         this.configurator = new SocketJackCopilotConfigurator(extensibility, new HttpClient());
         this.RefreshCommand = new AsyncCommand(this.RefreshAsync);
@@ -162,7 +161,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
         await this.RunBusyAsync("Loading SocketJack MasterList servers...", async token =>
         {
             this.LoadCachedServers("Showing cached SocketJack servers while live refresh runs...");
-            await this.EnsureSignedInAsync(token);
+            await this.PrepareWorkstationAsync(token);
             IReadOnlyList<SocketJackServerCandidate> candidates = await this.configurator.GetServersAsync(token);
             this.allServers.Clear();
             this.allServers.AddRange(candidates.Select(SocketJackServerDisplayItem.FromCandidate));
@@ -191,7 +190,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
     {
         await this.RunBusyAsync("Testing selected SocketJack model route...", async token =>
         {
-            await this.EnsureSignedInAsync(token);
+            await this.PrepareWorkstationAsync(token);
             SocketJackServerCandidate server = this.GetSelectedServerOrThrow();
             SocketJackModelCandidate? model = this.TryGetSelectedModel();
             SocketJackEndpointAccessResult result = model == null
@@ -212,7 +211,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
     {
         await this.RunBusyAsync("Configuring Visual Studio Copilot for SocketJack...", async token =>
         {
-            await this.EnsureSignedInAsync(token);
+            await this.PrepareWorkstationAsync(token);
             SocketJackServerCandidate server = this.GetSelectedServerOrThrow();
             SocketJackModelCandidate model = this.GetSelectedModelOrThrow();
             if (!server.CanUseForCopilot)
@@ -225,7 +224,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
                 throw new InvalidOperationException(model.EligibilityReason);
             }
 
-            SocketJackConfigureResult result = await this.configurator.ConfigureAsync(server, model, this.AuthToken, this.AuthUserName, token);
+            SocketJackConfigureResult result = await this.configurator.ConfigureAsync(server, model, "", "", token);
             this.Status = result.ToUserMessage();
         }, cancellationToken);
     }
@@ -234,7 +233,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
     {
         SocketJackServerCandidate server = this.GetSelectedServerOrThrow();
         this.LoadCachedModels(server, "Showing cached models for " + server.DisplayName + " while live model discovery runs...");
-        await this.EnsureSignedInAsync(cancellationToken);
+        await this.PrepareWorkstationAsync(cancellationToken);
         SocketJackModelDiscoveryResult result = await this.configurator.GetModelsAsync(server, cancellationToken);
         this.Models = result.Models.Select(SocketJackModelDisplayItem.FromCandidate).ToList();
         SocketJackModelDisplayItem? selected = this.Models.FirstOrDefault(model => model.IsSelectable) ?? this.Models.FirstOrDefault();
@@ -268,6 +267,12 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
 
         this.UpdateServerDetails();
         this.UpdateServerSummary();
+    }
+
+    private async Task PrepareWorkstationAsync(CancellationToken cancellationToken)
+    {
+        await this.EnsureWorkstationAvailableAsync(cancellationToken);
+        this.configurator.SetWorkstationAuth(this.AuthToken, this.AuthUserName);
     }
 
     private void UpdateServerSummary()
@@ -424,10 +429,7 @@ internal sealed class SocketJackCopilotServersViewModel : SocketJackAuthenticate
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (!this.HandleAuthException(ex))
-            {
-                this.Status = "SocketJack operation failed: " + ex.Message;
-            }
+            this.Status = "JackLLM Workstation operation failed: " + ex.Message;
         }
         finally
         {

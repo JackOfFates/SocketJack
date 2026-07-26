@@ -13502,7 +13502,7 @@ body.shared-view .composer-attach-stack {
     width: 100%;
     min-width: 0;
 }
-.jackhammer-toggle{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:4px 9px;border:1px solid #2563eb;border-radius:999px;background:rgba(37,99,235,.18);color:#bfdbfe;font:750 .68rem/1 var(--ui-font);cursor:pointer}.jackhammer-toggle.is-off{border-color:#ef4444;background:rgba(127,29,29,.28);color:#fecaca}.jackhammer-toggle input{position:absolute;opacity:0;pointer-events:none}.jackhammer-switch{position:relative;width:30px;height:16px;border-radius:999px;background:#2563eb;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}.jackhammer-switch::after{content:"";position:absolute;top:2px;left:16px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left 140ms ease}.jackhammer-toggle.is-off .jackhammer-switch{background:#dc2626}.jackhammer-toggle.is-off .jackhammer-switch::after{left:2px}.jackhammer-live-stack{position:absolute;left:12px;right:12px;bottom:calc(100% + 10px);z-index:5590;display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none}.jackhammer-live-item{max-width:min(720px,92%);padding:7px 12px;border:1px solid rgba(96,165,250,.45);border-radius:999px;background:rgba(8,18,36,.94);color:#dbeafe;box-shadow:0 10px 34px rgba(0,0,0,.35);font:700 .7rem/1.2 var(--ui-font);animation:jackhammer-status-float 4.8s ease forwards}@keyframes jackhammer-status-float{0%,65%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-42px)}}.jackhammer-run-card{margin:10px 0 2px;padding:10px 12px;border:1px solid rgba(96,165,250,.34);border-radius:12px;background:rgba(15,23,42,.62)}.jackhammer-run-card summary{cursor:pointer;color:#bfdbfe;font-weight:800}.jackhammer-run-meta{margin-top:7px;color:var(--muted);font-size:12px}.jackhammer-run-tree{margin:8px 0 0;padding-left:20px}.jackhammer-run-tree li{margin:4px 0;color:#dbeafe}.jackhammer-run-tree .failed{color:#fecaca}.jackhammer-run-files{margin-top:7px;color:#cbd5e1;font-size:12px}
+.jackhammer-toggle{position:relative;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:7px;width:100%;min-width:0;min-height:32px;height:100%;padding:4px 9px;border:1px solid #2563eb;border-radius:10px;background:rgba(37,99,235,.18);color:#bfdbfe;font:750 .68rem/1 var(--ui-font);white-space:nowrap;overflow:hidden;cursor:pointer}.jackhammer-toggle.is-off{border-color:#ef4444;background:rgba(127,29,29,.28);color:#fecaca}.jackhammer-toggle input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.jackhammer-switch{position:relative;display:inline-block;flex:0 0 30px;width:30px;min-width:30px;height:16px;border-radius:999px;background:#2563eb;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}.jackhammer-switch::after{content:"";position:absolute;top:2px;left:16px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left 140ms ease}.jackhammer-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.jackhammer-state{flex:0 0 auto}.jackhammer-toggle.is-off .jackhammer-switch{background:#dc2626}.jackhammer-toggle.is-off .jackhammer-switch::after{left:2px}.jackhammer-live-stack{position:absolute;left:12px;right:12px;bottom:calc(100% + 10px);z-index:5590;display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none}.jackhammer-live-item{max-width:min(720px,92%);padding:7px 12px;border:1px solid rgba(96,165,250,.45);border-radius:999px;background:rgba(8,18,36,.94);color:#dbeafe;box-shadow:0 10px 34px rgba(0,0,0,.35);font:700 .7rem/1.2 var(--ui-font);animation:jackhammer-status-float 4.8s ease forwards}@keyframes jackhammer-status-float{0%,65%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-42px)}}.jackhammer-run-card{margin:10px 0 2px;padding:10px 12px;border:1px solid rgba(96,165,250,.34);border-radius:12px;background:rgba(15,23,42,.62)}.jackhammer-run-card summary{cursor:pointer;color:#bfdbfe;font-weight:800}.jackhammer-run-meta{margin-top:7px;color:var(--muted);font-size:12px}.jackhammer-run-tree{margin:8px 0 0;padding-left:20px}.jackhammer-run-tree li{margin:4px 0;color:#dbeafe}.jackhammer-run-tree .failed{color:#fecaca}.jackhammer-run-files{margin-top:7px;color:#cbd5e1;font-size:12px}
 @media(prefers-reduced-motion:reduce){.generation-settings-panel,.jackhammer-live-item{animation:none!important}.jackhammer-live-item{opacity:1;transform:none}}
 
 .chat-mode-dock {
@@ -15153,6 +15153,84 @@ body:not(.agent-mode) .composer-attach-stack {
     padding: 0 8px;
     font: 750 0.68rem/1 var(--ui-font);
 }
+.composer.mobile-compact-composer .mobile-composer-more-controls .jackhammer-toggle {
+    min-height: 42px;
+    padding: 0 4px;
+    gap: 4px;
+    font-size: 0.58rem;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .jackhammer-state {
+    display: none;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-controls {
+    grid-column: span 2 !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: 42px;
+    gap: 6px;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle,
+.composer.mobile-compact-composer .mobile-composer-more-controls .jackhammer-toggle {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    height: 42px;
+    justify-content: center;
+    border-radius: 10px;
+    padding: 0 6px;
+    font: 750 0.62rem/1 var(--ui-font);
+    white-space: nowrap;
+    overflow: hidden;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle {
+    gap: 6px;
+    border-color: #ef4444;
+    background: rgba(127, 29, 29, 0.28);
+    color: #fecaca;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle:has(input:checked) {
+    border-color: #2563eb;
+    background: rgba(37, 99, 235, 0.18);
+    color: #bfdbfe;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle input {
+    position: relative;
+    flex: 0 0 30px !important;
+    width: 30px !important;
+    min-width: 30px;
+    height: 16px !important;
+    margin: 0;
+    border: 0;
+    border-radius: 999px;
+    background: #dc2626;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle input:checked {
+    border: 0;
+    background: #2563eb;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle input::before {
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    box-shadow: none;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls .retry-toggle input:checked::before {
+    transform: translateX(14px);
+    background: #fff;
+    box-shadow: none;
+}
+.composer.mobile-compact-composer .mobile-composer-more-controls #contextToggle {
+    display: grid !important;
+    place-items: center;
+    align-content: center;
+    justify-content: center;
+    text-align: center;
+    line-height: 1;
+}
 .composer.mobile-compact-composer .mobile-composer-more-controls .composer-model-controls {
     order: 2;
     grid-column: 1 / -1 !important;
@@ -15224,6 +15302,78 @@ body:not(.agent-mode) .composer-attach-stack {
 .goal-panel{position:absolute;left:12px;bottom:calc(100% + 10px);z-index:180;width:min(440px,calc(100% - 24px));box-sizing:border-box;padding:16px;border:1px solid rgba(125,211,252,.34);border-radius:16px;background:rgba(8,18,36,.97);box-shadow:0 24px 70px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(20px) saturate(1.18);display:grid;gap:10px}.goal-panel[hidden]{display:none}.goal-panel-head,.goal-options,.goal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.goal-panel-head{justify-content:space-between}.goal-panel-title{display:flex;align-items:center;gap:9px}.goal-panel-close{width:30px;height:30px;min-height:30px;padding:0;border-radius:8px}.goal-panel textarea{width:100%;min-height:58px;resize:vertical;box-sizing:border-box;border:1px solid var(--border);border-radius:9px;padding:9px;background:rgba(2,6,23,.78);color:inherit}.goal-options small,.goal-stage-summary{color:var(--muted);font-size:12px}.goal-actions button{min-width:92px}.chat-mode-button.goal-mode-button[aria-expanded="true"]{border-color:#7dd3fc;background:rgba(14,165,233,.24);box-shadow:0 0 0 1px rgba(125,211,252,.18),0 8px 24px rgba(2,132,199,.2)}.plan-mode .goal-panel{border-color:#a78bfa}@media(max-width:720px){.goal-panel{position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;max-height:calc(100dvh - 24px);overflow:auto}}.plan-clarification{padding:12px;border:1px solid #8b5cf6;border-radius:12px;margin:8px 0}.plan-clarification button{margin:4px}.plan-card{padding:14px;border:1px solid #8b5cf6;border-radius:14px;background:rgba(76,29,149,.15)}
 .alignment-strip{position:fixed;left:0;right:0;top:0;height:3px;z-index:10031;border:0;padding:0;background:#64748b;cursor:pointer;overflow:visible;transition:top .32s ease,bottom .32s ease,background .32s ease,box-shadow .32s ease}.alignment-strip::after{content:"↓";position:absolute;left:50%;top:3px;width:58px;height:25px;display:grid;place-items:center;border:1px solid rgba(148,163,184,.36);border-top:0;border-radius:0 0 12px 12px;color:#f8fafc;background:rgba(5,12,25,.94);box-shadow:0 9px 24px rgba(0,0,0,.32);font:900 14px/1 var(--ui-font);transform:translate(-50%,-110%);opacity:0;transition:transform .22s ease,opacity .22s ease}.alignment-strip:not(.evil):not(.locked):hover::after,.alignment-strip:not(.evil):not(.locked):focus-visible::after,body.alignment-drawer-open .alignment-strip::after{transform:translate(-50%,0);opacity:1}.alignment-strip.good{background:linear-gradient(90deg,#ff315f,#ffcf3f,#35e27a,#20c8ff,#875cff,#ff45d4,#ff315f);background-size:240% 100%;animation:alignment-rgb 8s linear infinite;box-shadow:0 0 12px rgba(70,220,255,.7)}.alignment-strip.evil,.alignment-strip.locked{top:auto;bottom:0;background:linear-gradient(90deg,#050000,#6f0000,#ef233c,#250000,#050000);box-shadow:0 -2px 14px rgba(255,0,30,.52)}.alignment-strip.evil::after,.alignment-strip.locked::after{content:"↑";top:auto;bottom:3px;border-top:1px solid rgba(239,35,60,.4);border-bottom:0;border-radius:12px 12px 0 0;transform:translate(-50%,110%)}.alignment-strip.evil:hover::after,.alignment-strip.evil:focus-visible::after{transform:translate(-50%,0);opacity:1}.alignment-strip.locked{height:5px}@keyframes alignment-rgb{to{background-position:240% 0}}.alignment-panel{position:fixed;z-index:10030;top:12px;right:12px;width:min(360px,calc(100vw - 24px));display:grid;gap:8px;padding:12px;border:1px solid rgba(148,163,184,.28);border-radius:13px;background:rgba(4,10,22,.96);box-shadow:0 18px 60px rgba(0,0,0,.55);font:12px var(--ui-font)}.alignment-panel[hidden]{display:none}.alignment-panel.evil,.alignment-panel.locked{top:auto;bottom:12px;border-color:rgba(239,35,60,.42);background:linear-gradient(145deg,rgba(31,0,4,.98),rgba(4,0,0,.98))}.alignment-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.alignment-score{font-weight:900;letter-spacing:.05em}.alignment-copy,.alignment-features{color:var(--muted);line-height:1.45}body.alignment-drawer-open{--alignment-drawer-height:148px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){top:0;left:0;right:0;width:auto;min-height:122px;box-sizing:border-box;grid-template-columns:minmax(180px,.7fr) repeat(3,minmax(160px,1fr));align-items:center;padding:18px 32px 24px;border-width:0 0 1px;border-radius:0 0 16px 16px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:122px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked)::after{content:"↑"}body.alignment-drawer-open .shell{margin-top:calc(10px + var(--alignment-drawer-height));height:calc(100vh - 20px - var(--alignment-drawer-height))}.shell{transition:opacity 140ms ease,margin-top .32s ease,height .32s ease}.alignment-feature-highlight{outline:1px solid rgba(80,220,255,.72)!important;box-shadow:0 0 14px rgba(125,92,255,.28)!important}.alignment-hidden{display:none!important}body.alignment-evil .shell{filter:saturate(.62)}body.alignment-evil{background-color:#090000}body.alignment-locked .shell,body.alignment-locked>.remote-admin-sticker{visibility:hidden;pointer-events:none}.alignment-lock-screen{position:fixed;inset:0;z-index:10010;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 35%,#410008 0,#100002 42%,#020000 100%);color:#fff}.alignment-lock-screen[hidden]{display:none}.alignment-lock-card{width:min(620px,100%);padding:28px;border:1px solid rgba(255,54,81,.55);border-radius:18px;background:rgba(8,0,1,.9);box-shadow:0 28px 90px #000;text-align:center}.alignment-lock-quote{font:900 clamp(1.2rem,3vw,2rem)/1.25 var(--ui-font);color:#ff8798}.alignment-lock-message{margin-top:12px;color:#f1c9cf;line-height:1.55}@media(max-width:820px),(hover:none),(pointer:coarse){.alignment-strip:not(.evil):not(.locked)::after{transform:translate(-50%,0);opacity:1}.alignment-panel{width:calc(100vw - 20px);right:10px}.alignment-panel:not(.evil):not(.locked){grid-template-columns:1fr!important;padding:14px 18px 22px!important;min-height:168px!important}body.alignment-drawer-open{--alignment-drawer-height:194px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:168px}}@media(prefers-reduced-motion:reduce){.alignment-strip.good{animation:none}.alignment-strip,.alignment-strip::after,.shell{transition:none!important}}
 .alignment-traits{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.alignment-trait{display:flex;justify-content:space-between;gap:8px;padding:5px 7px;border:1px solid rgba(148,163,184,.16);border-radius:7px;background:rgba(148,163,184,.06);color:#cbd5e1}.alignment-trait.bad{border-color:rgba(239,68,68,.18);background:rgba(127,29,29,.09)}.alignment-trait-score{font-weight:900;color:#f8fafc}.alignment-footer{display:flex;justify-content:space-between;gap:12px;align-items:end;color:#718096;font-size:10px;line-height:1.35}.alignment-model{white-space:nowrap;color:#64748b}.alignment-panel.evil{width:min(560px,calc(100vw - 24px));max-height:min(72vh,520px);overflow:auto}.alignment-panel.evil .alignment-traits{grid-template-columns:repeat(2,minmax(0,1fr))}.alignment-panel.evil .alignment-footer{align-items:start;flex-direction:column}.alignment-panel.evil .alignment-model{white-space:normal}body.alignment-drawer-open{--alignment-drawer-height:290px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){min-height:262px;grid-template-columns:minmax(180px,.7fr) repeat(2,minmax(180px,1fr));align-content:start}body.alignment-drawer-open .alignment-traits,body.alignment-drawer-open .alignment-footer{grid-column:1/-1}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:262px}@media(max-width:820px),(hover:none),(pointer:coarse){.alignment-traits{grid-template-columns:repeat(2,minmax(0,1fr));max-height:230px;overflow:auto}.alignment-footer{align-items:start;flex-direction:column}.alignment-model{white-space:normal}body.alignment-drawer-open{--alignment-drawer-height:456px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){min-height:430px!important;max-height:430px;overflow:auto}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:430px}}
+/* One switch language across Web Chat: red is off, blue is on. */
+.shell input[type="checkbox"]:not(.jackhammer-input),
+.login-gate input[type="checkbox"]:not(.jackhammer-input) {
+    position: relative !important;
+    display: inline-block;
+    flex: 0 0 30px !important;
+    width: 30px !important;
+    min-width: 30px;
+    height: 16px !important;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 0 !important;
+    border-radius: 999px !important;
+    background: #dc2626 !important;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.18) !important;
+    vertical-align: middle;
+    cursor: pointer;
+}
+.shell input[type="checkbox"]:not(.jackhammer-input)::before,
+.login-gate input[type="checkbox"]:not(.jackhammer-input)::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: none;
+    transform: translateX(0);
+    transition: transform 140ms ease;
+}
+.shell input[type="checkbox"]:not(.jackhammer-input):checked,
+.login-gate input[type="checkbox"]:not(.jackhammer-input):checked {
+    background: #2563eb !important;
+}
+.shell input[type="checkbox"]:not(.jackhammer-input):checked::before,
+.login-gate input[type="checkbox"]:not(.jackhammer-input):checked::before {
+    transform: translateX(14px) !important;
+    background: #fff;
+}
+.shell input[type="checkbox"]:not(.jackhammer-input):disabled,
+.login-gate input[type="checkbox"]:not(.jackhammer-input):disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+.shell :is(.retry-toggle, .voice-toggle) {
+    position: relative;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    padding: 4px 9px;
+    border: 1px solid #ef4444 !important;
+    border-radius: 10px !important;
+    background: rgba(127,29,29,.28) !important;
+    color: #fecaca !important;
+    font: 750 .68rem/1 var(--ui-font);
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+}
+.shell :is(.retry-toggle, .voice-toggle):has(> input[type="checkbox"]:checked) {
+    border-color: #2563eb !important;
+    background: rgba(37,99,235,.18) !important;
+    color: #bfdbfe !important;
+}
 </style>
 </head>
 <body class="app-loading">
@@ -15824,7 +15974,7 @@ body:not(.agent-mode) .composer-attach-stack {
         <div id="chatModeDock" class="chat-mode-dock" aria-label="Chat modes">
             <div id="chatModeStrip" class="chat-mode-strip" aria-label="Chat mode selector" role="group"></div>
         </div>
-        <div class="retry-controls" aria-label="Prompt retry controls">
+        <div class="retry-controls" aria-label="Prompt automation controls">
             <label class="retry-toggle" title="Retry the prompt until the selected model runtime returns a successful response."><input id="retryPrompt" type="checkbox" checked>Retry</label>
         </div>
         <button id="contextToggle" class="context-toggle" type="button" aria-controls="contextExpander" aria-expanded="false" aria-label="Show context" title="Show context">Context</button>
@@ -15842,7 +15992,7 @@ body:not(.agent-mode) .composer-attach-stack {
                     <span class="param-hint" role="tooltip"><strong>Reasoning</strong><span>Auto adapts to each prompt. Minimal through High favor progressively stronger local models when Model is Auto. A manually selected model stays fixed.</span></span>
                 </label>
                 <label class="param-field">Work cap <input id="jackhammerCustomBudget" type="number" min="1" max="200" step="1" placeholder="preset"><span class="param-hint" role="tooltip"><strong>Jackhammer turn cap</strong><span>Optional per-device override from 1 to 200. Leave blank to use 2, 5, 10, 20, 40, or 100 turns from the selected reasoning level.</span></span></label>
-                <label class="retry-toggle" title="When enabled, this session follows the global reasoning slider."><input id="sessionReasoningInherit" type="checkbox" checked>Session inherits</label>
+                <label class="retry-toggle" title="Use the global Reasoning setting for this session. Turn this off to choose a session-specific reasoning level."><input id="sessionReasoningInherit" type="checkbox" checked>Use global reasoning</label>
             </div>
         </div>
         <button id="send" type="submit">Send</button>
@@ -17053,6 +17203,9 @@ function isChatModeServiceSelectable(serviceId) {
 function serviceRequiresToolSupport(serviceId) {
     return serviceId === 'agent' || serviceId === 'companion';
 }
+function serviceRequiresVisionSupport(serviceId) {
+    return serviceId === 'companion';
+}
 function getAvailableMediaServiceIds() {
     return mediaServiceIds.filter(id => isChatModeServiceSelectable(id));
 }
@@ -17099,6 +17252,8 @@ function renderChatModeStrip() {
     const current = selectedService();
     const strip = chatModeStrip;
     strip.textContent = '';
+    if (retryControls)
+        retryControls.querySelectorAll('.jackhammer-toggle').forEach(existing => existing.remove());
     const planButton = document.createElement('button');
     planButton.type = 'button';
     planButton.className = 'chat-mode-button chat-mode-primary-button';
@@ -17115,6 +17270,7 @@ function renderChatModeStrip() {
         : 'Jackhammer is off. Enable bounded autonomous work runs.';
     const jackhammerInput = document.createElement('input');
     jackhammerInput.type = 'checkbox';
+    jackhammerInput.className = 'jackhammer-input';
     jackhammerInput.checked = jackhammerOn;
     jackhammerInput.setAttribute('aria-label', 'Jackhammer autonomous work mode');
     jackhammerInput.addEventListener('change', () => setJackhammerEnabled(jackhammerInput.checked));
@@ -17122,9 +17278,14 @@ function renderChatModeStrip() {
     jackhammerSwitch.className = 'jackhammer-switch';
     jackhammerSwitch.setAttribute('aria-hidden', 'true');
     const jackhammerText = document.createElement('span');
-    jackhammerText.textContent = 'Jackhammer ' + (jackhammerOn ? 'On' : 'Off');
-    jackhammerToggle.append(jackhammerInput, jackhammerSwitch, jackhammerText);
-    strip.appendChild(jackhammerToggle);
+    jackhammerText.className = 'jackhammer-text';
+    jackhammerText.textContent = 'Jackhammer';
+    const jackhammerState = document.createElement('span');
+    jackhammerState.className = 'jackhammer-state';
+    jackhammerState.textContent = jackhammerOn ? 'On' : 'Off';
+    jackhammerToggle.append(jackhammerInput, jackhammerSwitch, jackhammerText, jackhammerState);
+    if (retryControls)
+        retryControls.appendChild(jackhammerToggle);
     const goalButton = document.createElement('button');
     goalButton.id = 'goalPanelToggle';
     goalButton.type = 'button';
@@ -18428,6 +18589,7 @@ function finishStartupLoading() {
 function setLoginGateVisible(visible, options) {
     options = options || {};
     if (!loginGate) return;
+    const wasHidden = loginGate.hidden;
     loginGateOptional = !!(visible && options.optional);
     loginGate.hidden = !visible;
     document.body.classList.toggle('auth-required', !!visible);
@@ -18442,8 +18604,13 @@ function setLoginGateVisible(visible, options) {
         loginClose.setAttribute('aria-label', closeLabel);
     }
     updatePremiumTokenHint();
-    if (visible && loginUsername)
-        window.setTimeout(() => loginUsername.focus(), 30);
+    if (visible && wasHidden && loginUsername) {
+        window.setTimeout(() => {
+            if (loginGate.hidden || loginGate.contains(document.activeElement)) return;
+            const initialField = loginUsername.value && loginPassword ? loginPassword : loginUsername;
+            initialField.focus();
+        }, 30);
+    }
 }
 
 function isSocketJackAuthenticated(session) {
@@ -23999,6 +24166,8 @@ function permissionInputForService(permission) {
             return permSqlAdmin;
         case 'terminalCommands':
             return permTerminalCommands;
+        case 'companionEnabled':
+            return companionPermissionInputs.CompanionEnabled || null;
         default:
             return null;
     }
@@ -24229,7 +24398,7 @@ function updateServiceLabels() {
         const requiresCompatibleModel = serviceRequiresToolSupport(option.value) || isMediaGenerationService(option.value);
         const compatibleModel = requiresCompatibleModel ? serviceCompatibleModelLabel(option.value) : '';
         const blockedByModelCapability = requiresCompatibleModel && !compatibleModel;
-        option.disabled = blockedByPermission;
+        option.disabled = blockedByPermission || (serviceRequiresVisionSupport(option.value) && blockedByModelCapability);
         option.textContent = service.name || service.id;
         if (compatibleModel)
             option.dataset.compatibleModel = compatibleModel;
@@ -24237,7 +24406,8 @@ function updateServiceLabels() {
             delete option.dataset.compatibleModel;
         option.title = [
             blockedByPermission ? 'Disabled: this service permission is off.' : '',
-            serviceRequiresToolSupport(option.value) && blockedByModelCapability ? 'Select this mode, then choose or load a model that advertises tool support.' : '',
+            serviceRequiresVisionSupport(option.value) && blockedByModelCapability ? 'Companion requires the currently selected model to support image input and tool calls.' : '',
+            !serviceRequiresVisionSupport(option.value) && serviceRequiresToolSupport(option.value) && blockedByModelCapability ? 'Select this mode, then choose or load a model that advertises tool support.' : '',
             isMediaGenerationService(option.value) && blockedByModelCapability ? 'Select this mode, then choose or load a model that supports ' + (mediaTypeByService[option.value] || 'this') + ' generation.' : '',
             compatibleModel ? 'Compatible model: ' + compatibleModel : '',
             service.description || '',
@@ -24287,6 +24457,10 @@ function applySelectedServicePermission() {
         updateServiceLabels();
         return false;
     }
+    if (service.id === 'companion') {
+        updateServiceLabels();
+        return false;
+    }
 
     const input = permissionInputForService(service.permission);
     if (!input || !(permissionCanEdit && canUseAdminTools())) {
@@ -24307,7 +24481,7 @@ function ensureFallbackServiceOptions(preferredServiceId) {
     if (!serviceSelect || serviceSelect.options.length > 0) return;
     const fallbackServices = [
         { id: 'agent', name: 'Agent', kind: 'Agent', permission: 'agentAccess', enabled: true },
-        { id: 'companion', name: 'Companion', kind: 'Companion', permission: 'agentAccess', enabled: true },
+        { id: 'companion', name: 'Companion', kind: 'Companion', permission: 'companionEnabled', enabled: false },
         { id: 'image_generation', name: 'Image Generation', kind: 'Generator', permission: '', enabled: true },
         { id: 'audio_generation', name: 'Audio Generation', kind: 'Generator', permission: '', enabled: true },
         { id: 'video_generation', name: 'Video Generation', kind: 'Generator', permission: '', enabled: true }
@@ -37927,6 +38101,8 @@ function modelSupportsMediaServiceById(id, serviceId) {
 
 function modelSupportsServiceById(id, serviceId) {
     if (!serviceId) return true;
+    if (serviceRequiresVisionSupport(serviceId))
+        return !!modelCapabilities[id] && modelSupportsToolsById(id);
     if (serviceRequiresToolSupport(serviceId)) return modelSupportsToolsById(id);
     if (isMediaGenerationService(serviceId)) return modelSupportsMediaServiceById(id, serviceId);
     return true;
@@ -37948,6 +38124,8 @@ function modeCompatibleModelIds(serviceId) {
 function findModeCompatibleModel(serviceId) {
     if (!serviceRequiresToolSupport(serviceId) && !isMediaGenerationService(serviceId)) return '';
     const current = selectedModel();
+    if (serviceRequiresVisionSupport(serviceId))
+        return modelOptionIsEnabledOrLoaded(current) && modelSupportsServiceById(current, serviceId) ? current : '';
     if (modelOptionIsEnabledOrLoaded(current) && modelSupportsServiceById(current, serviceId)) return current;
     const matches = modeCompatibleModelIds(serviceId);
     if (!matches.length) return '';

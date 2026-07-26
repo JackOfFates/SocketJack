@@ -237,7 +237,6 @@
                                 <ComboBoxItem Content="skip"/>
                             </ComboBox>
                             <Button x:Name="ApplyMagicWorkflowControlButton" Content="Apply Workflow" Click="ApplyMagicWorkflowControlButton_Click" Margin="0,0,8,0" IsEnabled="False" Visibility="Collapsed"/>
-                            <Button x:Name="StartCompanionButton" Content="Start Companion" Click="StartCompanionButton_Click" Margin="0,0,8,0" Visibility="Collapsed"/>
                             <Button x:Name="OpenCompanionButton" Content="Open Companion" Click="OpenCompanionButton_Click" Margin="0,0,8,0"/>
                             <Button x:Name="StartStopButton" Content="Start JACK" Click="StartStopButton_Click" Background="#1F7A68"/>
                             <TextBlock x:Name="MagicWorkflowStatusText"
@@ -3428,28 +3427,15 @@
                                         Click="CompanionEmergencyStopButton_Click"/>
                                 <StackPanel>
                                     <TextBlock Text="Integrated Companion Mode" FontSize="24" FontWeight="SemiBold"/>
-                                    <TextBlock Text="Screen, cursor, applications, and terminal actions stay disabled until their individual permissions allow them."
+                                    <TextBlock Text="Enable Companion here, then choose Companion in Web Chat. The selected model must support image input."
                                                Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="CompanionStatusText"
+                                               Text="Companion is controlled through the selected model's system prompt in Web Chat."
+                                               Foreground="{StaticResource SubtleTextBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,4,0,0"/>
                                 </StackPanel>
                             </DockPanel>
-
-                            <Border Style="{StaticResource PanelBorderStyle}" Margin="0,0,0,12">
-                                <StackPanel>
-                                    <TextBlock Text="Task" FontSize="18" FontWeight="SemiBold"/>
-                                    <TextBox x:Name="CompanionGoalTextBox" Margin="0,8,0,8" MinHeight="64"
-                                             AcceptsReturn="True" TextWrapping="Wrap"
-                                             ToolTip="Describe the desktop task for the selected local model."/>
-                                    <WrapPanel>
-                                        <TextBox x:Name="CompanionModelTextBox" Width="260" Margin="0,0,8,8"
-                                                 ToolTip="Local model id; leave blank to use the configured chat model."/>
-                                        <Button Content="Start Companion" Click="CompanionStartButton_Click" Padding="10,5" Margin="0,0,8,8"/>
-                                        <Button Content="Stop" Click="CompanionStopButton_Click" Padding="10,5" Margin="0,0,8,8"/>
-                                        <Button Content="Preview Screen" Click="CompanionPreviewButton_Click" Padding="10,5" Margin="0,0,8,8"/>
-                                    </WrapPanel>
-                                    <TextBlock x:Name="CompanionStatusText" Text="Companion is idle." Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap"/>
-                                    <Image x:Name="CompanionPreviewImage" MaxHeight="420" Stretch="Uniform" Margin="0,10,0,0"/>
-                                </StackPanel>
-                            </Border>
 
                             <Border Style="{StaticResource PanelBorderStyle}">
                                 <StackPanel>

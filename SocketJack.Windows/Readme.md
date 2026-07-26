@@ -84,11 +84,11 @@ JackLLM Workstation can register a WPF host with SocketJack.WPF so the browser c
 
 JackLLM Mobile extends the JackLLM Workstation flow to Android. It can send prompts, view assistant responses, monitor model and compute status, and reopen workstation sessions from a phone or tablet.
 
-![JackLLM Mobile chat](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-chat.png)
+![JackLLM Mobile chat](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-chat.png)
 
-![JackLLM Mobile sessions](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/JackLLM.Android/docs/images/jackllm-mobile-sessions.png)
+![JackLLM Mobile sessions](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-sessions.png)
 
-Project README: [SocketJack/JackLLM.Android/README.md](https://github.com/JackOfFates/SocketJack/blob/master/SocketJack/JackLLM.Android/README.md)
+Project README: [JackLLM.Android/README.md](https://github.com/JackOfFates/SocketJack/blob/master/JackLLM.Android/README.md)
 
 </details>
 
@@ -98,7 +98,7 @@ Project README: [SocketJack/JackLLM.Android/README.md](https://github.com/JackOf
 - [Examples](https://github.com/JackOfFates/SocketJack/blob/master/examples.md)
 - [SocketJack.WPF package](https://www.nuget.org/packages/SocketJack.WPF)
 - [SocketJack package](https://www.nuget.org/packages/SocketJack)
-- [JackLLM Mobile README](https://github.com/JackOfFates/SocketJack/blob/master/SocketJack/JackLLM.Android/README.md)
+- [JackLLM Mobile README](https://github.com/JackOfFates/SocketJack/blob/master/JackLLM.Android/README.md)
 - [GitHub repository](https://github.com/JackOfFates/SocketJack)
 
 </details>

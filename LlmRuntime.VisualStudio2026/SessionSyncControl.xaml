@@ -296,7 +296,7 @@
           <Style TargetType="{x:Type Grid}">
             <Setter Property="Visibility" Value="Collapsed" />
             <Style.Triggers>
-              <DataTrigger Binding="{Binding IsSignInOverlayVisible}" Value="True">
+              <DataTrigger Binding="{Binding IsWorkstationUnavailable}" Value="True">
                 <Setter Property="Visibility" Value="Visible" />
               </DataTrigger>
             </Style.Triggers>
@@ -317,11 +317,30 @@
             <TextBlock Text="Start JackLLM Workstation at 127.0.0.1:11436 to create and sync Visual Studio session files locally."
                        TextWrapping="Wrap"
                        Margin="0,0,0,12" />
+            <TextBlock Text="Workstation user name" />
+            <TextBox MinHeight="26"
+                     Margin="0,4,0,10"
+                     Text="{Binding SignInUserName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+            <TextBlock Text="Workstation password" />
+            <TextBox MinHeight="26"
+                     Margin="0,4,0,10"
+                     Text="{Binding SignInPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     FontFamily="Wingdings"
+                     Style="{StaticResource {x:Static styles:VsResourceKeys.TextBoxStyleKey}}" />
+            <CheckBox Content="Remember this Workstation sign-in"
+                      Margin="0,0,0,10"
+                      IsChecked="{Binding RememberSignIn, Mode=TwoWay}" />
+            <Button Content="Sign in to JackLLM Workstation"
+                    MinWidth="190"
+                    HorizontalAlignment="Left"
+                    Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"
+                    Command="{Binding SignInCommand}" />
             <TextBlock Text="{Binding SignInError}"
                        Foreground="#FFB4A9"
                        TextWrapping="Wrap"
-                       Margin="0,12,0,0" />
-            <TextBlock Text="{Binding AuthStatus}"
+                       Margin="0,10,0,0" />
+            <TextBlock Text="{Binding WorkstationStatus}"
                        Foreground="#CFCFCF"
                        TextWrapping="Wrap"
                        Margin="0,8,0,0" />

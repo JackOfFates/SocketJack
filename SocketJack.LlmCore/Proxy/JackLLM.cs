@@ -16694,6 +16694,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			bool agentMode = IsChatAgentServiceSelected(request?.Body);
 			bool browserMode = IsChatBrowserSkillServiceSelected(request?.Body);
+			bool companionMode = IsChatCompanionServiceSelected(request?.Body);
 			bool terminalMode = IsChatTerminalServiceSelected(request?.Body);
 			bool imageRequest = ChatUiRequestContainsImageContent(request?.Body);
 			string sessionId = EnsureChatUiSessionId(ExtractChatUiSessionId(request?.Body));
@@ -16710,6 +16711,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return BuildJsonError(request, 403, "Forbidden", "Terminal Commands permission is disabled for this session.");
 			}
+			string companionError = ValidateChatCompanionRequest(request?.Body, permissions);
+			if (companionMode && !string.IsNullOrWhiteSpace(companionError))
+				return BuildJsonError(request, 403, "Companion Unavailable", companionError);
 			if (!EnsureChatUsageCanStart(request, ownerKey, request?.Body, out var usageSnapshot, out var usageError))
 			{
 				return JsonSerializer.Serialize(new
@@ -16720,9 +16724,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				});
 			}
 			string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, principal.UserName, ownerKey);
-			if (agentMode || browserMode || terminalMode)
+			if (agentMode || browserMode || terminalMode || companionMode)
 			{
 				lmRequestJson = AddProxyResearchTools(lmRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, ownerKey);
+				if (companionMode)
+					lmRequestJson = AddCompanionTools(lmRequestJson, permissions, ownerKey);
 			}
 			ChatUsageMeter usageMeter = CreateChatUsageMeter();
 			DateTimeOffset startedUtc = DateTimeOffset.UtcNow;
@@ -16805,6 +16811,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			bool agentMode = IsChatAgentServiceSelected(request?.Body);
 			bool browserMode = IsChatBrowserSkillServiceSelected(request?.Body);
+			bool companionMode = IsChatCompanionServiceSelected(request?.Body);
 			bool terminalMode = IsChatTerminalServiceSelected(request?.Body);
 			ChatUiRequestContainsImageContent(request?.Body);
 			string sessionId = EnsureChatUiSessionId(ExtractChatUiSessionId(request?.Body));
@@ -16826,14 +16833,23 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			else
 			{
+				string companionError = ValidateChatCompanionRequest(request?.Body, permissions);
+				if (companionMode && !string.IsNullOrWhiteSpace(companionError))
+				{
+					SetHttpStatus(request, 403, "Forbidden");
+					WriteChatUiStreamEvent(output, "error", companionError, "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
+					return;
+				}
 				if (!EnsureChatUsageCanStart(output, ownerKey, request?.Body))
 				{
 					return;
 				}
-				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands))
+				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands) || companionMode)
 				{
 					string toolRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, principal.UserName, ownerKey);
 					toolRequestJson = AddProxyResearchTools(toolRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, ownerKey);
+					if (companionMode)
+						toolRequestJson = AddCompanionTools(toolRequestJson, permissions, ownerKey);
 					StringBuilder liveContent = new StringBuilder();
 					StringBuilder liveReasoning = new StringBuilder();
 					ChatUiCompletion completion = NormalizeChatUiCompletionForDisplay(await ExecuteChatUiCompletionWithProxyToolsAsync(emitLiveReasoning: delegate(string reasoning)
@@ -17320,9 +17336,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				name = "Companion",
 				kind = "Companion",
 				source = "Integrated JackLLM Workstation Companion",
-				permission = "agentAccess",
-				enabled = agentEnabled,
-				description = "Integrated JackLLM Workstation Companion mode for separately permissioned screen, cursor, application, terminal, transcript, sensitive-memory, and financial actions."
+				permission = "companionEnabled",
+				enabled = permissions?.companionEnabled ?? false,
+				description = "Adds the integrated Companion system prompt and desktop-action tools to an image-capable Web Chat model. Screen, cursor, application, terminal, transcript, sensitive-memory, and financial actions remain separately permissioned."
 			},
 			new ChatUiServiceInfo
 			{
@@ -17446,7 +17462,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (permissions != null && permissions.agentAccess)
 		{
-			services.Add("Integrated Companion mode is hosted by JackLLM Workstation. It has independent default-off gates for screen viewing, cursor control, application launch/control, terminal commands, transcript storage, sensitive memory, and financial actions.");
+			services.Add("Integrated Companion mode is enabled from the Workstation Companion tab and is offered only to the currently selected image-capable model. It injects a Companion system prompt, a live screen observation when permitted, and typed desktop-action tools. Screen viewing, cursor control, application launch/control, terminal commands, transcript storage, sensitive memory, and financial actions retain independent default-off gates.");
 		}
 		if (permissions != null && permissions.agentAccess)
 		{
@@ -17630,7 +17646,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (string.Equals(service.id, "companion", StringComparison.OrdinalIgnoreCase))
 		{
-			return "[JACK service selection] The Web UI Service dropdown selected integrated Companion mode inside JackLLM Workstation. Every screen, cursor, application, terminal, transcript, sensitive-memory, and financial capability has an independent default-off permission. Financial and sensitive-memory actions additionally require a fresh local per-action confirmation. Use only tool or API results that explicitly report success; never claim the standalone Companion app or /Workspace service exists.";
+			return "[JACK service selection] The Web UI selected integrated Companion mode. You are operating the Windows desktop through Workstation-provided Companion tools. Inspect the current screen before acting, take one typed action at a time, inspect again after state changes, and stop when the user's request is complete. This mode is valid only for an image-capable model and only while Companion is enabled in the Workstation Companion tab. Every screen, cursor, application, terminal, transcript, sensitive-memory, and financial action retains its independent permission. Financial and sensitive-memory actions require fresh local confirmation. Never claim an action succeeded unless its tool result explicitly reports success.";
 		}
 		if (string.Equals(service.id, "sockjack_dml", StringComparison.OrdinalIgnoreCase))
 		{
@@ -17690,6 +17706,52 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			return false;
 		}
+	}
+
+	private bool IsChatCompanionServiceSelected(string requestBody)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody))
+			return false;
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			return string.Equals(ExtractStringProperty(document.RootElement, "service"), "companion", StringComparison.OrdinalIgnoreCase);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private string ValidateChatCompanionRequest(string requestBody, ChatPermissionState permissions)
+	{
+		if (!IsChatCompanionServiceSelected(requestBody))
+			return "";
+		if (permissions == null || !permissions.companionEnabled)
+			return "Companion mode is disabled. Enable it in the Workstation Companion tab.";
+
+		string requestedModel = "";
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			requestedModel = ExtractStringProperty(document.RootElement, "model") ?? "";
+		}
+		catch
+		{
+		}
+		string modelId = ResolveChatUiRequestModel(requestedModel);
+		bool supportsImages = false;
+		lock (_chatModelCacheLock)
+		{
+			ChatUiModelInfo cached = _lastChatUiModelInfos.FirstOrDefault(model =>
+				model != null && string.Equals(model.id, modelId, StringComparison.OrdinalIgnoreCase));
+			supportsImages = cached?.supportsImages ?? false;
+		}
+		if (!supportsImages)
+			supportsImages = ModelLikelySupportsImages(modelId);
+		return supportsImages
+			? ""
+			: "Companion mode requires a selected model that supports image input. Choose a vision-capable model first.";
 	}
 
 	private bool IsChatTerminalServiceSelected(string requestBody)
@@ -43031,6 +43093,7 @@ except Exception as exc:
 			}
 			bool agentMode = IsChatAgentServiceSelected(request?.Body);
 			bool browserMode = IsChatBrowserSkillServiceSelected(request?.Body);
+			bool companionMode = IsChatCompanionServiceSelected(request?.Body);
 			bool terminalMode = IsChatTerminalServiceSelected(request?.Body);
 			bool imageRequest = ChatUiRequestContainsImageContent(request?.Body);
 			string sessionId = (sharedChat ? sharedSessionId : EnsureChatUiSessionId(ExtractChatUiSessionId(request?.Body)));
@@ -43079,6 +43142,12 @@ except Exception as exc:
 					error = "Terminal Commands permission is disabled for this client."
 				});
 			}
+			string companionError = ValidateChatCompanionRequest(request?.Body, permissions);
+			if (companionMode && !string.IsNullOrWhiteSpace(companionError))
+			{
+				SetHttpStatus(request, 403, "Forbidden");
+				return JsonSerializer.Serialize(new { ok = false, error = companionError });
+			}
 			if (!EnsureChatUsageCanStart(request, ownerKey, request?.Body, out var usageSnapshot, out var usageError))
 			{
 				return JsonSerializer.Serialize(new
@@ -43090,9 +43159,11 @@ except Exception as exc:
 			}
 			string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, ownerKey, includeMemories: !sharedChat);
 			string runtimeModelForUse = EnsureWebChatRuntimeModelReadyAsync(lmRequestJson, cancellationToken).GetAwaiter().GetResult();
-			if (agentMode || browserMode || terminalMode)
+			if (agentMode || browserMode || terminalMode || companionMode)
 			{
 				lmRequestJson = AddProxyResearchTools(lmRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, ownerKey);
+				if (companionMode)
+					lmRequestJson = AddCompanionTools(lmRequestJson, permissions, ownerKey);
 			}
 			string promptSessionId = BeginActivePromptSession(agentMode ? "Web UI Agent" : (browserMode ? "Web UI Browser Skill" : (terminalMode ? "Web UI Terminal" : "Web UI Chat")), ownerKey, lmRequestJson, sessionId);
 			ChatUsageMeter usageMeter = CreateChatUsageMeter();
@@ -43250,6 +43321,7 @@ except Exception as exc:
 			}
 			bool agentMode = IsChatAgentServiceSelected(request?.Body);
 			bool browserMode = IsChatBrowserSkillServiceSelected(request?.Body);
+			bool companionMode = IsChatCompanionServiceSelected(request?.Body);
 			bool terminalMode = IsChatTerminalServiceSelected(request?.Body);
 			string mediaServiceId;
 			string mediaKind;
@@ -43272,6 +43344,12 @@ except Exception as exc:
 			}
 			else
 			{
+				string companionError = ValidateChatCompanionRequest(request?.Body, permissions);
+				if (companionMode && !string.IsNullOrWhiteSpace(companionError))
+				{
+					WriteChatUiStreamEvent(output, "error", companionError, "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
+					return;
+				}
 				string streamRequestBody = request?.Body ?? "{}";
 				if (!TryMaterializeInlineChatReferenceFiles(ref streamRequestBody, streamOwnerKey, sessionId, permissions, out var materializeError))
 				{
@@ -43321,10 +43399,12 @@ except Exception as exc:
 				{
 					WriteChatUiProgressWithUsage(output, streamOwnerKey, usageMeter, progress, "runtime_preflight", status, 0L, 0L);
 				}, requestBody: request?.Body, cancellationToken: cancellationToken).ConfigureAwait(continueOnCapturedContext: false));
-				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands))
+				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands) || companionMode)
 				{
 					string toolRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, streamOwnerKey, includeMemories: !sharedChat);
 					toolRequestJson = AddProxyResearchTools(toolRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, streamOwnerKey);
+					if (companionMode)
+						toolRequestJson = AddCompanionTools(toolRequestJson, permissions, streamOwnerKey);
 					promptSessionId = promptSessionId ?? BeginActivePromptSession(agentMode ? "Web UI Agent" : (browserMode ? "Web UI Browser Skill" : "Web UI Terminal"), streamOwnerKey, toolRequestJson, sessionId, sharedParticipantKey);
 					string agentStatus = imageRequest
 						? ("Processing image in " + selectedRuntimeDisplayName + "...")
@@ -50616,6 +50696,7 @@ except Exception as exc:
 		writer.WriteString("reasoningLevel", reasoningLevel);
 		string selectedServiceId = ExtractStringProperty(root, "service") ?? "";
 		bool agentMode = string.Equals(selectedServiceId, "agent", StringComparison.OrdinalIgnoreCase);
+		bool companionMode = string.Equals(selectedServiceId, "companion", StringComparison.OrdinalIgnoreCase);
 		if (root.TryGetProperty("temperature", out var temperature))
 		{
 			WritePropertyIfSimple(writer, "temperature", temperature);
@@ -50647,7 +50728,10 @@ except Exception as exc:
 		}
 		if (lastUserIndex >= 0)
 		{
-			WriteChatUiMessage(writer, messageList[lastUserIndex], ref messageCount);
+			if (companionMode && WriteCompanionChatUserMessage(writer, messageList[lastUserIndex], permissions))
+				messageCount++;
+			else
+				WriteChatUiMessage(writer, messageList[lastUserIndex], ref messageCount);
 		}
 		if (messageCount == 0)
 		{
@@ -56106,7 +56190,7 @@ except Exception as exc:
 
 	private bool IsProxyOwnedResearchTool(string toolName)
 	{
-		return toolName != null && (toolName.Equals("internet_search", StringComparison.Ordinal) || toolName.Equals("download_file", StringComparison.Ordinal) || toolName.Equals("nuget_search", StringComparison.Ordinal) || toolName.Equals("nuget_package_info", StringComparison.Ordinal) || toolName.Equals("github_code_search", StringComparison.Ordinal) || IsProxyOwnedCoordinationTool(toolName) || IsProxyOwnedWorkstationModelTool(toolName) || IsProxyOwnedSockJackDmlTool(toolName) || IsProxyOwnedGitTool(toolName) || IsProxyOwnedTerminalTool(toolName) || IsProxyOwnedBrowserTool(toolName) || IsProxyOwnedVsTool(toolName) || IsLlmRuntimeToolName(toolName));
+		return toolName != null && (toolName.Equals("companion_action", StringComparison.Ordinal) || toolName.Equals("internet_search", StringComparison.Ordinal) || toolName.Equals("download_file", StringComparison.Ordinal) || toolName.Equals("nuget_search", StringComparison.Ordinal) || toolName.Equals("nuget_package_info", StringComparison.Ordinal) || toolName.Equals("github_code_search", StringComparison.Ordinal) || IsProxyOwnedCoordinationTool(toolName) || IsProxyOwnedWorkstationModelTool(toolName) || IsProxyOwnedSockJackDmlTool(toolName) || IsProxyOwnedGitTool(toolName) || IsProxyOwnedTerminalTool(toolName) || IsProxyOwnedBrowserTool(toolName) || IsProxyOwnedVsTool(toolName) || IsLlmRuntimeToolName(toolName));
 	}
 
 	private bool IsProxyOwnedCoordinationTool(string toolName)
@@ -57880,6 +57964,12 @@ except Exception as exc:
 			return BuildProxyCoordinationToolResult(toolName, argumentsJson, "").Result;
 		}
 		ChatPermissionState permissions = (string.IsNullOrWhiteSpace(ownerKey) ? GetChatPermissions() : GetChatPermissions(ownerKey));
+		if (toolName.Equals("companion_action", StringComparison.Ordinal))
+		{
+			if (permissions == null || !permissions.companionEnabled)
+				return "companion_action blocked: Companion mode is disabled in the Workstation Companion tab.";
+			return ExecuteCompanionToolAction(ownerKey, argumentsJson);
+		}
 		if (IsProxyOwnedSockJackDmlTool(toolName))
 		{
 			if (permissions == null || !permissions.agentAccess)
@@ -67492,7 +67582,7 @@ except Exception as exc:
 		{
 			return false;
 		}
-		return requestBody.Contains("\"internet_search\"", StringComparison.Ordinal) || requestBody.Contains("\"download_file\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_open\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_read_page\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_click_link\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_click\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_type\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_select\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_press\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_find_text\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_search\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_package_info\"", StringComparison.Ordinal) || requestBody.Contains("\"github_code_search\"", StringComparison.Ordinal) || requestBody.Contains("\"goal_checkpoint\"", StringComparison.Ordinal) || requestBody.Contains("\"continue_with_tools\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_list_models\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_run_model\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_execute\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_workflow_status\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_find\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_execution_control\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_evidence_link\"", StringComparison.Ordinal) || requestBody.Contains("\"git_dependency_check\"", StringComparison.Ordinal) || requestBody.Contains("\"git_status\"", StringComparison.Ordinal) || requestBody.Contains("\"git_changed_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_tracked_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_at_ref\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_history\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_blame\"", StringComparison.Ordinal) || requestBody.Contains("\"git_grep\"", StringComparison.Ordinal) || requestBody.Contains("\"git_log\"", StringComparison.Ordinal) || requestBody.Contains("\"git_show\"", StringComparison.Ordinal) || requestBody.Contains("\"git_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_remote\"", StringComparison.Ordinal) || requestBody.Contains("\"git_stage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_unstage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_commit\"", StringComparison.Ordinal) || requestBody.Contains("\"git_create_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_switch_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_fetch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_pull\"", StringComparison.Ordinal) || requestBody.Contains("\"git_push\"", StringComparison.Ordinal) || requestBody.Contains("\"read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_write_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_replace_in_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_copy_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_rename_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_delete_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_search_files\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_list_files\"", StringComparison.Ordinal) || requestBody.Contains("\"run_command_in_terminal\"", StringComparison.Ordinal);
+		return requestBody.Contains("\"companion_action\"", StringComparison.Ordinal) || requestBody.Contains("\"internet_search\"", StringComparison.Ordinal) || requestBody.Contains("\"download_file\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_open\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_read_page\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_click_link\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_click\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_type\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_select\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_press\"", StringComparison.Ordinal) || requestBody.Contains("\"browser_find_text\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_search\"", StringComparison.Ordinal) || requestBody.Contains("\"nuget_package_info\"", StringComparison.Ordinal) || requestBody.Contains("\"github_code_search\"", StringComparison.Ordinal) || requestBody.Contains("\"goal_checkpoint\"", StringComparison.Ordinal) || requestBody.Contains("\"continue_with_tools\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_list_models\"", StringComparison.Ordinal) || requestBody.Contains("\"workstation_run_model\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_create\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_plan_execute\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_workflow_status\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_progress_document_find\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_execution_control\"", StringComparison.Ordinal) || requestBody.Contains("\"sockjackdml_evidence_link\"", StringComparison.Ordinal) || requestBody.Contains("\"git_dependency_check\"", StringComparison.Ordinal) || requestBody.Contains("\"git_status\"", StringComparison.Ordinal) || requestBody.Contains("\"git_changed_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_tracked_files\"", StringComparison.Ordinal) || requestBody.Contains("\"git_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_diff\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_at_ref\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_history\"", StringComparison.Ordinal) || requestBody.Contains("\"git_file_blame\"", StringComparison.Ordinal) || requestBody.Contains("\"git_grep\"", StringComparison.Ordinal) || requestBody.Contains("\"git_log\"", StringComparison.Ordinal) || requestBody.Contains("\"git_show\"", StringComparison.Ordinal) || requestBody.Contains("\"git_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_remote\"", StringComparison.Ordinal) || requestBody.Contains("\"git_stage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_unstage\"", StringComparison.Ordinal) || requestBody.Contains("\"git_commit\"", StringComparison.Ordinal) || requestBody.Contains("\"git_create_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_switch_branch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_fetch\"", StringComparison.Ordinal) || requestBody.Contains("\"git_pull\"", StringComparison.Ordinal) || requestBody.Contains("\"git_push\"", StringComparison.Ordinal) || requestBody.Contains("\"read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_read_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_write_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_replace_in_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_copy_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_rename_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_delete_file\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_search_files\"", StringComparison.Ordinal) || requestBody.Contains("\"vs_list_files\"", StringComparison.Ordinal) || requestBody.Contains("\"run_command_in_terminal\"", StringComparison.Ordinal);
 	}
 
 	private void WriteGitToolSchemas(Utf8JsonWriter writer)

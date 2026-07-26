@@ -675,11 +675,7 @@ public static class SocketJackLocalWorkstationDiscovery
 
 public sealed class SocketJackMasterListClient
 {
-    public static readonly string[] DefaultMasterListUrls =
-    {
-        "https://socketjack.com/api/lmvsproxy/servers",
-        "https://socketjack.com/api/socketjack-com/servers"
-    };
+    public static readonly string[] DefaultMasterListUrls = Array.Empty<string>();
 
     private readonly HttpClient _httpClient;
     private readonly IReadOnlyList<Uri> _masterListUris;
@@ -702,23 +698,8 @@ public sealed class SocketJackMasterListClient
             return new[] { localWorkstation };
         }
 
-        var errors = new List<string>();
-        foreach (Uri uri in _masterListUris)
-        {
-            try
-            {
-                using HttpResponseMessage response = await _httpClient.GetAsync(uri, cancellationToken).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
-                string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return ParseServers(json);
-            }
-            catch (Exception ex) when (!(ex is OperationCanceledException))
-            {
-                errors.Add(uri + ": " + ex.Message);
-            }
-        }
-
-        throw new InvalidOperationException("Unable to load SocketJack MasterList. " + string.Join(" | ", errors));
+        throw new InvalidOperationException(
+            "JackLLM Workstation is not available at " + SocketJackLocalWorkstationDiscovery.DefaultEndpoint + ".");
     }
 
     public static IReadOnlyList<SocketJackServerCandidate> ParseServers(string json)
