@@ -109,7 +109,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "LlmRuntime Projects", "LlmR
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "JackLLM Projects", "JackLLM Projects", "{A6C25422-C503-4D12-A1BF-B2CA6A7747CC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Mobile", "SocketJack\JackLLM.Android\JackLLM.Android.csproj", "{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Android", "SocketJack\JackLLM.Android\JackLLM.Android.csproj", "{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.WorkstationMcp", "SocketJack.WorkstationMcp\SocketJack.WorkstationMcp.csproj", "{348FF866-EA37-42A5-B3AE-A3E7A7878546}"
 EndProject
@@ -121,18 +121,18 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "LlmRuntime.VisualStudioCode
 	ProjectSection(SolutionItems) = preProject
 		LlmRuntime.VisualStudioCode\.gitignore = LlmRuntime.VisualStudioCode\.gitignore
 		LlmRuntime.VisualStudioCode\.vscodeignore = LlmRuntime.VisualStudioCode\.vscodeignore
-		LlmRuntime.VisualStudioCode\assets\socketjack.png = LlmRuntime.VisualStudioCode\assets\socketjack.png
 		LlmRuntime.VisualStudioCode\CHANGELOG.md = LlmRuntime.VisualStudioCode\CHANGELOG.md
 		LlmRuntime.VisualStudioCode\esbuild.mjs = LlmRuntime.VisualStudioCode\esbuild.mjs
+		LlmRuntime.VisualStudioCode\src\extension.ts = LlmRuntime.VisualStudioCode\src\extension.ts
 		LlmRuntime.VisualStudioCode\LICENSE = LlmRuntime.VisualStudioCode\LICENSE
 		LlmRuntime.VisualStudioCode\package-lock.json = LlmRuntime.VisualStudioCode\package-lock.json
 		LlmRuntime.VisualStudioCode\package.json = LlmRuntime.VisualStudioCode\package.json
-		LlmRuntime.VisualStudioCode\README.md = LlmRuntime.VisualStudioCode\README.md
-		LlmRuntime.VisualStudioCode\src\extension.ts = LlmRuntime.VisualStudioCode\src\extension.ts
 		LlmRuntime.VisualStudioCode\src\provider.ts = LlmRuntime.VisualStudioCode\src\provider.ts
+		LlmRuntime.VisualStudioCode\README.md = LlmRuntime.VisualStudioCode\README.md
+		LlmRuntime.VisualStudioCode\assets\socketjack.png = LlmRuntime.VisualStudioCode\assets\socketjack.png
+		LlmRuntime.VisualStudioCode\tsconfig.json = LlmRuntime.VisualStudioCode\tsconfig.json
 		LlmRuntime.VisualStudioCode\src\types.ts = LlmRuntime.VisualStudioCode\src\types.ts
 		LlmRuntime.VisualStudioCode\src\workstationClient.ts = LlmRuntime.VisualStudioCode\src\workstationClient.ts
-		LlmRuntime.VisualStudioCode\tsconfig.json = LlmRuntime.VisualStudioCode\tsconfig.json
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Workstation", "JackLLM.Workstation\JackLLM.Workstation.csproj", "{3B25755B-5A0F-4B5E-A0D3-71B1E42FBCAC}"
@@ -247,8 +247,8 @@ Global
 		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Debug|x86.Build.0 = Debug|Any CPU
 		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|Any CPU.Build.0 = Release|Any CPU
-		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x64.ActiveCfg = Release|Any CPU
-		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x64.Build.0 = Release|Any CPU
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x64.ActiveCfg = Release|x64
+		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x64.Build.0 = Release|x64
 		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x86.ActiveCfg = Release|Any CPU
 		{6E560CB5-6800-4910-8C13-D0B6ECF175C6}.Release|x86.Build.0 = Release|Any CPU
 		{D7A7A7F1-C52A-45D5-A208-0D6C94FE2B57}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
@@ -511,6 +511,7 @@ Global
 		{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}.Debug|x86.Build.0 = Debug|Any CPU
 		{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}.Release|Any CPU.Deploy.0 = Release|Any CPU
 		{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}.Release|x64.ActiveCfg = Release|Any CPU
 		{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}.Release|x64.Build.0 = Release|Any CPU
 		{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}.Release|x86.ActiveCfg = Release|Any CPU

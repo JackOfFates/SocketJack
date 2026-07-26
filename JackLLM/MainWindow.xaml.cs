@@ -1133,14 +1133,14 @@ public partial class MainWindow : Window {
     }
 
     private void StopUiTimers() {
-        _metricsTimer.Stop();
-        _masterServerRefreshTimer.Stop();
-        _updaterStatusTimer.Stop();
-        _trayTooltipDelayTimer.Stop();
-        _trayTooltipHideTimer.Stop();
-        _coachmarkTimer.Stop();
-        _remoteCursorDiagnosticsTimer?.Stop();
-        _wpfChatIntellisenseTimer?.Stop();
+        if (_metricsTimer != null) _metricsTimer.Stop();
+        if (_masterServerRefreshTimer != null) _masterServerRefreshTimer.Stop();
+        if (_updaterStatusTimer != null) _updaterStatusTimer.Stop();
+        if (_trayTooltipDelayTimer != null) _trayTooltipDelayTimer.Stop();
+        if (_trayTooltipHideTimer != null) _trayTooltipHideTimer.Stop();
+        if (_coachmarkTimer != null) _coachmarkTimer.Stop();
+        if (_remoteCursorDiagnosticsTimer != null) _remoteCursorDiagnosticsTimer.Stop();
+        if (_wpfChatIntellisenseTimer != null) _wpfChatIntellisenseTimer.Stop();
     }
 
     private void CancelPendingUiOperations() {
@@ -4955,7 +4955,7 @@ public partial class MainWindow : Window {
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var title = new TextBlock {
-            Text = "Visual composer Â· guided file types Â· raw regex Â· live path test",
+            Text = "Visual composer · guided file types · raw regex · live path test",
             Foreground = Brushes.White,
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
@@ -5048,7 +5048,7 @@ public partial class MainWindow : Window {
         };
         test.Click += (_, _) => {
             bool matched = _proxy.TestChatWorkspaceIgnoreRegex(pattern.Text, target.SelectedItem?.ToString() ?? "path", caseSensitive.IsChecked == true, testPath.Text, out string error);
-            status.Text = string.IsNullOrWhiteSpace(error) ? (matched ? "MATCH â€” this path will be blocked." : "No match.") : "Invalid regex: " + error;
+            status.Text = string.IsNullOrWhiteSpace(error) ? (matched ? "MATCH — this path will be blocked." : "No match.") : "Invalid regex: " + error;
             status.Foreground = string.IsNullOrWhiteSpace(error) ? Brushes.LightGreen : Brushes.Orange;
         };
         save.Click += (_, _) => {

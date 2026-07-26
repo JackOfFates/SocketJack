@@ -78,6 +78,7 @@
     <StartupObject>JackLLM.App</StartupObject>
     <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8618;CS8622;CS8625</NoWarn>
     <JackOnnxBundleCudaDependencies>true</JackOnnxBundleCudaDependencies>
+    <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -96,30 +97,18 @@
     <Copy SourceFiles="@(JackLLMUpdaterFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(JackLLMUpdaterFiles)' != ''" />
   </Target>
 
-  <Target Name="BundleOfficialSecurityBroker"
-          AfterTargets="Build"
-          Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
+  <Target Name="BundleOfficialSecurityBroker" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
     <GetFileHash Files="$(OutDir)$(AssemblyName).exe" Algorithm="SHA256">
       <Output TaskParameter="Items" ItemName="_SecureReleaseWorkstationHash" />
     </GetFileHash>
-    <WriteLinesToFile File="$(OutDir)secure-release.sha256"
-                      Lines="@(_SecureReleaseWorkstationHash->'%(FileHash)')"
-                      Overwrite="true"
-                      WriteOnlyWhenDifferent="true" />
-    <MSBuild Projects="..\JackLLM.SecurityBroker\JackLLM.SecurityBroker.csproj"
-             Targets="Build"
-             BuildInParallel="false"
-             Properties="Configuration=Release;RuntimeIdentifier=win-x64" />
+    <WriteLinesToFile File="$(OutDir)secure-release.sha256" Lines="@(_SecureReleaseWorkstationHash->'%(FileHash)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <MSBuild Projects="..\JackLLM.SecurityBroker\JackLLM.SecurityBroker.csproj" Targets="Build" BuildInParallel="false" Properties="Configuration=Release;RuntimeIdentifier=win-x64" />
     <ItemGroup>
       <OfficialSecurityBrokerFiles Include="..\JackLLM.SecurityBroker\bin\Release\net8.0-windows10.0.17763.0\win-x64\**\*" />
     </ItemGroup>
-    <Copy SourceFiles="@(OfficialSecurityBrokerFiles)"
-          DestinationFiles="@(OfficialSecurityBrokerFiles->'$(OutDir)SecurityBroker\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-    <Error Condition="!Exists('$(OutDir)SecurityBroker\JackLLM.SecurityBroker.exe')"
-           Text="The official Release security broker was not produced beside JackLLM.exe." />
-    <Error Condition="!Exists('$(OutDir)secure-release.sha256')"
-           Text="The secure Release workstation hash was not produced beside JackLLM.exe." />
+    <Copy SourceFiles="@(OfficialSecurityBrokerFiles)" DestinationFiles="@(OfficialSecurityBrokerFiles->'$(OutDir)SecurityBroker\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(OutDir)SecurityBroker\JackLLM.SecurityBroker.exe')" Text="The official Release security broker was not produced beside JackLLM.exe." />
+    <Error Condition="!Exists('$(OutDir)secure-release.sha256')" Text="The secure Release workstation hash was not produced beside JackLLM.exe." />
   </Target>
 
 </Project>
