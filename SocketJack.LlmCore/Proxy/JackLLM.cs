@@ -754,7 +754,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private readonly Dictionary<string, string> _chatOwnerEncryptionSecrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-	private readonly Dictionary<string, string> _chatOwnerEphemeralEncryptionSecrets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+	private readonly HashSet<string> _chatOwnersReencryptedForDurableStorage = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 	private readonly object _chatPrivatePayloadCacheLock = new object();
 
@@ -1072,9 +1072,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	public string ChatModel { get; set; } = "lm-studio";
 
-	public bool UseSocketJackMasterAuth { get; set; } = true;
+	public bool UseSocketJackMasterAuth { get; set; } = false;
 
-	public bool StoreLocalWebAuthAccounts { get; set; } = false;
+	public bool StoreLocalWebAuthAccounts { get; set; } = true;
+
+	public bool RequireWorkstationUserAuthentication { get; set; } = true;
 
 	public bool PublicAccessEnabled { get; set; } = true;
 
@@ -1650,6 +1652,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			table.Rows.Add(clone);
 			SaveChatSessionDataAndInvalidateCaches();
+			CloneChatSessionWorkspaceConfiguration(ownerKey, GetRowValue(source, 0), cloneId);
 			return BuildChatSessionDiagnosticsSnapshot(clone);
 		}
 	}
@@ -1682,6 +1685,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			throw new InvalidOperationException(error);
 		}
 		SaveChatFilesystemAccess(ownerKey, normalizedPath);
+		EnsureLegacyGlobalWorkspaceRoots(ownerKey);
 		return GetChatFilesystemAccessDiagnostics(ownerKey);
 	}
 
@@ -1693,6 +1697,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			throw new InvalidOperationException(error);
 		}
 		RemoveChatFilesystemAccess(ownerKey, normalizedPath);
+		RemoveLegacyGlobalWorkspaceRoot(ownerKey, normalizedPath);
 		StopChatFtpServerIfRootRemoved(ownerKey, normalizedPath);
 		return GetChatFilesystemAccessDiagnostics(ownerKey);
 	}
@@ -5041,6 +5046,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		networkOptions.BindAddress = PublicAccessEnabled ? IPAddress.Any : IPAddress.Loopback;
 		MutableTcpServer server = new MutableTcpServer(networkOptions, _chatServerPort, "JACK Chat UI");
 		DisableDefaultSocketJackSecurity(server);
+		server.RequestGate = GateWorkstationUserRequest;
 		server.RegisterProtocol(new WebChatApiWebSocketProtocolHandler());
 		server.RegisterProtocol(new PersonaPlexWebSocketBridgeProtocolHandler(BuildPersonaPlexBridgeEndpoint, LogMessage));
 		server.LogOutput += RelaySocketJackLogOutput;
@@ -5091,6 +5097,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		RegisterJackDirectorRoutes(server);
 		RegisterAlignmentRoutes(server);
 		RegisterDreamRoutes(server);
+		RegisterCompanionRoutes(server);
 		server.Map("GET", "/assets/jackllm-workstation-metadata.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildWorkstationMetadataImageResponse(request));
 		server.Map("GET", "/Account", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildSocketJackAccountPage(connection, request));
 		RegisterSockJackDmlRoutes(server);
@@ -5288,6 +5295,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("OPTIONS", "/api/terminal-approvals", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("GET", "/api/chat-filesystem-access", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatFilesystemAccessListRequest(connection, request));
 		server.Map("POST", "/api/chat-filesystem-access", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatFilesystemAccessMutationRequest(connection, request));
+		server.Map("GET", "/api/chat-workspaces", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatWorkspaceListRequest(connection, request));
+		server.Map("POST", "/api/chat-workspaces", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatWorkspaceMutationRequest(connection, request));
 		server.Map("GET", "/api/chat-directory-browser", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatDirectoryBrowserRequest(connection, request));
 		server.Map("GET", "/api/chat-solution-explorer", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSolutionExplorerRequest(connection, request));
 		server.Map("GET", "/api/chat-file-preview", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatFilePreviewRequest(connection, request));
@@ -5446,6 +5455,63 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			server.RouteString("GET", path2, pageHtml, null, "Documentation:" + path2, 0);
 		}
+	}
+
+	private string GateWorkstationUserRequest(NetworkConnection connection, HttpRequest request)
+	{
+		if (!RequireWorkstationUserAuthentication || request == null)
+		{
+			return null;
+		}
+
+		string method = (request.Method ?? "GET").Trim().ToUpperInvariant();
+		string path = (request.Path ?? "/").Trim();
+		if (method == "OPTIONS" || IsWorkstationUnauthenticatedRoute(method, path))
+		{
+			return null;
+		}
+
+		if (AuthenticateMobileDevice(request) != null)
+		{
+			return null;
+		}
+
+		if (TryAuthenticateWebAuthRequest(request, out var principal, out var _) &&
+			principal != null &&
+			!string.IsNullOrWhiteSpace(principal.UserName))
+		{
+			return null;
+		}
+
+		return "Workstation sign-in required. Use an account created on this JackLLM Workstation; client IP addresses do not grant access.";
+	}
+
+	private static bool IsWorkstationUnauthenticatedRoute(string method, string path)
+	{
+		path = string.IsNullOrWhiteSpace(path) ? "/" : path;
+		if (method == "GET")
+		{
+			if (path == "/" ||
+				path.Equals("/Session", StringComparison.OrdinalIgnoreCase) ||
+				path.Equals("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
+				path.Equals("/site.webmanifest", StringComparison.OrdinalIgnoreCase) ||
+				path.Equals("/api/web-auth/session", StringComparison.OrdinalIgnoreCase) ||
+				path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+		}
+
+		if (method == "POST" &&
+			(path.Equals("/api/web-auth/login", StringComparison.OrdinalIgnoreCase) ||
+			 path.Equals("/api/web-auth/register", StringComparison.OrdinalIgnoreCase) ||
+			 path.Equals("/api/web-auth/registration-request", StringComparison.OrdinalIgnoreCase) ||
+			 path.Equals("/api/mobile/pairing/complete", StringComparison.OrdinalIgnoreCase)))
+		{
+			return true;
+		}
+
+		return false;
 	}
 
 	private string HandleMagicToolRequest(NetworkConnection connection, HttpRequest request, string toolName)
@@ -8274,6 +8340,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				ok = true,
 				canEdit = IsDatabaseAdministrator(connection, request),
+				interactionModes = new object[]
+				{
+					new { id = "chat", name = "General", readOnly = false, requiresTools = false },
+					new { id = "plan", name = "Plan", readOnly = true, requiresTools = false },
+					new { id = "agent", name = "Advanced", readOnly = false, requiresTools = true }
+				},
 				services = BuildChatServiceCatalog(permissions)
 			});
 		}
@@ -15007,9 +15079,14 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		try
 		{
-			bool localAdmin = IsLocalAdmin(connection, request);
+			bool accountAdmin = TryAuthenticateWebAuthRequest(request, out var accountPrincipal, out var _) &&
+				accountPrincipal != null &&
+				(accountPrincipal.IsAdministrator ||
+				 IsDefaultAdministratorUserName(accountPrincipal.UserName) ||
+				 IsWebAuthAdministrator(accountPrincipal.UserName) ||
+				 IsServerOwnerPrincipal(accountPrincipal));
 			bool openRegistration = AllowOpenRegistration;
-			if (!localAdmin && !openRegistration)
+			if (!accountAdmin && !openRegistration)
 			{
 				return BuildJsonError(request, 403, "Forbidden", "Open registration is disabled. Send a registration request for administrator approval.");
 			}
@@ -15019,7 +15096,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			string username = ExtractStringProperty(root, "username") ?? ExtractStringProperty(root, "user") ?? ExtractStringProperty(root, "login");
 			string password = ExtractStringProperty(root, "password") ?? ExtractStringProperty(root, "pass");
 			JsonElement overwriteElement;
-			bool overwrite = localAdmin && root.TryGetProperty("overwrite", out overwriteElement) && ReadJsonBool(overwriteElement, fallback: false);
+			bool overwrite = accountAdmin && root.TryGetProperty("overwrite", out overwriteElement) && ReadJsonBool(overwriteElement, fallback: false);
 			if (!TryNormalizeWebAuthUserName(username, out var normalizedUserName, out var userError))
 			{
 				return BuildJsonError(request, 400, "Bad Request", userError);
@@ -15030,7 +15107,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			WebAuthRecord record = CreateWebAuthRecord(normalizedUserName, password);
 			record.lastClientIp = ExtractClientIp(connection, request) ?? "";
-			if (localAdmin && ((root.TryGetProperty("isAdministrator", out var isAdministratorElement) && ReadJsonBool(isAdministratorElement, fallback: false)) || (root.TryGetProperty("administrator", out var administratorElement) && ReadJsonBool(administratorElement, fallback: false)) || !HasAnyWebAuthAdministrator()))
+			if (accountAdmin && ((root.TryGetProperty("isAdministrator", out var isAdministratorElement) && ReadJsonBool(isAdministratorElement, fallback: false)) || (root.TryGetProperty("administrator", out var administratorElement) && ReadJsonBool(administratorElement, fallback: false)) || !HasAnyWebAuthAdministrator()))
 			{
 				record.isAdministrator = true;
 			}
@@ -15041,7 +15118,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			string token = "";
 			DateTimeOffset expires = DateTimeOffset.UtcNow.Add(WebAuthTokenLifetime);
-			if (!localAdmin)
+			if (!accountAdmin)
 			{
 				token = GenerateWebAuthToken();
 				record.tokenHash = HashWebAuthToken(token);
@@ -15054,7 +15131,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return JsonSerializer.Serialize(new
 			{
 				ok = true,
-				authenticated = !localAdmin,
+				authenticated = !accountAdmin,
 				username = normalizedUserName,
 				isAdministrator = record.isAdministrator,
 				created = created,
@@ -15101,14 +15178,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				return BuildJsonError(request, 409, "Conflict", "A WebAuth user with that name already exists.");
 			}
 			string clientIp = ExtractClientIp(connection, request) ?? "";
-			if (AllowOpenRegistration || IsLocalAdmin(connection, request))
+			if (AllowOpenRegistration)
 			{
 				WebAuthRecord record = CreateWebAuthRecord(normalizedUserName, password);
 				record.lastClientIp = clientIp;
-				if (IsLocalAdmin(connection, request) && !HasAnyWebAuthAdministrator())
-				{
-					record.isAdministrator = true;
-				}
 				if (!SaveWebAuthRecord(record, overwrite: false))
 				{
 					return BuildJsonError(request, 409, "Conflict", "A WebAuth user with that name already exists.");
@@ -15267,40 +15340,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					table = (StoreLocalWebAuthAccounts ? "Auth.Users" : "SocketJack.com")
 				});
 			}
-			if (IsLocalAdmin(connection, request))
-			{
-				string ownerKey = GetChatSessionOwnerKey(connection, request);
-				string localUserName = GetLocalChatPromptUserName();
-				string serverOwnerUserName = GetConfiguredServerOwnerUserName();
-				return JsonSerializer.Serialize(new
-				{
-					ok = true,
-					authenticated = true,
-					username = (string.IsNullOrWhiteSpace(localUserName) ? "local user" : localUserName),
-					authType = "Localhost",
-					accountType = "local",
-					isPublicAccount = false,
-					expiresUtc = "",
-					ownerKey = ownerKey,
-					clientIp = clientIp,
-					isAdministrator = true,
-					isOwner = true,
-					isServerOwner = true,
-					serverOwnerUserName = string.IsNullOrWhiteSpace(serverOwnerUserName) ? "localhost" : serverOwnerUserName,
-					canRegisterOpen = AllowOpenRegistration,
-					usage = GetChatUsageSnapshot(ownerKey),
-					table = "Auth.Users"
-				});
-			}
 			string guestOwnerKey = GetChatSessionOwnerKey(connection, request);
 			return JsonSerializer.Serialize(new
 			{
 				ok = true,
 				authenticated = false,
-				username = "guest",
-				authType = "Ip",
-				accountType = "guest",
-				isPublicAccount = true,
+				username = "",
+				authType = "None",
+				accountType = "unauthenticated",
+				isPublicAccount = false,
 				ownerKey = guestOwnerKey,
 				clientIp = clientIp,
 				isAdministrator = false,
@@ -15309,7 +15357,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				serverOwnerUserName = GetConfiguredServerOwnerUserName(),
 				canRegisterOpen = AllowOpenRegistration,
 				usage = GetChatUsageSnapshot(guestOwnerKey),
-				table = "Auth.Users"
+				table = "Workstation.Auth.Users"
 			});
 		}
 		catch (Exception ex)
@@ -17271,10 +17319,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				id = "companion",
 				name = "Companion",
 				kind = "Companion",
-				source = "JackLLMCompanion /Workspace",
+				source = "Integrated JackLLM Workstation Companion",
 				permission = "agentAccess",
 				enabled = agentEnabled,
-				description = "SocketJack Companion Tool service for approval-gated PC assistance, work-session recording, learned templates, and the live /Workspace dashboard."
+				description = "Integrated JackLLM Workstation Companion mode for separately permissioned screen, cursor, application, terminal, transcript, sensitive-memory, and financial actions."
 			},
 			new ChatUiServiceInfo
 			{
@@ -17398,7 +17446,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (permissions != null && permissions.agentAccess)
 		{
-			services.Add("Companion service can be selected when the SocketJack Companion desktop app is running. It exposes a local /Workspace dashboard, /file browser, session recording, saved templates, learned skills, and its own approval gates for real PC control.");
+			services.Add("Integrated Companion mode is hosted by JackLLM Workstation. It has independent default-off gates for screen viewing, cursor control, application launch/control, terminal commands, transcript storage, sensitive memory, and financial actions.");
 		}
 		if (permissions != null && permissions.agentAccess)
 		{
@@ -17582,7 +17630,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (string.Equals(service.id, "companion", StringComparison.OrdinalIgnoreCase))
 		{
-			return "[JACK service selection] The Web UI Service dropdown selected Companion. Treat SocketJack Companion as the user's approval-gated PC companion service. The Companion desktop app owns a local /Workspace dashboard and /file browser for work sessions, files, templates, people memory, applications, learned skills, and audit events. Do not claim to control the PC, interact with people, spend money, log in, use real files, change settings, or access the internet unless the Companion permission/audit surface or a tool result explicitly says that capability is approved and available.";
+			return "[JACK service selection] The Web UI Service dropdown selected integrated Companion mode inside JackLLM Workstation. Every screen, cursor, application, terminal, transcript, sensitive-memory, and financial capability has an independent default-off permission. Financial and sensitive-memory actions additionally require a fresh local per-action confirmation. Use only tool or API results that explicitly report success; never claim the standalone Companion app or /Workspace service exists.";
 		}
 		if (string.Equals(service.id, "sockjack_dml", StringComparison.OrdinalIgnoreCase))
 		{
@@ -17612,6 +17660,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		try
 		{
 			using JsonDocument document = JsonDocument.Parse(requestBody);
+			string interactionMode = ExtractStringProperty(document.RootElement, "interactionMode") ?? ExtractStringProperty(document.RootElement, "interaction_mode");
+			if (string.Equals(interactionMode, "plan", StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
 			string serviceId = ExtractStringProperty(document.RootElement, "service");
 			return string.Equals(serviceId, "agent", StringComparison.OrdinalIgnoreCase);
 		}
@@ -18827,13 +18880,15 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		try
 		{
 			bool isAdmin = IsDatabaseAdministrator(connection, request);
-			if (!isAdmin)
+			string currentOwnerKey = GetChatSessionOwnerKey(connection, request);
+			if (string.Equals(currentOwnerKey, "unauthenticated", StringComparison.OrdinalIgnoreCase))
 			{
 				return BuildDatabaseAdminOnlyJsonError(request, "");
 			}
-			string currentOwnerKey = GetChatSessionOwnerKey(connection, request);
 			string requestedOwnerKey = GetQueryParameter(request, "ownerKey");
-			string ownerKey = ((!string.IsNullOrWhiteSpace(requestedOwnerKey)) ? NormalizeChatOwnerKeyInput(requestedOwnerKey) : "global");
+			string ownerKey = isAdmin && !string.IsNullOrWhiteSpace(requestedOwnerKey)
+				? NormalizeChatOwnerKeyInput(requestedOwnerKey)
+				: NormalizeChatFilesystemOwnerKey(currentOwnerKey);
 			ChatPermissionState permissions = GetChatPermissions(ownerKey);
 			return JsonSerializer.Serialize(new
 			{
@@ -18929,6 +18984,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				permissions.bannedUntilUtc = bannedUntil;
 			}
+			ApplyCompanionPermissionJson(root, permissions);
 			ApplyDreamPermissionJson(root, permissions);
 			SaveChatPermissions(ownerKey, permissions);
 			ApplyRuntimeChatPermissions(GetChatPermissions());
@@ -21532,6 +21588,7 @@ except Exception as exc:
 				canEdit = IsDatabaseAdministrator(connection, request),
 				ownerKey = ownerKey,
 				directories = GetChatFilesystemAccess(ownerKey),
+				workspace = BuildChatWorkspacePayload(ownerKey, sessionId, IsDatabaseAdministrator(connection, request)),
 				contextRoots = BuildAgentFilesystemContextRootOptions(ownerKey, sessionId),
 				monitoring = BuildSecurityPermissionMonitoringPayload(ownerKey)
 			});
@@ -21578,6 +21635,7 @@ except Exception as exc:
 					});
 				}
 				SaveChatFilesystemAccess(ownerKey, normalizedPath);
+				EnsureLegacyGlobalWorkspaceRoots(ownerKey);
 				RecordObservabilityEvent("security", "filesystem access", "allowed", normalizedPath, ownerKey, "/api/chat-filesystem-access", 0L);
 			}
 			else
@@ -21601,6 +21659,7 @@ except Exception as exc:
 					});
 				}
 				RemoveChatFilesystemAccess(ownerKey, normalizedPath2);
+				RemoveLegacyGlobalWorkspaceRoot(ownerKey, normalizedPath2);
 				StopChatFtpServerIfRootRemoved(ownerKey, normalizedPath2);
 				RecordObservabilityEvent("security", "filesystem access", "removed", normalizedPath2, ownerKey, "/api/chat-filesystem-access", 0L);
 			}
@@ -21611,6 +21670,7 @@ except Exception as exc:
 				canEdit = true,
 				ownerKey = ownerKey,
 				directories = GetChatFilesystemAccess(ownerKey),
+				workspace = BuildChatWorkspacePayload(ownerKey, sessionId, true),
 				contextRoots = BuildAgentFilesystemContextRootOptions(ownerKey, sessionId),
 				monitoring = BuildSecurityPermissionMonitoringPayload(ownerKey)
 			});
@@ -22641,6 +22701,7 @@ except Exception as exc:
 		foreach (string deletedId in deletedIds)
 		{
 			DeleteChatSessionFilesDirectory(deletedId, ownerKey);
+			RemoveChatSessionWorkspaceConfiguration(ownerKey, deletedId);
 		}
 		return JsonSerializer.Serialize(new
 		{
@@ -25983,11 +26044,11 @@ except Exception as exc:
 		return total;
 	}
 
-	private bool TryResolveChatUploadDirectory(string sessionId, string targetPath, out string directory, out string error)
+	private bool TryResolveChatUploadDirectory(string ownerKey, string sessionId, string targetPath, out string directory, out string error)
 	{
 		directory = null;
 		error = null;
-		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
+		string sessionRoot = GetChatSessionDefaultWriteDirectory(ownerKey, sessionId);
 		if (string.IsNullOrWhiteSpace(sessionRoot))
 		{
 			error = "Session file directory is unavailable.";
@@ -25998,8 +26059,16 @@ except Exception as exc:
 		{
 			return true;
 		}
-		if (!TryResolveChatSessionRequestPath(sessionId, targetPath, out var candidate, out error))
+		string candidate;
+		try
 		{
+			candidate = Path.GetFullPath(Path.Combine(
+				sessionRoot,
+				NormalizeChatUploadRelativePath(targetPath)));
+		}
+		catch (Exception ex)
+		{
+			error = ex.Message;
 			return false;
 		}
 		if (!IsPathInsideRoot(candidate, sessionRoot))
@@ -26007,13 +26076,17 @@ except Exception as exc:
 			error = "Upload target is outside the current session files.";
 			return false;
 		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, candidate, requireWrite: true, out error))
+		{
+			return false;
+		}
 		directory = candidate;
 		return true;
 	}
 
-	private string BuildChatUploadFilePath(string sessionId, string uploadDirectory, string fileId, string fileName, string relativePath)
+	private string BuildChatUploadFilePath(string ownerKey, string sessionId, string uploadDirectory, string fileId, string fileName, string relativePath)
 	{
-		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
+		string sessionRoot = GetChatSessionDefaultWriteDirectory(ownerKey, sessionId);
 		string targetDirectory = Path.GetFullPath(uploadDirectory);
 		string leafName = SanitizeFileName(fileName);
 		string normalizedRelative = NormalizeChatUploadRelativePath(relativePath);
@@ -26037,6 +26110,10 @@ except Exception as exc:
 		if (string.IsNullOrWhiteSpace(sessionRoot) || !IsPathInsideRoot(path, sessionRoot))
 		{
 			throw new InvalidOperationException("Upload path is outside the current session files.");
+		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, path, requireWrite: true, out string accessError))
+		{
+			throw new InvalidOperationException(accessError);
 		}
 		return path;
 	}
@@ -26109,7 +26186,7 @@ except Exception as exc:
 	{
 		string fileId = "file_" + Guid.NewGuid().ToString("N");
 		string safeName = SanitizeFileName(name);
-		string path = BuildChatUploadFilePath(sessionId, uploadDirectory, fileId, safeName, relativePath);
+		string path = BuildChatUploadFilePath(ownerKey, sessionId, uploadDirectory, fileId, safeName, relativePath);
 		ChatSessionFile file = new ChatSessionFile
 		{
 			id = fileId,
@@ -26119,9 +26196,19 @@ except Exception as exc:
 			path = path,
 			uploadedUtc = DateTimeOffset.UtcNow.ToString("O")
 		};
-		string sandboxSessionId;
-		SandboxFileEntry entry = WriteChatSessionFileBytesToSandbox(sessionId, ownerKey, path, bytes ?? Array.Empty<byte>(), "uploaded-file", out sandboxSessionId);
-		AttachSandboxMetadata(sessionId, ownerKey, file, entry, sandboxSessionId);
+		if (IsJackLlmSessionManagedPath(path))
+		{
+			string sandboxSessionId;
+			SandboxFileEntry entry = WriteChatSessionFileBytesToSandbox(sessionId, ownerKey, path, bytes ?? Array.Empty<byte>(), "uploaded-file", out sandboxSessionId);
+			AttachSandboxMetadata(sessionId, ownerKey, file, entry, sandboxSessionId);
+		}
+		else
+		{
+			string directory = Path.GetDirectoryName(path);
+			if (!string.IsNullOrWhiteSpace(directory))
+				Directory.CreateDirectory(directory);
+			File.WriteAllBytes(path, bytes ?? Array.Empty<byte>());
+		}
 		RegisterChatSessionFile(sessionId, ownerKey, file);
 		return file;
 	}
@@ -27132,7 +27219,7 @@ except Exception as exc:
 			{
 				return true;
 			}
-			if (!TryResolveChatUploadDirectory(sessionId, "", out var uploadDirectory, out var uploadDirectoryError))
+			if (!TryResolveChatUploadDirectory(ownerKey, sessionId, "", out var uploadDirectory, out var uploadDirectoryError))
 			{
 				error = uploadDirectoryError;
 				return false;
@@ -27353,7 +27440,7 @@ except Exception as exc:
 			{
 				bytes = Encoding.UTF8.GetBytes(text ?? "");
 			}
-			if (!TryResolveChatUploadDirectory(sessionId, targetPath, out var dir, out var targetError))
+			if (!TryResolveChatUploadDirectory(ownerKey, sessionId, targetPath, out var dir, out var targetError))
 			{
 				SetHttpStatus(request, 400, "Bad Request");
 				return JsonSerializer.Serialize(new
@@ -27688,6 +27775,15 @@ except Exception as exc:
 			fileUploads = source.fileUploads,
 			imageUploads = source.imageUploads,
 			pcAccess = source.pcAccess,
+			companionEnabled = source.companionEnabled,
+			companionScreenView = source.companionScreenView,
+			companionCursorControl = source.companionCursorControl,
+			companionApplicationLaunch = source.companionApplicationLaunch,
+			companionApplicationControl = source.companionApplicationControl,
+			companionTerminalCommands = source.companionTerminalCommands,
+			companionActivityTranscriptStorage = source.companionActivityTranscriptStorage,
+			companionSensitiveMemory = source.companionSensitiveMemory,
+			companionFinancialActions = source.companionFinancialActions,
 			dreamInternetSearch = source.dreamInternetSearch,
 			dreamVsCopilotTools = source.dreamVsCopilotTools,
 			dreamFileDownloads = source.dreamFileDownloads,
@@ -27787,14 +27883,23 @@ except Exception as exc:
 			pcAccess = ParseStoredBool(GetRowValue(row, 16), fallback: false),
 			dreamInternetSearch = ParseStoredBool(GetRowValue(row, 17), false), dreamVsCopilotTools = ParseStoredBool(GetRowValue(row, 18), false), dreamFileDownloads = ParseStoredBool(GetRowValue(row, 19), false),
 			dreamFtpServer = ParseStoredBool(GetRowValue(row, 20), false), dreamSqlAdmin = ParseStoredBool(GetRowValue(row, 21), false), dreamTerminalCommands = ParseStoredBool(GetRowValue(row, 22), false),
-			dreamAgentAccess = ParseStoredBool(GetRowValue(row, 23), false), dreamFileUploads = ParseStoredBool(GetRowValue(row, 24), false), dreamImageUploads = ParseStoredBool(GetRowValue(row, 25), false), dreamPcAccess = ParseStoredBool(GetRowValue(row, 26), false)
+			dreamAgentAccess = ParseStoredBool(GetRowValue(row, 23), false), dreamFileUploads = ParseStoredBool(GetRowValue(row, 24), false), dreamImageUploads = ParseStoredBool(GetRowValue(row, 25), false), dreamPcAccess = ParseStoredBool(GetRowValue(row, 26), false),
+			companionEnabled = ParseStoredBool(GetRowValue(row, 27), false),
+			companionScreenView = ParseStoredBool(GetRowValue(row, 28), false),
+			companionCursorControl = ParseStoredBool(GetRowValue(row, 29), false),
+			companionApplicationLaunch = ParseStoredBool(GetRowValue(row, 30), false),
+			companionApplicationControl = ParseStoredBool(GetRowValue(row, 31), false),
+			companionTerminalCommands = ParseStoredBool(GetRowValue(row, 32), false),
+			companionActivityTranscriptStorage = ParseStoredBool(GetRowValue(row, 33), false),
+			companionSensitiveMemory = ParseStoredBool(GetRowValue(row, 34), false),
+			companionFinancialActions = ParseStoredBool(GetRowValue(row, 35), false)
 		};
 	}
 
 	private object[] ChatPermissionStateToRow(string ownerKey, ChatPermissionState permissions)
 	{
 		permissions = permissions ?? new ChatPermissionState();
-		return NormalizeChatPermissionRow(new object[27]
+		return NormalizeChatPermissionRow(new object[36]
 		{
 			string.IsNullOrWhiteSpace(ownerKey) ? "global" : ownerKey.Trim(),
 			permissions.internetSearch ? "true" : "false",
@@ -27814,7 +27919,16 @@ except Exception as exc:
 			permissions.terminalForeverApproved ? "true" : "false",
 			permissions.pcAccess ? "true" : "false",
 			permissions.dreamInternetSearch ? "true" : "false", permissions.dreamVsCopilotTools ? "true" : "false", permissions.dreamFileDownloads ? "true" : "false", permissions.dreamFtpServer ? "true" : "false", permissions.dreamSqlAdmin ? "true" : "false",
-			permissions.dreamTerminalCommands ? "true" : "false", permissions.dreamAgentAccess ? "true" : "false", permissions.dreamFileUploads ? "true" : "false", permissions.dreamImageUploads ? "true" : "false", permissions.dreamPcAccess ? "true" : "false"
+			permissions.dreamTerminalCommands ? "true" : "false", permissions.dreamAgentAccess ? "true" : "false", permissions.dreamFileUploads ? "true" : "false", permissions.dreamImageUploads ? "true" : "false", permissions.dreamPcAccess ? "true" : "false",
+			permissions.companionEnabled ? "true" : "false",
+			permissions.companionScreenView ? "true" : "false",
+			permissions.companionCursorControl ? "true" : "false",
+			permissions.companionApplicationLaunch ? "true" : "false",
+			permissions.companionApplicationControl ? "true" : "false",
+			permissions.companionTerminalCommands ? "true" : "false",
+			permissions.companionActivityTranscriptStorage ? "true" : "false",
+			permissions.companionSensitiveMemory ? "true" : "false",
+			permissions.companionFinancialActions ? "true" : "false"
 		});
 	}
 
@@ -27869,6 +27983,7 @@ except Exception as exc:
 		{
 			permissions.pcAccess = ReadJsonBool(pcAccess, permissions.pcAccess);
 		}
+		ApplyCompanionPermissionJson(root, permissions);
 		if (root.TryGetProperty("muteUntilEnabled", out var muteUntilEnabled))
 		{
 			permissions.muteUntilEnabled = ReadJsonBool(muteUntilEnabled, permissions.muteUntilEnabled);
@@ -27905,6 +28020,15 @@ except Exception as exc:
 		permissions.terminalCommands = snapshot.TerminalCommands;
 		permissions.terminalForeverApproved = snapshot.TerminalForeverApproved;
 		permissions.pcAccess = snapshot.PcAccess;
+		permissions.companionEnabled = snapshot.CompanionEnabled;
+		permissions.companionScreenView = snapshot.CompanionScreenView;
+		permissions.companionCursorControl = snapshot.CompanionCursorControl;
+		permissions.companionApplicationLaunch = snapshot.CompanionApplicationLaunch;
+		permissions.companionApplicationControl = snapshot.CompanionApplicationControl;
+		permissions.companionTerminalCommands = snapshot.CompanionTerminalCommands;
+		permissions.companionActivityTranscriptStorage = snapshot.CompanionActivityTranscriptStorage;
+		permissions.companionSensitiveMemory = snapshot.CompanionSensitiveMemory;
+		permissions.companionFinancialActions = snapshot.CompanionFinancialActions;
 		permissions.dreamInternetSearch = snapshot.DreamInternetSearch && permissions.internetSearch;
 		permissions.dreamVsCopilotTools = snapshot.DreamVsCopilotTools && permissions.vsCopilotTools;
 		permissions.dreamFileDownloads = snapshot.DreamFileDownloads && permissions.fileDownloads;
@@ -27939,6 +28063,15 @@ except Exception as exc:
 			TerminalCommands = permissions.terminalCommands,
 			TerminalForeverApproved = permissions.terminalForeverApproved,
 			PcAccess = permissions.pcAccess,
+			CompanionEnabled = permissions.companionEnabled,
+			CompanionScreenView = permissions.companionScreenView,
+			CompanionCursorControl = permissions.companionCursorControl,
+			CompanionApplicationLaunch = permissions.companionApplicationLaunch,
+			CompanionApplicationControl = permissions.companionApplicationControl,
+			CompanionTerminalCommands = permissions.companionTerminalCommands,
+			CompanionActivityTranscriptStorage = permissions.companionActivityTranscriptStorage,
+			CompanionSensitiveMemory = permissions.companionSensitiveMemory,
+			CompanionFinancialActions = permissions.companionFinancialActions,
 			DreamInternetSearch = permissions.dreamInternetSearch && permissions.internetSearch,
 			DreamVsCopilotTools = permissions.dreamVsCopilotTools && permissions.vsCopilotTools,
 			DreamFileDownloads = permissions.dreamFileDownloads && permissions.fileDownloads,
@@ -28754,37 +28887,31 @@ except Exception as exc:
 	private List<SolutionExplorerEntry> BuildChatSolutionExplorerRoots(string ownerKey, string sessionId, bool includeAccessibleRoots = true)
 	{
 		List<SolutionExplorerEntry> roots = new List<SolutionExplorerEntry>();
-		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
-		if (!string.IsNullOrWhiteSpace(sessionId) && !string.IsNullOrWhiteSpace(sessionRoot))
+		foreach (ChatWorkspaceRootSnapshot workspaceRoot in GetChatWorkspaceRootsDiagnostics(ownerKey, sessionId))
 		{
+			if (workspaceRoot == null ||
+				string.Equals(workspaceRoot.Role, WorkspaceRoleAttached, StringComparison.OrdinalIgnoreCase) ||
+				(!includeAccessibleRoots && workspaceRoot.IsInherited))
+			{
+				continue;
+			}
 			roots.Add(new SolutionExplorerEntry
 			{
-				name = "Current Session Files",
-				path = "\\",
-				kind = "session",
+				name = workspaceRoot.IsInherited
+					? "Global > " + workspaceRoot.DisplayName
+					: workspaceRoot.DisplayName,
+				path = workspaceRoot.IsSandbox ? "\\" : workspaceRoot.Path,
+				kind = workspaceRoot.IsSandbox ? "session" : "workspace",
 				sessionId = sessionId,
 				type = "directory",
-				exists = true,
-				hasChildren = true
+				exists = workspaceRoot.Exists || workspaceRoot.IsSandbox,
+				hasChildren = workspaceRoot.Exists || workspaceRoot.IsSandbox,
+				rootId = workspaceRoot.Id,
+				role = workspaceRoot.Role,
+				accessMode = workspaceRoot.AccessMode,
+				inherited = workspaceRoot.IsInherited,
+				parentId = workspaceRoot.ParentId
 			});
-		}
-		if (includeAccessibleRoots)
-		{
-			foreach (ChatFilesystemAccessEntry entry in GetChatFilesystemAccess(ownerKey))
-			{
-				if (entry == null || string.IsNullOrWhiteSpace(entry.path))
-					continue;
-				roots.Add(new SolutionExplorerEntry
-				{
-					name = GetExplorerDisplayName(entry.path),
-					path = entry.path,
-					kind = "accessible",
-					sessionId = sessionId,
-					type = "directory",
-					exists = entry.exists,
-					hasChildren = entry.exists
-				});
-			}
 		}
 		return roots;
 	}
@@ -28824,6 +28951,10 @@ except Exception as exc:
 				error = "directory does not exist: " + ToChatSessionVirtualPath(sessionId, sessionCandidate);
 				return false;
 			}
+			if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, sessionCandidate, requireWrite: false, out error))
+			{
+				return false;
+			}
 			fullPath = sessionCandidate;
 			return true;
 		}
@@ -28837,14 +28968,7 @@ except Exception as exc:
 			error = ex.Message;
 			return false;
 		}
-		List<string> roots = new List<string>();
-		foreach (ChatFilesystemAccessEntry entry in GetChatFilesystemAccess(ownerKey))
-		{
-			if (entry != null && entry.exists)
-			{
-				AddAllowedRoot(roots, entry.path);
-			}
-		}
+		List<string> roots = GetEffectiveChatWorkspacePaths(ownerKey, sessionId, writableOnly: false);
 		if (!IsPathUnderAnyRoot(candidate, roots))
 		{
 			error = "path is outside the accessible directories.";
@@ -28853,6 +28977,10 @@ except Exception as exc:
 		if (!Directory.Exists(candidate))
 		{
 			error = "directory does not exist: " + candidate;
+			return false;
+		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, candidate, requireWrite: false, out error))
+		{
 			return false;
 		}
 		fullPath = candidate;
@@ -28885,6 +29013,10 @@ except Exception as exc:
 				error = "file does not exist: " + ToChatSessionVirtualPath(sessionId, sessionCandidate);
 				return false;
 			}
+			if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, sessionCandidate, requireWrite: false, out error))
+			{
+				return false;
+			}
 			fullPath = sessionCandidate;
 			return true;
 		}
@@ -28898,14 +29030,7 @@ except Exception as exc:
 			error = ex.Message;
 			return false;
 		}
-		List<string> roots = new List<string>();
-		foreach (ChatFilesystemAccessEntry entry in GetChatFilesystemAccess(ownerKey))
-		{
-			if (entry != null && entry.exists)
-			{
-				AddAllowedRoot(roots, entry.path);
-			}
-		}
+		List<string> roots = GetEffectiveChatWorkspacePaths(ownerKey, sessionId, writableOnly: false);
 		if (!IsPathUnderAnyRoot(candidate, roots))
 		{
 			error = "path is outside the accessible directories.";
@@ -28914,6 +29039,10 @@ except Exception as exc:
 		if (!File.Exists(candidate))
 		{
 			error = "file does not exist: " + candidate;
+			return false;
+		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, candidate, requireWrite: false, out error))
+		{
 			return false;
 		}
 		fullPath = candidate;
@@ -29108,24 +29237,31 @@ except Exception as exc:
 		List<SolutionExplorerEntry> directories = new List<SolutionExplorerEntry>();
 		HashSet<string> seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		HashSet<string> seenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		string sessionRoot = GetChatSessionFilesDirectory(sessionId);
-		if (kind.Equals("session", StringComparison.OrdinalIgnoreCase) &&
-			!string.IsNullOrWhiteSpace(sessionRoot) &&
-			string.Equals(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), Path.GetFullPath(sessionRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+		ChatWorkspaceRootSnapshot primaryWorkspace = GetChatWorkspaceRootsDiagnostics(ownerKey, sessionId)
+			.FirstOrDefault(item => string.Equals(item.Role, WorkspaceRolePrimary, StringComparison.OrdinalIgnoreCase));
+		string primaryPath = primaryWorkspace?.Path ?? GetChatSessionFilesDirectory(sessionId);
+		if (!string.IsNullOrWhiteSpace(primaryPath) &&
+			string.Equals(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), Path.GetFullPath(primaryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
 		{
-			foreach (ChatFilesystemAccessEntry accessibleEntry in GetChatFilesystemAccess(ownerKey))
+			foreach (ChatWorkspaceRootSnapshot attached in GetChatWorkspaceRootsDiagnostics(ownerKey, sessionId)
+				.Where(item => string.Equals(item.Role, WorkspaceRoleAttached, StringComparison.OrdinalIgnoreCase)))
 			{
-				if (accessibleEntry == null || string.IsNullOrWhiteSpace(accessibleEntry.path))
+				if (attached == null || string.IsNullOrWhiteSpace(attached.Path))
 					continue;
 				directories.Add(new SolutionExplorerEntry
 				{
-					name = GetExplorerDisplayName(accessibleEntry.path),
-					path = accessibleEntry.path,
-					kind = "accessible",
+					name = (primaryWorkspace?.DisplayName ?? "Session") + " > " + attached.DisplayName,
+					path = attached.Path,
+					kind = "workspace",
 					sessionId = sessionId,
 					type = "directory",
-					exists = accessibleEntry.exists,
-					hasChildren = accessibleEntry.exists
+					exists = attached.Exists,
+					hasChildren = attached.Exists,
+					rootId = attached.Id,
+					role = attached.Role,
+					accessMode = attached.AccessMode,
+					inherited = false,
+					parentId = attached.ParentId
 				});
 			}
 		}
@@ -29134,7 +29270,9 @@ except Exception as exc:
 		{
 			foreach (string child in Directory.EnumerateDirectories(directory))
 			{
-				if (!ShouldFilterGeneratedOrBuildOutputPath(child, directory) && seenDirectories.Add(NormalizeExplorerEntryPathKey(child)))
+				if (!ShouldFilterGeneratedOrBuildOutputPath(child, directory) &&
+					!IsChatWorkspacePathIgnored(ownerKey, sessionId, child, out _) &&
+					seenDirectories.Add(NormalizeExplorerEntryPathKey(child)))
 				{
 					directories.Add(BuildSolutionExplorerEntry(kind, child, isDirectory: true, sessionId));
 					if (directories.Count >= 180)
@@ -29163,7 +29301,9 @@ except Exception as exc:
 		{
 			foreach (string child2 in Directory.EnumerateFiles(directory))
 			{
-				if (!ShouldFilterGeneratedOrBuildOutputPath(child2, directory) && seenFiles.Add(NormalizeExplorerEntryPathKey(child2)))
+				if (!ShouldFilterGeneratedOrBuildOutputPath(child2, directory) &&
+					!IsChatWorkspacePathIgnored(ownerKey, sessionId, child2, out _) &&
+					seenFiles.Add(NormalizeExplorerEntryPathKey(child2)))
 				{
 					files.Add(BuildSolutionExplorerEntry(kind, child2, isDirectory: false, sessionId));
 					if (files.Count >= remaining)
@@ -30533,11 +30673,6 @@ except Exception as exc:
 		{
 			return NormalizeChatFilesystemOwnerKey(string.IsNullOrWhiteSpace(mobileDevice.OwnerKey) ? "mobile:" + mobileDevice.Id : mobileDevice.OwnerKey);
 		}
-		string ip = ExtractClientIp(connection, request);
-		if (string.IsNullOrWhiteSpace(ip))
-		{
-			ip = "unknown";
-		}
 		if (TryAuthenticateWebAuthRequest(request, out var principal, out var _) && !string.IsNullOrWhiteSpace(principal?.UserName))
 		{
 			string ownerKey = "webauth:" + principal.UserName.Trim().ToLowerInvariant();
@@ -30547,11 +30682,10 @@ except Exception as exc:
 			if (StoreLocalWebAuthAccounts)
 			{
 				GetOrCreateWebAuthTokenAccount(principal.UserName, connection, request);
-				LinkWebAuthUserToIp(principal.UserName, ip);
 			}
 			return ownerKey;
 		}
-		return "ip:" + ip.Trim().ToLowerInvariant();
+		return "unauthenticated";
 	}
 
 	private void RememberSocketJackBearerToken(string ownerKey, string token)
@@ -30577,9 +30711,27 @@ except Exception as exc:
 		{
 			return;
 		}
+		string normalizedOwnerKey = ownerKey.Trim().ToLowerInvariant();
+		bool migrateOwner;
 		lock (_socketJackBearerTokenLock)
 		{
-			_chatOwnerEncryptionSecrets[ownerKey.Trim().ToLowerInvariant()] = secret;
+			_chatOwnerEncryptionSecrets[normalizedOwnerKey] = secret;
+			migrateOwner = _chatOwnersReencryptedForDurableStorage.Add(normalizedOwnerKey);
+		}
+		if (migrateOwner)
+		{
+			try
+			{
+				ReencryptChatOwnerPrivatePayloadsForDurableStorage(normalizedOwnerKey);
+			}
+			catch (Exception ex)
+			{
+				lock (_socketJackBearerTokenLock)
+				{
+					_chatOwnersReencryptedForDurableStorage.Remove(normalizedOwnerKey);
+				}
+				LogMessage("[Chat UI] Session private-payload migration delayed: " + ex.Message);
+			}
 		}
 	}
 
@@ -31008,29 +31160,6 @@ except Exception as exc:
 	private bool TryAuthorizeDatabaseAdministrator(NetworkConnection connection, HttpRequest request, out WebAuthPrincipal principal, out string error)
 	{
 		principal = null;
-		if (IsLocalAdmin(connection, request))
-		{
-			principal = new WebAuthPrincipal
-			{
-				UserName = GetLocalChatPromptUserName(),
-				AuthType = "Localhost",
-				AccountType = "local",
-				IsAdministrator = true,
-				IsServerOwner = true,
-				IsPublicAccount = false,
-				ServerOwnerUserName = GetConfiguredServerOwnerUserName()
-			};
-			if (string.IsNullOrWhiteSpace(principal.UserName))
-			{
-				principal.UserName = "localhost";
-			}
-			if (string.IsNullOrWhiteSpace(principal.ServerOwnerUserName))
-			{
-				principal.ServerOwnerUserName = principal.UserName;
-			}
-			error = "";
-			return true;
-		}
 		if (!TryAuthenticateWebAuthRequest(request, out var authenticated, out error))
 		{
 			return false;
@@ -31068,7 +31197,7 @@ except Exception as exc:
 	private bool TryAuthenticateWebAuthRequest(HttpRequest request, out WebAuthPrincipal principal, out string error)
 	{
 		principal = null;
-		error = (StoreLocalWebAuthAccounts ? "Missing Authorization header. Use a SocketJack.com Bearer token or local WebAuth credentials." : "Missing Authorization header. Sign in on SocketJack.com and send the SocketJack.com Bearer token.");
+		error = "Missing Authorization header. Sign in with an account from this JackLLM Workstation.";
 		string authorization = null;
 		if (request?.Headers != null)
 		{
@@ -31083,7 +31212,7 @@ except Exception as exc:
 		{
 			if (!StoreLocalWebAuthAccounts)
 			{
-				error = "Local Basic auth is disabled. Sign in on SocketJack.com.";
+				error = "Local Workstation accounts are disabled.";
 				return false;
 			}
 			try
@@ -31168,7 +31297,7 @@ except Exception as exc:
 	private bool TryAuthenticateBearerToken(string token, out WebAuthPrincipal principal, out string error)
 	{
 		principal = null;
-		error = (StoreLocalWebAuthAccounts ? "Missing Authorization header. Use a SocketJack.com Bearer token or local WebAuth credentials." : "Missing Authorization header. Sign in on SocketJack.com and send the SocketJack.com Bearer token.");
+		error = "Missing Authorization header. Sign in with an account from this JackLLM Workstation.";
 		token = (token ?? "").Trim();
 		if (string.IsNullOrWhiteSpace(token))
 		{
@@ -33637,8 +33766,7 @@ except Exception as exc:
 
 	private string GetChatOwnerEncryptionSecretForWrite(string ownerKey)
 	{
-		string remembered = GetRememberedChatOwnerEncryptionSecret(ownerKey);
-		return string.IsNullOrWhiteSpace(remembered) ? "" : remembered;
+		return GetChatOwnerEncryptionFallbackSecret(ownerKey);
 	}
 
 	private string GetChatOwnerEncryptionFallbackSecret(string ownerKey)
@@ -33648,15 +33776,80 @@ except Exception as exc:
 		{
 			ownerKey = "legacy";
 		}
-		lock (_socketJackBearerTokenLock)
+		string machineContext = string.Join("|", new[]
 		{
-			if (!_chatOwnerEphemeralEncryptionSecrets.TryGetValue(ownerKey, out var secret) || string.IsNullOrWhiteSpace(secret))
-			{
-				secret = Convert.ToBase64String(GenerateRandomBytes(32));
-				_chatOwnerEphemeralEncryptionSecrets[ownerKey] = secret;
-			}
-			return secret;
+			"JackLLMChatPrivatePayloadV1",
+			Environment.MachineName ?? "",
+			Environment.UserName ?? "",
+			Environment.UserDomainName ?? "",
+			Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) ?? "",
+			_chatSessionRoot ?? "",
+			ownerKey
+		});
+		using SHA256 sha = SHA256.Create();
+		return Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(machineContext)));
+	}
+
+	private void ReencryptChatOwnerPrivatePayloadsForDurableStorage(string ownerKey)
+	{
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		string durableSecret = GetChatOwnerEncryptionFallbackSecret(ownerKey);
+		if (string.IsNullOrWhiteSpace(durableSecret))
+		{
+			return;
 		}
+		bool changed = false;
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatSessionsTable();
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				object[] row = NormalizeChatSessionRow(table.Rows[i]);
+				if (!ChatOwnerKeysMatch(ownerKey, GetRowValue(row, 7)))
+				{
+					continue;
+				}
+				changed |= ReencryptChatSessionPrivateValue(row, 5, "messages", "[]", normalizeJsonArray: true, durableSecret);
+				changed |= ReencryptChatSessionPrivateValue(row, 6, "files", "[]", normalizeJsonArray: true, durableSecret);
+				changed |= ReencryptChatSessionPrivateValue(row, 8, "draft", "", normalizeJsonArray: false, durableSecret);
+				table.Rows[i] = row;
+			}
+			if (changed)
+			{
+				lock (_chatPrivatePayloadCacheLock)
+				{
+					_chatPrivatePayloadCache.Clear();
+				}
+				SaveChatSessionDataAndInvalidateCaches(ownerKey);
+			}
+		}
+	}
+
+	private bool ReencryptChatSessionPrivateValue(object[] row, int index, string purpose, string fallback, bool normalizeJsonArray, string durableSecret)
+	{
+		if (row == null || index < 0 || index >= row.Length)
+		{
+			return false;
+		}
+		string stored = GetRowValue(row, index);
+		string plain;
+		if (IsProtectedChatSessionPrivateValue(stored))
+		{
+			if (!TryUnprotectChatSessionPrivateValue(GetRowValue(row, 7), stored, purpose, out plain))
+			{
+				return false;
+			}
+		}
+		else
+		{
+			plain = string.IsNullOrWhiteSpace(stored) ? (fallback ?? "") : stored;
+		}
+		if (normalizeJsonArray)
+		{
+			plain = NormalizeJsonArrayRawText(plain);
+		}
+		row[index] = EncryptChatSessionPrivateValue(GetRowValue(row, 7), plain, purpose, durableSecret);
+		return !string.Equals(stored, GetRowValue(row, index), StringComparison.Ordinal);
 	}
 
 	private object[] NormalizeDeveloperProjectWorkspaceRow(object[] row)
@@ -34068,12 +34261,12 @@ except Exception as exc:
 		error = "";
 		if (!TryAuthenticateWebAuthRequest(request, out var principal, out var _) || principal == null || string.IsNullOrWhiteSpace(principal.UserName))
 		{
-			error = "Sign in with a non-public SocketJack.com account to join this shared session.";
+			error = "Sign in with an account from this Workstation to join this shared session.";
 			return false;
 		}
 		if (principal.IsPublicAccount)
 		{
-			error = "Public SocketJack.com accounts can view this session but cannot send prompts.";
+			error = "This Workstation account can view the session but cannot send prompts.";
 			return false;
 		}
 		ChatPermissionState participantPermissions = GetChatPermissions(participantKey);
@@ -34497,6 +34690,23 @@ except Exception as exc:
 		lock (_chatSessionLock)
 		{
 			Table table = GetChatMemoriesTable();
+			bool removedSensitive = false;
+			for (int index = table.Rows.Count - 1; index >= 0; index--)
+			{
+				object[] candidate = NormalizeChatMemoryRow(table.Rows[index]);
+				if (!OwnerKeyListContains(ownerKeys, GetRowValue(candidate, 1))) continue;
+				string category = GetRowValue(candidate, 7);
+				if (string.Equals(category, "blacklist", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(category, "sensitive-confirmed", StringComparison.OrdinalIgnoreCase)) continue;
+				object[] readable = DecryptChatMemoryRowForOwner(candidate, ownerKey);
+				string candidateText = GetRowValue(readable, 2);
+				if (!IsProtectedChatSessionPrivateValue(candidateText) && IsCompanionSensitiveText(candidateText))
+				{
+					table.Rows.RemoveAt(index);
+					removedSensitive = true;
+				}
+			}
+			if (removedSensitive) SaveChatSessionDataAndInvalidateCaches();
 			foreach (object[] sourceRow in table.Rows)
 			{
 				object[] row = NormalizeChatMemoryRow(sourceRow);
@@ -34533,6 +34743,15 @@ except Exception as exc:
 		{
 			error = "Memory text is required.";
 			return false;
+		}
+		if (category != "blacklist" && IsCompanionSensitiveText(text))
+		{
+			ChatPermissionState memoryPermissions = GetChatPermissions(ownerKey);
+			if (!memoryPermissions.companionSensitiveMemory || !string.Equals(category, "sensitive-confirmed", StringComparison.OrdinalIgnoreCase))
+			{
+				error = "Sensitive information and credentials are not retained in JackLLM memory without the dedicated permission and a fresh local per-item confirmation.";
+				return false;
+			}
 		}
 		if (category != "blacklist" && MemoryViolatesBlacklist(ownerKey, text, out string blacklistRule))
 		{
@@ -34855,12 +35074,12 @@ except Exception as exc:
 		error = "";
 		if (!TryAuthenticateWebAuthRequest(request, out var principal, out var _) || principal == null || string.IsNullOrWhiteSpace(principal.UserName))
 		{
-			error = "Sign in with a SocketJack.com account to comment. Public viewers can read comments only.";
+			error = "Sign in with an account from this Workstation to comment.";
 			return false;
 		}
 		if (principal.IsPublicAccount)
 		{
-			error = "Public SocketJack.com accounts can view this session but cannot comment.";
+			error = "This Workstation account can view the session but cannot comment.";
 			return false;
 		}
 		displayName = principal.UserName.Trim();
@@ -34970,7 +35189,7 @@ except Exception as exc:
 
 	private object[] CreateDefaultChatPermissionRow()
 	{
-		return new object[27]
+		return new object[36]
 		{
 			"global",
 			"false",
@@ -34988,7 +35207,8 @@ except Exception as exc:
 			"true",
 			"true",
 			"false",
-			"false", "false", "false", "false", "false", "false", "false", "false", "false", "false", "false"
+			"false", "false", "false", "false", "false", "false", "false", "false", "false", "false", "false",
+			"false", "false", "false", "false", "false", "false", "false", "false", "false"
 		};
 	}
 
@@ -37208,7 +37428,8 @@ except Exception as exc:
 						enabled = true,
 						lastClientIp = request.clientIp,
 						tokenLimit = 0L,
-						tokensUsed = 0L
+						tokensUsed = 0L,
+						isAdministrator = !HasAnyWebAuthAdministrator()
 					};
 					SaveWebAuthRecord(user, overwrite: false);
 					LinkWebAuthUserToIp(user.userName, request.clientIp);
@@ -46689,7 +46910,10 @@ except Exception as exc:
 		}
 		// Let the model decide whether a search is needed and compose its semantic query.
 		// Preloading from command text can leak phrases such as "search the internet for".
-		for (int toolRound = 0; toolRound < 36 + autoContinuationCount; toolRound++)
+		int maxToolRounds = GetJackhammerToolRoundBudget(currentRequestJson);
+		int finalToolRound = Math.Max(0, maxToolRounds - 2);
+		int lastToolRound = Math.Max(0, maxToolRounds - 1);
+		for (int toolRound = 0; toolRound < maxToolRounds + autoContinuationCount; toolRound++)
 		{
 			currentRequestJson = ApplyPendingChatUiSteering(currentRequestJson, consumeSteering);
 			bool finalAnswerOnlyRound = IsProxyToolExecutionDisabled(currentRequestJson);
@@ -46726,33 +46950,33 @@ except Exception as exc:
 				}
 				if (hasFinalProxyToolResult && string.IsNullOrWhiteSpace(final.Content))
 				{
-					if (toolRound < 35 && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model produced no final answer after tool results", out var digestRetryRequest))
+					if (toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model produced no final answer after tool results", out var digestRetryRequest))
 					{
 						LogMessage("[Chat UI] Final-answer pass produced no visible content; feeding compact tool digest back into the prompt.");
 						currentRequestJson = digestRetryRequest;
 						continue;
 					}
 					LogMessage("[Chat UI] Model returned reasoning only after proxy tool results; returning latest tool result fallback.");
-					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass produced no visible text after completed tool results, so I am rendering the clean tool fallback instead of leaving the turn stuck.");
+					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= lastToolRound, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass produced no visible text after completed tool results, so I am rendering the clean tool fallback instead of leaving the turn stuck.");
 				}
 				if (string.IsNullOrWhiteSpace(final.Content) && string.IsNullOrWhiteSpace(final.Reasoning))
 				{
-					if (hasFinalProxyToolResult && toolRound < 35 && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the runtime requested more tools even though final-answer mode is active", out var digestRetryRequest))
+					if (hasFinalProxyToolResult && toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the runtime requested more tools even though final-answer mode is active", out var digestRetryRequest))
 					{
 						LogMessage("[Chat UI] Final-answer pass requested tools after tools were disabled; feeding compact tool digest back into the prompt.");
 						currentRequestJson = digestRetryRequest;
 						continue;
 					}
 					LogMessage("[Chat UI] LM Studio requested proxy tools after final-answer mode disabled tools; returning latest tool results.");
-					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The runtime requested more tools after tool use was already closed for final synthesis, so I am rendering the latest completed tool output instead of stalling.");
+					return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= lastToolRound, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The runtime requested more tools after tool use was already closed for final synthesis, so I am rendering the latest completed tool output instead of stalling.");
 				}
 				string finalPendingSteering = ((consumeSteering == null) ? "" : NormalizeChatStreamSteeringText(consumeSteering()));
-				if (!string.IsNullOrWhiteSpace(finalPendingSteering) && toolRound < 35)
+				if (!string.IsNullOrWhiteSpace(finalPendingSteering) && toolRound < lastToolRound)
 				{
 					currentRequestJson = ApplyChatUiSteeringToRequest(currentRequestJson, finalPendingSteering);
 					continue;
 				}
-				if (hasFinalProxyToolResult && toolRound < 35)
+				if (hasFinalProxyToolResult && toolRound < lastToolRound)
 				{
 					if (ShouldContinueAfterRecoverableToolFailure(currentRequestJson, final.Content))
 					{
@@ -46767,7 +46991,7 @@ except Exception as exc:
 						continue;
 					}
 				}
-				if (!hasFinalProxyToolResult && toolRound < 35 && ShouldRejectUngroundedExternalAnswer(currentRequestJson, final.Content) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var finalGroundingSearchCall))
+				if (!hasFinalProxyToolResult && toolRound < lastToolRound && ShouldRejectUngroundedExternalAnswer(currentRequestJson, final.Content) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var finalGroundingSearchCall))
 				{
 					LogMessage("[Chat UI] Rejected ungrounded external/link answer in final-answer mode; forcing internet_search before responding.");
 					string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { finalGroundingSearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -46777,7 +47001,7 @@ except Exception as exc:
 						continue;
 					}
 				}
-				if (!hasFinalProxyToolResult && toolRound < 35 && ShouldForceInternetSearchAfterEmptyOutputLimit(currentRequestJson, final.FinishReason, final.Content, final.Reasoning) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var finalEmptyRecoverySearchCall))
+				if (!hasFinalProxyToolResult && toolRound < lastToolRound && ShouldForceInternetSearchAfterEmptyOutputLimit(currentRequestJson, final.FinishReason, final.Content, final.Reasoning) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var finalEmptyRecoverySearchCall))
 				{
 					LogMessage("[Chat UI] Empty output-limit completion for an external lookup; forcing internet_search instead of recursively retrying an empty answer.");
 					string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { finalEmptyRecoverySearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -46789,7 +47013,7 @@ except Exception as exc:
 				}
 				if (RequestRequiresUnmetProxyFileWrite(currentRequestJson))
 				{
-					if (toolRound < 35 && ShouldContinueForRequiredProxyFileWrite(currentRequestJson, final.Content, out var finalMissingFileWriteInstruction))
+					if (toolRound < lastToolRound && ShouldContinueForRequiredProxyFileWrite(currentRequestJson, final.Content, out var finalMissingFileWriteInstruction))
 					{
 						LogMessage("[Chat UI] Rejected final-answer-only text for file-write prompt without a successful vs_write_file result; reopening the agent loop.");
 						currentRequestJson = EnsureRequiredProxyFileWriteToolsEnabled(AppendAssistantAndSystemMessage(currentRequestJson, final.Content ?? "", finalMissingFileWriteInstruction), ownerKey);
@@ -46821,7 +47045,7 @@ except Exception as exc:
 			if (toolCalls.Count > 0 && ContainsProxyOwnedToolCall(toolCalls))
 			{
 				LogToolCalls("chat ui proxy tools", toolCalls);
-				bool finalAnswerRound = toolRound >= 34;
+				bool finalAnswerRound = toolRound >= finalToolRound;
 				string continuationRequest3 = await BuildProxyToolContinuationRequestAsync(currentRequestJson, toolCalls, !finalAnswerRound, ownerKey, sessionId, emitToolCall, cancellationToken);
 				if (!string.IsNullOrWhiteSpace(continuationRequest3))
 				{
@@ -46868,17 +47092,17 @@ except Exception as exc:
 			bool malformedPostToolAttempt = !string.IsNullOrWhiteSpace(direct.Content) && direct.Content.IndexOf("attempted a tool call but returned malformed JSON", StringComparison.OrdinalIgnoreCase) >= 0;
 			if (hasProxyToolResult && ((string.IsNullOrWhiteSpace(direct.Content) && string.IsNullOrWhiteSpace(direct.Reasoning)) || malformedPostToolAttempt))
 			{
-				if (toolRound < 35 && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, malformedPostToolAttempt ? "the model attempted malformed post-tool JSON" : "the model produced no final answer after tool results", out var digestRetryRequest))
+				if (toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, malformedPostToolAttempt ? "the model attempted malformed post-tool JSON" : "the model produced no final answer after tool results", out var digestRetryRequest))
 				{
 					LogMessage("[Chat UI] Model returned unusable final content after proxy tool results; feeding compact tool digest back into the prompt.");
 					currentRequestJson = digestRetryRequest;
 					continue;
 				}
 				LogMessage("[Chat UI] Model returned unusable final content after proxy tool results; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass returned unusable content after completed tool results, so I am rendering the clean tool fallback.");
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= lastToolRound, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass returned unusable content after completed tool results, so I am rendering the clean tool fallback.");
 			}
 			string pendingSteering = ((consumeSteering == null) ? "" : NormalizeChatStreamSteeringText(consumeSteering()));
-			if (!string.IsNullOrWhiteSpace(pendingSteering) && toolRound < 35)
+			if (!string.IsNullOrWhiteSpace(pendingSteering) && toolRound < lastToolRound)
 			{
 				currentRequestJson = ApplyChatUiSteeringToRequest(currentRequestJson, pendingSteering);
 				continue;
@@ -46888,7 +47112,7 @@ except Exception as exc:
 			{
 				direct.Reasoning = "";
 			}
-			if (toolRound < 35 && ShouldContinueForRequiredProxyFileWrite(currentRequestJson, direct.Content, out var missingFileWriteInstruction))
+			if (toolRound < lastToolRound && ShouldContinueForRequiredProxyFileWrite(currentRequestJson, direct.Content, out var missingFileWriteInstruction))
 			{
 				LogMessage("[Chat UI] Rejected final answer for file-write prompt without a successful vs_write_file result; continuing the agent loop.");
 				currentRequestJson = EnsureRequiredProxyFileWriteToolsEnabled(AppendAssistantAndSystemMessage(currentRequestJson, direct.Content ?? "", missingFileWriteInstruction), ownerKey);
@@ -46899,13 +47123,13 @@ except Exception as exc:
 				LogMessage("[Chat UI] Blocking final answer for file-write prompt because no successful vs_write_file result was observed.");
 				return BuildRequiredProxyFileWriteBlockedCompletion(currentRequestJson, direct.Content, emitLiveContent);
 			}
-			if (hasProxyToolResult && toolRound < 35 && ShouldContinueAfterRecoverableToolFailure(currentRequestJson, direct.Content))
+			if (hasProxyToolResult && toolRound < lastToolRound && ShouldContinueAfterRecoverableToolFailure(currentRequestJson, direct.Content))
 			{
 				LogMessage("[Chat UI] Model stopped on a recoverable tool failure; continuing with alternate-tool recovery guidance.");
 				currentRequestJson = BuildProxyToolRecoveryRequest(currentRequestJson, direct.Content);
 				continue;
 			}
-			if (hasProxyToolResult && toolRound < 35 && TryBuildProxyAnswerSufficiencyInstruction(currentRequestJson, direct.Content, out var sufficiencyInstruction))
+			if (hasProxyToolResult && toolRound < lastToolRound && TryBuildProxyAnswerSufficiencyInstruction(currentRequestJson, direct.Content, out var sufficiencyInstruction))
 			{
 				LogMessage("[Chat UI] Model final answer did not satisfy requested list/research criteria; continuing with a sufficiency instruction.");
 				currentRequestJson = AppendAssistantAndSystemMessage(currentRequestJson, direct.Content, sufficiencyInstruction);
@@ -46913,27 +47137,27 @@ except Exception as exc:
 			}
 			if (hasProxyToolResult && ContainsUnsafePostToolFinalContent(direct.Content, currentRequestJson))
 			{
-				if (toolRound < 35 && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model leaked raw tool markup or transcripts instead of answering", out var digestRetryRequest))
+				if (toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model leaked raw tool markup or transcripts instead of answering", out var digestRetryRequest))
 				{
 					LogMessage("[Chat UI] Model final content after proxy tool use contained unsafe transcript/markup leakage; feeding compact tool digest back into the prompt.");
 					currentRequestJson = digestRetryRequest;
 					continue;
 				}
 				LogMessage("[Chat UI] Model final content after proxy tool use contained unsafe transcript/markup leakage; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass leaked tool markup after completed tool results, so I am rendering the clean tool fallback.");
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= lastToolRound, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass leaked tool markup after completed tool results, so I am rendering the clean tool fallback.");
 			}
 			if (hasProxyToolResult && string.IsNullOrWhiteSpace(direct.Content))
 			{
-				if (toolRound < 35 && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model produced empty content after tool results", out var digestRetryRequest))
+				if (toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model produced empty content after tool results", out var digestRetryRequest))
 				{
 					LogMessage("[Chat UI] Model returned no visible final content after proxy tool results; feeding compact tool digest back into the prompt.");
 					currentRequestJson = digestRetryRequest;
 					continue;
 				}
 				LogMessage("[Chat UI] Model returned no visible final content after proxy tool results; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass came back empty after completed tool results, so I am rendering the clean tool fallback.");
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= lastToolRound, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass came back empty after completed tool results, so I am rendering the clean tool fallback.");
 			}
-			if (!hasProxyToolResult && toolRound < 35 && ShouldRejectUngroundedExternalAnswer(currentRequestJson, direct.Content) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var groundingSearchCall))
+			if (!hasProxyToolResult && toolRound < lastToolRound && ShouldRejectUngroundedExternalAnswer(currentRequestJson, direct.Content) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var groundingSearchCall))
 			{
 				LogMessage("[Chat UI] Rejected ungrounded external/link answer; forcing internet_search before responding.");
 				string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { groundingSearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -46943,7 +47167,7 @@ except Exception as exc:
 					continue;
 				}
 			}
-			if (!hasProxyToolResult && toolRound < 35 && ShouldForceInternetSearchAfterEmptyOutputLimit(currentRequestJson, direct.FinishReason, direct.Content, direct.Reasoning) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var emptyRecoverySearchCall))
+			if (!hasProxyToolResult && toolRound < lastToolRound && ShouldForceInternetSearchAfterEmptyOutputLimit(currentRequestJson, direct.FinishReason, direct.Content, direct.Reasoning) && TryBuildExplicitInternetSearchToolCall(currentRequestJson, out var emptyRecoverySearchCall))
 			{
 				LogMessage("[Chat UI] Empty output-limit completion for an external lookup; forcing internet_search instead of recursively retrying an empty answer.");
 				string groundingRequest = await BuildProxyToolContinuationRequestAsync(currentRequestJson, new List<ToolCallData> { emptyRecoverySearchCall }, keepProxyTools: false, ownerKey, sessionId, emitToolCall, cancellationToken).ConfigureAwait(continueOnCapturedContext: false);
@@ -46952,6 +47176,12 @@ except Exception as exc:
 					currentRequestJson = groundingRequest;
 					continue;
 				}
+			}
+			if (toolRound < lastToolRound && ShouldContinueJackhammerAfterDirectCompletion(currentRequestJson, out var jackhammerContinuationInstruction))
+			{
+				LogMessage("[Chat UI] Jackhammer intercepted a direct completion before a terminal goal checkpoint; continuing the bounded work run.");
+				currentRequestJson = AppendAssistantAndSystemMessage(currentRequestJson, direct.Content ?? "", jackhammerContinuationInstruction);
+				continue;
 			}
 			string directAccumulatedContent = MergeChatUiContinuationText(autoContinuationContent.ToString(), direct.Content ?? "");
 			string directAccumulatedReasoning = MergeChatUiContinuationText(autoContinuationReasoning.ToString(), direct.Reasoning ?? "");
@@ -46975,7 +47205,7 @@ except Exception as exc:
 			catch (OperationCanceledException) when (timeboxFinalAnswer && !cancellationToken.IsCancellationRequested)
 			{
 				LogMessage("[Chat UI] Final-answer pass timed out after proxy tool results; returning latest tool result fallback.");
-				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= 35, synthesisTimedOut: true, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer synthesis pass timed out after completed tool results, so I am rendering the source/tool fallback instead of leaving the turn stalled.");
+				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= lastToolRound, synthesisTimedOut: true, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer synthesis pass timed out after completed tool results, so I am rendering the source/tool fallback instead of leaving the turn stalled.");
 			}
 			finally
 			{
@@ -46984,6 +47214,33 @@ except Exception as exc:
 		}
 		LogMessage("[Chat UI] Proxy agent tool loop reached the maximum; returning latest tool results instead of an error.");
 		return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, loopLimitReached: true, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The agent reached the maximum tool-loop count, so I am summarizing the latest completed tool output.");
+	}
+
+	private bool ShouldContinueJackhammerAfterDirectCompletion(string requestBody, out string instruction)
+	{
+		instruction = "";
+		if (string.IsNullOrWhiteSpace(requestBody) ||
+			requestBody.IndexOf("[Jackhammer work mode]", StringComparison.OrdinalIgnoreCase) < 0 ||
+			IsProxyToolExecutionDisabled(requestBody))
+		{
+			return false;
+		}
+		List<string> resultBlocks = ExtractLatestProxyToolResultText(requestBody, 200);
+		string latestCheckpoint = resultBlocks.LastOrDefault(block =>
+			(block ?? "").IndexOf("\"tool\":\"goal_checkpoint\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			(block ?? "").StartsWith("goal_checkpoint result:", StringComparison.OrdinalIgnoreCase));
+		if (!string.IsNullOrWhiteSpace(latestCheckpoint) &&
+			(latestCheckpoint.IndexOf("\"status\":\"ready_final\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			 latestCheckpoint.IndexOf("\"status\":\"plan_ready\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			 latestCheckpoint.IndexOf("\"status\":\"needs_user\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
+			 latestCheckpoint.IndexOf("\"status\":\"blocked\"", StringComparison.OrdinalIgnoreCase) >= 0))
+		{
+			return false;
+		}
+		instruction = string.IsNullOrWhiteSpace(latestCheckpoint)
+			? "[Jackhammer continuation] You attempted to answer before creating the required work checkpoint. Do not repeat that answer yet. Call goal_checkpoint now with the user goal, success criteria, completed work, remaining work, concise notes, progressPercent, and the correct status. Use ready_final only if the request is genuinely complete; otherwise continue the work."
+			: "[Jackhammer continuation] The latest checkpoint was not terminal. Do not stop or repeat the draft answer yet. Reassess the completed and remaining work, then call goal_checkpoint with an updated status and progress. Continue with real tools when work remains; use ready_final only when the request and its verification are genuinely complete.";
+		return true;
 	}
 
 	private bool ShouldContinueAfterRecoverableToolFailure(string requestBody, string finalContent)
@@ -50597,6 +50854,16 @@ except Exception as exc:
 		}
 		string selectedServiceId = ExtractStringProperty(root, "service") ?? "";
 		bool plainChatMode = string.IsNullOrWhiteSpace(selectedServiceId);
+		bool planMode = string.Equals(NormalizeInteractionMode(ExtractStringProperty(root, "interactionMode")), "plan", StringComparison.OrdinalIgnoreCase);
+		if (planMode)
+		{
+			parts.Add(BuildPlanModeSystemHint());
+		}
+		string jackhammerHint = BuildJackhammerSystemHint(root, planMode);
+		if (!string.IsNullOrWhiteSpace(jackhammerHint))
+		{
+			parts.Add(jackhammerHint);
+		}
 		string plainChatHint = (plainChatMode ? BuildPlainChatModeSystemHint() : "");
 		if (!string.IsNullOrWhiteSpace(plainChatHint))
 		{
@@ -50638,6 +50905,81 @@ except Exception as exc:
 			parts.Add(priorConversationHint.Trim());
 		}
 		return parts;
+	}
+
+	private static string BuildPlanModeSystemHint()
+	{
+		return "[JackLLM Plan mode] Work with the user to produce a decision-complete implementation plan. Do not modify files, run mutating commands, install software, publish artifacts, or claim implementation is complete. You may reason from the conversation and any explicitly supplied read-only context. Ask only focused clarification questions that materially affect the plan, offering two or three concise choices when useful. Once the important decisions are settled, respond with a concise <proposed_plan> containing Summary, Implementation Changes, Interfaces or Data Contracts when applicable, Test Plan, and Assumptions. Stop after the plan and wait for explicit approval.";
+	}
+
+	private string BuildJackhammerSystemHint(JsonElement root, bool planMode)
+	{
+		if (root.ValueKind != JsonValueKind.Object ||
+			!root.TryGetProperty("jackhammer", out var jackhammer) ||
+			jackhammer.ValueKind != JsonValueKind.Object)
+		{
+			return "";
+		}
+		JsonElement enabledElement;
+		bool enabled = jackhammer.TryGetProperty("enabled", out enabledElement) &&
+			(enabledElement.ValueKind == JsonValueKind.True ||
+			 (enabledElement.ValueKind == JsonValueKind.String &&
+			  bool.TryParse(enabledElement.GetString(), out var parsedEnabled) &&
+			  parsedEnabled));
+		if (!enabled)
+		{
+			return "";
+		}
+		string runId = ExtractStringProperty(jackhammer, "runId") ?? "";
+		int turnBudget = ReadJackhammerTurnBudget(jackhammer, ExtractStringProperty(root, "reasoningLevel") ?? ExtractStringProperty(root, "reasoning_level"));
+		return "[Jackhammer work mode]\n" +
+			"Run id: " + (string.IsNullOrWhiteSpace(runId) ? "auto" : TruncateForLog(runId, 120)) + "\n" +
+			"Jackhammer turn budget: " + turnBudget.ToString(CultureInfo.InvariantCulture) + "\n" +
+			"Continue the same user request autonomously until it is genuinely complete, blocked, needs user input, reaches a decision-complete plan, or the turn budget is exhausted. " +
+			"Use goal_checkpoint at the start and after each material step. Include concise successCriteria, completed, remaining, notes, and progressPercent so the UI can build a task tree. " +
+			"Use status=in_progress while work remains, status=needs_user only for a decision or external action that cannot be safely inferred, status=blocked only for a real blocker, and status=ready_final only after requested work and any requested tests or verification are complete. " +
+			(planMode
+				? "This run is in Plan mode: remain read-only, use status=plan_ready once the plan is decision-complete, and then stop for explicit user approval. "
+				: "Use available real tools for work instead of merely describing the work. ") +
+			"Coordination calls are internal status signals. Do not expose their JSON or fabricate tool results. Do not repeat completed steps.";
+	}
+
+	private static int ReadJackhammerTurnBudget(JsonElement jackhammer, string reasoningLevel)
+	{
+		if (jackhammer.ValueKind == JsonValueKind.Object)
+		{
+			foreach (string propertyName in new[] { "customTurnBudget", "turnBudget" })
+			{
+				if (jackhammer.TryGetProperty(propertyName, out var value))
+				{
+					int parsed = ReadPositiveJsonInt(value);
+					if (parsed > 0)
+					{
+						return Math.Max(1, Math.Min(200, parsed));
+					}
+				}
+			}
+		}
+		return (reasoningLevel ?? "auto").Trim().ToLowerInvariant() switch
+		{
+			"minimal" => 2,
+			"low" => 5,
+			"medium" => 10,
+			"high" => 20,
+			"ultra" => 100,
+			_ => 40
+		};
+	}
+
+	private static int GetJackhammerToolRoundBudget(string requestBody)
+	{
+		Match match = Regex.Match(requestBody ?? "", "Jackhammer turn budget:\\s*(?<budget>\\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+		if (match.Success &&
+			int.TryParse(match.Groups["budget"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var budget))
+		{
+			return Math.Max(1, Math.Min(200, budget));
+		}
+		return 36;
 	}
 
 	private string BuildChatUiPriorConversationSystemHint(List<JsonElement> messages, int lastUserIndex)
@@ -51121,6 +51463,7 @@ except Exception as exc:
 			}
 			sb.Append("- ").Append(root.DisplayName ?? GetAgentFilesystemContextDisplayName(root.Path))
 				.Append(" [").Append(root.Source ?? "root").Append("]")
+				.Append(string.IsNullOrWhiteSpace(root.AccessMode) ? "" : " [" + root.AccessMode + "]")
 				.Append(" | ").AppendLine(GetAgentFilesystemContextDisplayPath(root));
 			shown++;
 		}
@@ -51227,7 +51570,10 @@ except Exception as exc:
 				displayName = root.DisplayName,
 				source = root.Source,
 				path = GetAgentFilesystemContextDisplayPath(root),
-				exists = root.Exists
+				exists = root.Exists,
+				role = root.Role,
+				accessMode = root.AccessMode,
+				parentId = root.ParentId
 			}).Cast<object>().ToList();
 	}
 
@@ -51246,15 +51592,30 @@ except Exception as exc:
 		sessionId = NormalizeOptionalDeveloperProjectSessionId(sessionId);
 		List<AgentFilesystemContextRootEntry> roots = new List<AgentFilesystemContextRootEntry>();
 		List<string> seen = new List<string>();
-		foreach (string sessionRoot in GetChatAgentSessionRoots(sessionId, ensureExists: false))
+		foreach (ChatWorkspaceRootSnapshot workspaceRoot in GetChatWorkspaceRootsDiagnostics(ownerKey, sessionId))
 		{
-			AddAgentFilesystemContextRoot(roots, seen, "Session files", sessionRoot, "session");
-		}
-		foreach (ChatFilesystemAccessEntry entry in GetChatFilesystemAccess(ownerKey))
-		{
-			if (entry != null && entry.exists)
+			if (workspaceRoot != null && (workspaceRoot.Exists || workspaceRoot.IsSandbox))
 			{
-				AddAgentFilesystemContextRoot(roots, seen, "Approved root", entry.path, "approved");
+				string label = workspaceRoot.IsInherited
+					? "Global read-only"
+					: string.Equals(workspaceRoot.Role, WorkspaceRolePrimary, StringComparison.OrdinalIgnoreCase)
+						? "Primary workspace"
+						: "Attached workspace";
+				string source = workspaceRoot.IsSandbox
+					? "session"
+					: workspaceRoot.IsInherited
+						? "global"
+						: workspaceRoot.Role;
+				AddAgentFilesystemContextRoot(roots, seen, label, workspaceRoot.Path, source);
+				AgentFilesystemContextRootEntry added = roots.LastOrDefault();
+				if (added != null && PathsEqual(added.Path, workspaceRoot.Path))
+				{
+					added.Id = workspaceRoot.Id;
+					added.DisplayName = workspaceRoot.DisplayName;
+					added.Role = workspaceRoot.Role;
+					added.AccessMode = workspaceRoot.AccessMode;
+					added.ParentId = workspaceRoot.ParentId;
+				}
 			}
 		}
 		foreach (string temporaryRoot in GetTemporaryFilesystemAccess(ownerKey))
@@ -51307,7 +51668,7 @@ except Exception as exc:
 		{
 			return;
 		}
-		if (!Directory.Exists(full))
+		if (!Directory.Exists(full) && !string.Equals(source, "session", StringComparison.OrdinalIgnoreCase))
 		{
 			return;
 		}
@@ -51326,7 +51687,7 @@ except Exception as exc:
 			DisplayName = string.Equals(source, "session", StringComparison.OrdinalIgnoreCase) ? "Current Session Files" : GetAgentFilesystemContextDisplayName(full),
 			Source = (source ?? "root"),
 			Path = full,
-			Exists = true
+			Exists = Directory.Exists(full) || string.Equals(source, "session", StringComparison.OrdinalIgnoreCase)
 		});
 	}
 
@@ -51385,14 +51746,15 @@ except Exception as exc:
 					{
 						continue;
 					}
-					if (IsPathInsideRoot(fullPath, _chatSessionFilesRoot) && TryGetUploadedPromptFileStats(fullPath, ownerKey, sessionId, out var length, out var lastWriteUtc))
+					if (EnsureChatWorkspacePathAccess(ownerKey, sessionId, fullPath, requireWrite: false, out var _) &&
+						TryGetUploadedPromptFileStats(fullPath, ownerKey, sessionId, out var length, out var lastWriteUtc))
 					{
 						contextFiles.Add(new UploadedFilePromptContext
 						{
 							Name = name,
 							Type = type,
 							FullPath = fullPath,
-							RelativePath = GetUploadedFilePromptRelativePath(fullPath),
+							RelativePath = GetUploadedFilePromptRelativePath(fullPath, ownerKey, sessionId),
 							Length = length,
 							LastWriteUtc = lastWriteUtc
 						});
@@ -51414,8 +51776,22 @@ except Exception as exc:
 		}
 	}
 
-	private string GetUploadedFilePromptRelativePath(string fullPath)
+	private string GetUploadedFilePromptRelativePath(string fullPath, string ownerKey, string sessionId)
 	{
+		try
+		{
+			ChatWorkspaceRootSnapshot workspaceRoot = FindEffectiveChatWorkspaceRoot(ownerKey, sessionId, fullPath);
+			if (workspaceRoot != null && !string.IsNullOrWhiteSpace(workspaceRoot.Path))
+			{
+				string relative = GetFilesystemContextRelativePath(workspaceRoot.Path, fullPath);
+				return string.IsNullOrWhiteSpace(relative)
+					? workspaceRoot.DisplayName
+					: workspaceRoot.DisplayName + "/" + relative.Replace('\\', '/');
+			}
+		}
+		catch
+		{
+		}
 		try
 		{
 			string sessionRoot = GetChatSessionFilesDirectory(ExtractChatSessionIdFromPath(fullPath));
@@ -56016,6 +56392,8 @@ except Exception as exc:
 		string notes = ExtractJsonStringProperty(argumentsJson, "notes") ?? "";
 		bool blocked = status.Equals("blocked", StringComparison.Ordinal);
 		bool readyFinal = status.Equals("ready_final", StringComparison.Ordinal);
+		bool planReady = status.Equals("plan_ready", StringComparison.Ordinal);
+		bool needsUser = status.Equals("needs_user", StringComparison.Ordinal);
 		string result = JsonSerializer.Serialize(new
 		{
 			ok = true,
@@ -56032,14 +56410,18 @@ except Exception as exc:
 		});
 		string instruction = readyFinal
 			? "[JackLLM goal checkpoint] The model marked the goal ready for final answer. Produce a clean final answer now using the gathered context. Do not expose checkpoint JSON, internal progress notes, or tool transcripts."
-			: (blocked
-				? "[JackLLM goal checkpoint] The model marked the goal blocked. Produce a brief user-facing blocker explanation and the best next user action. Do not expose checkpoint JSON, internal progress notes, or tool transcripts."
-				: "[JackLLM goal checkpoint] Goal progress recorded at " + progressPercent.ToString(CultureInfo.InvariantCulture) + "%. Continue the same user request. If more external action, source material, files, browser work, shell output, or generated media is needed, call a real available tool next or use continue_with_tools to name the needed real tools.");
+			: planReady
+				? "[JackLLM goal checkpoint] The plan is decision-complete. Produce only the clean <proposed_plan> now, then stop for explicit user approval. Do not implement, modify files, or expose checkpoint JSON."
+				: needsUser
+					? "[JackLLM goal checkpoint] The work needs user input. Ask one concise, concrete question that identifies the required decision or action, then stop. Do not expose checkpoint JSON."
+					: blocked
+						? "[JackLLM goal checkpoint] The model marked the goal blocked. Produce a brief user-facing blocker explanation and the best next user action. Do not expose checkpoint JSON, internal progress notes, or tool transcripts."
+						: "[JackLLM goal checkpoint] Goal progress recorded at " + progressPercent.ToString(CultureInfo.InvariantCulture) + "%. Continue the same user request. If more external action, source material, files, browser work, shell output, or generated media is needed, call a real available tool next or use continue_with_tools to name the needed real tools.";
 		return new ProxyCoordinationToolResult
 		{
 			Result = result,
 			SystemInstruction = instruction,
-			ForceFinalAnswer = readyFinal || blocked,
+			ForceFinalAnswer = readyFinal || blocked || planReady || needsUser,
 			ProgressPercent = progressPercent
 		};
 	}
@@ -56117,6 +56499,8 @@ except Exception as exc:
 				"ready_final" => "ready_final",
 				"ready" => "ready_final",
 				"final" => "ready_final",
+				"plan_ready" => "plan_ready",
+				"needs_user" => "needs_user",
 				"blocked" => "blocked",
 				_ => "in_progress",
 			};
@@ -56133,9 +56517,13 @@ except Exception as exc:
 
 	private int EstimateProxyCoordinationProgressPercent(string requestBody, string status)
 	{
-		if (status.Equals("ready_final", StringComparison.Ordinal))
+		if (status.Equals("ready_final", StringComparison.Ordinal) || status.Equals("plan_ready", StringComparison.Ordinal))
 		{
 			return 96;
+		}
+		if (status.Equals("needs_user", StringComparison.Ordinal))
+		{
+			return 70;
 		}
 		if (status.Equals("blocked", StringComparison.Ordinal))
 		{
@@ -58808,6 +59196,10 @@ except Exception as exc:
 		{
 			return "vs_read_file error: " + error;
 		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, fullPath, requireWrite: false, out error))
+		{
+			return "vs_read_file blocked: " + error;
+		}
 		int startLine = ExtractIntFromToolArguments(argumentsJson, "startLine", 1);
 		int endLine = ExtractIntFromToolArguments(argumentsJson, "endLine", startLine + 240);
 		bool includeLineNumbers = ExtractBoolFromToolArguments(argumentsJson, "includeLineNumbers", fallback: true);
@@ -58872,6 +59264,10 @@ except Exception as exc:
 		if (!TryResolveChatAgentFilePath(path, ownerKey, sessionId, mustExist: false, sessionOnly: false, out var fullPath, out var error))
 		{
 			return "vs_write_file error: " + error;
+		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, fullPath, requireWrite: true, out error))
+		{
+			return "vs_write_file blocked: " + error;
 		}
 		bool managedSessionPath = IsJackLlmSessionManagedPath(fullPath);
 		bool fileExists = managedSessionPath ? ChatSessionSandboxFileExists(sessionId, ownerKey, fullPath) : File.Exists(fullPath);
@@ -58942,6 +59338,10 @@ except Exception as exc:
 		{
 			return "vs_replace_in_file error: " + error;
 		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, fullPath, requireWrite: true, out error))
+		{
+			return "vs_replace_in_file blocked: " + error;
+		}
 		string existing;
 		bool managedReplacePath = IsJackLlmSessionManagedPath(fullPath);
 		if (managedReplacePath)
@@ -59011,6 +59411,10 @@ except Exception as exc:
 		{
 			return "vs_rename_file error: " + sourceError;
 		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, sourceFullPath, requireWrite: true, out sourceError))
+		{
+			return "vs_rename_file blocked: " + sourceError;
+		}
 		if (string.IsNullOrWhiteSpace(newPath) && !string.IsNullOrWhiteSpace(newName))
 		{
 			newPath = Path.Combine(Path.GetDirectoryName(sourceFullPath) ?? "", newName.Trim().Trim('"', '\'', ',', ' '));
@@ -59022,6 +59426,10 @@ except Exception as exc:
 		if (!TryResolveChatAgentFilePath(newPath, ownerKey, sessionId, mustExist: false, sessionOnly: false, out var targetFullPath, out var targetError))
 		{
 			return "vs_rename_file error: " + targetError;
+		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, targetFullPath, requireWrite: true, out targetError))
+		{
+			return "vs_rename_file blocked: " + targetError;
 		}
 		if (PathsEqual(sourceFullPath, targetFullPath))
 		{
@@ -59096,6 +59504,10 @@ except Exception as exc:
 		{
 			return "vs_copy_file error: " + sourceError;
 		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, sourceFullPath, requireWrite: false, out sourceError))
+		{
+			return "vs_copy_file blocked: " + sourceError;
+		}
 		if (string.IsNullOrWhiteSpace(newPath) && !string.IsNullOrWhiteSpace(newName))
 		{
 			newPath = Path.Combine(Path.GetDirectoryName(sourceFullPath) ?? "", newName.Trim().Trim('"', '\'', ',', ' '));
@@ -59107,6 +59519,10 @@ except Exception as exc:
 		if (!TryResolveChatAgentFilePath(newPath, ownerKey, sessionId, mustExist: false, sessionOnly: false, out var targetFullPath, out var targetError))
 		{
 			return "vs_copy_file error: " + targetError;
+		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, targetFullPath, requireWrite: true, out targetError))
+		{
+			return "vs_copy_file blocked: " + targetError;
 		}
 		if (PathsEqual(sourceFullPath, targetFullPath))
 		{
@@ -59156,6 +59572,10 @@ except Exception as exc:
 		if (!TryResolveChatAgentFilePath(path, ownerKey, sessionId, mustExist: true, sessionOnly: false, out var fullPath, out var error))
 		{
 			return "vs_delete_file error: " + error;
+		}
+		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, fullPath, requireWrite: true, out error))
+		{
+			return "vs_delete_file blocked: " + error;
 		}
 		if (TryCreateChatSessionFileFromPath(fullPath, "deleted", out var deletedFile))
 		{
@@ -59875,6 +60295,10 @@ except Exception as exc:
 		}
 		try
 		{
+			if (TryResolveChatWorkspaceLogicalPath(requestedPath, ownerKey, sessionId, requireFile: true, mustExist, out var logicalCandidate))
+			{
+				return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, logicalCandidate, out fullPath, out error);
+			}
 			if (Path.IsPathRooted(rawCleaned))
 			{
 				string hostCandidate = Path.GetFullPath(rawCleaned);
@@ -59890,8 +60314,7 @@ except Exception as exc:
 						error = "file does not exist: " + FormatChatAgentPathForOutput(hostCandidate, sessionId);
 						return false;
 					}
-					fullPath = hostCandidate;
-					return true;
+					return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, hostCandidate, out fullPath, out error);
 				}
 				if (!IsRootedWithoutVolume(rawCleaned))
 				{
@@ -59919,8 +60342,7 @@ except Exception as exc:
 					error = "file does not exist: " + FormatChatAgentPathForOutput(candidate, sessionId);
 					return false;
 				}
-				fullPath = candidate;
-				return true;
+				return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, candidate, out fullPath, out error);
 			}
 			if (sessionOnly)
 			{
@@ -59936,8 +60358,7 @@ except Exception as exc:
 					error = "file does not exist in current session: " + requestedPath;
 					return false;
 				}
-				fullPath = candidate2;
-				return true;
+				return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, candidate2, out fullPath, out error);
 			}
 			foreach (string root in roots)
 			{
@@ -59946,8 +60367,7 @@ except Exception as exc:
 				{
 					continue;
 				}
-				fullPath = candidate3;
-				return true;
+				return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, candidate3, out fullPath, out error);
 			}
 			if (mustExist)
 			{
@@ -59960,16 +60380,14 @@ except Exception as exc:
 						{
 							if (string.Equals(Path.GetFileName(sandboxFile), fileName, StringComparison.OrdinalIgnoreCase) && IsPathInsideRoot(sandboxFile, root2))
 							{
-								fullPath = Path.GetFullPath(sandboxFile);
-								return true;
+								return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, Path.GetFullPath(sandboxFile), out fullPath, out error);
 							}
 						}
 						foreach (string candidate4 in SafeEnumerateFiles(root2, fileName, SearchOption.AllDirectories))
 						{
 							if (IsPathInsideRoot(candidate4, root2))
 							{
-								fullPath = Path.GetFullPath(candidate4);
-								return true;
+								return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, Path.GetFullPath(candidate4), out fullPath, out error);
 							}
 						}
 					}
@@ -60013,6 +60431,10 @@ except Exception as exc:
 		List<string> roots = GetChatAgentAllowedRoots(ownerKey, sessionId);
 		try
 		{
+			if (TryResolveChatWorkspaceLogicalPath(requestedPath, ownerKey, sessionId, requireFile: false, mustExist: true, out var logicalCandidate))
+			{
+				return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, logicalCandidate, out fullPath, out error);
+			}
 			if (Path.IsPathRooted(rawCleaned))
 			{
 				string hostCandidate = Path.GetFullPath(rawCleaned);
@@ -60023,8 +60445,7 @@ except Exception as exc:
 				}
 				if ((Directory.Exists(hostCandidate) || IsJackLlmSessionManagedPath(hostCandidate)) && IsPathUnderAnyRoot(hostCandidate, roots))
 				{
-					fullPath = hostCandidate;
-					return true;
+					return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, hostCandidate, out fullPath, out error);
 				}
 				if (!IsRootedWithoutVolume(rawCleaned))
 				{
@@ -60043,8 +60464,7 @@ except Exception as exc:
 				}
 				if ((Directory.Exists(candidate) || IsJackLlmSessionManagedPath(candidate)) && IsPathUnderAnyRoot(candidate, roots))
 				{
-					fullPath = candidate;
-					return true;
+					return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, candidate, out fullPath, out error);
 				}
 				QueueFilesystemPermissionRequest(ownerKey, requestedPath, candidate, "list/search directory", "outside authorized filesystem roots");
 			}
@@ -60055,8 +60475,7 @@ except Exception as exc:
 					string candidate2 = Path.GetFullPath(Path.Combine(root, cleaned));
 					if ((Directory.Exists(candidate2) || IsJackLlmSessionManagedPath(candidate2)) && IsPathInsideRoot(candidate2, root))
 					{
-						fullPath = candidate2;
-						return true;
+						return TryAcceptResolvedChatWorkspacePath(ownerKey, sessionId, candidate2, out fullPath, out error);
 					}
 				}
 			}
@@ -60072,24 +60491,13 @@ except Exception as exc:
 
 	private List<string> GetChatAgentAllowedRoots(string ownerKey, string sessionId = null)
 	{
-		List<string> roots = new List<string>();
-		foreach (string sessionRoot in GetChatAgentSessionRoots(sessionId, ensureExists: false))
-		{
-			AddAllowedRoot(roots, sessionRoot, requireExists: false);
-		}
+		List<string> roots = GetEffectiveChatWorkspacePaths(ownerKey, sessionId, writableOnly: false);
 		if (!string.IsNullOrWhiteSpace(sessionId))
 		{
 			AddAllowedRoot(roots, GetRemoteSessionCloneDirectory(sessionId), requireExists: false);
 		}
 		if (!string.IsNullOrWhiteSpace(ownerKey))
 		{
-			foreach (ChatFilesystemAccessEntry entry in GetChatFilesystemAccess(ownerKey))
-			{
-				if (entry != null && entry.exists)
-				{
-					AddAllowedRoot(roots, entry.path);
-				}
-			}
 			foreach (string root in GetTemporaryFilesystemAccess(ownerKey))
 			{
 				AddAllowedRoot(roots, root);
@@ -60578,7 +60986,8 @@ except Exception as exc:
 			{
 				break;
 			}
-			if (ShouldFilterGeneratedOrBuildOutputPath(file, root))
+			if (ShouldFilterGeneratedOrBuildOutputPath(file, root) ||
+				IsChatWorkspacePathIgnored(ownerKey, sessionId, file, out _))
 			{
 				continue;
 			}
@@ -60613,7 +61022,8 @@ except Exception as exc:
 			{
 				break;
 			}
-			if (ShouldFilterGeneratedOrBuildOutputPath(file, root))
+			if (ShouldFilterGeneratedOrBuildOutputPath(file, root) ||
+				IsChatWorkspacePathIgnored(ownerKey, sessionId, file, out _))
 			{
 				continue;
 			}
@@ -60685,6 +61095,10 @@ except Exception as exc:
 			{
 				return;
 			}
+			if (IsChatWorkspacePathIgnored(ownerKey, sessionId, file, out _))
+			{
+				continue;
+			}
 			string relative = SafeRelativePath(root, file);
 			string displayRelative = FormatChatAgentRelativePathForOutput(root, relative);
 			string normalizedRelative = relative.Replace('\\', '/');
@@ -60715,7 +61129,8 @@ except Exception as exc:
 				{
 					return;
 				}
-				if (!ShouldFilterGeneratedOrBuildOutputPath(directory, root))
+				if (!ShouldFilterGeneratedOrBuildOutputPath(directory, root) &&
+					!IsChatWorkspacePathIgnored(ownerKey, sessionId, directory, out _))
 				{
 					string relative = SafeRelativePath(root, directory) + "\\";
 					if (seen.Add(relative))
@@ -60734,7 +61149,8 @@ except Exception as exc:
 			{
 				break;
 			}
-			if (!ShouldFilterGeneratedOrBuildOutputPath(file, root))
+			if (!ShouldFilterGeneratedOrBuildOutputPath(file, root) &&
+				!IsChatWorkspacePathIgnored(ownerKey, sessionId, file, out _))
 			{
 				string relative = SafeRelativePath(root, file);
 				if (seen.Add(relative))
@@ -66331,6 +66747,10 @@ except Exception as exc:
 		{
 			return false;
 		}
+		if (requestBody.IndexOf("[Jackhammer work mode]", StringComparison.OrdinalIgnoreCase) >= 0)
+		{
+			return false;
+		}
 		string prompt = ExtractChatUiLastUserPromptText(requestBody);
 		if (string.IsNullOrWhiteSpace(prompt))
 		{
@@ -66958,7 +67378,7 @@ except Exception as exc:
 		WriteProxyResearchToolSchema(writer, GoalCheckpointToolName, "Record the current prompt goal, success criteria, progress percent, completed work, remaining work, and blockers. This is an internal progress checkpoint, not a final answer.", new string[2] { "goal", "status" }, new ProxyToolParameter[8]
 		{
 			new ProxyToolParameter("goal", "string", "Concise restatement of the user-requested goal."),
-			new ProxyToolParameter("status", "string", "One of started, in_progress, ready_final, or blocked."),
+			new ProxyToolParameter("status", "string", "One of started, in_progress, needs_user, plan_ready, ready_final, or blocked."),
 			new ProxyToolParameter("progressPercent", "number", "Estimated completion from 0 to 100. Values outside 0-100 are clamped by the runtime."),
 			new ProxyToolParameter("successCriteria", "string", "What must be true before the final answer is ready."),
 			new ProxyToolParameter("completed", "string", "Work already completed."),

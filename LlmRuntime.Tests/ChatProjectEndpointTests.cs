@@ -56,7 +56,11 @@ public sealed class ChatProjectEndpointTests
 
     private static LmVsProxy CreateProxy(string root)
     {
-        var proxy = new LmVsProxy("127.0.0.1", NextPort(), NextPort(), NextPort(), root) { PublicAccessEnabled = false };
+        var proxy = new LmVsProxy("127.0.0.1", NextPort(), NextPort(), NextPort(), root)
+        {
+            PublicAccessEnabled = false,
+            RequireWorkstationUserAuthentication = false
+        };
         Assert.IsTrue(proxy.ChatServer.Listen());
         return proxy;
     }

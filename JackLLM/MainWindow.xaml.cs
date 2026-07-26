@@ -682,7 +682,9 @@ public partial class MainWindow : Window {
             var proxy = new SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort) {
                 MobileAccessEnabled = string.Equals(Environment.GetEnvironmentVariable("JACKLLM_MOBILE_ACCESS"), "true", StringComparison.OrdinalIgnoreCase),
                 PromptTimeout = TimeSpan.FromMinutes(30),
-                StoreLocalWebAuthAccounts = false,
+                StoreLocalWebAuthAccounts = true,
+                UseSocketJackMasterAuth = false,
+                RequireWorkstationUserAuthentication = true,
                 EnsureLmStudioStartedAsync = EnsureLmStudioProviderForPromptAsync
             };
             proxy.UseStripePaymentsFromEnvironment();
@@ -691,6 +693,10 @@ public partial class MainWindow : Window {
             proxy.PcAccessStartRtmp = StartPcAccessRtmpPublisher;
             proxy.PcAccessStopRtmp = StopPcAccessRtmpPublisher;
             proxy.PcAccessDesktopState = GetPcAccessDesktopState;
+            proxy.CompanionCaptureJpeg = CapturePcAccessDesktopJpeg;
+            proxy.CompanionInput = ApplyPcAccessInput;
+            proxy.CompanionLaunchApplication = LaunchCompanionApplication;
+            proxy.CompanionEmergencyStopRequested += OnCompanionEmergencyStopRequested;
             return proxy;
         }, cancellationToken);
         _lmStudioRuntime = await Task.Run(
@@ -699,6 +705,7 @@ public partial class MainWindow : Window {
 
         ReportStartup(startupProgress, 24, "Loading local settings database", "Reading JackLLM workstation settings before model services start.");
         _settings = await LoadSettingsAsync(cancellationToken);
+        InitializeIntegratedCompanion();
         ApplyModelsLocationEnvironment(_settings);
         WriteModelsLocationEnvironmentHint(_settings);
         PromptForDreamHardwareRecommendation();
@@ -1267,14 +1274,17 @@ public partial class MainWindow : Window {
             return;
         }
 
+        UnregisterCompanionEmergencyHotKey();
         SaveSettings();
         ShutdownProxy();
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e) {
         IntPtr handle = new WindowInteropHelper(this).Handle;
-        if (handle != IntPtr.Zero)
+        if (handle != IntPtr.Zero) {
             HwndSource.FromHwnd(handle)?.AddHook(WindowProc);
+            RegisterCompanionEmergencyHotKey(handle);
+        }
         EnableAeroBlur();
     }
 
@@ -1434,7 +1444,7 @@ public partial class MainWindow : Window {
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) {
-        ExitApplication();
+        HideToTray();
     }
 
     private void UpdateWindowChromeState() {
@@ -1460,6 +1470,10 @@ public partial class MainWindow : Window {
     }
 
     private IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) {
+        if (HandleCompanionWindowMessage(msg, wParam)) {
+            handled = true;
+            return IntPtr.Zero;
+        }
         if (msg == WmGetMinMaxInfo) {
             ApplyMaximizedWorkArea(hwnd, lParam);
             handled = true;
@@ -2293,23 +2307,8 @@ public partial class MainWindow : Window {
     }
 
     private async void StartCompanionButton_Click(object sender, RoutedEventArgs e) {
-        string? path = FindCompanionExecutablePath();
-        if (string.IsNullOrWhiteSpace(path)) {
-            SetStatus("JackLLM Workstation Companion executable was not found. Build JackLLMCompanion first.");
-            return;
-        }
-
-        try {
-            _companionProcess = Process.Start(new ProcessStartInfo(path, "--tray --parent-pid " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture)) {
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            });
-            SetStatus("Starting SocketJack Companion.");
-            await Task.Delay(1800);
-            await ProbeCompanionStatusAsync(force: true);
-        } catch (Exception ex) {
-            SetStatus("Companion start failed: " + ex.Message);
-        }
+        await Dispatcher.InvokeAsync(() => MainTabs.SelectedItem = CompanionTab);
+        SetStatus("Opened integrated Companion mode.");
     }
 
     private void CloseStartedCompanionProcess() {
@@ -2328,15 +2327,8 @@ public partial class MainWindow : Window {
     }
 
     private async void OpenCompanionButton_Click(object sender, RoutedEventArgs e) {
-        string endpoint = await ResolveCompanionEndpointAsync();
-        if (string.IsNullOrWhiteSpace(endpoint)) {
-            SetStatus("SocketJack Companion is not running. Click Start Companion first.");
-            return;
-        }
-
-        Process.Start(new ProcessStartInfo(endpoint.TrimEnd('/') + "/Workspace") {
-            UseShellExecute = true
-        });
+        await Dispatcher.InvokeAsync(() => MainTabs.SelectedItem = CompanionTab);
+        SetStatus("Opened integrated Companion mode.");
     }
 
     private void OnRemoteSessionFileCloneChanged(object? sender, RemoteSessionFileCloneChangedEventArgs e) {
@@ -4597,10 +4589,28 @@ public partial class MainWindow : Window {
     }
 
     private void BrowseAccessibleDirectoryButton_Click(object sender, RoutedEventArgs e) {
+        AddWorkspaceFolders(string.IsNullOrWhiteSpace(_selectedSessionId) ? "global" : "attached");
+    }
+
+    private void SetPrimaryWorkspaceButton_Click(object sender, RoutedEventArgs e) {
+        if (string.IsNullOrWhiteSpace(_selectedSessionId)) {
+            SetFilesystemAccessStatusText("Select a stored session before assigning a primary workspace.");
+            return;
+        }
+        AddWorkspaceFolders("primary");
+    }
+
+    private void AddGlobalWorkspaceButton_Click(object sender, RoutedEventArgs e) {
+        AddWorkspaceFolders("global");
+    }
+
+    private void AddWorkspaceFolders(string role) {
         try {
             var dialog = new OpenFolderDialog {
-                Title = "Select accessible directories",
-                Multiselect = true
+                Title = role == "primary" ? "Select primary session workspace" :
+                        role == "global" ? "Select global read-only folders" :
+                        "Select folders to attach to this session",
+                Multiselect = role != "primary"
             };
             object? selectedTreeItem = ServerWorkspaceTreeView?.SelectedItem ?? WorkspaceTreeView?.SelectedItem;
             if (selectedTreeItem is FileTreeItem selected &&
@@ -4612,8 +4622,12 @@ public partial class MainWindow : Window {
                     dialog.InitialDirectory = initialDirectory;
             }
 
-            if (dialog.ShowDialog(this) == true)
-                AddAccessibleDirectoryPaths(dialog.FolderNames);
+            if (dialog.ShowDialog(this) == true) {
+                string[] paths = dialog.FolderNames;
+                if (role == "primary" && paths.Length > 1)
+                    paths = paths.Take(1).ToArray();
+                AddWorkspaceDirectoryPaths(paths, role);
+            }
         } catch (Exception ex) {
             SetFilesystemAccessStatusText("Add failed: " + TrimForDisplay(ex.Message, 120));
         }
@@ -4631,30 +4645,43 @@ public partial class MainWindow : Window {
     private void RemoveAccessibleDirectoryListItemButton_Click(object sender, RoutedEventArgs e) {
         e.Handled = true;
         if ((sender as FrameworkElement)?.Tag is AccessibleDirectoryListItem item &&
-            !string.IsNullOrWhiteSpace(item.Path))
-            RemoveAccessibleDirectoryPath(item.Path);
+            !string.IsNullOrWhiteSpace(item.Path)) {
+            if (!string.IsNullOrWhiteSpace(item.RootId) && !item.IsSandbox)
+                RemoveWorkspaceRoot(item);
+            else
+                RemoveAccessibleDirectoryPath(item.Path);
+        }
     }
 
     private void ClearAccessibleDirectoriesButton_Click(object sender, RoutedEventArgs e) {
-        List<string> paths = _accessibleDirectoryItems
-            .Select(item => item.Path)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
+        List<AccessibleDirectoryListItem> roots = _accessibleDirectoryItems
+            .Where(item => !item.IsSandbox && !string.IsNullOrWhiteSpace(item.Path))
             .ToList();
-        if (paths.Count == 0) {
+        if (roots.Count == 0) {
             SetFilesystemAccessStatusText("No accessible directories to clear.");
             return;
         }
 
         MessageBoxResult result = MessageBox.Show(
             this,
-            "Remove access to all " + paths.Count + " listed director" + (paths.Count == 1 ? "y?" : "ies?"),
+            "Remove access to all " + roots.Count + " listed workspace folder" + (roots.Count == 1 ? "?" : "s?") +
+            Environment.NewLine + "Files on disk will not be deleted.",
             "Clear accessible folders",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes)
             return;
 
-        RemoveAccessibleDirectoryPaths(paths);
+        foreach (AccessibleDirectoryListItem item in roots) {
+            if (!string.IsNullOrWhiteSpace(item.RootId))
+                _proxy.RemoveChatWorkspaceRootDiagnostics(ResolveActiveFilesystemOwnerKey(), _selectedSessionId, item.RootId);
+            else
+                _proxy.RemoveChatFilesystemAccessDirectory(ResolveActiveFilesystemOwnerKey(), item.Path);
+        }
+        _accessibleDirectorySignature = "";
+        _workspaceTreeSignature = "";
+        RefreshAccessibleDirectories(true);
+        RefreshWorkspaceExplorer(true);
     }
 
     private async void DownloadWorkspaceTreeDirectoryZipButton_Click(object sender, RoutedEventArgs e) {
@@ -4737,6 +4764,318 @@ public partial class MainWindow : Window {
         } catch (Exception ex) {
             SetFilesystemAccessStatusText("Add failed: " + TrimForDisplay(ex.Message, 120));
         }
+    }
+
+    private void AddWorkspaceDirectoryPaths(IEnumerable<string> paths, string role) {
+        try {
+            string ownerKey = ResolveActiveFilesystemOwnerKey();
+            bool hadSandboxFallback = !string.IsNullOrWhiteSpace(_selectedSessionId) &&
+                _proxy.GetChatWorkspaceRootsDiagnostics(ownerKey, _selectedSessionId).Any(item => item.IsSandbox);
+            if (!string.Equals(role, "global", StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(_selectedSessionId)) {
+                SetFilesystemAccessStatusText("Select a stored session first.");
+                return;
+            }
+            int added = 0;
+            foreach (string path in paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase)) {
+                string displayName = GetDirectoryDisplayName(path);
+                _proxy.SaveChatWorkspaceRootDiagnostics(
+                    ownerKey,
+                    string.Equals(role, "global", StringComparison.OrdinalIgnoreCase) ? "" : _selectedSessionId,
+                    "",
+                    role,
+                    displayName,
+                    path,
+                    string.Equals(role, "global", StringComparison.OrdinalIgnoreCase) ? "read-only" : "read-write");
+                added++;
+            }
+            if (string.Equals(role, "primary", StringComparison.OrdinalIgnoreCase) && hadSandboxFallback) {
+                MessageBoxResult merge = MessageBox.Show(
+                    this,
+                    "Copy existing sandbox session files into the new primary workspace?\n\nExisting files will not be overwritten, and the sandbox source is retained.",
+                    "Merge session files",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (merge == MessageBoxResult.Yes)
+                    _proxy.MergeChatSessionSandboxIntoWorkspaceDiagnostics(ownerKey, _selectedSessionId);
+            }
+            SetFilesystemAccessStatusText("Added " + added + " workspace folder" + (added == 1 ? "." : "s."));
+            _accessibleDirectorySignature = "";
+            _workspaceTreeSignature = "";
+            RefreshAccessibleDirectories(true);
+            RefreshWorkspaceExplorer(true);
+        } catch (Exception ex) {
+            SetFilesystemAccessStatusText("Workspace add failed: " + TrimForDisplay(ex.Message, 160));
+        }
+    }
+
+    private void RemoveWorkspaceRoot(AccessibleDirectoryListItem item) {
+        try {
+            if (item.IsSandbox) {
+                SetFilesystemAccessStatusText("The sandbox fallback cannot be removed. Assign a primary workspace instead.");
+                return;
+            }
+            _proxy.RemoveChatWorkspaceRootDiagnostics(
+                ResolveActiveFilesystemOwnerKey(),
+                _selectedSessionId,
+                item.RootId);
+            SetFilesystemAccessStatusText("Workspace link removed. Files on disk were not deleted.");
+            _accessibleDirectorySignature = "";
+            _workspaceTreeSignature = "";
+            RefreshAccessibleDirectories(true);
+            RefreshWorkspaceExplorer(true);
+        } catch (Exception ex) {
+            SetFilesystemAccessStatusText("Workspace remove failed: " + TrimForDisplay(ex.Message, 160));
+        }
+    }
+
+    private void EditWorkspaceRootButton_Click(object sender, RoutedEventArgs e) {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.Tag is not AccessibleDirectoryListItem item || item.IsSandbox)
+            return;
+        var menu = CreateReadableContextMenu();
+        menu.Items.Add(CreateReadableMenuItem(item.RoleLabel + " | " + item.AccessMode, isEnabled: false));
+        MenuItem rename = CreateReadableMenuItem("Rename display label");
+        rename.Click += (_, _) => {
+            string? next = PromptForText("Workspace label", "Display name", item.Name);
+            if (!string.IsNullOrWhiteSpace(next))
+                SaveWorkspaceItem(item, displayName: next);
+        };
+        menu.Items.Add(rename);
+        if (!item.IsInherited) {
+            MenuItem toggle = CreateReadableMenuItem(item.AccessMode == "read-only" ? "Allow read/write" : "Make read-only");
+            toggle.Click += (_, _) => SaveWorkspaceItem(item, accessMode: item.AccessMode == "read-only" ? "read-write" : "read-only");
+            menu.Items.Add(toggle);
+            MenuItem relink = CreateReadableMenuItem("Relink to existing folder");
+            relink.Click += (_, _) => {
+                var picker = new OpenFolderDialog { Title = "Relink " + item.Name, Multiselect = false };
+                if (Directory.Exists(item.Path)) picker.InitialDirectory = item.Path;
+                if (picker.ShowDialog(this) == true)
+                    SaveWorkspaceItem(item, path: picker.FolderName);
+            };
+            menu.Items.Add(relink);
+            MenuItem move = CreateReadableMenuItem("Move on disk (same drive)");
+            move.Click += (_, _) => {
+                string? destination = PromptForText("Move workspace", "New same-drive folder path", item.Path);
+                if (string.IsNullOrWhiteSpace(destination)) return;
+                try {
+                    _proxy.MoveChatWorkspaceRootDiagnostics(
+                        ResolveActiveFilesystemOwnerKey(), _selectedSessionId, item.RootId, destination);
+                    _accessibleDirectorySignature = "";
+                    _workspaceTreeSignature = "";
+                    RefreshAccessibleDirectories(true);
+                    RefreshWorkspaceExplorer(true);
+                    SetFilesystemAccessStatusText("Workspace moved to " + destination);
+                } catch (Exception ex) {
+                    SetFilesystemAccessStatusText("Move failed: " + TrimForDisplay(ex.Message, 180));
+                }
+            };
+            menu.Items.Add(move);
+        }
+        if (sender is Button button) {
+            button.ContextMenu = menu;
+            menu.PlacementTarget = button;
+        }
+        menu.IsOpen = true;
+    }
+
+    private void SaveWorkspaceItem(
+        AccessibleDirectoryListItem item,
+        string? displayName = null,
+        string? path = null,
+        string? accessMode = null) {
+        try {
+            _proxy.SaveChatWorkspaceRootDiagnostics(
+                ResolveActiveFilesystemOwnerKey(),
+                item.IsInherited ? "" : _selectedSessionId,
+                item.RootId,
+                item.Role,
+                displayName ?? item.Name,
+                path ?? item.Path,
+                accessMode ?? item.AccessMode,
+                item.ParentId);
+            _accessibleDirectorySignature = "";
+            _workspaceTreeSignature = "";
+            RefreshAccessibleDirectories(true);
+            RefreshWorkspaceExplorer(true);
+        } catch (Exception ex) {
+            SetFilesystemAccessStatusText("Workspace update failed: " + TrimForDisplay(ex.Message, 180));
+        }
+    }
+
+    private string? PromptForText(string title, string label, string initialValue) {
+        var dialog = new Window {
+            Title = title,
+            Owner = this,
+            Width = 520,
+            Height = 180,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Background = new SolidColorBrush(Color.FromRgb(42, 46, 54))
+        };
+        var panel = new StackPanel { Margin = new Thickness(16) };
+        panel.Children.Add(new TextBlock { Text = label, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold });
+        var input = new TextBox { Text = initialValue ?? "", Margin = new Thickness(0, 8, 0, 12), MinHeight = 30 };
+        panel.Children.Add(input);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancel = new Button { Content = "Cancel", MinWidth = 72, Margin = new Thickness(0, 0, 8, 0) };
+        var save = new Button { Content = "OK", MinWidth = 72, IsDefault = true };
+        cancel.Click += (_, _) => dialog.DialogResult = false;
+        save.Click += (_, _) => dialog.DialogResult = true;
+        actions.Children.Add(cancel); actions.Children.Add(save); panel.Children.Add(actions);
+        dialog.Content = panel;
+        input.SelectAll();
+        input.Focus();
+        return dialog.ShowDialog() == true ? input.Text.Trim() : null;
+    }
+
+    private void WorkspaceIgnoreRulesButton_Click(object sender, RoutedEventArgs e) {
+        if (string.IsNullOrWhiteSpace(_selectedSessionId)) {
+            SetFilesystemAccessStatusText("Select a stored session before editing session ignore rules.");
+            return;
+        }
+        string ownerKey = ResolveActiveFilesystemOwnerKey();
+        var dialog = new Window {
+            Title = "Workspace regex ignore builder",
+            Owner = this,
+            Width = 720,
+            Height = 700,
+            MinWidth = 620,
+            MinHeight = 560,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromRgb(32, 37, 46))
+        };
+        var root = new Grid { Margin = new Thickness(16) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var title = new TextBlock {
+            Text = "Visual composer · guided file types · raw regex · live path test",
+            Foreground = Brushes.White,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        Grid.SetRow(title, 0); root.Children.Add(title);
+
+        var first = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        first.ColumnDefinitions.Add(new ColumnDefinition());
+        first.ColumnDefinitions.Add(new ColumnDefinition());
+        first.ColumnDefinitions.Add(new ColumnDefinition());
+        var mode = new ComboBox { Margin = new Thickness(0, 0, 8, 0), MinHeight = 30 };
+        mode.Items.Add("Visual composer"); mode.Items.Add("Guided file types"); mode.Items.Add("Raw regex"); mode.SelectedIndex = 0;
+        var scope = new ComboBox { Margin = new Thickness(0, 0, 8, 0), MinHeight = 30 };
+        scope.Items.Add(new WorkspaceScopeItem("", "Whole session"));
+        foreach (ChatWorkspaceRootSnapshot workspaceRoot in _proxy.GetChatWorkspaceRootsDiagnostics(ownerKey, _selectedSessionId))
+            scope.Items.Add(new WorkspaceScopeItem(workspaceRoot.Id, workspaceRoot.DisplayName + " only"));
+        scope.DisplayMemberPath = nameof(WorkspaceScopeItem.Label); scope.SelectedIndex = 0;
+        var target = new ComboBox { MinHeight = 30 };
+        target.Items.Add("path"); target.Items.Add("filename"); target.Items.Add("extension"); target.Items.Add("directory"); target.SelectedIndex = 0;
+        Grid.SetColumn(mode, 0); Grid.SetColumn(scope, 1); Grid.SetColumn(target, 2);
+        first.Children.Add(mode); first.Children.Add(scope); first.Children.Add(target);
+        Grid.SetRow(first, 1); root.Children.Add(first);
+
+        var second = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        second.ColumnDefinitions.Add(new ColumnDefinition());
+        second.ColumnDefinitions.Add(new ColumnDefinition());
+        var operation = new ComboBox { Margin = new Thickness(0, 0, 8, 0), MinHeight = 30 };
+        operation.Items.Add("Ends with"); operation.Items.Add("Contains"); operation.Items.Add("Starts with"); operation.Items.Add("Exactly equals"); operation.SelectedIndex = 0;
+        var values = new TextBox { MinHeight = 30, VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "Comma-separated values or extensions, for example .log, .tmp, .bak" };
+        Grid.SetColumn(operation, 0); Grid.SetColumn(values, 1); second.Children.Add(operation); second.Children.Add(values);
+        Grid.SetRow(second, 2); root.Children.Add(second);
+
+        var third = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        third.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+        third.ColumnDefinitions.Add(new ColumnDefinition());
+        var name = new TextBox { Text = "Ignored file types", Margin = new Thickness(0, 0, 8, 0), MinHeight = 30 };
+        var pattern = new TextBox { MinHeight = 30, FontFamily = new FontFamily("Cascadia Code"), ToolTip = "Authoritative .NET regular expression" };
+        Grid.SetColumn(name, 0); Grid.SetColumn(pattern, 1); third.Children.Add(name); third.Children.Add(pattern);
+        Grid.SetRow(third, 3); root.Children.Add(third);
+
+        var testRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        testRow.ColumnDefinitions.Add(new ColumnDefinition());
+        testRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var testPath = new TextBox { MinHeight = 30, Margin = new Thickness(0, 0, 8, 0), ToolTip = "Example: src/cache/debug.log" };
+        var caseSensitive = new CheckBox { Content = "Case-sensitive", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(testPath, 0); Grid.SetColumn(caseSensitive, 1); testRow.Children.Add(testPath); testRow.Children.Add(caseSensitive);
+        Grid.SetRow(testRow, 4); root.Children.Add(testRow);
+
+        var rulesPanel = new DockPanel();
+        var ruleList = new ListBox { Background = new SolidColorBrush(Color.FromRgb(22, 27, 35)), Foreground = Brushes.White };
+        DockPanel.SetDock(ruleList, Dock.Top); rulesPanel.Children.Add(ruleList);
+        Grid.SetRow(rulesPanel, 5); root.Children.Add(rulesPanel);
+
+        var footer = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+        var status = new TextBlock { Foreground = new SolidColorBrush(Color.FromRgb(190, 202, 220)), VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var generate = new Button { Content = "Generate", MinWidth = 80, Margin = new Thickness(6, 0, 0, 0) };
+        var test = new Button { Content = "Test path", MinWidth = 80, Margin = new Thickness(6, 0, 0, 0) };
+        var save = new Button { Content = "Save rule", MinWidth = 88, Margin = new Thickness(6, 0, 0, 0) };
+        var remove = new Button { Content = "Remove selected", MinWidth = 110, Margin = new Thickness(6, 0, 0, 0) };
+        var close = new Button { Content = "Close", MinWidth = 72, Margin = new Thickness(6, 0, 0, 0) };
+        buttons.Children.Add(generate); buttons.Children.Add(test); buttons.Children.Add(save); buttons.Children.Add(remove); buttons.Children.Add(close);
+        DockPanel.SetDock(buttons, Dock.Right); footer.Children.Add(buttons); footer.Children.Add(status);
+        Grid.SetRow(footer, 6); root.Children.Add(footer);
+
+        Action refreshRules = () => {
+            ruleList.Items.Clear();
+            foreach (ChatWorkspaceIgnoreRuleSnapshot rule in _proxy.GetChatWorkspaceIgnoreRulesDiagnostics(ownerKey, _selectedSessionId))
+                ruleList.Items.Add(new WorkspaceRuleItem(rule));
+            if (ruleList.Items.Count == 0)
+                status.Text = "No custom ignore rules. Ignored paths are hidden and blocked from agent tools.";
+        };
+        generate.Click += (_, _) => {
+            string[] parts = values.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == 0) { status.Text = "Enter one or more values."; return; }
+            if (mode.SelectedIndex == 1) {
+                target.SelectedItem = "extension";
+                pattern.Text = "^(?:" + string.Join("|", parts.Select(value => Regex.Escape(value.TrimStart('.')))) + ")$";
+            } else {
+                string alternatives = string.Join("|", parts.Select(Regex.Escape));
+                pattern.Text = operation.SelectedIndex switch {
+                    1 => "(?:" + alternatives + ")",
+                    2 => "^(?:" + alternatives + ")",
+                    3 => "^(?:" + alternatives + ")$",
+                    _ => "(?:" + alternatives + ")$"
+                };
+            }
+            status.Text = "Regex generated. Test a representative path before saving.";
+        };
+        test.Click += (_, _) => {
+            bool matched = _proxy.TestChatWorkspaceIgnoreRegex(pattern.Text, target.SelectedItem?.ToString() ?? "path", caseSensitive.IsChecked == true, testPath.Text, out string error);
+            status.Text = string.IsNullOrWhiteSpace(error) ? (matched ? "MATCH — this path will be blocked." : "No match.") : "Invalid regex: " + error;
+            status.Foreground = string.IsNullOrWhiteSpace(error) ? Brushes.LightGreen : Brushes.Orange;
+        };
+        save.Click += (_, _) => {
+            try {
+                WorkspaceScopeItem? selectedScope = scope.SelectedItem as WorkspaceScopeItem;
+                _proxy.SaveChatWorkspaceIgnoreRuleDiagnostics(
+                    ownerKey, _selectedSessionId, "", selectedScope?.Id ?? "", name.Text, pattern.Text,
+                    target.SelectedItem?.ToString() ?? "path", caseSensitive.IsChecked == true, true,
+                    mode.SelectedIndex == 2 ? "raw" : mode.SelectedIndex == 1 ? "guided" : "composer",
+                    JsonSerializer.Serialize(new { operation = operation.SelectedItem?.ToString(), values = values.Text }));
+                status.Text = "Rule saved and enforced.";
+                status.Foreground = Brushes.LightGreen;
+                refreshRules();
+            } catch (Exception ex) {
+                status.Text = "Save failed: " + TrimForDisplay(ex.Message, 180);
+                status.Foreground = Brushes.Orange;
+            }
+        };
+        remove.Click += (_, _) => {
+            if (ruleList.SelectedItem is not WorkspaceRuleItem selectedRule) return;
+            _proxy.RemoveChatWorkspaceIgnoreRuleDiagnostics(ownerKey, _selectedSessionId, selectedRule.Id);
+            refreshRules();
+        };
+        close.Click += (_, _) => dialog.Close();
+        dialog.Content = root;
+        refreshRules();
+        dialog.ShowDialog();
     }
 
     private void RemoveAccessibleDirectoryPaths(IEnumerable<string> paths) {
@@ -5060,7 +5399,7 @@ public partial class MainWindow : Window {
 
     private void ApplyOpenRegistrationSettingToProxy(JackLLMSettings settings) {
         try {
-            _proxy.AllowOpenRegistration = false;
+            _proxy.AllowOpenRegistration = settings?.AllowOpenRegistration == true;
         } catch (Exception ex) {
             if (_uiReady && SettingsStatusText != null)
                 SettingsStatusText.Text = "Registration setting failed: " + TrimForDisplay(ex.Message, 120);
@@ -5145,8 +5484,9 @@ public partial class MainWindow : Window {
             _proxy.SocketJackAuthServerUrl = string.IsNullOrWhiteSpace(settings.MasterServerUrl)
                 ? DefaultMasterServerUrl
                 : settings.MasterServerUrl.TrimEnd('/');
-            _proxy.UseSocketJackMasterAuth = true;
-            _proxy.StoreLocalWebAuthAccounts = false;
+            _proxy.UseSocketJackMasterAuth = false;
+            _proxy.StoreLocalWebAuthAccounts = true;
+            _proxy.RequireWorkstationUserAuthentication = true;
             _proxy.ConfigureServerBrowserProfile(BuildServerProfileFromSettings(settings));
         } catch (Exception ex) {
             if (_uiReady && ServerBrowserStatusText != null)
@@ -5389,9 +5729,11 @@ public partial class MainWindow : Window {
             ModelsLocationTextBox.Text = GetEffectiveModelsLocation(settings);
             ApplyModelsLocationToModelManagerControl();
             ApplyModelsLocationEnvironment(settings);
-            AllowOpenRegistrationCheckBox.IsChecked = false;
-            AllowOpenRegistrationCheckBox.IsEnabled = false;
-            OpenRegistrationWarningText.Visibility = Visibility.Collapsed;
+            AllowOpenRegistrationCheckBox.IsChecked = settings.AllowOpenRegistration;
+            AllowOpenRegistrationCheckBox.IsEnabled = true;
+            OpenRegistrationWarningText.Visibility = settings.AllowOpenRegistration
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             TokenRateRequestsEnabledCheckBox.IsChecked = settings.TokenRateRequestsEnabled;
             TokenRateRequestMinTextBox.Text = Math.Max(0, settings.TokenRateRequestMin).ToString(CultureInfo.InvariantCulture);
             TokenRateRequestMaxTextBox.Text = Math.Max(0, settings.TokenRateRequestMax).ToString(CultureInfo.InvariantCulture);
@@ -9099,56 +9441,23 @@ public partial class MainWindow : Window {
         };
     }
 
-    private async Task ProbeCompanionStatusAsync(bool force = false) {
+    private Task ProbeCompanionStatusAsync(bool force = false) {
         if (_companionProbeInFlight)
-            return;
+            return Task.CompletedTask;
         DateTimeOffset now = DateTimeOffset.UtcNow;
         if (!force && now - _lastCompanionProbeUtc < TimeSpan.FromSeconds(6))
-            return;
+            return Task.CompletedTask;
 
         _companionProbeInFlight = true;
         _lastCompanionProbeUtc = now;
         try {
-            string endpoint = await ResolveCompanionEndpointAsync();
-            _companionStatusText = string.IsNullOrWhiteSpace(endpoint) ? "Not running" : "Running";
-            _companionEndpointText = string.IsNullOrWhiteSpace(endpoint)
-                ? "Workspace: :80 or :8091"
-                : endpoint.TrimEnd('/') + "/Workspace";
+            _companionStatusText = "Integrated";
+            _companionEndpointText = "/api/companion/*";
             RefreshServicesPanel();
         } finally {
             _companionProbeInFlight = false;
         }
-    }
-
-    private static async Task<string> ResolveCompanionEndpointAsync() {
-        foreach (string endpoint in CompanionCandidateEndpoints()) {
-            try {
-                using var client = CreateNetworkHttpClient(TimeSpan.FromSeconds(2));
-                using HttpResponseMessage response = await client.GetAsync(endpoint.TrimEnd('/') + "/api/workspace");
-                if (response.IsSuccessStatusCode)
-                    return endpoint.TrimEnd('/');
-            } catch {
-            }
-        }
-
-        return "";
-    }
-
-    private static IEnumerable<string> CompanionCandidateEndpoints() {
-        yield return "http://localhost";
-        yield return "http://localhost:" + CompanionFallbackPort.ToString(CultureInfo.InvariantCulture);
-    }
-
-    private static string? FindCompanionExecutablePath() {
-        string baseDir = AppContext.BaseDirectory;
-        string[] candidates = {
-            Path.Combine(baseDir, "Companion", "JackLLMCompanion.exe"),
-            Path.Combine(baseDir, "JackLLMCompanion.exe"),
-            Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "JackLLMCompanion", "bin", "Debug", "net8.0-windows7.0", "JackLLMCompanion.exe")),
-            Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "JackLLMCompanion", "bin", "Release", "net8.0-windows7.0", "JackLLMCompanion.exe"))
-        };
-
-        return candidates.FirstOrDefault(File.Exists);
+        return Task.CompletedTask;
     }
 
     private static Uri UpgradePublicHttpUri(Uri uri) {
@@ -9391,7 +9700,7 @@ public partial class MainWindow : Window {
             WindowsStartupEnabled = WindowsStartupCheckBox.IsChecked.GetValueOrDefault(true),
             HideToTrayOnStartup = HideToTrayOnStartupCheckBox.IsChecked.GetValueOrDefault(true),
             ModelsLocation = NormalizeModelsLocationForSettings(ModelsLocationTextBox?.Text),
-            AllowOpenRegistration = false,
+            AllowOpenRegistration = AllowOpenRegistrationCheckBox.IsChecked.GetValueOrDefault(false),
             TokenRateRequestsEnabled = TokenRateRequestsEnabledCheckBox.IsChecked.GetValueOrDefault(false),
             TokenRateRequestMin = ParseLong(TokenRateRequestMinTextBox.Text, 1000),
             TokenRateRequestMax = ParseLong(TokenRateRequestMaxTextBox.Text, 100000),
@@ -13027,6 +13336,12 @@ public partial class MainWindow : Window {
     }
 
     private void RefreshWebAuthUsersPanel(bool force, string? preferredOwnerKey = null, bool refreshPermissions = true) {
+        if (!Dispatcher.CheckAccess()) {
+            TryBeginOnUi(
+                () => RefreshWebAuthUsersPanel(force, preferredOwnerKey, refreshPermissions),
+                "WebAuth user refresh");
+            return;
+        }
         try {
             string selectedOwnerKey = string.IsNullOrWhiteSpace(preferredOwnerKey)
                 ? (WebAuthUsersListBox?.SelectedItem as WebAuthUserItem)?.OwnerKey ?? ""
@@ -14025,7 +14340,7 @@ public partial class MainWindow : Window {
             return true;
 
         if (ServerManagementStatusText != null)
-            ServerManagementStatusText.Text = "Account admin only applies to SocketJack.com accounts. Use permissions for local/IP users.";
+            ServerManagementStatusText.Text = "Account administration applies to users stored on this Workstation. Client IP addresses are not user identities.";
         return false;
     }
 
@@ -15746,16 +16061,22 @@ public partial class MainWindow : Window {
                 });
             } else {
                 bool first = true;
+                string primaryName = directories.FirstOrDefault(item => item.Role == "primary")?.Name ?? "Session";
                 foreach (AccessibleDirectoryListItem directory in directories) {
+                    string displayName = directory.IsInherited
+                        ? "Global > " + directory.Name
+                        : directory.Role == "attached"
+                            ? primaryName + " > " + directory.Name
+                            : directory.Name;
                     FileTreeItem node = BuildDirectoryTree(
                         directory.Path,
-                        GetDirectoryDisplayName(directory.Path),
+                        displayName,
                         3,
                         first,
                         true);
                     if (!directory.Exists)
                         node = new FileTreeItem {
-                            DisplayName = GetDirectoryDisplayName(directory.Path),
+                            DisplayName = displayName,
                             Detail = TrimPathForDisplay(directory.Path, 84) + " (missing)",
                             Icon = "[dir]",
                             AccentBrush = Brushes.SlateGray,
@@ -15770,7 +16091,7 @@ public partial class MainWindow : Window {
                 }
             }
 
-            SetWorkspaceSummaryText("Explorer roots: " + directories.Count + " accessible director" + (directories.Count == 1 ? "y" : "ies"));
+            SetWorkspaceSummaryText("Workspace roots: " + directories.Count + (directories.Any(item => item.IsSandbox) ? " | sandbox fallback active" : ""));
         } catch (Exception ex) {
             SetWorkspaceSummaryText("Explorer unavailable: " + TrimForDisplay(ex.Message, 120));
         }
@@ -15779,10 +16100,10 @@ public partial class MainWindow : Window {
     private List<AccessibleDirectoryListItem> RefreshAccessibleDirectories(bool force) {
         string ownerKey = ResolveActiveFilesystemOwnerKey();
         try {
-            IReadOnlyList<ChatFilesystemAccessSnapshot> snapshots =
-                _proxy.GetChatFilesystemAccessDiagnostics(ownerKey);
-            List<AccessibleDirectoryListItem> items = snapshots.Select(AccessibleDirectoryListItem.FromSnapshot).ToList();
-            string signature = ownerKey + "\u001E" + string.Join("\u001F", items.Select(item => item.Signature));
+            IReadOnlyList<ChatWorkspaceRootSnapshot> workspaceRoots =
+                _proxy.GetChatWorkspaceRootsDiagnostics(ownerKey, _selectedSessionId);
+            List<AccessibleDirectoryListItem> items = workspaceRoots.Select(AccessibleDirectoryListItem.FromWorkspace).ToList();
+            string signature = ownerKey + "\u001E" + _selectedSessionId + "\u001E" + string.Join("\u001F", items.Select(item => item.Signature));
             if (force || !string.Equals(signature, _accessibleDirectorySignature, StringComparison.Ordinal)) {
                 _accessibleDirectoryItems.Clear();
                 foreach (AccessibleDirectoryListItem item in items)
@@ -15790,15 +16111,15 @@ public partial class MainWindow : Window {
                 _accessibleDirectorySignature = signature;
             }
 
-            SetFilesystemOwnerText("Owner: " + ownerKey);
+            SetFilesystemOwnerText("Owner: " + ownerKey + (string.IsNullOrWhiteSpace(_selectedSessionId) ? " | global read-only roots" : " | session " + _selectedSessionId));
             string currentStatus = FilesystemAccessStatusText?.Text ?? ServerFilesystemAccessStatusText?.Text ?? "";
             if (string.IsNullOrWhiteSpace(currentStatus) ||
                 currentStatus.StartsWith("Loaded", StringComparison.OrdinalIgnoreCase) ||
                 currentStatus.StartsWith("No", StringComparison.OrdinalIgnoreCase) ||
                 currentStatus.StartsWith("Select", StringComparison.OrdinalIgnoreCase)) {
                 SetFilesystemAccessStatusText(items.Count == 0
-                    ? "No accessible directories defined."
-                    : "Loaded " + items.Count + " accessible director" + (items.Count == 1 ? "y." : "ies."));
+                    ? "No workspace folders defined."
+                    : "Loaded " + items.Count + " effective workspace root" + (items.Count == 1 ? "." : "s."));
             }
             return items;
         } catch (Exception ex) {
@@ -17028,13 +17349,11 @@ public partial class MainWindow : Window {
 
     private void RenderCompanionServiceOptions() {
         AddServiceConfigSection("Companion");
-        AddServiceConfigRow("Status", _companionStatusText, BuildServiceStatusBrush(_companionStatusText));
-        AddServiceConfigRow("Endpoint", _companionEndpointText);
-        AddServiceConfigRow("Executable", FindCompanionExecutablePath() ?? "not found");
+        AddServiceConfigRow("Status", "Integrated", BuildServiceStatusBrush("Running"));
+        AddServiceConfigRow("Endpoint", "/api/companion/*");
+        AddServiceConfigRow("Host", "JackLLM Workstation");
         AddServiceActionRow(
-            CreateServiceActionButton("Start companion", () => StartCompanionButton_Click(null, new RoutedEventArgs())),
-            CreateServiceActionButton("Open companion", () => OpenCompanionButton_Click(null, new RoutedEventArgs())),
-            CreateServiceAsyncActionButton("Probe companion", async () => await ProbeCompanionStatusAsync(force: true)));
+            CreateServiceActionButton("Open integrated Companion", () => OpenCompanionButton_Click(null, new RoutedEventArgs())));
     }
 
     private void RenderPermissionBackedServiceOptions(string title, string routeDetail, Func<ChatClientPermissionSnapshot, bool> permissionSelector) {
@@ -20206,10 +20525,41 @@ public partial class MainWindow : Window {
         }
     }
 
+    private sealed class WorkspaceScopeItem {
+        public WorkspaceScopeItem(string id, string label) {
+            Id = id ?? "";
+            Label = label ?? "";
+        }
+        public string Id { get; }
+        public string Label { get; }
+        public override string ToString() => Label;
+    }
+
+    private sealed class WorkspaceRuleItem {
+        public WorkspaceRuleItem(ChatWorkspaceIgnoreRuleSnapshot rule) {
+            Id = rule?.Id ?? "";
+            Name = rule?.Name ?? "Ignore rule";
+            Pattern = rule?.Pattern ?? "";
+            Scope = string.IsNullOrWhiteSpace(rule?.RootId) ? "session" : rule.RootId;
+        }
+        public string Id { get; }
+        public string Name { get; }
+        public string Pattern { get; }
+        public string Scope { get; }
+        public override string ToString() => Name + " | " + Scope + " | " + Pattern;
+    }
+
     private sealed class AccessibleDirectoryListItem {
+        public string RootId { get; init; } = "";
         public string Path { get; init; } = "";
         public bool Exists { get; init; }
         public string Name { get; init; } = "";
+        public string Role { get; init; } = "";
+        public string RoleLabel { get; init; } = "";
+        public string AccessMode { get; init; } = "";
+        public string ParentId { get; init; } = "";
+        public bool IsSandbox { get; init; }
+        public bool IsInherited { get; init; }
         public string DetailLine { get; init; } = "";
         public Brush StatusBrush { get; init; } = Brushes.SlateGray;
         public string Signature { get; init; } = "";
@@ -20224,6 +20574,32 @@ public partial class MainWindow : Window {
                 DetailLine = (exists ? "Accessible" : "Missing") + " | " + TrimPathForDisplay(path, 58),
                 StatusBrush = exists ? Brushes.LimeGreen : Brushes.Orange,
                 Signature = path + "\u001F" + exists + "\u001F" + (snapshot?.CreatedUtc ?? "")
+            };
+        }
+
+        public static AccessibleDirectoryListItem FromWorkspace(ChatWorkspaceRootSnapshot snapshot) {
+            string path = snapshot?.Path ?? "";
+            bool exists = snapshot != null && (snapshot.Exists || snapshot.IsSandbox);
+            string role = snapshot?.Role ?? "attached";
+            string roleLabel = snapshot?.IsSandbox == true ? "Sandbox fallback" :
+                snapshot?.IsInherited == true ? "Global read-only" :
+                role == "primary" ? "Primary" : "Attached";
+            string access = snapshot?.AccessMode ?? "read-only";
+            return new AccessibleDirectoryListItem {
+                RootId = snapshot?.Id ?? "",
+                Path = path,
+                Exists = exists,
+                Name = snapshot?.DisplayName ?? GetDirectoryDisplayName(path),
+                Role = role,
+                RoleLabel = roleLabel,
+                AccessMode = access,
+                ParentId = snapshot?.ParentId ?? "",
+                IsSandbox = snapshot?.IsSandbox == true,
+                IsInherited = snapshot?.IsInherited == true,
+                DetailLine = roleLabel + " | " + access + " | " + TrimPathForDisplay(path, 58),
+                StatusBrush = exists ? Brushes.LimeGreen : Brushes.Orange,
+                Signature = (snapshot?.Id ?? "") + "\u001F" + path + "\u001F" + exists + "\u001F" +
+                            role + "\u001F" + access + "\u001F" + (snapshot?.UpdatedUtc ?? "")
             };
         }
     }
@@ -20611,6 +20987,7 @@ public partial class MainWindow : Window {
         private static string FormatUsageCost(double value) {
             return value <= 0 ? "$0.00" : value.ToString("C4", CultureInfo.CurrentCulture);
         }
+
     }
 
     private sealed class FileTreeItem {

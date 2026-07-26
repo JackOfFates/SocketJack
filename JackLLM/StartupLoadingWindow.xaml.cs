@@ -3,27 +3,27 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Windows.Interop;
 using JackLLM.Security;
-using System.Text.Json;
 using Microsoft.Win32;
 using System.IO;
 using System.Diagnostics;
 using System.Security.Principal;
+using System.ServiceProcess;
 
 namespace JackLLM;
 
 public partial class StartupLoadingWindow : Window {
     private readonly TaskCompletionSource<string?> _authenticationCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-#if DEBUG
-    private const bool DevelopmentSecurityMode = true;
-#else
-    private const bool DevelopmentSecurityMode = false;
-#endif
-    private readonly SecurityBrokerClient _securityBroker = new(DevelopmentSecurityMode);
+    private readonly SecurityBrokerClient _securityBroker = new(development: false);
+    private readonly RememberedDeviceTokenStore _rememberedDeviceTokenStore = new();
     private AuthenticationMode _authenticationMode;
     private string? _pendingEnrollmentGrant;
-    private string? _pendingRecoveryBackup;
+    private DateTimeOffset? _pendingEnrollmentGrantExpiresUtc;
+    private string? _pendingProtectedRecoveryFile;
     private string? _importedRecoveryBackup;
+    private string? _importedRecoveryKey;
+    private string? _rememberedUnlockFailure;
     private readonly bool _recoveryRequested;
     private bool _allowClose;
     private bool _cancelRequested;
@@ -35,11 +35,14 @@ public partial class StartupLoadingWindow : Window {
     private double _lavaSweepPhase;
     private DateTimeOffset _lastProgressUtc = DateTimeOffset.UtcNow;
     private TimeSpan _lastFrameTime;
+    private readonly DispatcherTimer _enrollmentGrantTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private static readonly double[] RgbBaseOffsets = { 0, 0.10, 0.22, 0.36, 0.52, 0.67, 0.82, 0.92, 1 };
 
     public StartupLoadingWindow(bool recoveryRequested = false) {
         _recoveryRequested = recoveryRequested;
         InitializeComponent();
+        RecoverySavePathTextBox.Text = GetDefaultRecoveryFilePath();
+        _enrollmentGrantTimer.Tick += EnrollmentGrantTimer_Tick;
     }
 
     public event EventHandler? CancelRequested;
@@ -47,73 +50,49 @@ public partial class StartupLoadingWindow : Window {
     public async Task<string?> AuthenticateAsync(CancellationToken cancellationToken) {
         using CancellationTokenRegistration registration = cancellationToken.Register(() =>
             _authenticationCompletion.TrySetCanceled(cancellationToken));
-#if DEBUG
-        await EnsureDevelopmentBrokerAsync(cancellationToken);
-#endif
         await RefreshAuthenticationStatusAsync();
-        string? grant = await _authenticationCompletion.Task;
-        if (string.IsNullOrWhiteSpace(grant)) return null;
-        SecurityResponse activation = await _securityBroker.SendAsync(new SecurityRequest {
-            Operation = SecurityOperation.CompleteUnlock,
-            UnlockGrant = grant
-        }, cancellationToken);
-        if (!activation.Success)
-            throw new System.Security.SecurityException("The security broker rejected the unlock grant: " + activation.Message);
-        return grant;
+        return await _authenticationCompletion.Task;
     }
-
-#if DEBUG
-    private async Task EnsureDevelopmentBrokerAsync(CancellationToken cancellationToken) {
-        SecurityResponse existing = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.Status }, cancellationToken, TimeSpan.FromMilliseconds(300));
-        if (existing.State != SecurityStateKind.Error) return;
-        string? brokerPath = FindDevelopmentBroker();
-        if (brokerPath == null) {
-            App.WriteCrashLog("Development security broker not found", detail: "BaseDirectory=" + AppContext.BaseDirectory);
-            return;
-        }
-        try {
-            Process.Start(new ProcessStartInfo(brokerPath, "--development") {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                WorkingDirectory = Path.GetDirectoryName(brokerPath) ?? AppContext.BaseDirectory
-            });
-            for (int attempt = 0; attempt < 20; attempt++) {
-                await Task.Delay(150, cancellationToken);
-                SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.Status }, cancellationToken, TimeSpan.FromMilliseconds(300));
-                if (response.State != SecurityStateKind.Error) return;
-            }
-        } catch (Exception ex) {
-            App.WriteCrashLog("Development security broker failed to start", ex, brokerPath);
-        }
-    }
-
-    private static string? FindDevelopmentBroker() {
-        string besideApp = Path.Combine(AppContext.BaseDirectory, "JackLLM.SecurityBroker.exe");
-        if (File.Exists(besideApp)) return besideApp;
-        DirectoryInfo? directory = new(AppContext.BaseDirectory);
-        for (int depth = 0; directory != null && depth < 8; depth++, directory = directory.Parent) {
-            string candidate = Path.Combine(directory.FullName, "JackLLM.SecurityBroker", "bin", "Debug",
-                "net8.0-windows10.0.17763.0", "win-x64", "JackLLM.SecurityBroker.exe");
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
-#endif
 
     public void ShowLoadingProgress() {
         AuthenticationPanel.Visibility = Visibility.Collapsed;
         LoadingPanel.Visibility = Visibility.Visible;
-        Height = 248;
-        MinHeight = 230;
+        MinHeight = 248;
+        MaxHeight = 280;
+        Height = 260;
+        Width = 560;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => {
+            UpdateLayout();
+            RecenterOnCurrentMonitor();
+        }));
+    }
+
+    private void RecenterOnCurrentMonitor() {
+        IntPtr handle = new WindowInteropHelper(this).Handle;
+        System.Drawing.Rectangle workingArea =
+            System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
+        DpiScale dpi = VisualTreeHelper.GetDpi(this);
+        double workingLeft = workingArea.Left / dpi.DpiScaleX;
+        double workingTop = workingArea.Top / dpi.DpiScaleY;
+        double workingWidth = workingArea.Width / dpi.DpiScaleX;
+        double workingHeight = workingArea.Height / dpi.DpiScaleY;
+        double windowWidth = ActualWidth > 0 ? ActualWidth : Width;
+        double windowHeight = ActualHeight > 0 ? ActualHeight : Height;
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = workingLeft + Math.Max(0, (workingWidth - windowWidth) / 2);
+        Top = workingTop + Math.Max(0, (workingHeight - windowHeight) / 2);
     }
 
     private async Task RefreshAuthenticationStatusAsync() {
         SetAuthenticationBusy(true);
-        SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.Status });
-        DevelopmentBadge.Visibility = response.DevelopmentMode || DevelopmentSecurityMode ? Visibility.Visible : Visibility.Collapsed;
+        SecurityResponse response = await GetSecurityStatusWithStartupAsync();
+        if (response.State == SecurityStateKind.Locked && await TryRememberedUnlockAsync())
+            return;
+        DevelopmentBadge.Visibility = Visibility.Collapsed;
         HardwareIdText.Text = FormatHardwareId(response.HardwareId);
-        AuthenticationErrorText.Text = response.State == SecurityStateKind.Error ? response.Message : "";
+        AuthenticationErrorText.Text = !string.IsNullOrWhiteSpace(_rememberedUnlockFailure)
+            ? _rememberedUnlockFailure
+            : response.State == SecurityStateKind.Error ? response.Message : "";
         RecoveryButton.Visibility = response.State is SecurityStateKind.Unenrolled or SecurityStateKind.HardwareMismatch or SecurityStateKind.CredentialMissing or SecurityStateKind.CorruptEnrollment
             ? Visibility.Visible : Visibility.Collapsed;
         ChangePasswordButton.Visibility = response.State == SecurityStateKind.Locked ? Visibility.Visible : Visibility.Collapsed;
@@ -149,6 +128,111 @@ public partial class StartupLoadingWindow : Window {
         SetAuthenticationBusy(false);
     }
 
+    private async Task<bool> TryRememberedUnlockAsync() {
+        RememberedDeviceToken? remembered = _rememberedDeviceTokenStore.Load();
+        if (remembered == null) return false;
+        _rememberedUnlockFailure = null;
+        SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
+            Operation = SecurityOperation.RememberedUnlock,
+            RememberedDeviceToken = remembered.Token
+        });
+        if (response.Success && !string.IsNullOrWhiteSpace(response.UnlockGrant)) {
+            SecurityResponse activation = await ActivateUnlockGrantAsync(response.UnlockGrant);
+            if (activation.Success) {
+                RememberDeviceStatusText.Text =
+                    $"Remembered device verified through {(response.RememberedDeviceExpiresUtc ?? remembered.ExpiresUtc).LocalDateTime:g}.";
+                _authenticationCompletion.TrySetResult(response.UnlockGrant);
+                return true;
+            }
+        }
+        if (response.State == SecurityStateKind.Locked)
+            _rememberedDeviceTokenStore.Delete();
+        if (!string.IsNullOrWhiteSpace(response.Message)) {
+            _rememberedUnlockFailure = response.Message;
+            AuthenticationErrorText.Text = response.Message;
+            RememberDeviceStatusText.Text = response.Message;
+            RememberDeviceStatusText.Visibility = Visibility.Visible;
+        }
+        return false;
+    }
+
+    private async Task<SecurityResponse> GetSecurityStatusWithStartupAsync() {
+        SecurityResponse response = await _securityBroker.SendAsync(
+            new SecurityRequest { Operation = SecurityOperation.Status },
+            timeoutValue: TimeSpan.FromMilliseconds(500));
+        if (response.State != SecurityStateKind.Error)
+            return response;
+        try {
+            await EnsureOfficialBrokerRunningAsync(CancellationToken.None);
+            return await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.Status });
+        } catch (Exception ex) {
+            App.WriteCrashLog("Security broker automatic startup failed", ex);
+            return new SecurityResponse {
+                State = SecurityStateKind.Error,
+                Message = "JackLLM could not start the Security Broker: " + ex.GetBaseException().Message,
+                DevelopmentMode = false
+            };
+        }
+    }
+
+    private async Task EnsureOfficialBrokerRunningAsync(CancellationToken cancellationToken) {
+        try {
+            using var service = new ServiceController("JackLLMSecurityBroker");
+            try {
+                service.Refresh();
+                if (service.Status == ServiceControllerStatus.Running)
+                    return;
+                if (service.Status == ServiceControllerStatus.StartPending) {
+                    await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10)), cancellationToken);
+                    return;
+                }
+                if (service.Status == ServiceControllerStatus.StopPending) {
+                    await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(10)), cancellationToken);
+                    service.Refresh();
+                }
+                service.Start();
+                await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10)), cancellationToken);
+                return;
+            } catch (InvalidOperationException) {
+                // A source-tree Release build may not have gone through the MSI yet.
+                // Start the bundled official broker elevated; it still uses the official
+                // pipe and machine-protected credential store.
+            }
+
+            string brokerPath = Path.Combine(AppContext.BaseDirectory, "SecurityBroker", "JackLLM.SecurityBroker.exe");
+            if (!File.Exists(brokerPath)) {
+                throw new FileNotFoundException(
+                    "The official Release Security Broker is not installed or bundled. Rebuild JackLLM Workstation in Release mode.",
+                    brokerPath);
+            }
+
+            using Process brokerProcess = Process.Start(new ProcessStartInfo(brokerPath, "--local-release") {
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+                WorkingDirectory = Path.GetDirectoryName(brokerPath) ?? AppContext.BaseDirectory
+            }) ?? throw new InvalidOperationException("Windows did not start the official Release Security Broker.");
+
+            for (int attempt = 0; attempt < 40; attempt++) {
+                await Task.Delay(250, cancellationToken);
+                if (brokerProcess.HasExited)
+                    throw new InvalidOperationException($"The official Release Security Broker exited with code {brokerProcess.ExitCode}.");
+                SecurityResponse response = await _securityBroker.SendAsync(
+                    new SecurityRequest { Operation = SecurityOperation.Status },
+                    cancellationToken,
+                    TimeSpan.FromMilliseconds(300));
+                if (response.State != SecurityStateKind.Error &&
+                    response.BrokerCompatibility == SecurityProtocol.BrokerCompatibility &&
+                    !response.DevelopmentMode)
+                    return;
+            }
+            throw new System.TimeoutException("The official Release Security Broker started but did not become ready.");
+        } catch (Exception ex) {
+            App.WriteCrashLog("Official Release security broker failed to start", ex);
+            throw;
+        }
+    }
+
     private void ConfigureAuthenticationMode(AuthenticationMode mode, string title, string detail, string action) {
         _authenticationMode = mode;
         AuthenticationTitleText.Text = title;
@@ -158,6 +242,7 @@ public partial class StartupLoadingWindow : Window {
         CurrentPasswordPanel.Visibility = mode == AuthenticationMode.ChangePassword ? Visibility.Visible : Visibility.Collapsed;
         PasswordLabelText.Text = mode == AuthenticationMode.ChangePassword ? "New workstation password" : "Workstation password";
         RecoveryInputPanel.Visibility = mode == AuthenticationMode.Recover ? Visibility.Visible : Visibility.Collapsed;
+        RememberDeviceCheckBox.Visibility = mode is AuthenticationMode.Enroll or AuthenticationMode.Unlock ? Visibility.Visible : Visibility.Collapsed;
         AuthenticationPasswordBox.IsEnabled = mode is AuthenticationMode.Enroll or AuthenticationMode.Unlock or AuthenticationMode.Recover or AuthenticationMode.ChangePassword;
         AuthenticationActionButton.IsEnabled = mode is AuthenticationMode.Enroll or AuthenticationMode.Unlock or AuthenticationMode.Recover or AuthenticationMode.ChangePassword;
         RecoveryKeyPanel.Visibility = Visibility.Collapsed;
@@ -171,7 +256,23 @@ public partial class StartupLoadingWindow : Window {
                 AuthenticationErrorText.Text = "Confirm that you saved the recovery key before continuing.";
                 return;
             }
-            _authenticationCompletion.TrySetResult(_pendingEnrollmentGrant);
+            SetAuthenticationBusy(true);
+            try {
+                string grant = _pendingEnrollmentGrant;
+                SecurityResponse activation = await ActivateUnlockGrantAsync(grant);
+                if (activation.Success) {
+                    StopEnrollmentGrantTimer();
+                    _authenticationCompletion.TrySetResult(grant);
+                    return;
+                }
+                _pendingEnrollmentGrant = null;
+                StopEnrollmentGrantTimer();
+                await RefreshAuthenticationStatusAsync();
+                AuthenticationErrorText.Text =
+                    "Enrollment and recovery-file saving succeeded. The temporary opening grant expired, so unlock once with your new password.";
+            } finally {
+                SetAuthenticationBusy(false);
+            }
             return;
         }
         if (_authenticationMode == AuthenticationMode.Blocked) {
@@ -192,6 +293,11 @@ public partial class StartupLoadingWindow : Window {
         AuthenticationErrorText.Text = "";
         AuthenticationErrorText.Foreground = new SolidColorBrush(Color.FromRgb(255, 143, 165));
         try {
+            SecurityResponse brokerStatus = await GetSecurityStatusWithStartupAsync();
+            if (brokerStatus.State == SecurityStateKind.Error) {
+                ApplyFailure(brokerStatus);
+                return;
+            }
             if (_authenticationMode == AuthenticationMode.Enroll)
                 await EnrollAsync(password);
             else if (_authenticationMode == AuthenticationMode.Recover)
@@ -206,6 +312,7 @@ public partial class StartupLoadingWindow : Window {
             AuthenticationPasswordBox.Clear();
             ConfirmPasswordBox.Clear();
             CurrentPasswordBox.Clear();
+            RecoveryFilePasswordBox.Clear();
             SetAuthenticationBusy(false);
         }
     }
@@ -216,16 +323,29 @@ public partial class StartupLoadingWindow : Window {
         WindowsHelloProof proof = await WindowsHelloAuthenticator.CreateAndSignAsync(Convert.FromBase64String(challenge.Challenge));
         SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
             Operation = SecurityOperation.Enroll, ChallengeId = challenge.ChallengeId, Password = password,
-            PublicKey = proof.PublicKey, Signature = proof.Signature, Attestation = proof.Attestation
+            PublicKey = proof.PublicKey, Signature = proof.Signature, Attestation = proof.Attestation,
+            RememberDevice = RememberDeviceCheckBox.IsChecked == true
         });
         if (!response.Success || string.IsNullOrWhiteSpace(response.RecoveryKey)) { ApplyFailure(response); return; }
+        if (string.IsNullOrWhiteSpace(response.RecoveryBackup)) {
+            AuthenticationErrorText.Text = "The broker did not generate the portable recovery package.";
+            return;
+        }
         _pendingEnrollmentGrant = response.UnlockGrant;
-        _pendingRecoveryBackup = response.RecoveryBackup;
+        _pendingEnrollmentGrantExpiresUtc = response.UnlockGrantExpiresUtc;
+        SaveRememberedToken(response);
+        _pendingProtectedRecoveryFile = RecoveryFileProtection.Protect(new PortableRecoveryFile {
+            RecoveryKey = response.RecoveryKey,
+            RecoveryBackup = response.RecoveryBackup
+        }, password);
         HardwareIdText.Text = FormatHardwareId(response.HardwareId);
-        GeneratedRecoveryKeyText.Text = response.RecoveryKey;
+        GeneratedRecoveryKeyText.Text =
+            "Your recovery file has been generated and encrypted. Save it before opening JackLLM; it will not be generated again.";
         RecoveryKeyPanel.Visibility = Visibility.Visible;
+        StartEnrollmentGrantTimer();
         AuthenticationActionButton.Content = "I SAVED IT — OPEN JACKLLM";
-        AuthenticationDetailText.Text = "Enrollment succeeded. Save the recovery key now; it will not be shown again.";
+        AuthenticationDetailText.Text =
+            "Enrollment succeeded. Save the generated password-protected recovery file now. It uses your workstation password.";
         AuthenticationPasswordBox.IsEnabled = false;
         ConfirmPasswordPanel.Visibility = Visibility.Collapsed;
     }
@@ -236,23 +356,83 @@ public partial class StartupLoadingWindow : Window {
         WindowsHelloProof proof = await WindowsHelloAuthenticator.OpenAndSignAsync(Convert.FromBase64String(challenge.Challenge));
         SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
             Operation = SecurityOperation.CompleteUnlock, ChallengeId = challenge.ChallengeId,
-            Password = password, Signature = proof.Signature
+            Password = password, Signature = proof.Signature,
+            RememberDevice = RememberDeviceCheckBox.IsChecked == true
         });
         if (!response.Success || string.IsNullOrWhiteSpace(response.UnlockGrant)) { ApplyFailure(response); return; }
+        SaveRememberedToken(response);
+        SecurityResponse activation = await ActivateUnlockGrantAsync(response.UnlockGrant);
+        if (!activation.Success) { ApplyFailure(activation); return; }
         _authenticationCompletion.TrySetResult(response.UnlockGrant);
     }
 
+    private Task<SecurityResponse> ActivateUnlockGrantAsync(string grant) =>
+        _securityBroker.SendAsync(new SecurityRequest {
+            Operation = SecurityOperation.CompleteUnlock,
+            UnlockGrant = grant
+        });
+
+    private void SaveRememberedToken(SecurityResponse response) {
+        if (!string.IsNullOrWhiteSpace(response.RememberedDeviceToken) &&
+            response.RememberedDeviceExpiresUtc is DateTimeOffset expires) {
+            _rememberedDeviceTokenStore.Save(response.RememberedDeviceToken, expires);
+            _rememberedUnlockFailure = null;
+            RememberDeviceStatusText.Text = $"This device is remembered through {expires.LocalDateTime:g}.";
+            RememberDeviceStatusText.Visibility = Visibility.Visible;
+        } else if (RememberDeviceCheckBox.IsChecked == true) {
+            _rememberedDeviceTokenStore.Delete();
+            RememberDeviceStatusText.Text = response.Message;
+            RememberDeviceStatusText.Visibility = Visibility.Visible;
+        } else {
+            _rememberedDeviceTokenStore.Delete();
+        }
+    }
+
+    private void StartEnrollmentGrantTimer() {
+        UpdateEnrollmentGrantTimer();
+        _enrollmentGrantTimer.Start();
+    }
+
+    private void StopEnrollmentGrantTimer() {
+        _enrollmentGrantTimer.Stop();
+        _pendingEnrollmentGrantExpiresUtc = null;
+    }
+
+    private void EnrollmentGrantTimer_Tick(object? sender, EventArgs e) =>
+        UpdateEnrollmentGrantTimer();
+
+    private void UpdateEnrollmentGrantTimer() {
+        if (_pendingEnrollmentGrantExpiresUtc == null) {
+            RecoveryGrantTimerText.Text = "Opening time remaining: unavailable";
+            return;
+        }
+        TimeSpan remaining = _pendingEnrollmentGrantExpiresUtc.Value - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero) {
+            _enrollmentGrantTimer.Stop();
+            RecoveryGrantTimerText.Text = "Opening grant expired — your enrollment and recovery file are still saved.";
+            RecoveryGrantTimerText.Foreground = new SolidColorBrush(Color.FromRgb(255, 143, 165));
+            return;
+        }
+        int totalSeconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
+        RecoveryGrantTimerText.Text = $"Opening time remaining: {totalSeconds / 60:00}:{totalSeconds % 60:00}";
+        RecoveryGrantTimerText.Foreground = new SolidColorBrush(Color.FromRgb(255, 210, 122));
+    }
+
     private async Task RecoverAsync(string newPassword) {
+        LoadRecoveryFile();
         SecurityResponse challenge = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.BeginUnlock });
         if (!challenge.Success || string.IsNullOrWhiteSpace(challenge.Challenge)) { ApplyFailure(challenge); return; }
         WindowsHelloProof proof = await WindowsHelloAuthenticator.CreateAndSignAsync(Convert.FromBase64String(challenge.Challenge));
         SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
             Operation = SecurityOperation.Recover, ChallengeId = challenge.ChallengeId, NewPassword = newPassword,
-            RecoveryKey = RecoveryKeyInput.Text, RecoveryBackup = _importedRecoveryBackup,
+            RecoveryKey = _importedRecoveryKey, RecoveryBackup = _importedRecoveryBackup,
             PublicKey = proof.PublicKey, Signature = proof.Signature, Attestation = proof.Attestation
         });
         if (!response.Success) { ApplyFailure(response); return; }
-        RecoveryKeyInput.Clear();
+        _rememberedDeviceTokenStore.Delete();
+        _importedRecoveryKey = null;
+        _importedRecoveryBackup = null;
+        RecoveryFilePasswordBox.Clear();
         await RefreshAuthenticationStatusAsync();
     }
 
@@ -265,6 +445,7 @@ public partial class StartupLoadingWindow : Window {
             Password = CurrentPasswordBox.Password, NewPassword = newPassword, Signature = proof.Signature
         });
         if (!response.Success) { ApplyFailure(response); return; }
+        _rememberedDeviceTokenStore.Delete();
         await RefreshAuthenticationStatusAsync();
         AuthenticationDetailText.Text = "Password changed. Unlock with the new password.";
     }
@@ -278,51 +459,91 @@ public partial class StartupLoadingWindow : Window {
     }
 
     private void SaveRecoveryFileButton_Click(object sender, RoutedEventArgs e) {
-        if (string.IsNullOrWhiteSpace(GeneratedRecoveryKeyText.Text) || string.IsNullOrWhiteSpace(_pendingRecoveryBackup)) {
+        if (string.IsNullOrWhiteSpace(_pendingProtectedRecoveryFile)) {
             AuthenticationErrorText.Text = "The broker did not provide a portable recovery package.";
             return;
         }
-        var dialog = new SaveFileDialog {
-            Title = "Save JackLLM recovery key",
-            FileName = "JackLLM-Workstation-Recovery-Key.jackllm-recovery",
+        try {
+            string path = RecoverySavePathTextBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(path))
+                throw new InvalidOperationException("Choose where to save the recovery file.");
+            if (!string.Equals(Path.GetExtension(path), ".jackllm-recovery", StringComparison.OrdinalIgnoreCase))
+                path += ".jackllm-recovery";
+            string fullPath = Path.GetFullPath(path);
+            string? directory = Path.GetDirectoryName(fullPath);
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                throw new DirectoryNotFoundException("The selected recovery-file folder does not exist.");
+            File.WriteAllText(fullPath, _pendingProtectedRecoveryFile);
+            RecoverySavePathTextBox.Text = fullPath;
+            RecoveryKeySavedCheckBox.IsChecked = true;
+            AuthenticationErrorText.Foreground = new SolidColorBrush(Color.FromRgb(126, 233, 255));
+            AuthenticationErrorText.Text = "Password-protected recovery file saved. Keep it offline or in a protected vault.";
+        } catch (Exception ex) {
+            AuthenticationErrorText.Foreground = new SolidColorBrush(Color.FromRgb(255, 143, 165));
+            AuthenticationErrorText.Text = "Could not save the recovery file: " + ex.Message;
+        }
+    }
+
+    private void BrowseRecoverySavePathButton_Click(object sender, RoutedEventArgs e) {
+        string current = RecoverySavePathTextBox.Text.Trim();
+        var dialog = CreateRecoverySaveDialog(current);
+        if (dialog.ShowDialog(this) == true)
+            RecoverySavePathTextBox.Text = dialog.FileName;
+    }
+
+    private void BrowseRecoveryOpenPathButton_Click(object sender, RoutedEventArgs e) {
+        var dialog = new OpenFileDialog {
+            Title = "Open password-protected JackLLM recovery file",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Filter = "JackLLM recovery file (*.jackllm-recovery)|*.jackllm-recovery",
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) == true) {
+            RecoveryFilePathInput.Text = dialog.FileName;
+            RecoveryFilePasswordBox.Focus();
+        }
+    }
+
+    private void LoadRecoveryFile() {
+        string path = RecoveryFilePathInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            throw new FileNotFoundException("Choose an existing password-protected recovery file.", path);
+        PortableRecoveryFile file = RecoveryFileProtection.Unprotect(
+            File.ReadAllText(path), RecoveryFilePasswordBox.Password);
+        _importedRecoveryKey = file.RecoveryKey;
+        _importedRecoveryBackup = file.RecoveryBackup;
+    }
+
+    private static SaveFileDialog CreateRecoverySaveDialog(string currentPath) {
+        string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string fileName = "JackLLM-Workstation-Recovery.jackllm-recovery";
+        string initialDirectory = documents;
+        if (!string.IsNullOrWhiteSpace(currentPath)) {
+            try {
+                string fullPath = Path.GetFullPath(currentPath);
+                fileName = Path.GetFileName(fullPath);
+                string? directory = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+                    initialDirectory = directory;
+            } catch {
+            }
+        }
+        return new SaveFileDialog {
+            Title = "Save password-protected JackLLM recovery file",
+            InitialDirectory = initialDirectory,
+            FileName = fileName,
             DefaultExt = ".jackllm-recovery",
-            Filter = "JackLLM recovery key (*.jackllm-recovery)|*.jackllm-recovery|JSON files (*.json)|*.json",
+            Filter = "JackLLM recovery file (*.jackllm-recovery)|*.jackllm-recovery",
             AddExtension = true,
             OverwritePrompt = true
         };
-        if (dialog.ShowDialog(this) != true) return;
-        var recoveryFile = new PortableRecoveryFile {
-            RecoveryKey = GeneratedRecoveryKeyText.Text,
-            RecoveryBackup = _pendingRecoveryBackup
-        };
-        File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(recoveryFile, new JsonSerializerOptions { WriteIndented = true }));
-        RecoveryKeySavedCheckBox.IsChecked = true;
-        AuthenticationErrorText.Foreground = new SolidColorBrush(Color.FromRgb(126, 233, 255));
-        AuthenticationErrorText.Text = "Recovery key saved. Keep that file offline or in a protected vault.";
     }
 
-    private void ImportRecoveryFileButton_Click(object sender, RoutedEventArgs e) {
-        var dialog = new OpenFileDialog {
-            Title = "Import JackLLM recovery key",
-            Filter = "JackLLM recovery key (*.jackllm-recovery)|*.jackllm-recovery|JSON files (*.json)|*.json",
-            CheckFileExists = true
-        };
-        if (dialog.ShowDialog(this) != true) return;
-        try {
-            PortableRecoveryFile file = JsonSerializer.Deserialize<PortableRecoveryFile>(File.ReadAllText(dialog.FileName), SecurityProtocol.Json)
-                ?? throw new InvalidDataException("The recovery file is empty.");
-            if (file.Version != 1 || !string.Equals(file.Format, "JackLLM Workstation Recovery Key", StringComparison.Ordinal) ||
-                string.IsNullOrWhiteSpace(file.RecoveryKey) || string.IsNullOrWhiteSpace(file.RecoveryBackup))
-                throw new InvalidDataException("This is not a supported JackLLM recovery-key file.");
-            RecoveryKeyInput.Text = file.RecoveryKey;
-            _importedRecoveryBackup = file.RecoveryBackup;
-            AuthenticationErrorText.Foreground = new SolidColorBrush(Color.FromRgb(126, 233, 255));
-            AuthenticationErrorText.Text = "Recovery backup loaded. Choose and confirm a new workstation password.";
-        } catch (Exception ex) {
-            _importedRecoveryBackup = null;
-            AuthenticationErrorText.Foreground = new SolidColorBrush(Color.FromRgb(255, 143, 165));
-            AuthenticationErrorText.Text = "Could not import the recovery file: " + ex.Message;
-        }
+    private static string GetDefaultRecoveryFilePath() {
+        string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        if (string.IsNullOrWhiteSpace(documents))
+            documents = AppContext.BaseDirectory;
+        return Path.Combine(documents, "JackLLM-Workstation-Recovery.jackllm-recovery");
     }
 
     private void RecoveryButton_Click(object sender, RoutedEventArgs e) {
@@ -383,7 +604,10 @@ public partial class StartupLoadingWindow : Window {
         AuthenticationPasswordBox.IsEnabled = !busy && _authenticationMode is AuthenticationMode.Enroll or AuthenticationMode.Unlock or AuthenticationMode.Recover or AuthenticationMode.ChangePassword;
         CurrentPasswordBox.IsEnabled = !busy;
         ConfirmPasswordBox.IsEnabled = !busy;
-        RecoveryKeyInput.IsEnabled = !busy;
+        RecoveryFilePathInput.IsEnabled = !busy;
+        RecoveryFilePasswordBox.IsEnabled = !busy;
+        RecoverySavePathTextBox.IsEnabled = !busy;
+        SaveRecoveryFileButton.IsEnabled = !busy;
         if (busy) AuthenticationActionButton.Content = "WORKING...";
         else if (_pendingEnrollmentGrant != null) AuthenticationActionButton.Content = "I SAVED IT — OPEN JACKLLM";
         else AuthenticationActionButton.Content = _authenticationMode switch {
@@ -463,6 +687,7 @@ public partial class StartupLoadingWindow : Window {
 
     private void Window_Closed(object? sender, EventArgs e) {
         CompositionTarget.Rendering -= OnRendering;
+        _enrollmentGrantTimer.Stop();
         _authenticationCompletion.TrySetResult(null);
     }
 

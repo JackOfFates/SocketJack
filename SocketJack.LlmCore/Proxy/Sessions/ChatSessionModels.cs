@@ -43,6 +43,9 @@ private sealed class AgentFilesystemContextRootEntry
             public string Source { get; set; } = "";
             public string Path { get; set; } = "";
             public bool Exists { get; set; }
+            public string Role { get; set; } = "";
+            public string AccessMode { get; set; } = "";
+            public string ParentId { get; set; } = "";
         }
 
 private sealed class ChatSessionSummary

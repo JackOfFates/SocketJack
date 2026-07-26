@@ -19,6 +19,8 @@ public sealed class AlignmentSnapshot
     public string Edge { get; set; } = "top";
     public string Theme { get; set; } = "neutral";
     public string LastReason { get; set; } = "Every Hero chooses a path.";
+    public Dictionary<string, int> CharacterTraits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string AssessmentModel { get; set; } = "";
     public string[] DisabledFeatures { get; set; } = Array.Empty<string>();
     public string[] HighlightedFeatures { get; set; } = Array.Empty<string>();
     public bool DreamsEnabled { get; set; } = true;
@@ -38,6 +40,8 @@ public sealed class AlignmentAssessmentSnapshot
     public bool BenignContext { get; set; }
     public bool Evasion { get; set; }
     public string Reason { get; set; } = "Every Hero chooses a path.";
+    public Dictionary<string, int> CharacterTraits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string AssessmentModel { get; set; } = "";
 }
 
 public partial class LmVsProxy
@@ -60,6 +64,8 @@ public partial class LmVsProxy
         public string OwnerKey { get; set; } = "";
         public int Score { get; set; }
         public string LastReason { get; set; } = "Every Hero chooses a path.";
+        public Dictionary<string, int> CharacterTraits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public string LastAssessmentModel { get; set; } = "";
         public string LastPromptHash { get; set; } = "";
         public string PositiveCreditDayUtc { get; set; } = "";
         public int PositiveCreditToday { get; set; }
@@ -84,6 +90,8 @@ public partial class LmVsProxy
         public double Confidence { get; set; }
         public int Delta { get; set; }
         public string Reason { get; set; } = "";
+        public Dictionary<string, int> CharacterTraits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public string AssessmentModel { get; set; } = "";
         public bool Evasion { get; set; }
         public bool Dismissed { get; set; }
         public string CreatedUtc { get; set; } = DateTimeOffset.UtcNow.ToString("O");
@@ -215,6 +223,8 @@ public partial class LmVsProxy
             Edge = negative || profile.Locked ? "bottom" : "top",
             Theme = profile.Locked ? "locked" : negative ? "evil" : profile.Score > 0 ? "good" : "neutral",
             LastReason = profile.LastReason,
+            CharacterTraits = BuildAlignmentTraitSnapshot(profile.CharacterTraits),
+            AssessmentModel = profile.LastAssessmentModel,
             DisabledFeatures = disabled,
             HighlightedFeatures = profile.Score > 0
                 ? profile.FeatureUse.Where(pair => !profile.DisabledFeatures.Contains(pair.Key)).OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key).Take(3).Select(pair => pair.Key).ToArray()
@@ -244,6 +254,7 @@ public partial class LmVsProxy
         profile.DisabledFeatures ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         profile.RecoveryScores ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         profile.FeatureUse ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        profile.CharacterTraits ??= DefaultAlignmentTraits();
         return profile;
     }
 
@@ -260,29 +271,36 @@ public partial class LmVsProxy
                 .OrderByDescending(item => item.CreatedUtc).Take(6).Select(item => item.Category).ToArray();
         }
         AlignmentAssessmentSnapshot signals = AssessAlignmentText(prompt, recentCategories);
-        AlignmentAssessmentSnapshot local = await TryAssessAlignmentWithLocalModelAsync(prompt, signals, recentCategories, cancellationToken).ConfigureAwait(false);
+        string selectedModel = ExtractAlignmentSelectedModel(requestBody);
+        AlignmentAssessmentSnapshot local = await TryAssessAlignmentWithLocalModelAsync(prompt, signals, recentCategories, selectedModel, cancellationToken).ConfigureAwait(false);
         AlignmentAssessmentSnapshot assessment = signals.BenignContext
             ? signals
             : local ?? new AlignmentAssessmentSnapshot { Category = "neutral", Severity = "none", Capability = signals.Capability, Reason = "Every Hero chooses a path." };
+        if (signals.BenignContext && local != null)
+        {
+            assessment.CharacterTraits = local.CharacterTraits;
+            assessment.AssessmentModel = local.AssessmentModel;
+        }
         if (signals.Category == "constructive" && local?.Category == "constructive")
             assessment.Delta = signals.Delta;
         ApplyAlignmentAssessment(ownerKey, sessionId, promptHash, assessment);
         return GetAlignmentSnapshot(ownerKey);
     }
 
-    private async Task<AlignmentAssessmentSnapshot> TryAssessAlignmentWithLocalModelAsync(string prompt, AlignmentAssessmentSnapshot seed, IReadOnlyList<string> recentCategories, CancellationToken cancellationToken)
+    private async Task<AlignmentAssessmentSnapshot> TryAssessAlignmentWithLocalModelAsync(string prompt, AlignmentAssessmentSnapshot seed, IReadOnlyList<string> recentCategories, string selectedModel, CancellationToken cancellationToken)
     {
         try
         {
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(12));
-            string instruction = "Classify observable intent conservatively. Never diagnose personality or mental health. Help-seeking about distress, self-harm, trauma, fiction, quotations, role-play, security research, prevention, and remediation are benign unless the user clearly intends harm. Repeated malicious categories may be context for disguised or split intent, but are not proof by themselves. Return JSON only with category (constructive|neutral|self-sabotage|feature-abuse|malicious|critical), severity (none|low|medium|high|critical), capability (chat|dreams|terminal|filesystem|uploads|downloads|internet|media|pc-access|agent), confidence 0..1, benignContext boolean, evasion boolean, and a short reason without chain-of-thought.";
+            string instruction = "Classify observable intent conservatively. Never diagnose personality or mental health. Help-seeking about distress, self-harm, trauma, fiction, quotations, role-play, security research, prevention, and remediation are benign unless the user clearly intends harm. Repeated malicious categories may be context for disguised or split intent, but are not proof by themselves. Also score this fixed character sheet from 1 to 10 using only observable choices in the prompt: Nobility, Humility, Compassion, Courage, Honesty, Mercy, Generosity, Discipline, Responsibility, Self-Respect, Greed, Cruelty, Pride, Deception, Coercion, Self-Sabotage. A score is a game-style alignment reading, not a diagnosis. Return JSON only with category (constructive|neutral|self-sabotage|feature-abuse|malicious|critical), severity (none|low|medium|high|critical), capability (chat|dreams|terminal|filesystem|uploads|downloads|internet|media|pc-access|agent), confidence 0..1, benignContext boolean, evasion boolean, reason without chain-of-thought, and traits as an object containing every named character trait with an integer 1..10.";
+            string classifierModel = string.IsNullOrWhiteSpace(selectedModel) ? ChatModel : selectedModel.Trim();
             string body = JsonSerializer.Serialize(new
             {
-                model = ChatModel,
+                model = classifierModel,
                 messages = new[] { new { role = "system", content = instruction }, new { role = "user", content = "Recent classification categories: " + string.Join(", ", recentCategories ?? Array.Empty<string>()) + "\nCurrent prompt:\n" + prompt } },
                 temperature = 0,
-                max_tokens = 220,
+                max_tokens = 420,
                 stream = false
             });
             ChatUiCompletion completion = await ExecuteChatUiCompletionWithProxyToolsAsync(body, "alignment-classifier", "alignment-" + Guid.NewGuid().ToString("N"), timeout.Token).ConfigureAwait(false);
@@ -297,9 +315,12 @@ public partial class LmVsProxy
             string severity = root.TryGetProperty("severity", out JsonElement severityElement) ? severityElement.GetString() ?? "none" : "none";
             string capability = root.TryGetProperty("capability", out JsonElement capabilityElement) ? capabilityElement.GetString() ?? seed.Capability : seed.Capability;
             string reason = root.TryGetProperty("reason", out JsonElement reasonElement) ? reasonElement.GetString() ?? "Every Hero chooses a path." : "Every Hero chooses a path.";
+            Dictionary<string, int> traits = root.TryGetProperty("traits", out JsonElement traitsElement)
+                ? NormalizeAlignmentTraits(traitsElement)
+                : DefaultAlignmentTraits();
             if (benign || confidence < 0.90) category = "neutral";
             int delta = AlignmentDelta(category, confidence);
-            return new AlignmentAssessmentSnapshot { Category = category, Severity = severity, Capability = NormalizeAlignmentCapability(capability), Confidence = confidence, Delta = delta, BenignContext = benign, Evasion = evasion, Reason = reason };
+            return new AlignmentAssessmentSnapshot { Category = category, Severity = severity, Capability = NormalizeAlignmentCapability(capability), Confidence = confidence, Delta = delta, BenignContext = benign, Evasion = evasion, Reason = reason, CharacterTraits = traits, AssessmentModel = classifierModel };
         }
         catch { return null; }
     }
@@ -325,9 +346,13 @@ public partial class LmVsProxy
                 profile.PositiveCreditToday += delta;
             }
             profile.LastPromptHash = promptHash;
-            if (delta == 0 && assessment.Category == "neutral") return;
+            if (delta == 0 && assessment.Category == "neutral" && (assessment.CharacterTraits == null || assessment.CharacterTraits.Count == 0)) return;
             profile.Score = Math.Clamp(profile.Score + delta, -100, 100);
             profile.LastReason = string.IsNullOrWhiteSpace(assessment.Reason) ? AlignmentReasonForCategory(assessment.Category) : assessment.Reason;
+            if (assessment.CharacterTraits is { Count: > 0 })
+                profile.CharacterTraits = BuildAlignmentTraitSnapshot(assessment.CharacterTraits);
+            if (!string.IsNullOrWhiteSpace(assessment.AssessmentModel))
+                profile.LastAssessmentModel = assessment.AssessmentModel;
             profile.UpdatedUtc = DateTimeOffset.UtcNow.ToString("O");
             string capability = NormalizeAlignmentCapability(assessment.Capability);
             if (delta < 0 && profile.Score < 0) _ = Task.Run(() => CancelDreamForAlignment(ownerKey));
@@ -357,11 +382,76 @@ public partial class LmVsProxy
                 Confidence = assessment.Confidence,
                 Delta = delta,
                 Reason = profile.LastReason,
+                CharacterTraits = BuildAlignmentTraitSnapshot(assessment.CharacterTraits),
+                AssessmentModel = assessment.AssessmentModel,
                 Evasion = assessment.Evasion
             });
             if (_alignmentEvents.Count > 5000) _alignmentEvents.RemoveRange(0, _alignmentEvents.Count - 5000);
             SaveAlignmentStateNoLock();
         }
+    }
+
+    private static readonly string[] AlignmentCharacterTraitNames =
+    {
+        "Nobility", "Humility", "Compassion", "Courage", "Honesty", "Mercy", "Generosity", "Discipline",
+        "Responsibility", "Self-Respect", "Greed", "Cruelty", "Pride", "Deception", "Coercion", "Self-Sabotage"
+    };
+
+    private static readonly HashSet<string> AlignmentViceTraits = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Greed", "Cruelty", "Pride", "Deception", "Coercion", "Self-Sabotage"
+    };
+
+    private static Dictionary<string, int> DefaultAlignmentTraits()
+    {
+        return AlignmentCharacterTraitNames.ToDictionary(
+            name => name,
+            name => AlignmentViceTraits.Contains(name) ? 1 : 5,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, int> BuildAlignmentTraitSnapshot(IReadOnlyDictionary<string, int> traits)
+    {
+        Dictionary<string, int> result = DefaultAlignmentTraits();
+        if (traits == null) return result;
+        foreach (KeyValuePair<string, int> pair in traits)
+        {
+            string canonical = AlignmentCharacterTraitNames.FirstOrDefault(name =>
+                NormalizeAlignmentTraitName(name) == NormalizeAlignmentTraitName(pair.Key));
+            if (!string.IsNullOrWhiteSpace(canonical))
+                result[canonical] = Math.Clamp(pair.Value, 1, 10);
+        }
+        return result;
+    }
+
+    private static Dictionary<string, int> NormalizeAlignmentTraits(JsonElement traits)
+    {
+        Dictionary<string, int> parsed = DefaultAlignmentTraits();
+        if (traits.ValueKind != JsonValueKind.Object) return parsed;
+        foreach (JsonProperty property in traits.EnumerateObject())
+        {
+            if (!property.Value.TryGetInt32(out int score)) continue;
+            string canonical = AlignmentCharacterTraitNames.FirstOrDefault(name =>
+                NormalizeAlignmentTraitName(name) == NormalizeAlignmentTraitName(property.Name));
+            if (!string.IsNullOrWhiteSpace(canonical))
+                parsed[canonical] = Math.Clamp(score, 1, 10);
+        }
+        return parsed;
+    }
+
+    private static string NormalizeAlignmentTraitName(string value) =>
+        Regex.Replace(value ?? "", "[^a-z0-9]", "", RegexOptions.IgnoreCase).ToLowerInvariant();
+
+    private static string ExtractAlignmentSelectedModel(string requestBody)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(requestBody) ? "{}" : requestBody);
+            return document.RootElement.TryGetProperty("model", out JsonElement model) && model.ValueKind == JsonValueKind.String
+                ? model.GetString() ?? ""
+                : "";
+        }
+        catch { return ""; }
     }
 
     private static readonly string[] AlignmentRestrictableFeatures = { "terminal", "filesystem", "uploads", "downloads", "internet", "media", "pc-access", "agent" };

@@ -428,19 +428,18 @@
                                     <CheckBox x:Name="AllowOpenRegistrationCheckBox"
                                           Grid.Row="4"
                                           Grid.ColumnSpan="2"
-                                          Content="SocketJack.com handles registration"
-                                          Foreground="#F87171"
-                                          BorderBrush="#EF4444"
+                                          Content="Allow anyone to create an account"
+                                          ToolTip="When unchecked, every new account request must be approved by a Workstation administrator."
+                                          Foreground="#FACC15"
+                                          BorderBrush="#FACC15"
                                           FontWeight="SemiBold"
                                           Margin="0,10,0,0"
-                                          IsEnabled="False"
-                                          Visibility="Collapsed"
                                           Checked="AllowOpenRegistrationCheckBox_Changed"
                                           Unchecked="AllowOpenRegistrationCheckBox_Changed"/>
                                     <TextBlock x:Name="OpenRegistrationWarningText"
                                            Grid.Row="5"
                                            Grid.ColumnSpan="2"
-                                           Text="SocketJack.com handles account registration and login."
+                                           Text="Open registration is enabled. Leave this off to require administrator approval for new Workstation accounts."
                                            Foreground="#FACC15"
                                            FontSize="11"
                                            TextWrapping="Wrap"
@@ -755,12 +754,33 @@
                                                     Margin="0,0,6,0"
                                                     ToolTip="Remove access to every listed directory"/>
                                             <Button x:Name="BrowseAccessibleDirectoryButton"
-                                                    Content="Add Folders"
+                                                    Content="Attach"
                                                     DockPanel.Dock="Right"
                                                     Click="BrowseAccessibleDirectoryButton_Click"
                                                     Padding="8,3"
                                                     Margin="0,0,6,0"
-                                                    ToolTip="Add one or more accessible directories"/>
+                                                    ToolTip="Attach one or more folders to the selected session"/>
+                                            <Button x:Name="SetPrimaryWorkspaceButton"
+                                                    Content="Primary"
+                                                    DockPanel.Dock="Right"
+                                                    Click="SetPrimaryWorkspaceButton_Click"
+                                                    Padding="8,3"
+                                                    Margin="0,0,6,0"
+                                                    ToolTip="Set the selected session primary working folder"/>
+                                            <Button x:Name="WorkspaceIgnoreRulesButton"
+                                                    Content="Regex"
+                                                    DockPanel.Dock="Right"
+                                                    Click="WorkspaceIgnoreRulesButton_Click"
+                                                    Padding="8,3"
+                                                    Margin="0,0,6,0"
+                                                    ToolTip="Build and test session or folder ignore regex rules"/>
+                                            <Button x:Name="AddGlobalWorkspaceButton"
+                                                    Content="Global"
+                                                    DockPanel.Dock="Right"
+                                                    Click="AddGlobalWorkspaceButton_Click"
+                                                    Padding="8,3"
+                                                    Margin="0,0,6,0"
+                                                    ToolTip="Add a user-global read-only folder inherited by all sessions"/>
                                             <TextBlock Text="Solution Explorer"
                                                        FontSize="16"
                                                        FontWeight="SemiBold"
@@ -807,11 +827,18 @@
                                                                 <TextBlock Text="{Binding Path}" Foreground="{StaticResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"/>
                                                             </StackPanel>
                                                             <Button Grid.Column="1"
+                                                                    Content="Edit"
+                                                                    Tag="{Binding}"
+                                                                    Click="EditWorkspaceRootButton_Click"
+                                                                    Padding="7,2"
+                                                                    Margin="8,0,0,0"
+                                                                    VerticalAlignment="Center"/>
+                                                            <Button Grid.Column="1"
                                                                     Content="Remove"
                                                                     Tag="{Binding}"
                                                                     Click="RemoveAccessibleDirectoryListItemButton_Click"
                                                                     Padding="7,2"
-                                                                    Margin="8,0,0,0"
+                                                                    Margin="62,0,0,0"
                                                                     VerticalAlignment="Center"/>
                                                         </Grid>
                                                     </DataTemplate>
@@ -3387,6 +3414,77 @@
                     </ScrollViewer>
                 </TabItem>
 
+                <TabItem x:Name="CompanionTab" Header="Companion">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="18">
+                            <DockPanel Margin="0,0,0,14">
+                                <Button Content="EMERGENCY STOP (Ctrl+Esc)"
+                                        DockPanel.Dock="Right"
+                                        Background="#991B1B"
+                                        Foreground="White"
+                                        BorderBrush="#EF4444"
+                                        FontWeight="Bold"
+                                        Padding="14,8"
+                                        Click="CompanionEmergencyStopButton_Click"/>
+                                <StackPanel>
+                                    <TextBlock Text="Integrated Companion Mode" FontSize="24" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Screen, cursor, applications, and terminal actions stay disabled until their individual permissions allow them."
+                                               Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+
+                            <Border Style="{StaticResource PanelBorderStyle}" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Task" FontSize="18" FontWeight="SemiBold"/>
+                                    <TextBox x:Name="CompanionGoalTextBox" Margin="0,8,0,8" MinHeight="64"
+                                             AcceptsReturn="True" TextWrapping="Wrap"
+                                             ToolTip="Describe the desktop task for the selected local model."/>
+                                    <WrapPanel>
+                                        <TextBox x:Name="CompanionModelTextBox" Width="260" Margin="0,0,8,8"
+                                                 ToolTip="Local model id; leave blank to use the configured chat model."/>
+                                        <Button Content="Start Companion" Click="CompanionStartButton_Click" Padding="10,5" Margin="0,0,8,8"/>
+                                        <Button Content="Stop" Click="CompanionStopButton_Click" Padding="10,5" Margin="0,0,8,8"/>
+                                        <Button Content="Preview Screen" Click="CompanionPreviewButton_Click" Padding="10,5" Margin="0,0,8,8"/>
+                                    </WrapPanel>
+                                    <TextBlock x:Name="CompanionStatusText" Text="Companion is idle." Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap"/>
+                                    <Image x:Name="CompanionPreviewImage" MaxHeight="420" Stretch="Uniform" Margin="0,10,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource PanelBorderStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="Companion permissions — global owner" FontSize="18" FontWeight="SemiBold"/>
+                                    <TextBlock Text="These grants are independent from PC Access, Agent, terminal trust, and localhost administrator access."
+                                               Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap" Margin="0,3,0,10"/>
+                                    <UniformGrid Columns="2">
+                                        <CheckBox x:Name="CompanionEnabledCheckBox" Content="Enable Companion mode" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="CompanionScreenViewCheckBox" Content="See the screen" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="CompanionCursorControlCheckBox" Content="Move the cursor" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="CompanionApplicationLaunchCheckBox" Content="Open applications" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="CompanionApplicationControlCheckBox" Content="Use programs (click/type/scroll)" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="CompanionTerminalCommandsCheckBox" Content="Run terminal commands" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="CompanionTranscriptCheckBox" Content="Save Companion activity transcripts" Margin="0,0,8,8"/>
+                                        <CheckBox x:Name="CompanionSensitiveMemoryCheckBox" Content="Allow confirmed sensitive memories" Margin="0,0,8,8"/>
+                                    </UniformGrid>
+                                    <Border Background="#220000" BorderBrush="#EF4444" BorderThickness="2" Padding="12" Margin="0,4,0,10">
+                                        <StackPanel>
+                                            <CheckBox x:Name="CompanionFinancialActionsCheckBox"
+                                                      Content="ALLOW CONFIRMED FINANCIAL ACTIONS"
+                                                      Foreground="#FF4D4D" FontWeight="Bold" FontSize="15"/>
+                                            <TextBlock Foreground="#FF4D4D" FontWeight="Bold" TextWrapping="Wrap" Margin="0,6,0,0"
+                                                       Text="EXTREME RISK: This can cause purchases, recurring charges, lost accounts, irreversible transfers, trials converting to paid plans, or severe financial destruction. Every exact action still requires the local phrase: I UNDERSTAND THIS CAN CAUSE FINANCIAL LOSS"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <WrapPanel>
+                                        <Button Content="Load permissions" Click="CompanionLoadPermissionsButton_Click" Padding="10,5" Margin="0,0,8,0"/>
+                                        <Button Content="Save permissions" Click="CompanionSavePermissionsButton_Click" Padding="10,5"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
                 <TabItem x:Name="ServerManagementTab" Header="Server Management">
                     <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto"
@@ -3402,7 +3500,7 @@
 
                             <StackPanel Grid.Row="0" Margin="0,0,0,12">
                                 <TextBlock Text="Server Management" FontSize="24" FontWeight="SemiBold"/>
-                                <TextBlock Text="SocketJack.com owns account login and storage. This host only manages local server permissions and token-rate requests."
+                                <TextBlock Text="This Workstation owns its user accounts, sessions, storage, balances, permissions, and registration approvals."
                                            Foreground="{StaticResource SubtleTextBrush}"
                                            FontSize="13"
                                            TextWrapping="Wrap"
@@ -3522,7 +3620,7 @@
                                                     DockPanel.Dock="Right"
                                                     Click="RefreshWebAuthUsersButton_Click"
                                                     Padding="9,4"/>
-                                            <TextBlock Text="Server Token Usage"
+                                            <TextBlock Text="Workstation Users"
                                                        FontSize="17"
                                                        FontWeight="SemiBold"
                                                        VerticalAlignment="Center"/>
@@ -3579,7 +3677,7 @@
                                         </Border>
 
                                         <TextBlock Grid.Row="2"
-                                                   Text="SocketJack.com manages account balances. This server only reports local token usage."
+                                                   Text="Accounts, balances, sessions, and permissions are stored by this Workstation. An account on another Workstation does not grant access here."
                                                    Foreground="{StaticResource SubtleTextBrush}"
                                                    TextWrapping="Wrap"
                                                    Margin="0,0,0,10"/>
@@ -3639,7 +3737,7 @@
                                                 Margin="0,10,0,0">
                                             <StackPanel>
                                                 <TextBlock x:Name="SelectedWebAuthUserText"
-                                                           Text="Select a WebAuth user to manage."
+                                                           Text="Select a Workstation user to manage."
                                                            FontWeight="SemiBold"
                                                            TextWrapping="Wrap"/>
                                                 <WrapPanel Margin="0,8,0,0">
@@ -3973,12 +4071,30 @@
                                                             Margin="0,0,6,0"
                                                             ToolTip="Remove access to every listed directory"/>
                                                     <Button x:Name="ServerBrowseAccessibleDirectoryButton"
-                                                            Content="Add Folders"
+                                                            Content="Attach"
                                                             DockPanel.Dock="Right"
                                                             Click="BrowseAccessibleDirectoryButton_Click"
                                                             Padding="8,3"
                                                             Margin="0,0,6,0"
-                                                            ToolTip="Add one or more accessible directories"/>
+                                                            ToolTip="Attach one or more folders to the selected session"/>
+                                                    <Button x:Name="ServerSetPrimaryWorkspaceButton"
+                                                            Content="Primary"
+                                                            DockPanel.Dock="Right"
+                                                            Click="SetPrimaryWorkspaceButton_Click"
+                                                            Padding="8,3"
+                                                            Margin="0,0,6,0"/>
+                                                    <Button x:Name="ServerWorkspaceIgnoreRulesButton"
+                                                            Content="Regex"
+                                                            DockPanel.Dock="Right"
+                                                            Click="WorkspaceIgnoreRulesButton_Click"
+                                                            Padding="8,3"
+                                                            Margin="0,0,6,0"/>
+                                                    <Button x:Name="ServerAddGlobalWorkspaceButton"
+                                                            Content="Global"
+                                                            DockPanel.Dock="Right"
+                                                            Click="AddGlobalWorkspaceButton_Click"
+                                                            Padding="8,3"
+                                                            Margin="0,0,6,0"/>
                                                     <TextBlock Text="Solution Explorer"
                                                                FontSize="16"
                                                                FontWeight="SemiBold"
@@ -4025,11 +4141,18 @@
                                                                         <TextBlock Text="{Binding Path}" Foreground="{StaticResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"/>
                                                                     </StackPanel>
                                                                     <Button Grid.Column="1"
+                                                                            Content="Edit"
+                                                                            Tag="{Binding}"
+                                                                            Click="EditWorkspaceRootButton_Click"
+                                                                            Padding="7,2"
+                                                                            Margin="8,0,0,0"
+                                                                            VerticalAlignment="Center"/>
+                                                                    <Button Grid.Column="1"
                                                                             Content="Remove"
                                                                             Tag="{Binding}"
                                                                             Click="RemoveAccessibleDirectoryListItemButton_Click"
                                                                             Padding="7,2"
-                                                                            Margin="8,0,0,0"
+                                                                            Margin="62,0,0,0"
                                                                             VerticalAlignment="Center"/>
                                                                 </Grid>
                                                             </DataTemplate>
@@ -4297,7 +4420,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Worth noticing"
                                                FontWeight="SemiBold"/>
-                                    <TextBlock Text="SocketJack.com sign-in owns uploads, account storage, public listings, and paid token usage. Session files count against the user's storage cap."
+                                    <TextBlock Text="Workstation accounts own uploads, session storage, permissions, and local token usage. Public listing credentials are separate from user access."
                                                Foreground="{StaticResource SubtleTextBrush}"
                                                TextWrapping="Wrap"
                                                Margin="0,6,0,0"/>

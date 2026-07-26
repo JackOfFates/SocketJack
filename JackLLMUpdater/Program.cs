@@ -17,13 +17,10 @@ namespace JackLLMUpdater;
 internal static class Program {
     private const string DefaultManifestUrl = "https://socketjack.com/Update/meta";
     private const string DefaultUpdateFileBaseUrl = "https://socketjack.com/Update/";
-    private const string DefaultCompanionChannelManifestUrl = "https://socketjack.com/Update/jackllm-companion/meta";
     private const string GuiRegistryKeyPath = @"Software\SocketJack\JackLLM";
     private const string GuiRegistryInstallLocationValueName = "InstallLocation";
     private const string LegacyLmVsProxyProcessPrefix = "LmVsProxy";
     private const string GuiProcessName = "JackLLM";
-    private const string CompanionProcessName = "JackLLMCompanion";
-    private const string CompanionDirectoryName = "Companion";
     private const string UpdaterProcessName = "JackLLMUpdater";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
@@ -41,7 +38,7 @@ internal static class Program {
         UpdateOptions options = UpdateOptions.Parse(args);
         if (options.ShowHelp) {
             Console.WriteLine("JackLLM Updater");
-            Console.WriteLine("--check | --force | --diff | --watch | --startup-check | --parent-pid <pid> | --target <folder> | --manifest <url> | --base-url <url> | --companion-manifest <url>");
+            Console.WriteLine("--check | --force | --diff | --watch | --startup-check | --parent-pid <pid> | --target <folder> | --manifest <url> | --base-url <url>");
             return 0;
         }
 
@@ -294,55 +291,31 @@ internal static class Program {
                 return status;
             }
 
-            string companionTargetDirectory = GetCompanionTargetDirectory(options.TargetDirectory);
-            ApplyPendingReplacements(companionTargetDirectory, options.StatusPath);
-
             UpdateManifest guiManifest = BuildGuiManifest(manifest);
-            UpdateManifest companionManifest = BuildCompanionManifestFromGuiManifest(manifest, options);
-            if (!options.SkipCompanionUpdate && companionManifest.Files.Count == 0)
-                companionManifest = await TryLoadCompanionChannelManifestAsync(http, options, timeoutSource.Token, status);
-
             List<UpdateFileChange> changed = FindChangedFiles(options.TargetDirectory, guiManifest, options.Force);
-            List<UpdateFileChange> companionChanged = options.SkipCompanionUpdate || companionManifest.Files.Count == 0
-                ? new List<UpdateFileChange>()
-                : FindChangedFiles(companionTargetDirectory, companionManifest, options.Force);
             List<UpdateFileChange> applicableChanges = changed
-                .Where(change => options.Force || change.ShouldApplyByDefault)
-                .ToList();
-            List<UpdateFileChange> companionApplicableChanges = companionChanged
                 .Where(change => options.Force || change.ShouldApplyByDefault)
                 .ToList();
             List<UpdateFile> filesToApply = options.CheckOnly
                 ? (options.AutoApplyMissingFiles ? applicableChanges.Where(change => change.Missing).Select(change => change.File).ToList() : new List<UpdateFile>())
                 : applicableChanges.Select(change => change.File).ToList();
-            List<UpdateFile> companionFilesToApply = options.CheckOnly
-                ? (options.AutoApplyMissingFiles ? companionApplicableChanges.Where(change => change.Missing).Select(change => change.File).ToList() : new List<UpdateFile>())
-                : companionApplicableChanges.Select(change => change.File).ToList();
-            status.UpdateAvailable = applicableChanges.Count > 0 || companionApplicableChanges.Count > 0;
+            status.UpdateAvailable = applicableChanges.Count > 0;
             status.ManifestGeneratedUtc = manifest.GeneratedUtc;
-            status.TotalFiles = guiManifest.Files.Count + companionManifest.Files.Count;
-            status.ChangedFiles = changed.Count + companionChanged.Count;
-            status.MissingFiles = changed.Count(change => change.Missing) + companionChanged.Count(change => change.Missing);
-            status.RemoteNewerFiles = changed.Count(change => change.RemoteIsNewer) + companionChanged.Count(change => change.RemoteIsNewer);
-            status.LocalNewerFiles = changed.Count(change => change.LocalIsNewer) + companionChanged.Count(change => change.LocalIsNewer);
-            status.SkippedLocalNewerFiles = changed.Count(change => change.LocalIsNewer && !options.Force) + companionChanged.Count(change => change.LocalIsNewer && !options.Force);
-            status.CompanionTargetDirectory = companionTargetDirectory;
-            status.CompanionTotalFiles = companionManifest.Files.Count;
-            status.CompanionChangedFiles = companionChanged.Count;
-            status.CompanionMissingFiles = companionChanged.Count(change => change.Missing);
-            status.CompanionUpdateAvailable = companionApplicableChanges.Count > 0;
-            status.Message = BuildCombinedChangeSummary(changed, applicableChanges, companionChanged, companionApplicableChanges, options.Force);
+            status.TotalFiles = guiManifest.Files.Count;
+            status.ChangedFiles = changed.Count;
+            status.MissingFiles = changed.Count(change => change.Missing);
+            status.RemoteNewerFiles = changed.Count(change => change.RemoteIsNewer);
+            status.LocalNewerFiles = changed.Count(change => change.LocalIsNewer);
+            status.SkippedLocalNewerFiles = changed.Count(change => change.LocalIsNewer && !options.Force);
+            status.Message = BuildChangeSummary(changed, applicableChanges, options.Force);
             WriteStatus(options.StatusPath, status);
 
-            if (filesToApply.Count == 0 && companionFilesToApply.Count == 0)
+            if (filesToApply.Count == 0)
                 return status;
 
             int updated = 0;
             int pending = 0;
-            int companionUpdated = 0;
-            int companionPending = 0;
             var pendingReplacements = new List<PendingReplacement>();
-            var companionPendingReplacements = new List<PendingReplacement>();
             RelatedProcessRestartScope restartScope = RelatedProcessRestartScope.Empty;
             if (!options.CheckOnly) {
                 status.Message = options.NoCloseTarget
@@ -377,78 +350,19 @@ internal static class Program {
                 restartScope.RestartClosedProcesses();
             }
 
-            if (companionFilesToApply.Count > 0) {
-                RelatedProcessRestartScope companionRestartScope = RelatedProcessRestartScope.Empty;
-                status.CompanionIsDownloading = true;
-                status.CompanionMessage = "Preparing Companion update...";
-                status.CompanionCurrentFile = "";
-                WriteStatus(options.StatusPath, status);
-
-                try {
-                    if (!options.NoCloseTarget)
-                        companionRestartScope = CloseCompanionProcessForUpdate(companionTargetDirectory);
-                    foreach (UpdateFile file in companionFilesToApply) {
-                        status.CompanionIsDownloading = true;
-                        status.CompanionCurrentFile = file.Path;
-                        status.CompanionMessage = "Downloading Companion file: " + file.Path;
-                        WriteStatus(options.StatusPath, status);
-
-                        UpdateApplyResult result = await DownloadAndApplyFileAsync(http, options with { TargetDirectory = companionTargetDirectory }, companionManifest, file, timeoutSource.Token);
-                        if (result.Applied)
-                            companionUpdated++;
-                        if (!string.IsNullOrWhiteSpace(result.PendingSourcePath)) {
-                            companionPending++;
-                            companionPendingReplacements.Add(new PendingReplacement {
-                                SourcePath = result.PendingSourcePath,
-                                TargetPath = result.TargetPath,
-                                LastWriteUtc = result.LastWriteUtc
-                            });
-                        }
-                    }
-                } finally {
-                    if (companionRestartScope.HasProcessesToRestart) {
-                        status.CompanionMessage = "Restarting Companion...";
-                        status.CompanionCurrentFile = "";
-                        WriteStatus(options.StatusPath, status);
-                    }
-                    companionRestartScope.RestartClosedProcesses();
-                    status.CompanionIsDownloading = false;
-                    status.CompanionCurrentFile = "";
-                }
-            }
-
             if (pendingReplacements.Count > 0)
                 SavePendingReplacements(options.TargetDirectory, pendingReplacements);
-            if (companionPendingReplacements.Count > 0)
-                SavePendingReplacements(companionTargetDirectory, companionPendingReplacements);
 
             status.UpdatedFiles = updated;
             status.PendingFiles = pending;
-            status.CompanionUpdatedFiles = companionUpdated;
-            status.CompanionPendingFiles = companionPending;
             List<UpdateFileChange> remainingChanged = FindChangedFiles(options.TargetDirectory, guiManifest, false);
-            List<UpdateFileChange> remainingCompanionChanged = options.SkipCompanionUpdate || companionManifest.Files.Count == 0
-                ? new List<UpdateFileChange>()
-                : FindChangedFiles(companionTargetDirectory, companionManifest, false);
-            status.ChangedFiles = remainingChanged.Count + remainingCompanionChanged.Count;
-            status.MissingFiles = remainingChanged.Count(change => change.Missing) + remainingCompanionChanged.Count(change => change.Missing);
-            status.RemoteNewerFiles = remainingChanged.Count(change => change.RemoteIsNewer) + remainingCompanionChanged.Count(change => change.RemoteIsNewer);
-            status.LocalNewerFiles = remainingChanged.Count(change => change.LocalIsNewer) + remainingCompanionChanged.Count(change => change.LocalIsNewer);
-            status.SkippedLocalNewerFiles = remainingChanged.Count(change => change.LocalIsNewer) + remainingCompanionChanged.Count(change => change.LocalIsNewer);
-            status.CompanionChangedFiles = remainingCompanionChanged.Count;
-            status.CompanionMissingFiles = remainingCompanionChanged.Count(change => change.Missing);
-            status.CompanionUpdateAvailable = remainingCompanionChanged.Any(change => change.ShouldApplyByDefault) || companionPending > 0;
-            status.UpdateAvailable = pending > 0 || companionPending > 0 ||
-                                     remainingChanged.Any(change => change.ShouldApplyByDefault) ||
-                                     remainingCompanionChanged.Any(change => change.ShouldApplyByDefault);
-            status.Message = BuildCompletionSummary(pending, companionPending, remainingChanged, remainingCompanionChanged);
-            status.CompanionMessage = companionPending > 0
-                ? "Companion update staged. Restart Companion to finish " + companionPending.ToString(CultureInfo.InvariantCulture) + " locked file(s)."
-                : remainingCompanionChanged.Count > 0
-                    ? BuildChangeSummary(remainingCompanionChanged, remainingCompanionChanged.Where(change => change.ShouldApplyByDefault).ToList(), false)
-                    : companionUpdated > 0
-                        ? "Companion update complete."
-                        : status.CompanionMessage;
+            status.ChangedFiles = remainingChanged.Count;
+            status.MissingFiles = remainingChanged.Count(change => change.Missing);
+            status.RemoteNewerFiles = remainingChanged.Count(change => change.RemoteIsNewer);
+            status.LocalNewerFiles = remainingChanged.Count(change => change.LocalIsNewer);
+            status.SkippedLocalNewerFiles = remainingChanged.Count(change => change.LocalIsNewer);
+            status.UpdateAvailable = pending > 0 || remainingChanged.Any(change => change.ShouldApplyByDefault);
+            status.Message = BuildCompletionSummary(pending, remainingChanged);
             WriteStatus(options.StatusPath, status);
             return status;
         } catch (OperationCanceledException) {
@@ -491,64 +405,10 @@ internal static class Program {
             GeneratedUtc = manifest.GeneratedUtc,
             Error = manifest.Error,
             Files = manifest.Files
-                .Where(file => !IsCompanionManifestPath(file.Path))
+                .Where(file => !NormalizeManifestPath(file.Path).StartsWith("Companion/", StringComparison.OrdinalIgnoreCase))
                 .Where(file => IsInstallPayloadFile(file.Path))
                 .Select(CloneUpdateFile)
                 .ToList()
-        };
-    }
-
-    private static UpdateManifest BuildCompanionManifestFromGuiManifest(UpdateManifest manifest, UpdateOptions options) {
-        var files = manifest.Files
-            .Where(file => IsCompanionManifestPath(file.Path))
-            .Select(file => {
-                UpdateFile clone = CloneUpdateFile(file);
-                clone.Path = StripCompanionManifestPrefix(file.Path);
-                if (string.IsNullOrWhiteSpace(clone.Url))
-                    clone.Url = CombineUrl(CombineUrl(manifest.BaseUrl, CompanionDirectoryName + "/"), clone.Path);
-                return clone;
-            })
-            .Where(file => IsInstallPayloadFile(file.Path))
-            .ToList();
-
-        return new UpdateManifest {
-            Available = files.Count > 0,
-            BaseUrl = CombineUrl(manifest.BaseUrl, CompanionDirectoryName + "/"),
-            GeneratedUtc = manifest.GeneratedUtc,
-            Error = files.Count > 0 ? "" : "Companion files were not listed in the GUI update manifest.",
-            Files = files
-        };
-    }
-
-    private static async Task<UpdateManifest> TryLoadCompanionChannelManifestAsync(HttpClient http, UpdateOptions options, CancellationToken cancellationToken, UpdateStatus status) {
-        if (options.SkipCompanionUpdate || string.IsNullOrWhiteSpace(options.CompanionManifestUrl))
-            return EmptyCompanionManifest("Companion update metadata disabled.");
-
-        try {
-            UpdateManifest? manifest = await LoadManifestAsync(http, options with { ManifestUrl = options.CompanionManifestUrl }, cancellationToken);
-            if (manifest == null || !manifest.Available) {
-                status.CompanionHasError = true;
-                status.CompanionMessage = string.IsNullOrWhiteSpace(manifest?.Error)
-                    ? "Companion update metadata unavailable."
-                    : manifest.Error;
-                return EmptyCompanionManifest(status.CompanionMessage);
-            }
-
-            return manifest;
-        } catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is InvalidOperationException || ex is JsonException) {
-            status.CompanionHasError = true;
-            status.CompanionMessage = "Companion update metadata unavailable: " + ex.Message;
-            return EmptyCompanionManifest(status.CompanionMessage);
-        }
-    }
-
-    private static UpdateManifest EmptyCompanionManifest(string message) {
-        return new UpdateManifest {
-            Available = false,
-            BaseUrl = "",
-            GeneratedUtc = "",
-            Error = message,
-            Files = new List<UpdateFile>()
         };
     }
 
@@ -565,25 +425,8 @@ internal static class Program {
         };
     }
 
-    private static bool IsCompanionManifestPath(string path) {
-        string normalized = NormalizeManifestPath(path);
-        return normalized.StartsWith(CompanionDirectoryName + "/", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string StripCompanionManifestPrefix(string path) {
-        string normalized = NormalizeManifestPath(path);
-        string prefix = CompanionDirectoryName + "/";
-        return normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            ? normalized.Substring(prefix.Length)
-            : normalized;
-    }
-
     private static string NormalizeManifestPath(string path) {
         return (path ?? "").Replace('\\', '/').TrimStart('/');
-    }
-
-    private static string GetCompanionTargetDirectory(string targetDirectory) {
-        return Path.Combine(targetDirectory, CompanionDirectoryName);
     }
 
     private static List<UpdateFileChange> FindChangedFiles(string targetDirectory, UpdateManifest manifest, bool force) {
@@ -609,36 +452,12 @@ internal static class Program {
         return changed;
     }
 
-    private static string BuildCombinedChangeSummary(List<UpdateFileChange> guiChanged, List<UpdateFileChange> guiApplicableChanges, List<UpdateFileChange> companionChanged, List<UpdateFileChange> companionApplicableChanges, bool force) {
-        if (guiChanged.Count == 0 && companionChanged.Count == 0)
-            return "JackLLM and Companion are up to date.";
+    private static string BuildCompletionSummary(int pending, List<UpdateFileChange> remainingChanged) {
+        if (pending > 0)
+            return "Update staged. Restart JackLLM to finish " + pending.ToString(CultureInfo.InvariantCulture) + " locked file(s).";
 
-        var parts = new List<string>();
-        if (guiChanged.Count > 0)
-            parts.Add("JackLLM: " + BuildChangeSummary(guiChanged, guiApplicableChanges, force));
-        if (companionChanged.Count > 0)
-            parts.Add("Companion: " + BuildChangeSummary(companionChanged, companionApplicableChanges, force));
-        return string.Join(" ", parts);
-    }
-
-    private static string BuildCompletionSummary(int pending, int companionPending, List<UpdateFileChange> remainingChanged, List<UpdateFileChange> remainingCompanionChanged) {
-        if (pending > 0 || companionPending > 0) {
-            var parts = new List<string>();
-            if (pending > 0)
-                parts.Add(pending.ToString(CultureInfo.InvariantCulture) + " JackLLM locked file(s)");
-            if (companionPending > 0)
-                parts.Add(companionPending.ToString(CultureInfo.InvariantCulture) + " Companion locked file(s)");
-            return "Update staged. Restart affected JackLLM app(s) to finish " + string.Join(", ", parts) + ".";
-        }
-
-        if (remainingChanged.Count > 0 || remainingCompanionChanged.Count > 0) {
-            return BuildCombinedChangeSummary(
-                remainingChanged,
-                remainingChanged.Where(change => change.ShouldApplyByDefault).ToList(),
-                remainingCompanionChanged,
-                remainingCompanionChanged.Where(change => change.ShouldApplyByDefault).ToList(),
-                false);
-        }
+        if (remainingChanged.Count > 0)
+            return BuildChangeSummary(remainingChanged, remainingChanged.Where(change => change.ShouldApplyByDefault).ToList(), false);
 
         return "Update complete.";
     }
@@ -854,64 +673,6 @@ internal static class Program {
         return new RelatedProcessRestartScope(restartByPath.Values.ToList());
     }
 
-    private static RelatedProcessRestartScope CloseCompanionProcessForUpdate(string companionTargetDirectory) {
-        List<RelatedProcessCandidate> candidates = FindCompanionProcessCandidates(companionTargetDirectory);
-        if (candidates.Count == 0)
-            return RelatedProcessRestartScope.Empty;
-
-        var restartByPath = new Dictionary<string, ProcessRestartInfo>(StringComparer.OrdinalIgnoreCase);
-        foreach (RelatedProcessCandidate candidate in candidates) {
-            if (!restartByPath.TryGetValue(candidate.RestartInfo.ExecutablePath, out ProcessRestartInfo? existing) ||
-                existing.StartHidden && !candidate.RestartInfo.StartHidden)
-                restartByPath[candidate.RestartInfo.ExecutablePath] = candidate.RestartInfo;
-        }
-
-        foreach (RelatedProcessCandidate candidate in candidates) {
-            try {
-                using Process process = Process.GetProcessById(candidate.ProcessId);
-                TryCloseProcessForUpdate(process);
-            } catch {
-            }
-        }
-
-        return new RelatedProcessRestartScope(restartByPath.Values.ToList());
-    }
-
-    private static List<RelatedProcessCandidate> FindCompanionProcessCandidates(string companionTargetDirectory) {
-        var candidates = new List<RelatedProcessCandidate>();
-        string targetExecutable = Path.Combine(companionTargetDirectory, CompanionProcessName + ".exe");
-        string targetDirectory = Path.GetFullPath(companionTargetDirectory);
-
-        foreach (Process process in Process.GetProcessesByName(CompanionProcessName)) {
-            try {
-                if (process.Id == Environment.ProcessId || process.HasExited)
-                    continue;
-
-                string executablePath = TryGetProcessExecutablePath(process);
-                bool pathKnown = !string.IsNullOrWhiteSpace(executablePath);
-                if (!pathKnown)
-                    executablePath = targetExecutable;
-
-                if (pathKnown && !IsPathWithinDirectory(executablePath, targetDirectory))
-                    continue;
-
-                bool startHidden = ShouldRestartHidden(process, CompanionProcessName);
-                candidates.Add(new RelatedProcessCandidate(
-                    process.Id,
-                    new ProcessRestartInfo(
-                        executablePath,
-                        BuildRestartArguments(CompanionProcessName, startHidden),
-                        Path.GetDirectoryName(executablePath) ?? companionTargetDirectory,
-                        startHidden)));
-            } catch {
-            } finally {
-                process.Dispose();
-            }
-        }
-
-        return candidates;
-    }
-
     private static List<RelatedProcessCandidate> FindRelatedProcessCandidates(string targetDirectory) {
         var candidates = new List<RelatedProcessCandidate>();
         foreach (Process process in Process.GetProcesses()) {
@@ -949,8 +710,6 @@ internal static class Program {
     private static bool IsRelatedProcessName(string processName) {
         if (processName.Equals(UpdaterProcessName, StringComparison.OrdinalIgnoreCase))
             return false;
-        if (processName.Equals(CompanionProcessName, StringComparison.OrdinalIgnoreCase))
-            return false;
         return processName.Equals(GuiProcessName, StringComparison.OrdinalIgnoreCase) ||
                processName.StartsWith(LegacyLmVsProxyProcessPrefix, StringComparison.OrdinalIgnoreCase);
     }
@@ -980,8 +739,7 @@ internal static class Program {
     }
 
     private static bool ShouldRestartHidden(Process process, string processName) {
-        if (!processName.Equals(GuiProcessName, StringComparison.OrdinalIgnoreCase) &&
-            !processName.Equals(CompanionProcessName, StringComparison.OrdinalIgnoreCase))
+        if (!processName.Equals(GuiProcessName, StringComparison.OrdinalIgnoreCase))
             return false;
 
         try {
@@ -995,8 +753,7 @@ internal static class Program {
     private static string BuildRestartArguments(string processName, bool startHidden) {
         if (!startHidden)
             return "";
-        if (processName.Equals(GuiProcessName, StringComparison.OrdinalIgnoreCase) ||
-            processName.Equals(CompanionProcessName, StringComparison.OrdinalIgnoreCase))
+        if (processName.Equals(GuiProcessName, StringComparison.OrdinalIgnoreCase))
             return "--tray";
         return "";
     }
@@ -1235,23 +992,6 @@ internal static class Program {
         return DefaultUpdateFileBaseUrl;
     }
 
-    internal static string BuildDefaultCompanionManifestUrl(string manifestUrl) {
-        if (Uri.TryCreate(manifestUrl, UriKind.Absolute, out Uri? uri)) {
-            string path = uri.AbsolutePath.Replace('\\', '/').TrimEnd('/');
-
-            if (path.EndsWith("/update/meta", StringComparison.OrdinalIgnoreCase)) {
-                if (uri.Host.Equals("socketjack.com", StringComparison.OrdinalIgnoreCase) ||
-                    uri.Host.Equals("www.socketjack.com", StringComparison.OrdinalIgnoreCase))
-                    return new Uri(uri, "/Update/jackllm-companion/meta").ToString();
-
-                string prefix = path.Substring(0, path.Length - "/update/meta".Length);
-                return new Uri(uri, prefix + "/Update/jackllm-companion/meta").ToString();
-            }
-        }
-
-        return DefaultCompanionChannelManifestUrl;
-    }
-
     private static void WriteStatus(string statusPath, UpdateStatus status) {
         try {
             Directory.CreateDirectory(Path.GetDirectoryName(statusPath) ?? AppContext.BaseDirectory);
@@ -1314,8 +1054,6 @@ internal sealed record UpdateOptions {
     public int ParentProcessId { get; init; }
     public TimeSpan WatchInterval { get; init; } = TimeSpan.FromMinutes(1);
     public string ManifestUrl { get; init; } = "https://socketjack.com/Update/meta";
-    public string CompanionManifestUrl { get; init; } = "";
-    public bool SkipCompanionUpdate { get; init; }
     public string TargetDirectory { get; init; } = AppContext.BaseDirectory;
     public string StatusPath { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JackLLM", "updater-status.json");
     public string ConfigPath { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JackLLM", "updater-config.json");
@@ -1364,22 +1102,10 @@ internal sealed record UpdateOptions {
                         i++;
                     }
                     break;
-                case "--companion-manifest":
-                    if (!string.IsNullOrWhiteSpace(next)) {
-                        options = options with { CompanionManifestUrl = next };
-                        i++;
-                    }
-                    break;
-                case "--no-companion-update":
-                    options = options with { SkipCompanionUpdate = true };
-                    break;
                 case "--base-url":
                     if (!string.IsNullOrWhiteSpace(next)) {
                         string baseUrl = next.TrimEnd('/') + "/";
-                        options = options with {
-                            ManifestUrl = baseUrl.TrimEnd('/') + "/Update/meta",
-                            CompanionManifestUrl = baseUrl.TrimEnd('/') + "/Update/jackllm-companion/meta"
-                        };
+                        options = options with { ManifestUrl = baseUrl.TrimEnd('/') + "/Update/meta" };
                         i++;
                     }
                     break;
@@ -1406,8 +1132,6 @@ internal sealed record UpdateOptions {
             }
         }
 
-        if (string.IsNullOrWhiteSpace(options.CompanionManifestUrl))
-            options = options with { CompanionManifestUrl = Program.BuildDefaultCompanionManifestUrl(options.ManifestUrl) };
         options = options with { TargetDirectory = Program.ResolveUpdateTargetDirectory(options.TargetDirectory) };
         return options;
     }
@@ -1586,23 +1310,10 @@ internal sealed class UpdateStatus {
     public int UpdatedFiles { get; set; }
     public int PendingFiles { get; set; }
     public string Message { get; set; } = "";
-    public bool CompanionUpdateAvailable { get; set; }
-    public bool CompanionIsDownloading { get; set; }
-    public bool CompanionHasError { get; set; }
-    public int CompanionTotalFiles { get; set; }
-    public int CompanionChangedFiles { get; set; }
-    public int CompanionMissingFiles { get; set; }
-    public int CompanionUpdatedFiles { get; set; }
-    public int CompanionPendingFiles { get; set; }
-    public string CompanionTargetDirectory { get; set; } = "";
-    public string CompanionCurrentFile { get; set; } = "";
-    public string CompanionMessage { get; set; } = "";
-
     public static UpdateStatus Begin(string targetDirectory) {
         return new UpdateStatus {
             CheckedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
             TargetDirectory = targetDirectory,
-            CompanionTargetDirectory = Path.Combine(targetDirectory, "Companion"),
             Message = "Checking for updates..."
         };
     }

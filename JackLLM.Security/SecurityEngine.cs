@@ -6,12 +6,14 @@ namespace JackLLM.Security;
 public sealed class SecurityEngine {
     private readonly SecurityStateStore _store;
     private readonly bool _development;
+    private readonly INetworkBindingProvider _networkBindingProvider;
     private readonly ConcurrentDictionary<string, PendingChallenge> _challenges = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _grants = new();
 
-    public SecurityEngine(SecurityStateStore store, bool development) {
+    public SecurityEngine(SecurityStateStore store, bool development, INetworkBindingProvider? networkBindingProvider = null) {
         _store = store;
         _development = development;
+        _networkBindingProvider = networkBindingProvider ?? new NetworkBindingProvider();
     }
 
     public SecurityResponse GetStatus() {
@@ -26,7 +28,13 @@ public sealed class SecurityEngine {
             if (record.LastObservedUtc > now.AddMinutes(5)) {
                 record.CooldownUntilUtc = now.AddHours(24);
                 _store.Save(record);
+                _store.DeleteRememberedDevice();
                 return Response(SecurityStateKind.Cooldown, "The system clock moved backward. Unlocking is suspended for 24 hours.", record.HardwareId, record.CooldownUntilUtc);
+            }
+            if (string.IsNullOrWhiteSpace(record.CredentialGeneration)) {
+                record.CredentialGeneration = CreateCredentialGeneration();
+                _store.Save(record);
+                _store.DeleteRememberedDevice();
             }
             if (record.LastObservedUtc == null || now - record.LastObservedUtc > TimeSpan.FromMinutes(1)) {
                 record.LastObservedUtc = now;
@@ -94,13 +102,21 @@ public sealed class SecurityEngine {
             Pepper = Convert.ToBase64String(pepper),
             EnrolledUtc = DateTimeOffset.UtcNow,
             LastObservedUtc = DateTimeOffset.UtcNow
+            ,CredentialGeneration = CreateCredentialGeneration()
         });
+        _store.DeleteRememberedDevice();
         CryptographicOperations.ZeroMemory(pepper);
         CryptographicOperations.ZeroMemory(verifier);
         CryptographicOperations.ZeroMemory(recoveryVerifier);
         string grant = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        _grants[grant] = DateTimeOffset.UtcNow.AddSeconds(30);
-        return new SecurityResponse { Success = true, State = SecurityStateKind.Unlocked, Message = "Enrollment complete.", HardwareId = hardwareId, RecoveryKey = recoveryKey, RecoveryBackup = recoveryBackup, UnlockGrant = grant, DevelopmentMode = _development };
+        DateTimeOffset grantExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(10);
+        // Enrollment pauses while the user chooses a location and saves the generated recovery file.
+        // Keep this grant short-lived, but allow enough time for that required human workflow.
+        _grants[grant] = grantExpiresUtc;
+        var response = new SecurityResponse { Success = true, State = SecurityStateKind.Unlocked, Message = "Enrollment complete.", HardwareId = hardwareId, RecoveryKey = recoveryKey, RecoveryBackup = recoveryBackup, UnlockGrant = grant, UnlockGrantExpiresUtc = grantExpiresUtc, DevelopmentMode = _development };
+        if (request.RememberDevice)
+            AddRememberedDevice(response, _store.Load()!);
+        return response;
     }
 
     public SecurityResponse Unlock(SecurityRequest request) {
@@ -130,8 +146,12 @@ public sealed class SecurityEngine {
         record.CooldownUntilUtc = null;
         _store.Save(record);
         string grant = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        _grants[grant] = DateTimeOffset.UtcNow.AddSeconds(30);
-        return new SecurityResponse { Success = true, State = SecurityStateKind.Unlocked, Message = "Workstation unlocked.", HardwareId = record.HardwareId, UnlockGrant = grant, DevelopmentMode = _development };
+        DateTimeOffset grantExpiresUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        _grants[grant] = grantExpiresUtc;
+        var response = new SecurityResponse { Success = true, State = SecurityStateKind.Unlocked, Message = "Workstation unlocked.", HardwareId = record.HardwareId, UnlockGrant = grant, UnlockGrantExpiresUtc = grantExpiresUtc, DevelopmentMode = _development };
+        if (request.RememberDevice)
+            AddRememberedDevice(response, record);
+        return response;
     }
 
     public SecurityResponse ChangePassword(SecurityRequest request) {
@@ -151,9 +171,11 @@ public sealed class SecurityEngine {
             byte[] verifier = PasswordSecurity.Derive(request.NewPassword!, salt, pepper);
             record.Salt = Convert.ToBase64String(salt);
             record.PasswordVerifier = Convert.ToBase64String(verifier);
+            record.CredentialGeneration = CreateCredentialGeneration();
             record.FailedAttempts = 0;
             record.CooldownUntilUtc = null;
             _store.Save(record);
+            _store.DeleteRememberedDevice();
             CryptographicOperations.ZeroMemory(verifier);
             SecurityResponse changed = Response(SecurityStateKind.Locked, "The workstation password was changed.", record.HardwareId);
             changed.Success = true;
@@ -193,9 +215,11 @@ public sealed class SecurityEngine {
             record.HelloPublicKey = request.PublicKey;
             record.HelloAttestation = request.Attestation;
             record.HardwareId = HardwareIdentity.Compute(request.PublicKey);
+            record.CredentialGeneration = CreateCredentialGeneration();
             record.FailedAttempts = 0;
             record.CooldownUntilUtc = null;
             _store.Save(record);
+            _store.DeleteRememberedDevice();
             CryptographicOperations.ZeroMemory(verifier);
             CryptographicOperations.ZeroMemory(recoveryVerifier);
             SecurityResponse recovered = Response(SecurityStateKind.Locked, "Recovery complete. Unlock with the new password.", record.HardwareId);
@@ -221,9 +245,11 @@ public sealed class SecurityEngine {
             record.HelloPublicKey = request.PublicKey;
             record.HelloAttestation = request.Attestation;
             record.HardwareId = HardwareIdentity.Compute(request.PublicKey);
+            record.CredentialGeneration = CreateCredentialGeneration();
             record.FailedAttempts = 0;
             record.CooldownUntilUtc = null;
             _store.Save(record);
+            _store.DeleteRememberedDevice();
             SecurityResponse rebound = Response(SecurityStateKind.Locked, "Hardware binding updated.", record.HardwareId);
             rebound.Success = true;
             return rebound;
@@ -233,6 +259,69 @@ public sealed class SecurityEngine {
     public bool ConsumeGrant(string? grant) {
         if (string.IsNullOrWhiteSpace(grant) || !_grants.TryRemove(grant, out DateTimeOffset expires)) return false;
         return expires >= DateTimeOffset.UtcNow;
+    }
+
+    public SecurityResponse RememberedUnlock(string? token) {
+        WorkstationCredentialRecord? credential = TryLoadPrimary();
+        RememberedDeviceRecord? remembered;
+        try { remembered = _store.LoadRememberedDevice(); }
+        catch {
+            _store.DeleteRememberedDevice();
+            return Response(SecurityStateKind.Locked, "The remembered-device token could not be read. Sign in again.", credential?.HardwareId);
+        }
+        if (credential == null || remembered == null || string.IsNullOrWhiteSpace(token))
+            return Response(SecurityStateKind.Locked, "No remembered-device login is available.", credential?.HardwareId);
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (remembered.LastObservedUtc > now.AddMinutes(5))
+            return InvalidateRemembered("The system clock moved backward. Sign in again.", credential.HardwareId);
+        if (remembered.ExpiresUtc <= now)
+            return InvalidateRemembered("The remembered-device login expired after 30 days. Sign in again.", credential.HardwareId);
+
+        byte[] suppliedDigest = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
+        byte[] expectedDigest;
+        try { expectedDigest = Convert.FromBase64String(remembered.TokenDigest); }
+        catch { return InvalidateRemembered("The remembered-device token is corrupt. Sign in again.", credential.HardwareId); }
+        bool tokenValid = expectedDigest.Length == suppliedDigest.Length &&
+                          CryptographicOperations.FixedTimeEquals(expectedDigest, suppliedDigest);
+        CryptographicOperations.ZeroMemory(suppliedDigest);
+        CryptographicOperations.ZeroMemory(expectedDigest);
+        if (!tokenValid)
+            return InvalidateRemembered("The remembered-device token was not accepted. Sign in again.", credential.HardwareId);
+
+        string currentHardwareId = HardwareIdentity.Compute(credential.HelloPublicKey);
+        if (!FixedHexEquals(currentHardwareId, remembered.HardwareId) ||
+            !FixedHexEquals(currentHardwareId, credential.HardwareId))
+            return InvalidateRemembered("The workstation hardware changed. Sign in again.", credential.HardwareId);
+        if (!FixedTextEquals(credential.CredentialGeneration, remembered.CredentialGeneration))
+            return InvalidateRemembered("The workstation password or security enrollment changed. Sign in again.", credential.HardwareId);
+
+        NetworkBindingResult network = _networkBindingProvider.GetCurrentAsync(CancellationToken.None).GetAwaiter().GetResult();
+        if (!FixedTextEquals(network.LocalIpBinding, remembered.LocalIpBinding))
+            return InvalidateRemembered("The local network IP changed. Sign in again.", credential.HardwareId);
+        if (network.PublicIpVerified) {
+            if (!FixedTextEquals(network.PublicIp, remembered.PublicIp))
+                return InvalidateRemembered("The public IP changed. Sign in again.", credential.HardwareId);
+            remembered.LastPublicIpVerificationUtc = now;
+        } else if (now - remembered.LastPublicIpVerificationUtc > TimeSpan.FromHours(1)) {
+            return InvalidateRemembered("The public IP could not be verified and the one-hour cache expired. Sign in again.", credential.HardwareId);
+        }
+
+        remembered.LastObservedUtc = now;
+        _store.SaveRememberedDevice(remembered);
+        string grant = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        DateTimeOffset grantExpiresUtc = now.AddSeconds(30);
+        _grants[grant] = grantExpiresUtc;
+        return new SecurityResponse {
+            Success = true,
+            State = SecurityStateKind.Unlocked,
+            Message = $"Remembered device verified through {remembered.ExpiresUtc.LocalDateTime:g}.",
+            HardwareId = credential.HardwareId,
+            UnlockGrant = grant,
+            UnlockGrantExpiresUtc = grantExpiresUtc,
+            RememberedDeviceExpiresUtc = remembered.ExpiresUtc,
+            DevelopmentMode = _development
+        };
     }
 
     private bool TryConsumeChallenge(SecurityRequest request, SecurityOperation expected, out byte[] nonce) {
@@ -256,12 +345,58 @@ public sealed class SecurityEngine {
             "Authentication was not accepted.", record.HardwareId, record.CooldownUntilUtc);
     }
 
-    private static bool VerifyHelloSignature(string? publicKey, byte[] challenge, string? signature) {
+    private void AddRememberedDevice(SecurityResponse response, WorkstationCredentialRecord credential) {
+        NetworkBindingResult network = _networkBindingProvider.GetCurrentAsync(CancellationToken.None).GetAwaiter().GetResult();
+        if (!network.PublicIpVerified || string.IsNullOrWhiteSpace(network.PublicIp) || string.IsNullOrWhiteSpace(network.LocalIpBinding)) {
+            response.Message += " Remember this device was not enabled because both public and local IP addresses could not be verified.";
+            return;
+        }
+        string token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        byte[] digest = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset expires = now.AddDays(30);
+        _store.SaveRememberedDevice(new RememberedDeviceRecord {
+            TokenDigest = Convert.ToBase64String(digest),
+            ExpiresUtc = expires,
+            HardwareId = credential.HardwareId,
+            CredentialGeneration = credential.CredentialGeneration,
+            PublicIp = network.PublicIp,
+            LocalIpBinding = network.LocalIpBinding,
+            LastPublicIpVerificationUtc = now,
+            LastObservedUtc = now
+        });
+        CryptographicOperations.ZeroMemory(digest);
+        response.RememberedDeviceToken = token;
+        response.RememberedDeviceExpiresUtc = expires;
+        response.Message += $" This device is remembered through {expires.LocalDateTime:g}.";
+    }
+
+    private SecurityResponse InvalidateRemembered(string message, string? hardwareId) {
+        _store.DeleteRememberedDevice();
+        return Response(SecurityStateKind.Locked, message, hardwareId);
+    }
+
+    private static string CreateCredentialGeneration() =>
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+
+    private static bool FixedHexEquals(string? left, string? right) {
         try {
-            using CngKey key = CngKey.Import(Convert.FromBase64String(publicKey ?? ""), CngKeyBlobFormat.GenericPublicBlob);
-            using var rsa = new RSACng(key);
-            return rsa.VerifyData(challenge, Convert.FromBase64String(signature ?? ""), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
+            byte[] leftBytes = Convert.FromHexString(left ?? "");
+            byte[] rightBytes = Convert.FromHexString(right ?? "");
+            return leftBytes.Length == rightBytes.Length &&
+                   CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
         } catch { return false; }
+    }
+
+    private static bool FixedTextEquals(string? left, string? right) {
+        byte[] leftBytes = System.Text.Encoding.UTF8.GetBytes(left ?? "");
+        byte[] rightBytes = System.Text.Encoding.UTF8.GetBytes(right ?? "");
+        return leftBytes.Length == rightBytes.Length &&
+               CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
+    }
+
+    private static bool VerifyHelloSignature(string? publicKey, byte[] challenge, string? signature) {
+        return WindowsHelloCryptography.VerifySignature(publicKey, challenge, signature);
     }
 
     private SecurityResponse Response(SecurityStateKind state, string message, string? hardwareId = null, DateTimeOffset? cooldown = null) =>

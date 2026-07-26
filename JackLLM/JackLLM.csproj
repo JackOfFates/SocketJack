@@ -20,6 +20,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3124.44" />
     <PackageReference Include="System.Speech" Version="9.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
     <PackageReference Include="System.Text.Json" Version="10.0.7" />
   </ItemGroup>
 
@@ -79,6 +80,10 @@
     <JackOnnxBundleCudaDependencies>true</JackOnnxBundleCudaDependencies>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DefineConstants>$(DefineConstants);JACKLLM_SECURE_RELEASE</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <Resource Include="Assets\JackLLM.ico" />
     <Resource Include="Assets\JackLLM.png" />
@@ -89,6 +94,32 @@
       <JackLLMUpdaterFiles Include="..\JackLLMUpdater\bin\$(Configuration)\net8.0-windows7.0\JackLLMUpdater.*" />
     </ItemGroup>
     <Copy SourceFiles="@(JackLLMUpdaterFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(JackLLMUpdaterFiles)' != ''" />
+  </Target>
+
+  <Target Name="BundleOfficialSecurityBroker"
+          AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
+    <GetFileHash Files="$(OutDir)$(AssemblyName).exe" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_SecureReleaseWorkstationHash" />
+    </GetFileHash>
+    <WriteLinesToFile File="$(OutDir)secure-release.sha256"
+                      Lines="@(_SecureReleaseWorkstationHash->'%(FileHash)')"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+    <MSBuild Projects="..\JackLLM.SecurityBroker\JackLLM.SecurityBroker.csproj"
+             Targets="Build"
+             BuildInParallel="false"
+             Properties="Configuration=Release;RuntimeIdentifier=win-x64" />
+    <ItemGroup>
+      <OfficialSecurityBrokerFiles Include="..\JackLLM.SecurityBroker\bin\Release\net8.0-windows10.0.17763.0\win-x64\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(OfficialSecurityBrokerFiles)"
+          DestinationFiles="@(OfficialSecurityBrokerFiles->'$(OutDir)SecurityBroker\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(OutDir)SecurityBroker\JackLLM.SecurityBroker.exe')"
+           Text="The official Release security broker was not produced beside JackLLM.exe." />
+    <Error Condition="!Exists('$(OutDir)secure-release.sha256')"
+           Text="The secure Release workstation hash was not produced beside JackLLM.exe." />
   </Target>
 
 </Project>

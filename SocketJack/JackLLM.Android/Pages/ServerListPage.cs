@@ -61,12 +61,26 @@ public sealed class ServerListPage : ContentPage
             await OpenServerAsync(server);
         };
 
-        var add = new Button { Text = "Add or pair", BackgroundColor = Color.FromArgb("#2563EB"), TextColor = Colors.White, CornerRadius = 12 };
+        var signIn = new Button
+        {
+            Text = "Login / Register",
+            BackgroundColor = Color.FromArgb("#2563EB"),
+            TextColor = Colors.White,
+            CornerRadius = 12,
+            AutomationId = "OpenWorkstationLogin"
+        };
+        signIn.Clicked += async (_, _) => await OpenAuthenticationAsync();
+        var add = new Button
+        {
+            Text = "Pair code",
+            BackgroundColor = Color.FromArgb("#334155"),
+            TextColor = Colors.White,
+            CornerRadius = 12,
+            AutomationId = "OpenWorkstationPairing"
+        };
         add.Clicked += async (_, _) => await AddServerAsync();
         var refresh = new Button { Text = "Refresh", BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, CornerRadius = 12 };
         refresh.Clicked += async (_, _) => await ReloadAsync();
-        ToolbarItems.Add(new ToolbarItem("🖥", null, async () => await OpenPcAccessAsync()) { AutomationId = "PcAccess" });
-
         var pageContent = new Grid
         {
             Padding = new Thickness(16, 12),
@@ -88,7 +102,7 @@ public sealed class ServerListPage : ContentPage
                         _tailscaleStatus
                     }
                 }.Row(0),
-                new HorizontalStackLayout { Spacing = 10, Children = { add, refresh, _openTailscale } }.Row(1),
+                new HorizontalStackLayout { Spacing = 10, Children = { signIn, add, refresh, _openTailscale } }.Row(1),
                 new Label { Text = "Pull down to refresh connection status.", FontSize = 10, TextColor = Color.FromArgb("#64748B") }.Row(2),
                 _servers.Row(3)
             }
@@ -111,7 +125,7 @@ public sealed class ServerListPage : ContentPage
 
     private async Task ReloadAsync()
     {
-        _status.Text = "Finding saved and public Workstations...";
+        _status.Text = "Finding saved Workstations...";
         try
         {
             MobileConnectivityStatus mobileStatus = await _connectivity.GetStatusAsync();
@@ -120,19 +134,14 @@ public sealed class ServerListPage : ContentPage
             _openTailscale.IsVisible = !mobileStatus.TailscaleEnabled;
 
             List<ServerInfo> combined = _store.Load().ToList();
-            foreach (ServerInfo server in await _directory.LoadAsync())
-            {
-                if (!combined.Any(item => item.LaunchKey.Equals(server.LaunchKey, StringComparison.OrdinalIgnoreCase)))
-                    combined.Add(server);
-            }
 
             await Task.WhenAll(combined.Select(server => ProbeServerAsync(server, mobileStatus)));
             _currentServers = combined.OrderByDescending(server => server.Online).ThenBy(server => server.DisplayName).ToList();
             _servers.ItemsSource = _currentServers.ToList();
             int online = combined.Count(server => server.Online);
             _status.Text = combined.Count == 0
-                ? "No Workstations found. Add one by address or pairing code."
-                : $"{online} online · {combined.Count} saved/available";
+                ? "No Workstations found. Login, register, or pair a Workstation."
+                : $"{online} online · {combined.Count} saved";
         }
         catch (Exception ex)
         {
@@ -147,39 +156,60 @@ public sealed class ServerListPage : ContentPage
         try { endpoint = JackLlmClient.NormalizeBaseUrl(endpoint); }
         catch (Exception ex) { await DisplayAlertAsync("Invalid address", ex.Message, "OK"); return; }
 
-        string code = await DisplayPromptAsync("Pairing", "Enter the six-digit pairing code, or leave blank if this server uses SocketJack sign-in.", keyboard: Keyboard.Numeric) ?? "";
-        var server = new ServerInfo { Name = new Uri(endpoint).Host, Endpoint = endpoint, Online = true, IsSaved = true };
-        if (!string.IsNullOrWhiteSpace(code))
+        string code = await DisplayPromptAsync("Pair Workstation user", "Enter the six-digit code created for your user on this Workstation.", keyboard: Keyboard.Numeric) ?? "";
+        if (string.IsNullOrWhiteSpace(code))
         {
-            try
-            {
-                using var pairingClient = new JackLlmClient(_credentials);
-                string token = await pairingClient.CompletePairingAsync(endpoint, code.Trim(), DeviceInfo.Current.Name);
-                await _credentials.SetServerTokenAsync(server.LaunchKey, token);
-            }
-            catch (Exception ex) { await DisplayAlertAsync("Pairing failed", ex.Message, "OK"); return; }
+            await DisplayAlertAsync("Pairing required", "A Workstation pairing code is required. IP addresses and SocketJack.com accounts do not grant access.", "OK");
+            return;
         }
+        var server = new ServerInfo { Name = new Uri(endpoint).Host, Endpoint = endpoint, Online = true, IsSaved = true };
+        try
+        {
+            using var pairingClient = new JackLlmClient(_credentials);
+            string token = await pairingClient.CompletePairingAsync(endpoint, code.Trim(), DeviceInfo.Current.Name);
+            await _credentials.SetServerTokenAsync(server.LaunchKey, token);
+        }
+        catch (Exception ex) { await DisplayAlertAsync("Pairing failed", ex.Message, "OK"); return; }
         _store.Save(server);
         await ReloadAsync();
         await OpenServerAsync(server);
     }
 
-    private async Task OpenServerAsync(ServerInfo server)
+    private async Task OpenAuthenticationAsync(string endpoint = "")
     {
-        ServerInfo launch = BuildLaunch(server);
-        string recentSession = _recentSessions.FindRecent(server.LaunchKey, TimeSpan.FromHours(1))?.SessionId ?? "";
-        await Navigation.PushAsync(new ChatHostPage(launch, new JackLlmClient(_credentials), _store, _generation, _recentSessions, recentSession));
+        if (string.IsNullOrWhiteSpace(endpoint))
+            endpoint = _store.Load().FirstOrDefault()?.Endpoint ?? "";
+        await Navigation.PushAsync(new WorkstationAuthPage(
+            _credentials,
+            _store,
+            async server =>
+            {
+                await Navigation.PopAsync(false);
+                await ReloadAsync();
+                await OpenServerAsync(server);
+            },
+            endpoint));
     }
 
-    private async Task OpenPcAccessAsync()
+    private async Task OpenServerAsync(ServerInfo server)
     {
-        ServerInfo? server = _currentServers.FirstOrDefault(item => item.IsSaved) ?? _store.Load().FirstOrDefault();
-        if (server is null)
+        try
         {
-            await DisplayAlertAsync("PC Access", "Add or pair a Workstation first.", "OK");
-            return;
+            ServerInfo launch = BuildLaunch(server);
+            using var verification = new JackLlmClient(_credentials);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await verification.ConnectAsync(launch, timeout.Token);
+            string recentSession = _recentSessions.FindRecent(server.LaunchKey, TimeSpan.FromHours(1))?.SessionId ?? "";
+            await Navigation.PushAsync(new ChatHostPage(launch, new JackLlmClient(_credentials), _store, _credentials, _generation, _recentSessions, recentSession));
         }
-        await Navigation.PushAsync(new PcAccessPage(BuildLaunch(server), new JackLlmClient(_credentials)));
+        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+        {
+            await OpenAuthenticationAsync(server.Endpoint);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            await OpenAuthenticationAsync(server.Endpoint);
+        }
     }
 
     private async Task ProbeServerAsync(ServerInfo server, MobileConnectivityStatus mobileStatus)

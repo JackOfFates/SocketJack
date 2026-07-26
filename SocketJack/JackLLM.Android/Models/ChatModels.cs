@@ -9,6 +9,7 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     private string _reasoning = "";
     private string _status = "";
     private string _telemetry = "";
+    private string _workSummary = "";
     private bool _isReasoningExpanded = true;
     private bool _isGenerating;
     private string _routeSummary = "";
@@ -18,6 +19,7 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     public string Reasoning { get => _reasoning; set { if (_reasoning == value) return; _reasoning = value; PropertyChanged?.Invoke(this, new(nameof(Reasoning))); PropertyChanged?.Invoke(this, new(nameof(HasReasoning))); PropertyChanged?.Invoke(this, new(nameof(ShowReasoning))); } }
     public string Status { get => _status; set { if (_status == value) return; _status = value; PropertyChanged?.Invoke(this, new(nameof(Status))); PropertyChanged?.Invoke(this, new(nameof(HasStatus))); } }
     public string Telemetry { get => _telemetry; set { if (_telemetry == value) return; _telemetry = value; PropertyChanged?.Invoke(this, new(nameof(Telemetry))); PropertyChanged?.Invoke(this, new(nameof(HasTelemetry))); } }
+    public string WorkSummary { get => _workSummary; set { if (_workSummary == value) return; _workSummary = value; PropertyChanged?.Invoke(this, new(nameof(WorkSummary))); PropertyChanged?.Invoke(this, new(nameof(HasWorkSummary))); } }
     public bool IsReasoningExpanded { get => _isReasoningExpanded; set { if (_isReasoningExpanded == value) return; _isReasoningExpanded = value; PropertyChanged?.Invoke(this, new(nameof(IsReasoningExpanded))); PropertyChanged?.Invoke(this, new(nameof(ReasoningChevron))); } }
     public bool IsGenerating { get => _isGenerating; set { if (_isGenerating == value) return; _isGenerating = value; PropertyChanged?.Invoke(this, new(nameof(IsGenerating))); PropertyChanged?.Invoke(this, new(nameof(ReasoningHeader))); PropertyChanged?.Invoke(this, new(nameof(ShowReasoning))); } }
     public string RouteSummary { get => _routeSummary; set { if (_routeSummary == value) return; _routeSummary = value; PropertyChanged?.Invoke(this, new(nameof(RouteSummary))); PropertyChanged?.Invoke(this, new(nameof(HasRouteSummary))); } }
@@ -29,6 +31,7 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     public bool ShowReasoning => IsGenerating || HasReasoning;
     public bool HasStatus => !string.IsNullOrWhiteSpace(Status);
     public bool HasTelemetry => !string.IsNullOrWhiteSpace(Telemetry);
+    public bool HasWorkSummary => !string.IsNullOrWhiteSpace(WorkSummary);
     public string ReasoningHeader => IsGenerating ? "Thinking…" : "Thinking process";
     public string ReasoningChevron => IsReasoningExpanded ? "⌃" : "⌄";
     public bool IsCapturingEmbeddedReasoning { get; set; }
@@ -79,6 +82,8 @@ public sealed class MobileAlignmentSnapshot
     public string Edge { get; set; } = "top";
     public string Theme { get; set; } = "neutral";
     public string LastReason { get; set; } = "Every Hero chooses a path.";
+    public Dictionary<string, int> CharacterTraits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public string AssessmentModel { get; set; } = "";
     public string[] DisabledFeatures { get; set; } = Array.Empty<string>();
     public string[] HighlightedFeatures { get; set; } = Array.Empty<string>();
     public bool DreamsEnabled { get; set; } = true;
@@ -124,6 +129,7 @@ public sealed class ChatSessionDetail
     public string Title { get; set; } = "New chat";
     public string Model { get; set; } = "";
     public string ReasoningLevel { get; set; } = "inherit";
+    public string InteractionMode { get; set; } = "chat";
     public string ProjectId { get; set; } = "unsorted";
     public string ProjectName { get; set; } = "Unsorted";
     public bool Pinned { get; set; }

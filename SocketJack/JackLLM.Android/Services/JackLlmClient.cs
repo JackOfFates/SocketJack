@@ -13,6 +13,10 @@ public sealed class JackLlmClient : IDisposable
     private HttpClient? _http;
     private ServerInfo? _server;
     public string ActiveStreamId { get; private set; } = "";
+    public bool IsAdministrator { get; private set; }
+    public bool IsOwner { get; private set; }
+    public string AuthenticatedUserName { get; private set; } = "";
+    public string AuthenticatedOwnerKey { get; private set; } = "";
 
     public JackLlmClient(SecureCredentialStore credentials) => _credentials = credentials;
 
@@ -30,11 +34,74 @@ public sealed class JackLlmClient : IDisposable
         _http = new HttpClient(handler) { BaseAddress = new Uri(NormalizeBaseUrl(server.Endpoint)), Timeout = TimeSpan.FromMinutes(30) };
         string credentialKey = string.IsNullOrWhiteSpace(server.CredentialKey) ? server.LaunchKey : server.CredentialKey;
         string? token = await _credentials.GetServerTokenAsync(credentialKey);
-        if (string.IsNullOrWhiteSpace(token)) token = await _credentials.GetSocketJackTokenAsync();
         if (!string.IsNullOrWhiteSpace(token)) _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using HttpResponseMessage response = await _http.GetAsync("/api/health", cancellationToken);
         response.EnsureSuccessStatusCode();
+        using HttpResponseMessage authResponse = await _http.GetAsync("/api/web-auth/session", cancellationToken);
+        string authBody = await authResponse.Content.ReadAsStringAsync(cancellationToken);
+        authResponse.EnsureSuccessStatusCode();
+        using JsonDocument authStatus = JsonDocument.Parse(string.IsNullOrWhiteSpace(authBody) ? "{}" : authBody);
+        if (ReadBool(authStatus.RootElement, "authenticated"))
+        {
+            ApplyAuthenticatedIdentity(authStatus.RootElement);
+            return;
+        }
+
+        using HttpResponseMessage mobileResponse = await _http.GetAsync("/api/mobile/status", cancellationToken);
+        string mobileBody = await mobileResponse.Content.ReadAsStringAsync(cancellationToken);
+        mobileResponse.EnsureSuccessStatusCode();
+        using JsonDocument mobileStatus = JsonDocument.Parse(string.IsNullOrWhiteSpace(mobileBody) ? "{}" : mobileBody);
+        if (!ReadBool(mobileStatus.RootElement, "paired"))
+            throw new UnauthorizedAccessException("Login with a Workstation account or pair this phone before using JackLLM Mobile.");
+        ApplyAuthenticatedIdentity(mobileStatus.RootElement);
     }
+
+    public async Task<WorkstationAuthStatus> GetWorkstationAuthStatusAsync(
+        string endpoint,
+        string certificateFingerprint = "",
+        CancellationToken cancellationToken = default)
+    {
+        using HttpClient client = CreateBootstrapClient(endpoint, certificateFingerprint);
+        using HttpResponseMessage response = await client.GetAsync("/api/web-auth/session", cancellationToken);
+        using JsonDocument json = await ReadAuthResponseAsync(response, cancellationToken);
+        return new WorkstationAuthStatus
+        {
+            Authenticated = ReadBool(json.RootElement, "authenticated"),
+            CanRegisterOpen = ReadBool(json.RootElement, "canRegisterOpen"),
+            Username = ReadString(json.RootElement, "username"),
+            OwnerKey = ReadString(json.RootElement, "ownerKey"),
+            IsAdministrator = ReadBool(json.RootElement, "isAdministrator"),
+            IsOwner = ReadBool(json.RootElement, "isOwner", "isServerOwner")
+        };
+    }
+
+    public Task<WorkstationAuthResult> LoginToWorkstationAsync(
+        string endpoint,
+        string username,
+        string password,
+        string certificateFingerprint = "",
+        CancellationToken cancellationToken = default) =>
+        SubmitWorkstationAuthAsync(
+            endpoint,
+            "/api/web-auth/login",
+            username,
+            password,
+            certificateFingerprint,
+            cancellationToken);
+
+    public Task<WorkstationAuthResult> RegisterWithWorkstationAsync(
+        string endpoint,
+        string username,
+        string password,
+        string certificateFingerprint = "",
+        CancellationToken cancellationToken = default) =>
+        SubmitWorkstationAuthAsync(
+            endpoint,
+            "/api/web-auth/registration-request",
+            username,
+            password,
+            certificateFingerprint,
+            cancellationToken);
 
     public async Task<TimeSpan?> MeasureHealthAsync(CancellationToken cancellationToken = default)
     {
@@ -250,7 +317,7 @@ public sealed class JackLlmClient : IDisposable
     public async Task ClearResolvedDreamJournalAsync(string ownerKey, CancellationToken cancellationToken = default) =>
         _ = await PostJsonAsync("/api/dream-journal/clear", new { ownerKey }, cancellationToken);
 
-    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string sessionId, string projectId, string reasoningLevel, string sessionReasoningLevel, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string interactionMode, string sessionId, string projectId, string reasoningLevel, string sessionReasoningLevel, bool jackhammerEnabled, int jackhammerTurnBudget, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         EnsureConnected();
         var uploaded = new List<object>();
@@ -262,11 +329,18 @@ public sealed class JackLlmClient : IDisposable
         {
             ["model"] = model,
             ["service"] = string.IsNullOrWhiteSpace(service) ? "chat" : service,
+            ["interactionMode"] = NormalizeInteractionMode(interactionMode),
             ["sessionId"] = sessionId,
             ["projectId"] = string.IsNullOrWhiteSpace(projectId) ? "unsorted" : projectId,
             ["streamId"] = streamId,
             ["reasoningLevel"] = string.IsNullOrWhiteSpace(reasoningLevel) ? "auto" : reasoningLevel,
             ["sessionReasoningLevel"] = string.IsNullOrWhiteSpace(sessionReasoningLevel) ? "inherit" : sessionReasoningLevel,
+            ["jackhammer"] = new
+            {
+                enabled = jackhammerEnabled,
+                runId = "jackhammer_mobile_" + Guid.NewGuid().ToString("N"),
+                turnBudget = Math.Clamp(jackhammerTurnBudget, 1, 200)
+            },
             ["max_tokens"] = service.Equals("agent", StringComparison.OrdinalIgnoreCase) ? 16384 : 4096,
             ["filesystemContext"] = new { mode = "none", roots = Array.Empty<string>() },
             ["prompt"] = prompt,
@@ -361,6 +435,8 @@ public sealed class JackLlmClient : IDisposable
             Model = ReadString(session, "model")
         };
         detail.ReasoningLevel = ReadString(session, "reasoningLevel", "reasoning_level");
+        detail.InteractionMode = ReadString(session, "interactionMode", "interaction_mode");
+        if (string.IsNullOrWhiteSpace(detail.InteractionMode)) detail.InteractionMode = "chat";
         detail.ProjectId = ReadString(session, "projectId", "project_id");
         detail.ProjectName = ReadString(session, "projectName", "project_name");
         detail.Pinned = ReadBool(session, "pinned");
@@ -375,7 +451,22 @@ public sealed class JackLlmClient : IDisposable
                 string content = ReadMessageContent(message);
                 string reasoning = ReadString(message, "reasoning", "reasoningContent", "thought", "thinking");
                 if (!string.IsNullOrWhiteSpace(role) || !string.IsNullOrWhiteSpace(content) || !string.IsNullOrWhiteSpace(reasoning))
-                    detail.Messages.Add(new ChatMessage { Role = string.IsNullOrWhiteSpace(role) ? "assistant" : role, Content = content, Reasoning = reasoning });
+                {
+                    var chatMessage = new ChatMessage { Role = string.IsNullOrWhiteSpace(role) ? "assistant" : role, Content = content, Reasoning = reasoning };
+                    if (TryProperty(message, "toolCalls", out JsonElement toolCalls) && toolCalls.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (JsonElement toolCall in toolCalls.EnumerateArray())
+                        {
+                            string name = ReadString(toolCall, "toolName", "name", "tool");
+                            string status = ReadString(toolCall, "status", "toolStatus", "state");
+                            string detailText = ReadString(toolCall, "summary", "label", "resultPreview", "argumentsPreview", "detail");
+                            if (!string.IsNullOrWhiteSpace(name))
+                                chatMessage.Tools.Add(new ToolActivity { Name = name, Status = string.IsNullOrWhiteSpace(status) ? "completed" : status, Detail = detailText });
+                        }
+                        chatMessage.WorkSummary = BuildJackhammerWorkSummary(chatMessage.Tools, false);
+                    }
+                    detail.Messages.Add(chatMessage);
+                }
             }
         }
         if (TryProperty(session, "files", out JsonElement files) && files.ValueKind == JsonValueKind.Array)
@@ -426,6 +517,80 @@ public sealed class JackLlmClient : IDisposable
         string token = ReadString(json.RootElement, "token", "accessToken");
         if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("The Workstation did not return a device token.");
         return token;
+    }
+
+    private static async Task<WorkstationAuthResult> SubmitWorkstationAuthAsync(
+        string endpoint,
+        string path,
+        string username,
+        string password,
+        string certificateFingerprint,
+        CancellationToken cancellationToken)
+    {
+        using HttpClient client = CreateBootstrapClient(endpoint, certificateFingerprint);
+        using HttpResponseMessage response = await client.PostAsync(
+            path,
+            Json(new { username = (username ?? "").Trim(), password = password ?? "", remember = true }),
+            cancellationToken);
+        using JsonDocument json = await ReadAuthResponseAsync(response, cancellationToken);
+        return new WorkstationAuthResult
+        {
+            Authenticated = ReadBool(json.RootElement, "authenticated") || !string.IsNullOrWhiteSpace(ReadString(json.RootElement, "accessToken")),
+            Pending = ReadBool(json.RootElement, "pending"),
+            Username = ReadString(json.RootElement, "username"),
+            AccessToken = ReadString(json.RootElement, "accessToken", "access_token", "token"),
+            Message = ReadString(json.RootElement, "message"),
+            OwnerKey = ReadString(json.RootElement, "ownerKey"),
+            IsAdministrator = ReadBool(json.RootElement, "isAdministrator"),
+            IsOwner = ReadBool(json.RootElement, "isOwner", "isServerOwner")
+        };
+    }
+
+    private void ApplyAuthenticatedIdentity(JsonElement root)
+    {
+        AuthenticatedUserName = ReadString(root, "username");
+        AuthenticatedOwnerKey = ReadString(root, "ownerKey");
+        IsOwner = ReadBool(root, "isOwner", "isServerOwner");
+        IsAdministrator = IsOwner || ReadBool(root, "isAdministrator", "pcAccessEligible");
+    }
+
+    private static HttpClient CreateBootstrapClient(string endpoint, string certificateFingerprint)
+    {
+        var handler = new HttpClientHandler();
+        if (!string.IsNullOrWhiteSpace(certificateFingerprint))
+        {
+            string expected = NormalizeFingerprint(certificateFingerprint);
+            handler.ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
+                certificate is not null &&
+                NormalizeFingerprint(certificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256))
+                    .Equals(expected, StringComparison.OrdinalIgnoreCase);
+        }
+        return new HttpClient(handler)
+        {
+            BaseAddress = new Uri(NormalizeBaseUrl(endpoint)),
+            Timeout = TimeSpan.FromSeconds(20)
+        };
+    }
+
+    private static async Task<JsonDocument> ReadAuthResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        string body = await response.Content.ReadAsStringAsync(cancellationToken);
+        JsonDocument json;
+        try { json = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); }
+        catch (JsonException)
+        {
+            response.EnsureSuccessStatusCode();
+            throw new InvalidOperationException("The Workstation returned an invalid authentication response.");
+        }
+        if (!response.IsSuccessStatusCode || !ReadBool(json.RootElement, "ok"))
+        {
+            string message = ReadString(json.RootElement, "error", "message", "detail");
+            json.Dispose();
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(message)
+                ? "Workstation authentication failed with HTTP " + (int)response.StatusCode + "."
+                : message);
+        }
+        return json;
     }
 
     public async Task<string> TranscribeAsync(byte[] audio, CancellationToken cancellationToken = default)
@@ -491,10 +656,38 @@ public sealed class JackLlmClient : IDisposable
         catch { return new ChatStreamEvent { Type = "unknown", RawJson = line }; }
     }
 
+    private static string BuildJackhammerWorkSummary(IEnumerable<ToolActivity> tools, bool isGenerating)
+    {
+        ToolActivity[] items = tools.Take(12).ToArray();
+        if (items.Length == 0) return "";
+        var lines = new List<string> { "### Jackhammer work tree" };
+        foreach (ToolActivity item in items)
+        {
+            string state = item.Status.Equals("completed", StringComparison.OrdinalIgnoreCase) ||
+                           item.Status.Equals("complete", StringComparison.OrdinalIgnoreCase) ||
+                           item.Status.Equals("succeeded", StringComparison.OrdinalIgnoreCase)
+                ? "[x]"
+                : item.Status.Equals("failed", StringComparison.OrdinalIgnoreCase) ||
+                  item.Status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
+                    ? "[!]"
+                    : "[ ]";
+            string detail = string.IsNullOrWhiteSpace(item.Detail) ? "" : " - " + item.Detail.Trim();
+            lines.Add($"- {state} **{item.Name}**{detail}");
+        }
+        lines.Add(isGenerating ? "\n_Work continues automatically._" : "\n_Work run complete._");
+        return string.Join("\n", lines);
+    }
+
     public static string NormalizeBaseUrl(string value)
     {
         if (!Uri.TryCreate((value ?? "").Trim(), UriKind.Absolute, out Uri? uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)) throw new ArgumentException("Enter a valid Workstation http/https address.");
         return uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+    }
+
+    private static string NormalizeInteractionMode(string value)
+    {
+        value = (value ?? "").Trim().ToLowerInvariant();
+        return value is "plan" or "agent" or "companion" ? value : "chat";
     }
 
     private async Task<object> UploadFileAsync(string sessionId, AttachmentInfo file, CancellationToken cancellationToken)

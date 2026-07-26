@@ -1,0 +1,7 @@
+<Project>
+  <Target Name="RequireReleaseForTests"
+          BeforeTargets="Build;VSTest"
+          Condition="'$(IsTestProject)' == 'true' and '$(Configuration)' != 'Release'">
+    <Error Text="Tests must run in Release mode. Use: dotnet test --configuration Release" />
+  </Target>
+</Project>

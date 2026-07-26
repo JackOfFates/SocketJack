@@ -8,7 +8,7 @@ using JackLLM.Security;
 
 namespace JackLLM.SecurityBroker;
 
-public sealed record BrokerMode(bool Development);
+public sealed record BrokerMode(bool Development, bool AllowHashStampedLocalRelease);
 
 public sealed class SecurityBrokerWorker : BackgroundService {
     private readonly SecurityEngine _engine;
@@ -42,18 +42,29 @@ public sealed class SecurityBrokerWorker : BackgroundService {
         using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         SecurityResponse response;
-        if (!TryGetClientProcessId(pipe, out uint clientProcessId)) {
-            response = Failure(SecurityStateKind.IntegrityFailure, "Unable to identify the security client process.");
-        } else {
-            BuildIntegrityResult integrity = _integrity.Verify(clientProcessId, _mode.Development);
-            if (!integrity.Success) {
-                response = Failure(SecurityStateKind.IntegrityFailure, integrity.Message);
+        try {
+            if (!TryGetClientProcessId(pipe, out uint clientProcessId)) {
+                response = Failure(SecurityStateKind.IntegrityFailure, "Unable to identify the security client process.");
             } else {
-                string? line = await reader.ReadLineAsync(cancellationToken);
-                bool clientIsAdministrator = IsClientAdministrator(pipe);
-                response = await ProcessAsync(line, clientIsAdministrator);
+                BuildIntegrityResult integrity = _integrity.Verify(
+                    clientProcessId,
+                    _mode.Development,
+                    _mode.AllowHashStampedLocalRelease);
+                if (!integrity.Success) {
+                    response = Failure(SecurityStateKind.IntegrityFailure, integrity.Message);
+                } else {
+                    string? line = await reader.ReadLineAsync(cancellationToken);
+                    bool clientIsAdministrator = IsClientAdministrator(pipe);
+                    response = await ProcessAsync(line, clientIsAdministrator);
+                }
             }
+        } catch (Exception ex) {
+            _logger.LogError(ex, "Security broker operation failed");
+            response = Failure(SecurityStateKind.Error,
+                "The Security Broker could not complete the request. Check the Windows Application event log for details.");
         }
+        response.BrokerCompatibility = SecurityProtocol.BrokerCompatibility;
+        response.BrokerProcessId = Environment.ProcessId;
         await writer.WriteLineAsync(JsonSerializer.Serialize(response, SecurityProtocol.Json));
     }
 
@@ -74,6 +85,7 @@ public sealed class SecurityBrokerWorker : BackgroundService {
                 _engine.ConsumeGrant(request.UnlockGrant)
                     ? new SecurityResponse { Success = true, State = SecurityStateKind.Unlocked, Message = "Unlock grant accepted.", DevelopmentMode = _mode.Development }
                     : Failure(SecurityStateKind.Error, "The unlock grant expired or was already used."),
+            SecurityOperation.RememberedUnlock => _engine.RememberedUnlock(request.RememberedDeviceToken),
             SecurityOperation.CompleteUnlock => _engine.Unlock(request),
             SecurityOperation.ChangePassword => _engine.ChangePassword(request),
             SecurityOperation.Recover => _engine.Recover(request),

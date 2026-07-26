@@ -21,6 +21,19 @@ public sealed class WorkstationCredentialRecord {
     public DateTimeOffset? CooldownUntilUtc { get; set; }
     public DateTimeOffset? LastObservedUtc { get; set; }
     public DateTimeOffset EnrolledUtc { get; set; }
+    public string CredentialGeneration { get; set; } = "";
+}
+
+public sealed class RememberedDeviceRecord {
+    public int Version { get; set; } = 1;
+    public string TokenDigest { get; set; } = "";
+    public DateTimeOffset ExpiresUtc { get; set; }
+    public string HardwareId { get; set; } = "";
+    public string CredentialGeneration { get; set; } = "";
+    public string PublicIp { get; set; } = "";
+    public string LocalIpBinding { get; set; } = "";
+    public DateTimeOffset LastPublicIpVerificationUtc { get; set; }
+    public DateTimeOffset LastObservedUtc { get; set; }
 }
 
 public sealed class SecurityStateStore {
@@ -28,6 +41,7 @@ public sealed class SecurityStateStore {
     private readonly bool _development;
     private readonly string _statePath;
     private readonly string _recoveryPath;
+    private readonly string _rememberedDevicePath;
     private readonly string? _registryPathOverride;
 
     public SecurityStateStore(bool development, string? root = null, string? registryPathOverride = null) {
@@ -38,6 +52,7 @@ public sealed class SecurityStateStore {
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "JackLLM", "Security"));
         _statePath = Path.Combine(baseRoot, "workstation-access.bin");
         _recoveryPath = Path.Combine(baseRoot, "workstation-recovery.bin");
+        _rememberedDevicePath = Path.Combine(baseRoot, "remembered-device.bin");
     }
 
     public bool StateExists => File.Exists(_statePath);
@@ -57,6 +72,15 @@ public sealed class SecurityStateStore {
     }
 
     public WorkstationCredentialRecord? LoadRecovery() => LoadPath(_recoveryPath);
+
+    public RememberedDeviceRecord? LoadRememberedDevice() => LoadProtected<RememberedDeviceRecord>(_rememberedDevicePath);
+
+    public void SaveRememberedDevice(RememberedDeviceRecord record) =>
+        SaveProtected(_rememberedDevicePath, record);
+
+    public void DeleteRememberedDevice() {
+        try { File.Delete(_rememberedDevicePath); } catch (FileNotFoundException) { }
+    }
 
     public void Save(WorkstationCredentialRecord record) {
         string? directory = Path.GetDirectoryName(_statePath);
@@ -80,7 +104,6 @@ public sealed class SecurityStateStore {
         if (_development) return;
         var security = new DirectorySecurity();
         security.SetAccessRuleProtection(true, false);
-        security.SetOwner(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null));
         security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
             FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
@@ -95,6 +118,31 @@ public sealed class SecurityStateStore {
             _development ? DataProtectionScope.CurrentUser : DataProtectionScope.LocalMachine);
         try { return JsonSerializer.Deserialize<WorkstationCredentialRecord>(plain, SecurityProtocol.Json); }
         finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+
+    private T? LoadProtected<T>(string path) {
+        if (!File.Exists(path)) return default;
+        byte[] protectedBytes = File.ReadAllBytes(path);
+        byte[] plain = ProtectedData.Unprotect(protectedBytes, Entropy,
+            _development ? DataProtectionScope.CurrentUser : DataProtectionScope.LocalMachine);
+        try { return JsonSerializer.Deserialize<T>(plain, SecurityProtocol.Json); }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+
+    private void SaveProtected<T>(string path, T value) {
+        string? directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory)) EnsureDirectory(directory);
+        byte[] plain = JsonSerializer.SerializeToUtf8Bytes(value, SecurityProtocol.Json);
+        byte[] protectedBytes;
+        try {
+            protectedBytes = ProtectedData.Protect(plain, Entropy,
+                _development ? DataProtectionScope.CurrentUser : DataProtectionScope.LocalMachine);
+        } finally {
+            CryptographicOperations.ZeroMemory(plain);
+        }
+        string temporary = path + ".tmp";
+        File.WriteAllBytes(temporary, protectedBytes);
+        File.Move(temporary, path, true);
     }
 
     private RegistryKey? OpenRegistryKey(bool writable) {

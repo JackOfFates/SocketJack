@@ -995,6 +995,16 @@ body.auth-required .remote-admin-sticker {
     margin-right: 8px;
     animation: throbber-spin 900ms var(--circ-ease-in-out) 1 both;
 }
+.login-card .login-remember {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.login-card .login-remember input {
+    width: 16px;
+    min-height: 16px;
+    margin: 0;
+}
 .loading-empty,
 .loading-row {
     display: flex;
@@ -2573,6 +2583,65 @@ body.agent-mode .filesystem-item:hover {
 .filesystem-path.missing {
     color: #fda4af;
 }
+.workspace-toolbar,
+.workspace-rule-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 2px;
+}
+.workspace-toolbar button,
+.workspace-rule-actions button {
+    min-height: 30px;
+    padding: 5px 8px;
+    font-size: 0.68rem;
+}
+.workspace-card {
+    display: grid;
+    gap: 5px;
+    padding: 8px;
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 10px;
+    background: rgba(2, 6, 23, 0.38);
+}
+.workspace-card.attached { margin-left: 12px; border-left-color: #40c9a2; }
+.workspace-card.global { border-color: rgba(196, 181, 253, 0.32); }
+.workspace-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.workspace-card-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-badge {
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 999px;
+    padding: 2px 5px;
+    color: rgba(229,237,247,.72);
+    font: 0.58rem var(--ui-font);
+}
+.workspace-card-path { color: rgba(229,237,247,.62); font: 0.62rem var(--ui-font); overflow-wrap: anywhere; }
+.workspace-card-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.workspace-card-actions button { min-height: 26px; padding: 3px 6px; font-size: .62rem; }
+.workspace-regex-builder {
+    margin: 8px 2px 2px;
+    border-top: 1px solid rgba(255,255,255,.12);
+    padding-top: 7px;
+}
+.workspace-regex-builder summary { cursor: pointer; font-weight: 800; }
+.workspace-regex-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; margin-top: 7px; }
+.workspace-regex-grid label { display: grid; gap: 3px; color: rgba(229,237,247,.68); font: .61rem var(--ui-font); }
+.workspace-regex-grid input,
+.workspace-regex-grid select {
+    width: 100%;
+    min-height: 30px;
+    border: 1px solid rgba(125,211,252,.22);
+    border-radius: 8px;
+    color: var(--text);
+    background: rgba(2,6,23,.72);
+    padding: 5px 7px;
+    font: .68rem var(--ui-font);
+}
+.workspace-regex-grid .wide { grid-column: 1 / -1; }
+.workspace-regex-status { color: rgba(229,237,247,.66); font: .62rem/1.4 var(--ui-font); min-height: 18px; }
+.workspace-rule-list { display: grid; gap: 5px; margin-top: 7px; max-height: 150px; overflow: auto; }
+.workspace-rule-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px; padding: 6px; border-radius: 8px; background: rgba(255,255,255,.05); }
+.workspace-rule-row code { color: #d8f3ff; overflow-wrap: anywhere; white-space: normal; font-size: .62rem; }
 .ftp-config-wrap {
     display: none;
     position: fixed;
@@ -4381,17 +4450,60 @@ body.agent-mode .session-item.recent .session-activity-dot {
 }
 .project-group.archived { opacity: 0.72; border-style: dashed; }
 .project-group.selected { border-color: rgba(56, 189, 248, 0.58); box-shadow: 0 0 0 1px rgba(56,189,248,.12); }
-.project-header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 7px; }
+.project-group.unread {
+    border-color: rgba(45, 212, 191, 0.62);
+    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.12), 0 0 16px rgba(20, 184, 166, 0.11);
+}
+.project-group.working {
+    border-color: rgba(250, 204, 21, 0.72);
+    box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.14), 0 0 22px rgba(250, 204, 21, 0.16);
+    animation: project-working-glow 1500ms ease-in-out infinite;
+}
+.project-group.dragging { opacity: 0.48; }
+.project-group.drag-before { box-shadow: 0 -3px 0 #38bdf8; }
+.project-group.drag-after { box-shadow: 0 3px 0 #38bdf8; }
+.project-header { display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; align-items: center; gap: 7px; }
+.project-drag-handle {
+    display: grid;
+    place-items: center;
+    align-self: stretch;
+    min-width: 18px;
+    padding: 0 3px;
+    cursor: grab;
+    color: rgba(148, 163, 184, 0.74);
+    font-size: 13px;
+    letter-spacing: -2px;
+    user-select: none;
+    touch-action: none;
+}
+.project-drag-handle:active { cursor: grabbing; }
 .project-toggle,.project-action { min-height: 29px; height: 29px; padding: 0 7px; border-radius: 8px; font-size: 11px; }
 .project-title-wrap { min-width: 0; display: grid; gap: 2px; cursor: pointer; }
 .project-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e0f2fe; font-weight: 900; font-size: 13px; }
+.project-state-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    border-radius: 999px;
+    background: #2dd4bf;
+    box-shadow: 0 0 10px rgba(45, 212, 191, 0.72);
+}
 .project-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
 .project-actions { display: flex; gap: 4px; }
 .project-session-list { display: grid; gap: 3px; min-width: 0; }
 .project-session-list[hidden] { display: none; }
 .project-empty { padding: 10px; color: var(--muted); font-size: 11px; text-align: center; }
 .session-item.pinned { border-color: rgba(250, 204, 21, 0.48); }
+.session-item.streaming {
+    border-color: rgba(250, 204, 21, 0.66);
+    box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.12), 0 0 18px rgba(250, 204, 21, 0.14);
+}
 .session-project-pin { color: #fde68a !important; }
+@keyframes project-working-glow {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.12), 0 0 14px rgba(250, 204, 21, 0.10); }
+    50% { box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.20), 0 0 26px rgba(250, 204, 21, 0.22); }
+}
 body.agent-mode .session-depth span {
     background: linear-gradient(90deg, var(--agent-red), #f97316);
 }
@@ -13354,18 +13466,25 @@ body.shared-view .composer-attach-stack {
 
 .generation-settings-panel {
     position: absolute;
+    left: auto;
     right: 0;
-    bottom: calc(100% + 10px);
+    bottom: 100%;
     z-index: 5600;
-    width: min(260px, calc(100vw - 24px));
+    width: min(760px, calc(100vw - 24px));
+    max-height: min(72vh, 650px);
+    overflow: auto;
     display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
     padding: 10px;
     border: 1px solid rgba(125, 211, 252, 0.30);
     background: rgba(2, 6, 23, 0.96);
     box-shadow: 0 28px 88px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     backdrop-filter: blur(20px) saturate(1.16);
+    transform-origin: bottom center;
+    animation: jackhammer-settings-rise 160ms ease-out;
 }
+@keyframes jackhammer-settings-rise{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
 
 .generation-settings-panel[hidden] {
     display: none;
@@ -13383,6 +13502,8 @@ body.shared-view .composer-attach-stack {
     width: 100%;
     min-width: 0;
 }
+.jackhammer-toggle{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:4px 9px;border:1px solid #2563eb;border-radius:999px;background:rgba(37,99,235,.18);color:#bfdbfe;font:750 .68rem/1 var(--ui-font);cursor:pointer}.jackhammer-toggle.is-off{border-color:#ef4444;background:rgba(127,29,29,.28);color:#fecaca}.jackhammer-toggle input{position:absolute;opacity:0;pointer-events:none}.jackhammer-switch{position:relative;width:30px;height:16px;border-radius:999px;background:#2563eb;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}.jackhammer-switch::after{content:"";position:absolute;top:2px;left:16px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left 140ms ease}.jackhammer-toggle.is-off .jackhammer-switch{background:#dc2626}.jackhammer-toggle.is-off .jackhammer-switch::after{left:2px}.jackhammer-live-stack{position:absolute;left:12px;right:12px;bottom:calc(100% + 10px);z-index:5590;display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none}.jackhammer-live-item{max-width:min(720px,92%);padding:7px 12px;border:1px solid rgba(96,165,250,.45);border-radius:999px;background:rgba(8,18,36,.94);color:#dbeafe;box-shadow:0 10px 34px rgba(0,0,0,.35);font:700 .7rem/1.2 var(--ui-font);animation:jackhammer-status-float 4.8s ease forwards}@keyframes jackhammer-status-float{0%,65%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-42px)}}.jackhammer-run-card{margin:10px 0 2px;padding:10px 12px;border:1px solid rgba(96,165,250,.34);border-radius:12px;background:rgba(15,23,42,.62)}.jackhammer-run-card summary{cursor:pointer;color:#bfdbfe;font-weight:800}.jackhammer-run-meta{margin-top:7px;color:var(--muted);font-size:12px}.jackhammer-run-tree{margin:8px 0 0;padding-left:20px}.jackhammer-run-tree li{margin:4px 0;color:#dbeafe}.jackhammer-run-tree .failed{color:#fecaca}.jackhammer-run-files{margin-top:7px;color:#cbd5e1;font-size:12px}
+@media(prefers-reduced-motion:reduce){.generation-settings-panel,.jackhammer-live-item{animation:none!important}.jackhammer-live-item{opacity:1;transform:none}}
 
 .chat-mode-dock {
     grid-area: mode;
@@ -15101,16 +15222,18 @@ body:not(.agent-mode) .composer-attach-stack {
     }
 }
 .goal-panel{position:absolute;left:12px;bottom:calc(100% + 10px);z-index:180;width:min(440px,calc(100% - 24px));box-sizing:border-box;padding:16px;border:1px solid rgba(125,211,252,.34);border-radius:16px;background:rgba(8,18,36,.97);box-shadow:0 24px 70px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(20px) saturate(1.18);display:grid;gap:10px}.goal-panel[hidden]{display:none}.goal-panel-head,.goal-options,.goal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.goal-panel-head{justify-content:space-between}.goal-panel-title{display:flex;align-items:center;gap:9px}.goal-panel-close{width:30px;height:30px;min-height:30px;padding:0;border-radius:8px}.goal-panel textarea{width:100%;min-height:58px;resize:vertical;box-sizing:border-box;border:1px solid var(--border);border-radius:9px;padding:9px;background:rgba(2,6,23,.78);color:inherit}.goal-options small,.goal-stage-summary{color:var(--muted);font-size:12px}.goal-actions button{min-width:92px}.chat-mode-button.goal-mode-button[aria-expanded="true"]{border-color:#7dd3fc;background:rgba(14,165,233,.24);box-shadow:0 0 0 1px rgba(125,211,252,.18),0 8px 24px rgba(2,132,199,.2)}.plan-mode .goal-panel{border-color:#a78bfa}@media(max-width:720px){.goal-panel{position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;max-height:calc(100dvh - 24px);overflow:auto}}.plan-clarification{padding:12px;border:1px solid #8b5cf6;border-radius:12px;margin:8px 0}.plan-clarification button{margin:4px}.plan-card{padding:14px;border:1px solid #8b5cf6;border-radius:14px;background:rgba(76,29,149,.15)}
-.alignment-strip{position:fixed;left:0;right:0;top:0;height:3px;z-index:10020;border:0;padding:0;background:#64748b;cursor:pointer;transition:top .35s ease,bottom .35s ease,background .35s ease,box-shadow .35s ease}.alignment-strip.good{background:linear-gradient(90deg,#ff315f,#ffcf3f,#35e27a,#20c8ff,#875cff,#ff45d4,#ff315f);background-size:240% 100%;animation:alignment-rgb 8s linear infinite;box-shadow:0 0 12px rgba(70,220,255,.7)}.alignment-strip.evil,.alignment-strip.locked{top:auto;bottom:0;background:linear-gradient(90deg,#050000,#6f0000,#ef233c,#250000,#050000);box-shadow:0 -2px 14px rgba(255,0,30,.52)}.alignment-strip.locked{height:5px}@keyframes alignment-rgb{to{background-position:240% 0}}.alignment-panel{position:fixed;z-index:10030;top:12px;right:12px;width:min(360px,calc(100vw - 24px));display:grid;gap:8px;padding:12px;border:1px solid rgba(148,163,184,.28);border-radius:13px;background:rgba(4,10,22,.96);box-shadow:0 18px 60px rgba(0,0,0,.55);font:12px var(--ui-font)}.alignment-panel[hidden]{display:none}.alignment-panel.evil,.alignment-panel.locked{top:auto;bottom:12px;border-color:rgba(239,35,60,.42);background:linear-gradient(145deg,rgba(31,0,4,.98),rgba(4,0,0,.98))}.alignment-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.alignment-score{font-weight:900;letter-spacing:.05em}.alignment-copy,.alignment-features{color:var(--muted);line-height:1.45}.alignment-feature-highlight{outline:1px solid rgba(80,220,255,.72)!important;box-shadow:0 0 14px rgba(125,92,255,.28)!important}.alignment-hidden{display:none!important}body.alignment-evil .shell{filter:saturate(.62)}body.alignment-evil{background-color:#090000}body.alignment-locked .shell,body.alignment-locked>.remote-admin-sticker{visibility:hidden;pointer-events:none}.alignment-lock-screen{position:fixed;inset:0;z-index:10010;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 35%,#410008 0,#100002 42%,#020000 100%);color:#fff}.alignment-lock-screen[hidden]{display:none}.alignment-lock-card{width:min(620px,100%);padding:28px;border:1px solid rgba(255,54,81,.55);border-radius:18px;background:rgba(8,0,1,.9);box-shadow:0 28px 90px #000;text-align:center}.alignment-lock-quote{font:900 clamp(1.2rem,3vw,2rem)/1.25 var(--ui-font);color:#ff8798}.alignment-lock-message{margin-top:12px;color:#f1c9cf;line-height:1.55}@media(prefers-reduced-motion:reduce){.alignment-strip.good{animation:none}}
+.alignment-strip{position:fixed;left:0;right:0;top:0;height:3px;z-index:10031;border:0;padding:0;background:#64748b;cursor:pointer;overflow:visible;transition:top .32s ease,bottom .32s ease,background .32s ease,box-shadow .32s ease}.alignment-strip::after{content:"↓";position:absolute;left:50%;top:3px;width:58px;height:25px;display:grid;place-items:center;border:1px solid rgba(148,163,184,.36);border-top:0;border-radius:0 0 12px 12px;color:#f8fafc;background:rgba(5,12,25,.94);box-shadow:0 9px 24px rgba(0,0,0,.32);font:900 14px/1 var(--ui-font);transform:translate(-50%,-110%);opacity:0;transition:transform .22s ease,opacity .22s ease}.alignment-strip:not(.evil):not(.locked):hover::after,.alignment-strip:not(.evil):not(.locked):focus-visible::after,body.alignment-drawer-open .alignment-strip::after{transform:translate(-50%,0);opacity:1}.alignment-strip.good{background:linear-gradient(90deg,#ff315f,#ffcf3f,#35e27a,#20c8ff,#875cff,#ff45d4,#ff315f);background-size:240% 100%;animation:alignment-rgb 8s linear infinite;box-shadow:0 0 12px rgba(70,220,255,.7)}.alignment-strip.evil,.alignment-strip.locked{top:auto;bottom:0;background:linear-gradient(90deg,#050000,#6f0000,#ef233c,#250000,#050000);box-shadow:0 -2px 14px rgba(255,0,30,.52)}.alignment-strip.evil::after,.alignment-strip.locked::after{content:"↑";top:auto;bottom:3px;border-top:1px solid rgba(239,35,60,.4);border-bottom:0;border-radius:12px 12px 0 0;transform:translate(-50%,110%)}.alignment-strip.evil:hover::after,.alignment-strip.evil:focus-visible::after{transform:translate(-50%,0);opacity:1}.alignment-strip.locked{height:5px}@keyframes alignment-rgb{to{background-position:240% 0}}.alignment-panel{position:fixed;z-index:10030;top:12px;right:12px;width:min(360px,calc(100vw - 24px));display:grid;gap:8px;padding:12px;border:1px solid rgba(148,163,184,.28);border-radius:13px;background:rgba(4,10,22,.96);box-shadow:0 18px 60px rgba(0,0,0,.55);font:12px var(--ui-font)}.alignment-panel[hidden]{display:none}.alignment-panel.evil,.alignment-panel.locked{top:auto;bottom:12px;border-color:rgba(239,35,60,.42);background:linear-gradient(145deg,rgba(31,0,4,.98),rgba(4,0,0,.98))}.alignment-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.alignment-score{font-weight:900;letter-spacing:.05em}.alignment-copy,.alignment-features{color:var(--muted);line-height:1.45}body.alignment-drawer-open{--alignment-drawer-height:148px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){top:0;left:0;right:0;width:auto;min-height:122px;box-sizing:border-box;grid-template-columns:minmax(180px,.7fr) repeat(3,minmax(160px,1fr));align-items:center;padding:18px 32px 24px;border-width:0 0 1px;border-radius:0 0 16px 16px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:122px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked)::after{content:"↑"}body.alignment-drawer-open .shell{margin-top:calc(10px + var(--alignment-drawer-height));height:calc(100vh - 20px - var(--alignment-drawer-height))}.shell{transition:opacity 140ms ease,margin-top .32s ease,height .32s ease}.alignment-feature-highlight{outline:1px solid rgba(80,220,255,.72)!important;box-shadow:0 0 14px rgba(125,92,255,.28)!important}.alignment-hidden{display:none!important}body.alignment-evil .shell{filter:saturate(.62)}body.alignment-evil{background-color:#090000}body.alignment-locked .shell,body.alignment-locked>.remote-admin-sticker{visibility:hidden;pointer-events:none}.alignment-lock-screen{position:fixed;inset:0;z-index:10010;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 35%,#410008 0,#100002 42%,#020000 100%);color:#fff}.alignment-lock-screen[hidden]{display:none}.alignment-lock-card{width:min(620px,100%);padding:28px;border:1px solid rgba(255,54,81,.55);border-radius:18px;background:rgba(8,0,1,.9);box-shadow:0 28px 90px #000;text-align:center}.alignment-lock-quote{font:900 clamp(1.2rem,3vw,2rem)/1.25 var(--ui-font);color:#ff8798}.alignment-lock-message{margin-top:12px;color:#f1c9cf;line-height:1.55}@media(max-width:820px),(hover:none),(pointer:coarse){.alignment-strip:not(.evil):not(.locked)::after{transform:translate(-50%,0);opacity:1}.alignment-panel{width:calc(100vw - 20px);right:10px}.alignment-panel:not(.evil):not(.locked){grid-template-columns:1fr!important;padding:14px 18px 22px!important;min-height:168px!important}body.alignment-drawer-open{--alignment-drawer-height:194px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:168px}}@media(prefers-reduced-motion:reduce){.alignment-strip.good{animation:none}.alignment-strip,.alignment-strip::after,.shell{transition:none!important}}
+.alignment-traits{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.alignment-trait{display:flex;justify-content:space-between;gap:8px;padding:5px 7px;border:1px solid rgba(148,163,184,.16);border-radius:7px;background:rgba(148,163,184,.06);color:#cbd5e1}.alignment-trait.bad{border-color:rgba(239,68,68,.18);background:rgba(127,29,29,.09)}.alignment-trait-score{font-weight:900;color:#f8fafc}.alignment-footer{display:flex;justify-content:space-between;gap:12px;align-items:end;color:#718096;font-size:10px;line-height:1.35}.alignment-model{white-space:nowrap;color:#64748b}.alignment-panel.evil{width:min(560px,calc(100vw - 24px));max-height:min(72vh,520px);overflow:auto}.alignment-panel.evil .alignment-traits{grid-template-columns:repeat(2,minmax(0,1fr))}.alignment-panel.evil .alignment-footer{align-items:start;flex-direction:column}.alignment-panel.evil .alignment-model{white-space:normal}body.alignment-drawer-open{--alignment-drawer-height:290px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){min-height:262px;grid-template-columns:minmax(180px,.7fr) repeat(2,minmax(180px,1fr));align-content:start}body.alignment-drawer-open .alignment-traits,body.alignment-drawer-open .alignment-footer{grid-column:1/-1}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:262px}@media(max-width:820px),(hover:none),(pointer:coarse){.alignment-traits{grid-template-columns:repeat(2,minmax(0,1fr));max-height:230px;overflow:auto}.alignment-footer{align-items:start;flex-direction:column}.alignment-model{white-space:normal}body.alignment-drawer-open{--alignment-drawer-height:456px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){min-height:430px!important;max-height:430px;overflow:auto}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:430px}}
 </style>
 </head>
 <body class="app-loading">
-<button id="alignmentStrip" class="alignment-strip neutral" type="button" aria-label="Alignment: Neutral" aria-expanded="false" aria-controls="alignmentPanel"></button>
+<button id="alignmentStrip" class="alignment-strip neutral" type="button" aria-label="Open alignment drawer. Alignment: Neutral" aria-expanded="false" aria-controls="alignmentPanel"></button>
 <section id="alignmentPanel" class="alignment-panel" aria-live="polite" hidden>
     <div class="alignment-panel-head"><strong>Hero Alignment</strong><span id="alignmentScore" class="alignment-score">Neutral · 0</span></div>
     <div id="alignmentReason" class="alignment-copy">Every Hero chooses a path.</div>
     <div id="alignmentFeatures" class="alignment-features">All granted Guild privileges remain available.</div>
-    <div id="alignmentRecovery" class="alignment-copy">You can only help others after you help yourself.</div>
+    <div id="alignmentTraits" class="alignment-traits" aria-label="Character attributes"></div>
+    <div class="alignment-footer"><span id="alignmentRecovery">You can only help others after you help yourself.</span><span id="alignmentModel" class="alignment-model"></span></div>
 </section>
 <section id="alignmentLockScreen" class="alignment-lock-screen" role="alertdialog" aria-modal="true" aria-labelledby="alignmentLockQuote" hidden>
     <div class="alignment-lock-card"><div id="alignmentLockQuote" class="alignment-lock-quote">Your Will Energy is low. Watch that.</div><div class="alignment-lock-message">The Guildmaster is disappointed in the path you chose. This account has been sealed.</div></div>
@@ -15137,13 +15260,15 @@ body:not(.agent-mode) .composer-attach-stack {
             <h2 id="loginTitle">Sign in</h2>
             <button id="loginClose" class="secondary login-close" type="button" aria-label="Close tab" title="Close tab">X</button>
         </div>
-        <p id="loginSubtitle" class="login-subtitle">SocketJack.com account required for JackLLM chat.</p>
+        <p id="loginSubtitle" class="login-subtitle">Sign in with an account from this JackLLM Workstation.</p>
         <label>Username <input id="loginUsername" type="text" autocomplete="username" required></label>
         <label>Password <input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        <label class="login-remember"><input id="loginRemember" type="checkbox" checked>Remember this browser</label>
+        <p class="login-subtitle">New accounts require Workstation administrator approval unless “Allow anyone to create an account” is enabled in the Workstation.</p>
         <div id="loginError" class="login-error" role="status" aria-live="polite"></div>
         <div class="login-actions">
             <button id="loginSubmit" type="submit">Login</button>
-            <button id="registrationButton" class="secondary" type="button">Register on SocketJack.com</button>
+            <button id="registrationButton" class="secondary" type="button">Request account</button>
         </div>
     </form>
 </div>
@@ -15192,12 +15317,12 @@ body:not(.agent-mode) .composer-attach-stack {
                 </div>
             </div>
             <div class="header-controls top-panel">
-                <button id="accessPanelToggle" class="top-panel-summary access-panel-toggle" type="button" aria-expanded="false" aria-controls="permissionsMenu">
+                <button id="accessPanelToggle" class="top-panel-summary access-panel-toggle" type="button" aria-expanded="false" aria-controls="permissionsMenu" hidden>
                     <span class="top-panel-symbol" aria-hidden="true">A</span>
                     <span class="top-panel-copy"><strong>Permissions</strong><span id="accessSummaryText">Loading</span></span>
                     <span class="top-panel-chevron" aria-hidden="true">&gt;</span>
                 </button>
-                <div id="permissionsMenu" class="permissions-menu header-permissions">
+                <div id="permissionsMenu" class="permissions-menu header-permissions" hidden>
                     <div class="permissions-shell">
                         <div class="permissions-tool-status">
                             <div class="permissions-tool-title">Enabled tools</div>
@@ -15227,16 +15352,60 @@ body:not(.agent-mode) .composer-attach-stack {
                                 </div>
                                 <details class="filesystem-menu">
                                     <summary class="permission-row">
-                                        <span>Filesystem</span>
-                                        <button id="addFilesystemAccess" class="permission-plus" type="button" title="Add accessible directory">+</button>
+                                        <span>Session workspace</span>
+                                        <button id="addFilesystemAccess" class="permission-plus" type="button" title="Attach a session directory">+</button>
                                     </summary>
+                                    <div class="workspace-toolbar">
+                                        <button id="workspaceSetPrimary" class="ghost" type="button">Set primary</button>
+                                        <button id="workspaceAddAttached" class="ghost" type="button">Attach</button>
+                                        <button id="workspaceAddGlobal" class="ghost" type="button">Global read-only</button>
+                                        <button id="workspaceRefresh" class="ghost" type="button">Refresh</button>
+                                    </div>
                                     <div id="filesystemAccessList" class="filesystem-list"></div>
+                                    <details class="workspace-regex-builder">
+                                        <summary>Regex ignore builder</summary>
+                                        <div class="workspace-regex-grid">
+                                            <label>Mode
+                                                <select id="workspaceRegexMode"><option value="composer">Visual composer</option><option value="guided">Guided file types</option><option value="raw">Raw regex</option></select>
+                                            </label>
+                                            <label>Scope
+                                                <select id="workspaceRegexScope"><option value="">Whole session</option></select>
+                                            </label>
+                                            <label>Name <input id="workspaceRegexName" value="Ignored file types"></label>
+                                            <label>Target
+                                                <select id="workspaceRegexTarget"><option value="path">Relative path</option><option value="filename">Filename</option><option value="extension">Extension</option><option value="directory">Directory</option></select>
+                                            </label>
+                                            <label>Composer operator
+                                                <select id="workspaceRegexOperator"><option value="ends">Ends with</option><option value="contains">Contains</option><option value="starts">Starts with</option><option value="exact">Exactly equals</option></select>
+                                            </label>
+                                            <label>Value / extensions <input id="workspaceRegexValue" placeholder=".log, .tmp, .bak"></label>
+                                            <label class="wide">Generated or raw regex <input id="workspaceRegexPattern" placeholder="\\.(log|tmp|bak)$"></label>
+                                            <label>Test path <input id="workspaceRegexTestPath" placeholder="src/cache/debug.log"></label>
+                                            <label><span>Options</span><span><input id="workspaceRegexCase" type="checkbox"> Case-sensitive</span></label>
+                                        </div>
+                                        <div class="workspace-rule-actions">
+                                            <button id="workspaceRegexGenerate" class="ghost" type="button">Generate</button>
+                                            <button id="workspaceRegexTest" class="ghost" type="button">Test path</button>
+                                            <button id="workspaceRegexSave" class="primary" type="button">Save rule</button>
+                                        </div>
+                                        <div id="workspaceRegexStatus" class="workspace-regex-status"></div>
+                                        <div id="workspaceRuleList" class="workspace-rule-list"></div>
+                                    </details>
                                 </details>
                             </div>
                             <div class="permission-group permission-group-admin" data-group-label="Admin">
                                 <label class="permission-row"><input id="permTerminalCommands" type="checkbox">Terminal <input id="dreamPermTerminalCommands" type="checkbox" title="Requires Terminal Trust" disabled> Dream</label>
                                 <label class="permission-row"><input id="permTerminalForeverApproved" type="checkbox">Terminal Trust</label>
                                         <label class="permission-row"><input id="permPcAccess" type="checkbox">PC Access <input id="dreamPermPcAccess" type="checkbox" disabled> Dream</label>
+                                        <label class="permission-row"><input id="permCompanionEnabled" type="checkbox">Companion mode</label>
+                                        <label class="permission-row"><input id="permCompanionScreenView" type="checkbox">Companion: see screen</label>
+                                        <label class="permission-row"><input id="permCompanionCursorControl" type="checkbox">Companion: move cursor</label>
+                                        <label class="permission-row"><input id="permCompanionApplicationLaunch" type="checkbox">Companion: open applications</label>
+                                        <label class="permission-row"><input id="permCompanionApplicationControl" type="checkbox">Companion: use programs</label>
+                                        <label class="permission-row"><input id="permCompanionTerminalCommands" type="checkbox">Companion: terminal commands</label>
+                                        <label class="permission-row"><input id="permCompanionActivityTranscriptStorage" type="checkbox">Save Companion transcripts</label>
+                                        <label class="permission-row"><input id="permCompanionSensitiveMemory" type="checkbox">Allow confirmed sensitive memories</label>
+                                        <label class="permission-row" style="color:#ff4d4d;font-weight:800;border:2px solid #ef4444;padding:8px"><input id="permCompanionFinancialActions" type="checkbox">DANGER: allow individually confirmed financial actions</label>
                                 <details class="token-rate-admin-menu">
                                     <summary class="permission-row">Token-rate Requests</summary>
                                     <div class="token-rate-admin-panel">
@@ -15267,7 +15436,7 @@ body:not(.agent-mode) .composer-attach-stack {
             <div id="viewMenuWrap" class="view-menu-wrap">
                 <button id="viewMenuToggle" class="ghost view-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">View</button>
                 <div id="viewMenu" class="view-menu" role="menu" hidden>
-                    <label class="view-menu-row" role="menuitemcheckbox"><input id="sessionPanelToggle" type="checkbox" aria-controls="sessionSidebar">Sessions</label>
+                    <label class="view-menu-row" role="menuitemcheckbox"><input id="sessionPanelToggle" type="checkbox" aria-controls="sessionSidebar">Projects</label>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="solutionPanelToggle" type="checkbox" aria-controls="solutionExplorer">Files</label>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="commentsPanelToggle" type="checkbox" aria-controls="shareComments">Comments</label>
                     <button id="memoryPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Memory</button>
@@ -15377,7 +15546,7 @@ body:not(.agent-mode) .composer-attach-stack {
             </div>
             <div id="terminalApprovalPanel" class="terminal-approval-panel" hidden></div>
             <div id="sessionList" class="session-list"><div class="loading-row"><span class="mini-throbber" aria-hidden="true"></span>Loading sessions</div></div>
-            <div id="sessionPanelResize" class="session-panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize sessions panel" tabindex="0" aria-valuemin="220" aria-valuemax="520" aria-valuenow="354"></div>
+            <div id="sessionPanelResize" class="session-panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize projects panel" tabindex="0" aria-valuemin="220" aria-valuemax="520" aria-valuenow="354"></div>
         </aside>
         <aside id="solutionExplorer" class="solution-explorer" aria-label="Solution explorer">
             <div class="solution-head">
@@ -15581,7 +15750,7 @@ body:not(.agent-mode) .composer-attach-stack {
             </div>
             <div class="comment-form">
                 <div id="commentAuthStatus" class="comment-auth-status"></div>
-                <input id="commentName" class="comment-name" type="text" maxlength="80" autocomplete="nickname" placeholder="SocketJack.com username" hidden readonly>
+                <input id="commentName" class="comment-name" type="text" maxlength="80" autocomplete="nickname" placeholder="Workstation username" hidden readonly>
                 <textarea id="commentInput" class="comment-input" maxlength="4000" placeholder="Join the session comments"></textarea>
                 <button id="commentSend" class="ghost comment-send" type="button">Comment</button>
             </div>
@@ -15649,7 +15818,7 @@ body:not(.agent-mode) .composer-attach-stack {
         </div>
         <div id="premiumTokenHint" class="premium-token-hint" hidden>
             <span class="premium-token-symbol" aria-hidden="true">T</span>
-            <span id="premiumTokenText" class="premium-token-text">Free chat uses this IP as the session. Premium tokens add account history, file uploads, sharing, higher token rates, and richer remote tools.</span>
+            <span id="premiumTokenText" class="premium-token-text">Sign in with this Workstation's account to use chat, history, files, and tools.</span>
             <button id="premiumTokenLogin" class="premium-token-link" type="button">Sign in</button>
         </div>
         <div id="chatModeDock" class="chat-mode-dock" aria-label="Chat modes">
@@ -15667,11 +15836,12 @@ body:not(.agent-mode) .composer-attach-stack {
                 <label class="param-field">Top P <input id="topPInput" type="number" min="0" max="1" step="0.05" value="1"><span class="param-hint" role="tooltip"><strong>Top P</strong><span>Limits token choices to the smallest probability pool whose combined weight reaches this value. Keep it near 1 for natural breadth; lower it to make responses more conservative without changing temperature as much.</span></span></label>
                 <label class="param-field">Max <input id="maxTokensInput" type="number" min="1" step="1" placeholder="auto"><span class="param-hint" role="tooltip"><strong>Max Tokens</strong><span>Caps how much text the model may generate in one response. Leave it on auto to let LM Studio choose. Set a number when you need short replies or want to prevent very long generations.</span></span></label>
                 <label class="param-field routing-reasoning-field">Reasoning
-                    <input id="reasoningLevelInput" type="range" min="0" max="4" step="1" value="4" list="reasoningLevelTicks" aria-label="Global reasoning level">
+                    <input id="reasoningLevelInput" type="range" min="0" max="5" step="1" value="4" list="reasoningLevelTicks" aria-label="Global reasoning level">
                     <output id="reasoningLevelOutput">Auto</output>
-                    <datalist id="reasoningLevelTicks"><option value="0" label="Minimal"></option><option value="1" label="Low"></option><option value="2" label="Medium"></option><option value="3" label="High"></option><option value="4" label="Auto"></option></datalist>
+                    <datalist id="reasoningLevelTicks"><option value="0" label="Minimal"></option><option value="1" label="Low"></option><option value="2" label="Medium"></option><option value="3" label="High"></option><option value="4" label="Auto"></option><option value="5" label="Ultra"></option></datalist>
                     <span class="param-hint" role="tooltip"><strong>Reasoning</strong><span>Auto adapts to each prompt. Minimal through High favor progressively stronger local models when Model is Auto. A manually selected model stays fixed.</span></span>
                 </label>
+                <label class="param-field">Work cap <input id="jackhammerCustomBudget" type="number" min="1" max="200" step="1" placeholder="preset"><span class="param-hint" role="tooltip"><strong>Jackhammer turn cap</strong><span>Optional per-device override from 1 to 200. Leave blank to use 2, 5, 10, 20, 40, or 100 turns from the selected reasoning level.</span></span></label>
                 <label class="retry-toggle" title="When enabled, this session follows the global reasoning slider."><input id="sessionReasoningInherit" type="checkbox" checked>Session inherits</label>
             </div>
         </div>
@@ -15861,6 +16031,15 @@ body:not(.agent-mode) .composer-attach-stack {
             <label class="permission-row"><input id="adminPermTerminalCommands" type="checkbox">Terminal Commands</label>
             <label class="permission-row"><input id="adminPermTerminalForeverApproved" type="checkbox">Terminal Forever Approved</label>
             <label class="permission-row"><input id="adminPermPcAccess" type="checkbox">PC Access</label>
+            <label class="permission-row"><input id="adminPermCompanionEnabled" type="checkbox">Companion mode</label>
+            <label class="permission-row"><input id="adminPermCompanionScreenView" type="checkbox">Companion: see screen</label>
+            <label class="permission-row"><input id="adminPermCompanionCursorControl" type="checkbox">Companion: move cursor</label>
+            <label class="permission-row"><input id="adminPermCompanionApplicationLaunch" type="checkbox">Companion: open applications</label>
+            <label class="permission-row"><input id="adminPermCompanionApplicationControl" type="checkbox">Companion: use programs</label>
+            <label class="permission-row"><input id="adminPermCompanionTerminalCommands" type="checkbox">Companion: terminal commands</label>
+            <label class="permission-row"><input id="adminPermCompanionActivityTranscriptStorage" type="checkbox">Save Companion transcripts</label>
+            <label class="permission-row"><input id="adminPermCompanionSensitiveMemory" type="checkbox">Allow confirmed sensitive memories</label>
+            <label class="permission-row" style="color:#ff4d4d;font-weight:800"><input id="adminPermCompanionFinancialActions" type="checkbox">EXTREME RISK: confirmed financial actions</label>
         </div>
         <div class="confirm-actions">
             <button id="adminPermissionsCancel" class="ghost" type="button">Cancel</button>
@@ -15920,15 +16099,23 @@ const alignmentPanel = document.getElementById('alignmentPanel');
 const alignmentScore = document.getElementById('alignmentScore');
 const alignmentReason = document.getElementById('alignmentReason');
 const alignmentFeatures = document.getElementById('alignmentFeatures');
+const alignmentTraits = document.getElementById('alignmentTraits');
 const alignmentRecovery = document.getElementById('alignmentRecovery');
+const alignmentModel = document.getElementById('alignmentModel');
 const alignmentLockScreen = document.getElementById('alignmentLockScreen');
-let alignmentState = { score: 0, tier: 'Neutral', theme: 'neutral', edge: 'top', disabledFeatures: [], highlightedFeatures: [], dreamsEnabled: true, locked: false, lastReason: 'Every Hero chooses a path.', recoveryGuidance: 'You can only help others after you help yourself.' };
+let alignmentState = { score: 0, tier: 'Neutral', theme: 'neutral', edge: 'top', characterTraits: {}, assessmentModel: '', disabledFeatures: [], highlightedFeatures: [], dreamsEnabled: true, locked: false, lastReason: 'Every Hero chooses a path.', recoveryGuidance: 'You can only help others after you help yourself.' };
 let alignmentLoreIndex = 0;
+let alignmentEdgeTouchStartY = null;
+let alignmentPanelTouchStartY = null;
+let alignmentTouchConsumed = false;
+const alignmentTraitCatalog = ['Nobility','Humility','Compassion','Courage','Honesty','Mercy','Generosity','Discipline','Responsibility','Self-Respect','Greed','Cruelty','Pride','Deception','Coercion','Self-Sabotage'];
+const alignmentViceTraits = new Set(['Greed','Cruelty','Pride','Deception','Coercion','Self-Sabotage']);
 let activePromptLore = { key: '', text: '', changedAt: 0 };
 const loginGate = document.getElementById('loginGate');
 const loginForm = document.getElementById('loginForm');
 const loginUsername = document.getElementById('loginUsername');
 const loginPassword = document.getElementById('loginPassword');
+const loginRemember = document.getElementById('loginRemember');
 const loginSubmit = document.getElementById('loginSubmit');
 const loginClose = document.getElementById('loginClose');
 const registrationButton = document.getElementById('registrationButton');
@@ -16105,6 +16292,7 @@ const generationSettingsToggle = document.getElementById('generationSettingsTogg
 const generationSettingsPanel = document.getElementById('generationSettingsPanel');
 const reasoningLevelInput = document.getElementById('reasoningLevelInput');
 const reasoningLevelOutput = document.getElementById('reasoningLevelOutput');
+const jackhammerCustomBudget = document.getElementById('jackhammerCustomBudget');
 const sessionReasoningInherit = document.getElementById('sessionReasoningInherit');
 const mobileComposerControlsAnchor = document.getElementById('mobileComposerControlsAnchor');
 const mobileComposerMoreControls = document.getElementById('mobileComposerMoreControls');
@@ -16297,6 +16485,8 @@ const permSqlAdmin = document.getElementById('permSqlAdmin');
 const permTerminalCommands = document.getElementById('permTerminalCommands');
 const permTerminalForeverApproved = document.getElementById('permTerminalForeverApproved');
 const permPcAccess = document.getElementById('permPcAccess');
+const companionPermissionIds = ['CompanionEnabled','CompanionScreenView','CompanionCursorControl','CompanionApplicationLaunch','CompanionApplicationControl','CompanionTerminalCommands','CompanionActivityTranscriptStorage','CompanionSensitiveMemory','CompanionFinancialActions'];
+const companionPermissionInputs = Object.fromEntries(companionPermissionIds.map(name => [name, document.getElementById('perm' + name)]));
 const permissionNote = document.getElementById('permissionNote');
 const permissionGlobalTarget = document.getElementById('permissionGlobalTarget');
 const permissionUserSearch = document.getElementById('permissionUserSearch');
@@ -16312,6 +16502,24 @@ const tokenRateRequestList = document.getElementById('tokenRateRequestList');
 const tokenRateAdminMenu = document.querySelector('.token-rate-admin-menu');
 const addFilesystemAccess = document.getElementById('addFilesystemAccess');
 const filesystemAccessList = document.getElementById('filesystemAccessList');
+const workspaceSetPrimary = document.getElementById('workspaceSetPrimary');
+const workspaceAddAttached = document.getElementById('workspaceAddAttached');
+const workspaceAddGlobal = document.getElementById('workspaceAddGlobal');
+const workspaceRefresh = document.getElementById('workspaceRefresh');
+const workspaceRegexMode = document.getElementById('workspaceRegexMode');
+const workspaceRegexScope = document.getElementById('workspaceRegexScope');
+const workspaceRegexName = document.getElementById('workspaceRegexName');
+const workspaceRegexTarget = document.getElementById('workspaceRegexTarget');
+const workspaceRegexOperator = document.getElementById('workspaceRegexOperator');
+const workspaceRegexValue = document.getElementById('workspaceRegexValue');
+const workspaceRegexPattern = document.getElementById('workspaceRegexPattern');
+const workspaceRegexTestPath = document.getElementById('workspaceRegexTestPath');
+const workspaceRegexCase = document.getElementById('workspaceRegexCase');
+const workspaceRegexGenerate = document.getElementById('workspaceRegexGenerate');
+const workspaceRegexTest = document.getElementById('workspaceRegexTest');
+const workspaceRegexSave = document.getElementById('workspaceRegexSave');
+const workspaceRegexStatus = document.getElementById('workspaceRegexStatus');
+const workspaceRuleList = document.getElementById('workspaceRuleList');
 const filesystemContextMenu = document.getElementById('filesystemContextMenu');
 const ftpConfigWrap = document.getElementById('ftpConfigWrap');
 const ftpConfigFrame = document.getElementById('ftpConfigFrame');
@@ -16347,6 +16555,7 @@ const adminSqlPermissionRow = document.querySelector('.admin-sql-permission-row'
 const adminPermTerminalCommands = document.getElementById('adminPermTerminalCommands');
 const adminPermTerminalForeverApproved = document.getElementById('adminPermTerminalForeverApproved');
 const adminPermPcAccess = document.getElementById('adminPermPcAccess');
+const adminCompanionPermissionInputs = Object.fromEntries(companionPermissionIds.map(name => [name, document.getElementById('adminPerm' + name)]));
 const remoteAdminBackdrop = document.getElementById('remoteAdminBackdrop');
 const remoteAdminStatus = document.getElementById('remoteAdminStatus');
 const remoteAdminMeta = document.getElementById('remoteAdminMeta');
@@ -16517,9 +16726,24 @@ let sessionToolCalls = [];
 let recentSessionFileKeys = new Set();
 let chatSessions = [];
 let chatProjects = [];
-let selectedProjectId = 'unsorted';
+const chatProjectUiStorageKey = 'jackllm.chatProjects.ui.v2';
+function loadChatProjectUiState() {
+    try {
+        const value = JSON.parse(localStorage.getItem(chatProjectUiStorageKey) || '{}');
+        return value && typeof value === 'object' ? value : {};
+    } catch {
+        return {};
+    }
+}
+const chatProjectUiState = loadChatProjectUiState();
+let selectedProjectId = String(chatProjectUiState.selectedProjectId || 'unsorted');
 let currentProjectId = 'unsorted';
-let expandedProjectIds = new Set(['unsorted']);
+let collapsedProjectIds = new Set(Array.isArray(chatProjectUiState.collapsedProjectIds) ? chatProjectUiState.collapsedProjectIds.map(String) : []);
+let projectOrderIds = Array.isArray(chatProjectUiState.projectOrderIds) ? chatProjectUiState.projectOrderIds.map(String) : [];
+let projectReadUtc = chatProjectUiState.projectReadUtc && typeof chatProjectUiState.projectReadUtc === 'object' ? chatProjectUiState.projectReadUtc : {};
+let projectReadStateInitialized = !!chatProjectUiState.projectReadStateInitialized;
+let draggedProjectId = '';
+let projectPointerDragState = null;
 let archivedProjectsVisible = false;
 let chatMemories = [];
 let chatMemoryBlacklist = [];
@@ -16545,6 +16769,18 @@ let sessionComments = [];
 let commentsPollTimer = 0;
 let commentsPollInFlight = false;
 let commentsCollapsed = false;
+
+function saveChatProjectUiState() {
+    try {
+        localStorage.setItem(chatProjectUiStorageKey, JSON.stringify({
+            selectedProjectId,
+            collapsedProjectIds: Array.from(collapsedProjectIds),
+            projectOrderIds,
+            projectReadUtc,
+            projectReadStateInitialized
+        }));
+    } catch { }
+}
 let sessionsPanelOpen = true;
 let solutionExplorerOpen = true;
 let sessionsPanelWidth = 354;
@@ -16581,6 +16817,7 @@ let terminalApprovalPollTimer = 0;
 let terminalApprovalPollInFlight = false;
 let currentSessionId = null;
 let currentSessionOwnerKey = null;
+let sessionLoadRequestId = 0;
 let sessionOwnershipSaveConflicts = new Map();
 let sessionZipDownloading = false;
 let sessionSearchQuery = '';
@@ -16589,6 +16826,8 @@ let sessionSearchRegexError = '';
 let sessionDraftSaveTimer = 0;
 let authSession = null;
 let loginGateOptional = false;
+let workstationAuthRecoveryPromise = null;
+let workstationAuthReconnectRequired = false;
 let usageState = null;
 let usageToastTimer = 0;
 let tokenRatePolicy = { enabled: false, minTokenRate: 0, maxTokenRate: 0, advertisedTokenRate: 0, pendingRequest: null, canEdit: false };
@@ -16620,11 +16859,12 @@ let isServerOwner = false;
 let activeAdminSession = null;
 let sqlAdminState = null;
 let permissionState = { internetSearch: false, vsCopilotTools: true, agentAccess: true, fileUploads: true, imageUploads: true, fileDownloads: false, ftpServer: false, sqlAdmin: false, terminalCommands: true, terminalForeverApproved: false, mutedUntilUtc: '', bannedUntilUtc: '', muteUntilEnabled: false, banUntilEnabled: false };
-let selectedPermissionOwnerKey = 'global';
+let selectedPermissionOwnerKey = '';
 let selectedPermissionLabel = 'Global default permissions';
 let permissionUserSearchTimer = 0;
 let permissionUserSearchInFlight = false;
 let filesystemAccess = [];
+let chatWorkspaceState = { effectiveRoots: [], ignoreRules: [], fallbackSandbox: true };
 let filesystemContextRoots = [];
 let filesystemContextState = { mode: 'none', roots: [] };
 let filesystemContextExplicitlyConfigured = false;
@@ -16637,6 +16877,8 @@ let solutionExplorerExpanded = new Set();
 let solutionExplorerLoaded = false;
 let solutionExplorerLoading = false;
 let solutionExplorerLoadPromise = null;
+let solutionExplorerLoadRequestId = 0;
+let solutionExplorerPendingKey = '';
 let solutionExplorerRetryTimer = 0;
 let solutionExplorerRetryCount = 0;
 let solutionExplorerLoadKey = '';
@@ -16719,6 +16961,52 @@ const baseChatMode = {
 let interactionMode = 'chat';
 let activeGoal = {};
 let activePlan = {};
+const jackhammerPreferenceKey = 'jackllm.jackhammer.enabled.v1';
+let jackhammerPreferenceExplicit = localStorage.getItem(jackhammerPreferenceKey) !== null;
+let jackhammerEnabled = localStorage.getItem(jackhammerPreferenceKey) === 'true';
+let jackhammerLiveStack = null;
+function isJackhammerEnabled() {
+    return jackhammerPreferenceExplicit ? jackhammerEnabled : selectedService() === 'agent';
+}
+function setJackhammerEnabled(enabled, options) {
+    options = options || {};
+    jackhammerEnabled = !!enabled;
+    jackhammerPreferenceExplicit = true;
+    localStorage.setItem(jackhammerPreferenceKey, jackhammerEnabled ? 'true' : 'false');
+    if (jackhammerEnabled && interactionMode !== 'plan' && selectedService() !== 'agent')
+        selectServiceWithPriority('agent');
+    renderChatModeStrip();
+    saveSettings();
+    if (!options.quiet)
+        showJackhammerLiveStatus(jackhammerEnabled ? 'Jackhammer enabled' : 'Jackhammer off');
+}
+function jackhammerPresetBudget() {
+    const budgets = [2, 5, 10, 20, 40, 100];
+    const index = Math.max(0, Math.min(5, Number(reasoningLevelInput && reasoningLevelInput.value || 4)));
+    return budgets[index] || 40;
+}
+function effectiveJackhammerBudget() {
+    const custom = Number(jackhammerCustomBudget && jackhammerCustomBudget.value);
+    return Number.isFinite(custom) && custom >= 1 ? Math.max(1, Math.min(200, Math.round(custom))) : jackhammerPresetBudget();
+}
+function ensureJackhammerLiveStack() {
+    if (jackhammerLiveStack && jackhammerLiveStack.isConnected) return jackhammerLiveStack;
+    jackhammerLiveStack = document.createElement('div');
+    jackhammerLiveStack.className = 'jackhammer-live-stack';
+    jackhammerLiveStack.setAttribute('aria-live', 'polite');
+    if (form) form.appendChild(jackhammerLiveStack);
+    return jackhammerLiveStack;
+}
+function showJackhammerLiveStatus(text) {
+    if (!isJackhammerEnabled() || !text) return;
+    const stack = ensureJackhammerLiveStack();
+    const item = document.createElement('div');
+    item.className = 'jackhammer-live-item';
+    item.textContent = text;
+    stack.appendChild(item);
+    while (stack.children.length > 4) stack.firstElementChild.remove();
+    window.setTimeout(() => item.remove(), 4900);
+}
 function chatModeButtonLabel(serviceId) {
     if (serviceId === 'agent') return 'Agent mode';
     if (serviceId === browserSkillServiceId) return 'Browser skill mode';
@@ -16819,6 +17107,24 @@ function renderChatModeStrip() {
     planButton.setAttribute('aria-pressed', interactionMode === 'plan' ? 'true' : 'false');
     planButton.addEventListener('click', () => setInteractionMode(interactionMode === 'plan' ? 'chat' : 'plan'));
     strip.appendChild(planButton);
+    const jackhammerToggle = document.createElement('label');
+    const jackhammerOn = isJackhammerEnabled();
+    jackhammerToggle.className = 'jackhammer-toggle' + (jackhammerOn ? '' : ' is-off');
+    jackhammerToggle.title = jackhammerOn
+        ? 'Jackhammer is on. Prompts continue through a bounded autonomous work run.'
+        : 'Jackhammer is off. Enable bounded autonomous work runs.';
+    const jackhammerInput = document.createElement('input');
+    jackhammerInput.type = 'checkbox';
+    jackhammerInput.checked = jackhammerOn;
+    jackhammerInput.setAttribute('aria-label', 'Jackhammer autonomous work mode');
+    jackhammerInput.addEventListener('change', () => setJackhammerEnabled(jackhammerInput.checked));
+    const jackhammerSwitch = document.createElement('span');
+    jackhammerSwitch.className = 'jackhammer-switch';
+    jackhammerSwitch.setAttribute('aria-hidden', 'true');
+    const jackhammerText = document.createElement('span');
+    jackhammerText.textContent = 'Jackhammer ' + (jackhammerOn ? 'On' : 'Off');
+    jackhammerToggle.append(jackhammerInput, jackhammerSwitch, jackhammerText);
+    strip.appendChild(jackhammerToggle);
     const goalButton = document.createElement('button');
     goalButton.id = 'goalPanelToggle';
     goalButton.type = 'button';
@@ -17080,8 +17386,10 @@ const settingsKey = 'jackllm.chat.settings.v1';
 const chatBrowserSettingsKey = 'jackllm.chat.browserPanel.v1';
 const webUiLayoutSettingsKey = 'jackllm.chat.layout.v2';
 const socketJackAuthOrigin = 'https://socketjack.com';
-const socketJackTokenKey = 'SocketJackAccessToken';
-const socketJackTokenSessionKey = 'SocketJackAccessToken.Session';
+const workstationAuthScope = ((window.location.pathname.match(/^\/proxy\/[^/]+/i) || [window.location.origin])[0] || window.location.origin).toLowerCase();
+const workstationAuthKeySuffix = Array.from(workstationAuthScope).map(character => character.charCodeAt(0).toString(16)).join('');
+const socketJackTokenKey = 'JackLLMWorkstationAccessToken.' + workstationAuthKeySuffix;
+const socketJackTokenSessionKey = socketJackTokenKey + '.Session';
 const socketJackAuthCookieName = 'SocketJackAuth';
 const socketJackUrlTokenKeys = ['AuthTOKEN', 'AuthToken', 'Authtoken', 'authTOKEN', 'auth_token', 'socketjack_auth', 'socketjack_token', 'socketjackAccessToken', 'sj_auth', 'authToken', 'access_token'];
 const socketJackUrlTokenKeySet = new Set(socketJackUrlTokenKeys.map(key => key.toLowerCase()));
@@ -17110,15 +17418,15 @@ function isSocketJackFilePage() {
 }
 
 function canUseSocketJackLoginRedirect() {
-    return isSocketJackProxyPage();
+    return false;
 }
 
 function shouldUseLocalAuthFallback() {
-    return isSocketJackLocalPage() || isSocketJackFilePage();
+    return false;
 }
 
 function shouldHideLocalLoginUi() {
-    return !sharedView && shouldUseLocalAuthFallback();
+    return false;
 }
 
 function buildLocalAuthFallbackSession(reason) {
@@ -17248,6 +17556,146 @@ function clearSocketJackToken() {
     clearSocketJackAuthCookie();
 }
 
+function workstationAuthError(message) {
+    const error = new Error(message || 'Workstation sign-in required.');
+    error.name = 'WorkstationAuthRequiredError';
+    error.code = 'workstation_auth_required';
+    return error;
+}
+
+function isWorkstationAuthError(value) {
+    if (value && (value.name === 'WorkstationAuthRequiredError' || value.code === 'workstation_auth_required'))
+        return true;
+    const text = String(value && value.message ? value.message : value || '');
+    return /workstation sign-in required|sign in with an account (?:created on|from) this (?:jackllm )?workstation|missing authorization header/i.test(text);
+}
+
+function localApiRequestPath(resource) {
+    try {
+        const raw = typeof resource === 'string'
+            ? resource
+            : (resource instanceof URL ? resource.toString() : (resource && resource.url ? resource.url : ''));
+        return raw ? new URL(raw, window.location.href).pathname : '';
+    } catch {
+        return '';
+    }
+}
+
+function isWebAuthBootstrapRequest(resource) {
+    const path = localApiRequestPath(resource).toLowerCase();
+    return path.endsWith('/api/web-auth/session') ||
+        path.endsWith('/api/web-auth/login') ||
+        path.endsWith('/api/web-auth/logout') ||
+        path.endsWith('/api/web-auth/register') ||
+        path.endsWith('/api/web-auth/registration-request');
+}
+
+async function responseRequiresWorkstationAuthentication(response) {
+    if (!response || (response.status !== 401 && response.status !== 403))
+        return false;
+    let text = '';
+    try {
+        text = await response.clone().text();
+    } catch { }
+    return response.status === 401 ||
+        /workstation sign-in required|sign in with an account (?:created on|from) this (?:jackllm )?workstation|missing authorization header|invalid or expired (?:access )?token/i.test(text);
+}
+
+function applyLoadedAuthSession(data, applyUsage) {
+    authSession = data;
+    isServerOwner = !!(data && (data.isOwner || data.isServerOwner));
+    isDatabaseAdmin = !!(data && data.isAdministrator) || isServerOwner;
+    applyRemoteAdminAvailability();
+    updateRegistrationMode(data);
+    if (applyUsage !== false)
+        applyUsageSnapshot(data && data.usage, 0);
+    updateTokenRateUi();
+    updateAuthUserPill(data);
+    updatePremiumTokenHint();
+    return data;
+}
+
+function markWorkstationAuthenticationRestored(session) {
+    if (!isSocketJackAuthenticated(session))
+        return false;
+    workstationAuthReconnectRequired = false;
+    if (loginError) loginError.textContent = '';
+    setLoginGateVisible(false);
+    return true;
+}
+
+function requireWorkstationLogin() {
+    workstationAuthReconnectRequired = true;
+    authSession = null;
+    isDatabaseAdmin = false;
+    isServerOwner = false;
+    updateAuthUserPill(null);
+    applyRemoteAdminAvailability();
+    if (loginError)
+        loginError.textContent = 'Your Workstation session expired. Sign in again to reconnect; your chat will resume automatically.';
+    setLoginGateVisible(true);
+}
+
+async function probeWorkstationAuthentication() {
+    const headers = new Headers();
+    const token = readSocketJackToken();
+    if (token)
+        headers.set('Authorization', 'Bearer ' + token);
+    const response = await nativeFetch(normalizeLocalApiResource('/api/web-auth/session'), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers
+    });
+    if (!response.ok)
+        return null;
+    const text = await response.text();
+    if (!text || !text.trim())
+        return null;
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+async function recoverWorkstationAuthentication() {
+    if (workstationAuthRecoveryPromise)
+        return workstationAuthRecoveryPromise;
+    workstationAuthRecoveryPromise = (async () => {
+        const delays = [0, 300, 900, 1800];
+        for (const delay of delays) {
+            if (delay)
+                await new Promise(resolve => window.setTimeout(resolve, delay));
+            try {
+                const session = await probeWorkstationAuthentication();
+                if (session && session.ok && isSocketJackAuthenticated(session)) {
+                    applyLoadedAuthSession(session, true);
+                    markWorkstationAuthenticationRestored(session);
+                    if (chatAppBootstrapped)
+                        refreshChatIdentityState().catch(() => { });
+                    return true;
+                }
+            } catch {
+                // A restarting Workstation can briefly reject both transports. Keep reconnecting.
+            }
+        }
+        requireWorkstationLogin();
+        return false;
+    })().finally(() => {
+        workstationAuthRecoveryPromise = null;
+    });
+    return workstationAuthRecoveryPromise;
+}
+
+async function waitForWorkstationAuthentication(sessionId) {
+    while (workstationAuthReconnectRequired) {
+        if (sessionId && isQueueStopRequestedForSession(sessionId))
+            return false;
+        await new Promise(resolve => window.setTimeout(resolve, 250));
+    }
+    return isSocketJackAuthenticated(authSession);
+}
+
 function safeStorageGet(storage, key) {
     try {
         return storage && storage.getItem ? (storage.getItem(key) || '') : '';
@@ -17294,7 +17742,7 @@ function readSocketJackAuthCookie() {
 
 function writeSocketJackAuthCookie(token, remember) {
     try {
-        if (!token || !isSocketJackLocalPage() && !isSocketJackProxyPage()) return;
+        if (!token || !isSocketJackLocalPage()) return;
         let cookie = socketJackAuthCookieName + '=' + encodeURIComponent(token) + '; Path=/; SameSite=Lax';
         if (remember) cookie += '; Max-Age=2592000';
         document.cookie = cookie;
@@ -17390,11 +17838,7 @@ function isLocalApiRequest(resource) {
 }
 
 function shouldUseRootApiEndpoint(path) {
-    return path === '/api/web-auth/session'
-        || path === '/api/web-auth/login'
-        || path === '/api/web-auth/logout'
-        || path === '/api/account'
-        || path === '/api/costs';
+    return false;
 }
 
 let webChatApiTransport = null;
@@ -17402,6 +17846,8 @@ let webChatApiTransport = null;
 function webChatWebSocketUrl() {
     const url = new URL(explicitLocalRoutePath('/api/web-chat/ws'), window.location.href);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const token = readSocketJackToken();
+    if (token) url.searchParams.set('socketjack_auth', token);
     return url.href;
 }
 
@@ -17688,24 +18134,35 @@ function webChatWebSocketFetch(resource, options) {
     return webChatApiTransport.request(resource, options || {});
 }
 
-window.fetch = function(resource, options) {
+window.fetch = async function(resource, options) {
     if (!nativeFetch)
         throw new Error('This browser does not expose fetch for JackLLM local API requests.');
-    const nextResource = normalizeLocalApiResource(resource);
-    const token = readSocketJackToken();
+    const retryResource = typeof Request !== 'undefined' && resource instanceof Request ? resource.clone() : resource;
+    const performRequest = async requestResource => {
+        const nextResource = normalizeLocalApiResource(requestResource);
+        const token = readSocketJackToken();
+        const nextOptions = Object.assign({}, options || {});
+        const headers = new Headers(nextOptions.headers || (requestResource && requestResource.headers) || {});
+        if (token && isLocalApiRequest(nextResource) && !headers.has('Authorization') && !headers.has('X-SocketJack-Auth'))
+            headers.set('Authorization', 'Bearer ' + token);
+        nextOptions.headers = headers;
+        if (shouldUseWebChatWebSocketFetch(nextResource, nextOptions)) {
+            return webChatWebSocketFetch(nextResource, nextOptions).catch(error => {
+                console.debug('Web Chat WebSocket API fallback:', error);
+                return nativeFetch(nextResource, nextOptions);
+            });
+        }
+        return nativeFetch(nextResource, nextOptions);
+    };
 
-    const nextOptions = Object.assign({}, options || {});
-    const headers = new Headers(nextOptions.headers || (resource && resource.headers) || {});
-    if (token && isLocalApiRequest(nextResource) && !headers.has('Authorization') && !headers.has('X-SocketJack-Auth'))
-        headers.set('Authorization', 'Bearer ' + token);
-    nextOptions.headers = headers;
-    if (shouldUseWebChatWebSocketFetch(nextResource, nextOptions)) {
-        return webChatWebSocketFetch(nextResource, nextOptions).catch(error => {
-            console.debug('Web Chat WebSocket API fallback:', error);
-            return nativeFetch(nextResource, nextOptions);
-        });
-    }
-    return nativeFetch(nextResource, nextOptions);
+    const response = await performRequest(resource);
+    if (sharedView || isWebAuthBootstrapRequest(resource) || !isLocalApiRequest(normalizeLocalApiResource(resource)) ||
+        !await responseRequiresWorkstationAuthentication(response))
+        return response;
+
+    if (await recoverWorkstationAuthentication())
+        return performRequest(retryResource);
+    throw workstationAuthError('Workstation sign-in required. Waiting to reconnect.');
 };
 
 paramFields.forEach(field => {
@@ -17771,14 +18228,34 @@ function applyAlignmentSnapshot(snapshot) {
     document.body.classList.toggle('alignment-locked', theme === 'locked');
     if (alignmentStrip) {
         alignmentStrip.className = 'alignment-strip ' + theme;
-        alignmentStrip.setAttribute('aria-label', 'Alignment: ' + (alignmentState.tier || 'Neutral') + ', ' + Number(alignmentState.score || 0));
+        alignmentStrip.setAttribute('aria-label', (alignmentPanel && !alignmentPanel.hidden ? 'Close' : 'Open') + ' alignment drawer. Alignment: ' + (alignmentState.tier || 'Neutral') + ', ' + Number(alignmentState.score || 0));
     }
     if (alignmentPanel) alignmentPanel.className = 'alignment-panel ' + theme;
+    if (alignmentPanel && !alignmentPanel.hidden)
+        document.body.classList.toggle('alignment-drawer-open', theme !== 'evil' && theme !== 'locked');
     if (alignmentScore) alignmentScore.textContent = (alignmentState.tier || 'Neutral') + ' · ' + Number(alignmentState.score || 0);
     if (alignmentReason) alignmentReason.textContent = alignmentState.lastReason || 'Every Hero chooses a path.';
     const disabled = Array.isArray(alignmentState.disabledFeatures) ? alignmentState.disabledFeatures : [];
     if (alignmentFeatures) alignmentFeatures.textContent = disabled.length ? 'Withdrawn Guild privileges: ' + disabled.join(', ') + '.' : 'All granted Guild privileges remain available.';
+    if (alignmentTraits) {
+        alignmentTraits.textContent = '';
+        const traits = alignmentState.characterTraits && typeof alignmentState.characterTraits === 'object' ? alignmentState.characterTraits : {};
+        alignmentTraitCatalog.forEach(name => {
+            const row = document.createElement('div');
+            row.className = 'alignment-trait' + (alignmentViceTraits.has(name) ? ' bad' : '');
+            const label = document.createElement('span');
+            label.textContent = name;
+            const score = document.createElement('span');
+            score.className = 'alignment-trait-score';
+            const fallback = alignmentViceTraits.has(name) ? 1 : 5;
+            const value = Math.max(1, Math.min(10, Number(traits[name] ?? fallback) || fallback));
+            score.textContent = Math.round(value) + '/10';
+            row.append(label, score);
+            alignmentTraits.appendChild(row);
+        });
+    }
     if (alignmentRecovery) alignmentRecovery.textContent = alignmentState.recoveryGuidance || 'You can only help others after you help yourself.';
+    if (alignmentModel) alignmentModel.textContent = alignmentState.assessmentModel ? 'Judged by ' + alignmentState.assessmentModel : 'Awaiting the selected model’s reading';
     if (alignmentLockScreen) alignmentLockScreen.hidden = !alignmentState.locked;
     const dreamToggle = document.getElementById('dreamPanelToggle');
     if (dreamToggle) dreamToggle.classList.toggle('alignment-hidden', alignmentState.dreamsEnabled === false);
@@ -17803,17 +18280,76 @@ function applyAlignmentSnapshot(snapshot) {
     });
 }
 
+applyAlignmentSnapshot(alignmentState);
+
 async function loadAlignment() {
     const response = await fetchWithTimeout('/api/alignment', { credentials: 'same-origin' }, 8000);
     const data = await readJsonResponse(response, null, 8000);
     if (response.ok && data && data.ok && data.alignment) applyAlignmentSnapshot(data.alignment);
 }
 
-if (alignmentStrip) alignmentStrip.addEventListener('click', () => {
+function setAlignmentDrawerOpen(open) {
     if (!alignmentPanel) return;
-    alignmentPanel.hidden = !alignmentPanel.hidden;
-    alignmentStrip.setAttribute('aria-expanded', alignmentPanel.hidden ? 'false' : 'true');
+    const shouldOpen = !!open;
+    alignmentPanel.hidden = !shouldOpen;
+    const theme = alignmentState.locked ? 'locked' : (alignmentState.theme || 'neutral');
+    document.body.classList.toggle('alignment-drawer-open', shouldOpen && theme !== 'evil' && theme !== 'locked');
+    if (alignmentStrip) {
+        alignmentStrip.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+        alignmentStrip.setAttribute('aria-label', (shouldOpen ? 'Close' : 'Open') + ' alignment drawer. Alignment: ' + (alignmentState.tier || 'Neutral') + ', ' + Number(alignmentState.score || 0));
+    }
+}
+
+if (alignmentStrip) alignmentStrip.addEventListener('click', () => {
+    if (alignmentTouchConsumed) {
+        alignmentTouchConsumed = false;
+        return;
+    }
+    setAlignmentDrawerOpen(alignmentPanel ? alignmentPanel.hidden : true);
 });
+
+document.addEventListener('touchstart', event => {
+    if (!alignmentPanel || !alignmentPanel.hidden || event.touches.length !== 1) return;
+    const y = event.touches[0].clientY;
+    alignmentEdgeTouchStartY = y <= 32 ? y : null;
+}, { passive: true });
+
+document.addEventListener('touchmove', event => {
+    if (alignmentEdgeTouchStartY === null || event.touches.length !== 1) return;
+    const delta = event.touches[0].clientY - alignmentEdgeTouchStartY;
+    if (delta > 8) event.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchend', event => {
+    if (alignmentEdgeTouchStartY === null) return;
+    const endY = event.changedTouches && event.changedTouches.length ? event.changedTouches[0].clientY : alignmentEdgeTouchStartY;
+    const delta = endY - alignmentEdgeTouchStartY;
+    alignmentEdgeTouchStartY = null;
+    if (delta >= 48) {
+        alignmentTouchConsumed = true;
+        setAlignmentDrawerOpen(true);
+    }
+}, { passive: true });
+
+if (alignmentPanel) {
+    alignmentPanel.addEventListener('touchstart', event => {
+        alignmentPanelTouchStartY = event.touches.length === 1 ? event.touches[0].clientY : null;
+    }, { passive: true });
+    alignmentPanel.addEventListener('touchmove', event => {
+        if (alignmentPanelTouchStartY === null || event.touches.length !== 1) return;
+        if (event.touches[0].clientY - alignmentPanelTouchStartY < -8) event.preventDefault();
+    }, { passive: false });
+    alignmentPanel.addEventListener('touchend', event => {
+        if (alignmentPanelTouchStartY === null) return;
+        const endY = event.changedTouches && event.changedTouches.length ? event.changedTouches[0].clientY : alignmentPanelTouchStartY;
+        const delta = endY - alignmentPanelTouchStartY;
+        alignmentPanelTouchStartY = null;
+        if (delta <= -42) {
+            alignmentTouchConsumed = true;
+            setAlignmentDrawerOpen(false);
+        }
+    }, { passive: true });
+}
 
 let startupProgressValue = 4;
 let startupProgressTimer = 0;
@@ -17892,15 +18428,13 @@ function finishStartupLoading() {
 function setLoginGateVisible(visible, options) {
     options = options || {};
     if (!loginGate) return;
-    if (visible && shouldHideLocalLoginUi())
-        visible = false;
     loginGateOptional = !!(visible && options.optional);
     loginGate.hidden = !visible;
     document.body.classList.toggle('auth-required', !!visible);
     if (loginSubtitle) {
         loginSubtitle.textContent = loginGateOptional
-            ? 'Sign in to use premium tokens. Free chat can continue with this IP session.'
-            : 'SocketJack.com account required for JackLLM chat.';
+            ? 'Sign in with an account from this Workstation.'
+            : 'Sign in with an account from this JackLLM Workstation.';
     }
     if (loginClose) {
         const closeLabel = loginGateOptional ? 'Continue with free chat' : 'Close tab';
@@ -17930,17 +18464,13 @@ function isPublicSocketJackAccount(session) {
     return !!(session && (session.isPublicAccount || type === 'public' || type === 'guest' || type === 'viewer'));
 }
 function canUseChatWithoutLogin(session) {
-    return !!(shouldHideLocalLoginUi() && session && session.usage && session.usage.tokensRequired === false);
+    return false;
 }
 
 function updatePremiumTokenHint() {
     const show = !!(!shouldHideLocalLoginUi() && !sharedView && !isSocketJackAuthenticated(authSession) && usageState && usageState.tokensRequired === false);
     if (premiumTokenText) {
-        const ip = authSession && authSession.clientIp ? String(authSession.clientIp).trim() : '';
-        const freeSession = ip && ip.toLowerCase() !== 'unknown'
-            ? 'Free session: ' + ip + '. '
-            : 'Free IP session. ';
-        premiumTokenText.textContent = freeSession + 'Sign in for history, uploads, sharing, and higher limits.';
+        premiumTokenText.textContent = 'Sign in with this Workstation account for chat, history, uploads, sharing, and tools.';
     }
     if (premiumTokenHint) {
         premiumTokenHint.hidden = !show;
@@ -17952,9 +18482,8 @@ function updatePremiumTokenHint() {
 }
 
 function showOptionalLoginGate() {
-    if (shouldHideLocalLoginUi()) return;
     if (redirectToSocketJackLogin()) return;
-    setLoginGateVisible(true, { optional: true });
+    setLoginGateVisible(true);
 }
 
 function canCurrentUserComment() {
@@ -17964,9 +18493,9 @@ function canCurrentUserComment() {
 function sharedPromptDisabledReason() {
     if (!sharedView) return '';
     if (!isSocketJackAuthenticated(authSession))
-        return 'Sign in with a non-public SocketJack.com account to join this shared session.';
+        return 'Sign in with an account from this Workstation to join this shared session.';
     if (isPublicSocketJackAccount(authSession))
-        return 'Public SocketJack.com accounts can view this session but cannot send prompts.';
+        return 'This Workstation account can view the session but cannot send prompts.';
     if (shareState.canPrompt === false)
         return shareState.tokenWarning || 'This public session cannot send prompts right now.';
     return '';
@@ -17988,7 +18517,7 @@ function closeLoginTab() {
         if (prompt) prompt.focus();
         return;
     }
-    if (loginError) loginError.textContent = 'Closing this tab. SocketJack.com registration is required to use this service.';
+    if (loginError) loginError.textContent = 'Closing this tab. A user account from this Workstation is required.';
     try { window.close(); } catch { }
     window.setTimeout(() => {
         if (!document.hidden)
@@ -18014,8 +18543,6 @@ async function inheritSocketJackRedirectSession(force) {
 async function loadAuthSession(options) {
     options = Object.assign({ applyUsage: true }, options || {});
     consumeSocketJackUrlToken();
-    if (isSocketJackProxyPage() && (!readSocketJackToken() || options.forceInherit))
-        await inheritSocketJackRedirectSession(!!options.forceInherit).catch(() => null);
     let response = null;
     let data = null;
     try {
@@ -18032,15 +18559,6 @@ async function loadAuthSession(options) {
         else
             throw new Error(data.error || ('Could not check login. HTTP ' + response.status + ' ' + response.statusText));
     }
-    if (!isSocketJackAuthenticated(data) && isSocketJackProxyPage()) {
-        const inherited = await inheritSocketJackRedirectSession(true).catch(() => null);
-        if (inherited && (inherited.accessToken || inherited.access_token || inherited.token)) {
-            response = await fetchWithTimeout('/api/web-auth/session', { credentials: 'same-origin' }, 8000);
-            data = await readJsonResponse(response, {}, 8000);
-            if (!response.ok)
-                throw new Error(data.error || ('Could not check login. HTTP ' + response.status + ' ' + response.statusText));
-        }
-    }
     if (!data.ok) {
         if (shouldUseLocalAuthFallback())
             data = buildLocalAuthFallbackSession(data.error || 'Could not check login.');
@@ -18049,16 +18567,9 @@ async function loadAuthSession(options) {
     }
     if (isSocketJackAuthenticated(data))
         clearSocketJackUrlTokenFromUrl();
-    authSession = data;
-    isServerOwner = !!(data.isOwner || data.isServerOwner);
-    isDatabaseAdmin = !!data.isAdministrator || isServerOwner;
-    applyRemoteAdminAvailability();
-    updateRegistrationMode(data);
-    if (options.applyUsage !== false)
-        applyUsageSnapshot(data.usage, 0);
-    updateTokenRateUi();
-    updateAuthUserPill(data);
-    updatePremiumTokenHint();
+    applyLoadedAuthSession(data, options.applyUsage);
+    if (isSocketJackAuthenticated(data))
+        markWorkstationAuthenticationRestored(data);
     return data;
 }
 
@@ -18114,8 +18625,11 @@ function applyAdminVisibility() {
 
 function updateRegistrationMode(session) {
     if (!registrationButton) return;
-    registrationButton.textContent = 'Register on SocketJack.com';
-    registrationButton.title = 'Open SocketJack.com registration.';
+    const open = !!(session && session.canRegisterOpen);
+    registrationButton.textContent = open ? 'Create account' : 'Request account';
+    registrationButton.title = open
+        ? 'Create an account stored on this Workstation.'
+        : 'Request an account from this Workstation administrator.';
 }
 
 async function submitLogin(event) {
@@ -18126,24 +18640,25 @@ async function submitLogin(event) {
     if (registrationButton) registrationButton.disabled = true;
     let loginReturnedToken = false;
     try {
-        const response = await nativeFetch(socketJackAuthUrl('/api/web-auth/login'), {
+        const response = await fetch('/api/web-auth/login', {
             method: 'POST',
-            credentials: 'include',
+            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 username: loginUsername ? loginUsername.value : '',
                 password: loginPassword ? loginPassword.value : '',
-                remember: true
+                remember: !loginRemember || loginRemember.checked
             })
         });
         const data = await readJsonResponse(response, {});
         if (!response.ok || !data.ok) throw new Error(data.error || 'Login failed.');
         const accessToken = data.accessToken || data.token || '';
-        saveSocketJackToken(accessToken, true);
+        saveSocketJackToken(accessToken, !loginRemember || loginRemember.checked);
         loginReturnedToken = !!accessToken;
         const session = await loadAuthSession();
         if (!isSocketJackAuthenticated(session))
-            throw new Error('SocketJack.com login succeeded, but JACK did not authorize the returned token.');
+            throw new Error('The Workstation login succeeded, but JACK did not authorize the returned token.');
+        markWorkstationAuthenticationRestored(session);
         authSession = session;
         isServerOwner = !!(session.isOwner || session.isServerOwner);
         isDatabaseAdmin = !!session.isAdministrator || isServerOwner;
@@ -18167,21 +18682,45 @@ async function submitLogin(event) {
     }
 }
 
-function openSocketJackRegistration() {
-    if (loginError) loginError.textContent = 'Opening SocketJack.com registration...';
-    redirectToSocketJackRegistration();
+async function openSocketJackRegistration() {
+    if (loginError) loginError.textContent = '';
+    if (registrationButton) registrationButton.disabled = true;
+    try {
+        const session = authSession || await loadAuthSession({ applyUsage: false });
+        const path = session && session.canRegisterOpen
+            ? '/api/web-auth/register'
+            : '/api/web-auth/registration-request';
+        const response = await fetch(path, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: loginUsername ? loginUsername.value : '',
+                password: loginPassword ? loginPassword.value : ''
+            })
+        });
+        const data = await readJsonResponse(response, {});
+        if (!response.ok || !data.ok)
+            throw new Error(data.error || 'Account request failed.');
+        if (data.authenticated && data.accessToken) {
+            saveSocketJackToken(data.accessToken, !loginRemember || loginRemember.checked);
+            await loadAuthSession();
+            setLoginGateVisible(false);
+            await bootstrapChatApp();
+            return;
+        }
+        if (loginError)
+            loginError.textContent = data.message || 'Account request sent to this Workstation administrator.';
+    } catch (error) {
+        if (loginError) loginError.textContent = error && error.message ? error.message : String(error);
+    } finally {
+        if (registrationButton) registrationButton.disabled = false;
+    }
 }
 
 async function logout() {
     try {
         await fetch('/api/web-auth/logout', { method: 'POST', credentials: 'same-origin' });
-    } catch { }
-    try {
-        await nativeFetch(socketJackAuthUrl('/api/web-auth/logout'), {
-            method: 'POST',
-            credentials: 'include',
-            headers: readSocketJackToken() ? { Authorization: 'Bearer ' + readSocketJackToken() } : {}
-        });
     } catch { }
     clearSocketJackToken();
     authSession = null;
@@ -23254,6 +23793,7 @@ function saveSettings() {
         top_p: topPInput ? topPInput.value : '',
         max_tokens: maxTokensInput ? maxTokensInput.value : '',
         reasoning_level: reasoningLevelName(),
+        jackhammer_custom_budget: jackhammerCustomBudget ? jackhammerCustomBudget.value : '',
         retry_until_success: retryUntilSuccessEnabled(),
         tts_enabled: !!(ttsEnabled && ttsEnabled.checked),
         filesystem_context_explicit: !!filesystemContextExplicitlyConfigured,
@@ -23274,7 +23814,8 @@ function applySavedSettings() {
     if (saved.temperature !== undefined && temperatureInput) temperatureInput.value = saved.temperature;
     if (saved.top_p !== undefined && topPInput) topPInput.value = saved.top_p;
     if (saved.max_tokens !== undefined && maxTokensInput) maxTokensInput.value = saved.max_tokens;
-    if (saved.reasoning_level !== undefined && reasoningLevelInput) reasoningLevelInput.value = String(Math.max(0, ['minimal','low','medium','high','auto'].indexOf(String(saved.reasoning_level).toLowerCase())));
+    if (saved.reasoning_level !== undefined && reasoningLevelInput) reasoningLevelInput.value = String(Math.max(0, ['minimal','low','medium','high','auto','ultra'].indexOf(String(saved.reasoning_level).toLowerCase())));
+    if (saved.jackhammer_custom_budget !== undefined && jackhammerCustomBudget) jackhammerCustomBudget.value = saved.jackhammer_custom_budget;
     updateReasoningLevelUi();
     if (retryPrompt) retryPrompt.checked = saved.retry_until_success === undefined ? true : !!saved.retry_until_success;
     if (ttsEnabled && saved.tts_enabled !== undefined) ttsEnabled.checked = !!saved.tts_enabled;
@@ -23285,8 +23826,20 @@ function generationSettings(browserSkillContext, modelOverride, mediaSource) {
     const requestedModel = modelOverride || modelForSelectedService();
     const normalizedModel = isDefaultModelPlaceholder(requestedModel) ? (firstAvailableModel(true) || requestedModel) : requestedModel;
     const settings = { model: normalizedModel };
+    settings.interactionMode = interactionMode === 'plan'
+        ? 'plan'
+        : (interactionMode === 'agent' || interactionMode === 'companion' ? interactionMode : 'chat');
     settings.reasoningLevel = effectiveReasoningLevel();
     settings.sessionReasoningLevel = sessionReasoningInherit && sessionReasoningInherit.checked ? 'inherit' : effectiveReasoningLevel();
+    settings.interactionMode = interactionMode === 'plan' ? 'plan' : (selectedService() || 'chat');
+    if (isJackhammerEnabled()) {
+        settings.jackhammer = {
+            enabled: true,
+            runId: 'jackhammer_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9),
+            turnBudget: effectiveJackhammerBudget(),
+            customTurnBudget: jackhammerCustomBudget && jackhammerCustomBudget.value ? effectiveJackhammerBudget() : null
+        };
+    }
     const service = selectedService();
     const temperature = parseFloat(temperatureInput && temperatureInput.value);
     const topP = parseFloat(topPInput && topPInput.value);
@@ -23326,8 +23879,8 @@ function markLmStudioIdle(detail) {
     setLmStudioStatus('idle', detail || 'Model runtime is reachable and idle.');
 }
 
-const reasoningLevelNames = ['minimal', 'low', 'medium', 'high', 'auto'];
-function reasoningLevelName() { return reasoningLevelNames[Math.max(0, Math.min(4, Number(reasoningLevelInput && reasoningLevelInput.value || 4)))] || 'auto'; }
+const reasoningLevelNames = ['minimal', 'low', 'medium', 'high', 'auto', 'ultra'];
+function reasoningLevelName() { return reasoningLevelNames[Math.max(0, Math.min(5, Number(reasoningLevelInput && reasoningLevelInput.value || 4)))] || 'auto'; }
 function sessionReasoningStorageKey() { return settingsKey + '.reasoning.' + (currentSessionId || 'new'); }
 function effectiveReasoningLevel() { return sessionReasoningInherit && sessionReasoningInherit.checked ? reasoningLevelName() : (localStorage.getItem(sessionReasoningStorageKey()) || reasoningLevelName()); }
 function updateReasoningLevelUi() { if (reasoningLevelOutput) reasoningLevelOutput.value = reasoningLevelName().replace(/^./, c => c.toUpperCase()); }
@@ -23857,6 +24410,7 @@ function applyPermissionUi() {
     if (permTerminalCommands) permTerminalCommands.checked = permissionState.terminalCommands !== false;
     if (permTerminalForeverApproved) permTerminalForeverApproved.checked = !!permissionState.terminalForeverApproved;
     if (permPcAccess) permPcAccess.checked = !!permissionState.pcAccess;
+    companionPermissionIds.forEach(name => { const input=companionPermissionInputs[name]; if(input) input.checked=!!permissionState[name.charAt(0).toLowerCase()+name.slice(1)]; });
     [['dreamPermInternetSearch','internetSearch'],['dreamPermVsCopilotTools','vsCopilotTools'],['dreamPermAgentAccess','agentAccess'],['dreamPermTerminalCommands','terminalCommands'],['dreamPermFileUploads','fileUploads'],['dreamPermImageUploads','imageUploads'],['dreamPermFileDownloads','fileDownloads'],['dreamPermFtpServer','ftpServer'],['dreamPermPcAccess','pcAccess']].forEach(([id,key]) => { const dream=document.getElementById(id); if(dream){ dream.checked=!!permissionState['dream'+key.charAt(0).toUpperCase()+key.slice(1)] && !!permissionState[key]; dream.disabled=!adminEditable || !permissionState[key] || (key==='terminalCommands'&&!permissionState.terminalForeverApproved); } });
     [permInternetSearch, permVsCopilotTools, permAgentAccess, permFileUploads, permImageUploads, permFileDownloads, permFtpServer, permSqlAdmin, permTerminalCommands, permTerminalForeverApproved, permPcAccess].forEach(input => {
         if (input) input.disabled = !adminEditable;
@@ -24163,7 +24717,7 @@ function schedulePermissionUserSearch() {
 
 async function loadPermissions(timeoutMs, ownerKey) {
     const requestTimeoutMs = Math.max(1000, Number(timeoutMs || 15000));
-    const targetOwnerKey = String(ownerKey || selectedPermissionOwnerKey || 'global').trim() || 'global';
+    const targetOwnerKey = String(ownerKey || selectedPermissionOwnerKey || currentSessionOwnerKey || 'global').trim() || 'global';
     const url = '/api/chat-permissions?ownerKey=' + encodeURIComponent(targetOwnerKey);
     const response = await fetchWithTimeout(url, { credentials: 'same-origin' }, requestTimeoutMs);
     if (response.status === 403) {
@@ -24235,6 +24789,8 @@ async function loadFilesystemAccess(options) {
     permissionCanEdit = !!data.canEdit && canUseAdminTools();
     permissionMonitoringState = data.monitoring || permissionMonitoringState;
     filesystemAccess = Array.isArray(data.directories) ? data.directories : [];
+    if (data.workspace)
+        applyChatWorkspacePayload(data.workspace);
     filesystemContextRoots = mergeFilesystemContextRoots(data.contextRoots || data.filesystemContextRoots || [], filesystemContextRoots);
     pruneFilesystemContextSelection();
     ensureDefaultFilesystemContext();
@@ -24247,6 +24803,63 @@ async function loadFilesystemAccess(options) {
 function renderFilesystemAccess() {
     if (!filesystemAccessList) return;
     filesystemAccessList.textContent = '';
+    const workspaceRoots = Array.isArray(chatWorkspaceState.effectiveRoots) ? chatWorkspaceState.effectiveRoots : [];
+    if (workspaceRoots.length) {
+        const primary = workspaceRoots.find(root => root && root.role === 'primary');
+        workspaceRoots.forEach(root => {
+            if (!root) return;
+            const item = document.createElement('div');
+            item.className = 'workspace-card ' + (root.role || '') + (root.isInherited ? ' global' : '');
+            const head = document.createElement('div');
+            head.className = 'workspace-card-head';
+            const title = document.createElement('strong');
+            title.textContent = root.isInherited
+                ? 'Global > ' + (root.displayName || 'Folder')
+                : root.role === 'attached' && primary
+                    ? (primary.displayName || 'Session') + ' > ' + (root.displayName || 'Folder')
+                    : (root.displayName || 'Workspace');
+            const role = document.createElement('span');
+            role.className = 'workspace-badge';
+            role.textContent = root.isSandbox ? 'sandbox fallback' : (root.role || 'folder');
+            const access = document.createElement('span');
+            access.className = 'workspace-badge';
+            access.textContent = root.accessMode || 'read-only';
+            head.append(title, role, access);
+            const path = document.createElement('div');
+            path.className = 'workspace-card-path' + (root.exists === false && !root.isSandbox ? ' missing' : '');
+            path.textContent = root.path || '\\';
+            path.title = path.textContent;
+            item.append(head, path);
+            if (!root.isSandbox && permissionCanEdit && canUseAdminTools()) {
+                const actions = document.createElement('div');
+                actions.className = 'workspace-card-actions';
+                if (!root.isInherited) {
+                    actions.append(
+                        workspaceActionButton(root.accessMode === 'read-only' ? 'Make read/write' : 'Make read-only', () =>
+                            saveChatWorkspaceRoot(root, { accessMode: root.accessMode === 'read-only' ? 'read-write' : 'read-only' })),
+                        workspaceActionButton('Rename', async () => {
+                            const value = window.prompt('Workspace display name', root.displayName || '');
+                            if (value && value.trim()) await saveChatWorkspaceRoot(root, { displayName: value.trim() });
+                        }),
+                        workspaceActionButton('Relink', async () => {
+                            const selected = await showFolderDialog();
+                            if (selected) await saveChatWorkspaceRoot(root, { path: selected });
+                        }),
+                        workspaceActionButton('Move', async () => {
+                            const destination = window.prompt('Same-drive destination path', root.path || '');
+                            if (destination && destination.trim()) await mutateChatWorkspace({ action: 'move-root', rootId: root.id, destinationPath: destination.trim() });
+                        })
+                    );
+                }
+                actions.append(workspaceActionButton('Remove', () =>
+                    mutateChatWorkspace({ action: 'remove-root', rootId: root.id })));
+                item.appendChild(actions);
+            }
+            filesystemAccessList.appendChild(item);
+        });
+        renderWorkspaceRegexUi();
+        return;
+    }
     if (!filesystemAccess.length) {
         const empty = document.createElement('div');
         empty.className = 'permission-note';
@@ -24949,13 +25562,23 @@ function scheduleSolutionExplorerRetry() {
 }
 
 async function loadSolutionExplorer() {
-    if (solutionExplorerLoading && solutionExplorerLoadPromise)
+    const sessionId = ensureSessionId();
+    const search = getSolutionExplorerSearchText();
+    const sortMode = getSolutionExplorerSortMode();
+    const loadKey = sessionId + '|' + search + '|' + sortMode;
+    if (solutionExplorerLoading && solutionExplorerLoadPromise && solutionExplorerPendingKey === loadKey)
         return solutionExplorerLoadPromise;
-    solutionExplorerLoadPromise = loadSolutionExplorerInternal()
+    const requestId = ++solutionExplorerLoadRequestId;
+    solutionExplorerPendingKey = loadKey;
+    const requestPromise = loadSolutionExplorerInternal({ sessionId, search, sortMode, loadKey, requestId })
         .finally(() => {
-            solutionExplorerLoadPromise = null;
+            if (requestId === solutionExplorerLoadRequestId) {
+                solutionExplorerLoadPromise = null;
+                solutionExplorerPendingKey = '';
+            }
         });
-    return solutionExplorerLoadPromise;
+    solutionExplorerLoadPromise = requestPromise;
+    return requestPromise;
 }
 
 async function importGitHubRepositoryIntoSession() {
@@ -24995,13 +25618,15 @@ async function importGitHubRepositoryIntoSession() {
     }
 }
 
-async function loadSolutionExplorerInternal() {
+async function loadSolutionExplorerInternal(requestContext) {
     if (!solutionExplorerTree) return;
+    const context = requestContext || {};
     const params = new URLSearchParams();
-    const sessionId = ensureSessionId();
-    const search = getSolutionExplorerSearchText();
-    const sortMode = getSolutionExplorerSortMode();
-    const loadKey = sessionId + '|' + search + '|' + sortMode;
+    const sessionId = context.sessionId || ensureSessionId();
+    const search = context.search == null ? getSolutionExplorerSearchText() : context.search;
+    const sortMode = context.sortMode || getSolutionExplorerSortMode();
+    const loadKey = context.loadKey || (sessionId + '|' + search + '|' + sortMode);
+    const requestId = context.requestId || ++solutionExplorerLoadRequestId;
     if (loadKey !== solutionExplorerLoadKey) {
         solutionExplorerLoaded = false;
         solutionExplorerRoots = [];
@@ -25023,11 +25648,14 @@ async function loadSolutionExplorerInternal() {
         if (!response.ok) throw new Error('Solution explorer failed: HTTP ' + response.status);
         const data = await readJsonResponse(response, null, 30000);
         if (!data || !data.ok) throw new Error((data && data.error) || 'Solution explorer failed.');
+        if (requestId !== solutionExplorerLoadRequestId || currentSessionId !== sessionId)
+            return false;
+        if (data.sessionId && data.sessionId !== sessionId)
+            return false;
         window.clearTimeout(solutionExplorerRetryTimer);
         solutionExplorerRetryTimer = 0;
         solutionExplorerRetryCount = 0;
         solutionExplorerLoaded = true;
-        if (data.sessionId) currentSessionId = data.sessionId;
         updateSolutionStorage(data.storage);
         solutionExplorerSearchResults = Array.isArray(data.results) ? data.results : [];
         solutionExplorerRoots = (Array.isArray(data.roots) ? data.roots : []).map(entry => {
@@ -25047,16 +25675,20 @@ async function loadSolutionExplorerInternal() {
             loadProjectWorkflow({ silent: true }).catch(() => { });
         return true;
     } catch (error) {
+        if (requestId !== solutionExplorerLoadRequestId || currentSessionId !== sessionId)
+            return false;
         setSolutionExplorerStatus(error && error.message ? error.message : 'Session files refresh failed.', true);
         if (!solutionExplorerLoaded)
             renderSolutionExplorer();
         scheduleSolutionExplorerRetry();
         throw error;
     } finally {
-        solutionExplorerLoading = false;
-        updateSolutionExplorerLoadingUi();
-        if (!solutionExplorerLoaded)
-            renderSolutionExplorer();
+        if (requestId === solutionExplorerLoadRequestId) {
+            solutionExplorerLoading = false;
+            updateSolutionExplorerLoadingUi();
+            if (!solutionExplorerLoaded)
+                renderSolutionExplorer();
+        }
     }
 }
 
@@ -25245,6 +25877,190 @@ function closeSolutionNodeMenus(exceptMenu) {
         if (toggle)
             toggle.setAttribute('aria-expanded', 'false');
     });
+}
+
+function workspaceActionButton(label, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost';
+    button.textContent = label;
+    button.addEventListener('click', event => {
+        event.preventDefault();
+        Promise.resolve(handler()).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+    });
+    return button;
+}
+
+function applyChatWorkspacePayload(payload) {
+    payload = payload || {};
+    chatWorkspaceState = {
+        effectiveRoots: Array.isArray(payload.effectiveRoots) ? payload.effectiveRoots : [],
+        ignoreRules: Array.isArray(payload.ignoreRules) ? payload.ignoreRules : [],
+        fallbackSandbox: !!payload.fallbackSandbox
+    };
+    filesystemContextRoots = mergeFilesystemContextRoots(chatWorkspaceState.effectiveRoots.map(root => ({
+        id: root.id, label: root.role, displayName: root.displayName, source: root.isSandbox ? 'session' : root.role,
+        path: root.isSandbox ? '\\' : root.path, exists: root.exists !== false
+    })), filesystemContextRoots);
+}
+
+async function loadChatWorkspace() {
+    if (!currentSessionId) {
+        chatWorkspaceState = { effectiveRoots: [], ignoreRules: [], fallbackSandbox: true };
+        renderFilesystemAccess();
+        return;
+    }
+    const response = await fetch('/api/chat-workspaces?sessionId=' + encodeURIComponent(currentSessionId));
+    const data = await readJsonResponse(response, {});
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Workspace load failed.');
+    permissionCanEdit = !!data.canEdit && canUseAdminTools();
+    applyChatWorkspacePayload(data);
+    renderFilesystemAccess();
+}
+
+async function mutateChatWorkspace(payload) {
+    payload = Object.assign({ sessionId: currentSessionId || '' }, payload || {});
+    const response = await fetch('/api/chat-workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    const data = await readJsonResponse(response, {});
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Workspace update failed.');
+    const workspace = data.workspace || data;
+    applyChatWorkspacePayload(workspace);
+    renderFilesystemAccess();
+    filesystemContextRoots = [];
+    await loadFilesystemAccess({ loadSolutionExplorer: false });
+    await loadSolutionExplorer();
+    return data.result;
+}
+
+async function addChatWorkspaceRoot(role) {
+    if (!(permissionCanEdit && canUseAdminTools())) return;
+    const path = await showFolderDialog();
+    if (!path) return;
+    const parts = String(path).replace(/[\\/]+$/, '').split(/[\\/]+/).filter(Boolean);
+    const displayName = window.prompt('Workspace display name', parts[parts.length - 1] || 'Workspace');
+    if (!displayName || !displayName.trim()) return;
+    await mutateChatWorkspace({
+        action: 'save-root',
+        role,
+        displayName: displayName.trim(),
+        path,
+        accessMode: role === 'global' ? 'read-only' : 'read-write'
+    });
+    if (role === 'primary' && chatWorkspaceState.fallbackSandbox) {
+        if (window.confirm('Copy existing sandbox session files into the new primary workspace?'))
+            await mutateChatWorkspace({ action: 'merge-sandbox', copy: true });
+    }
+}
+
+async function saveChatWorkspaceRoot(root, changes) {
+    await mutateChatWorkspace(Object.assign({
+        action: 'save-root',
+        rootId: root.id,
+        role: root.role,
+        displayName: root.displayName,
+        path: root.path,
+        accessMode: root.accessMode,
+        parentId: root.parentId || ''
+    }, changes || {}));
+}
+
+function escapeRegexText(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function generateWorkspaceRegex() {
+    const values = String(workspaceRegexValue && workspaceRegexValue.value || '')
+        .split(',').map(value => value.trim()).filter(Boolean);
+    if (!values.length) return '';
+    if (workspaceRegexMode && workspaceRegexMode.value === 'guided') {
+        const extensions = values.map(value => escapeRegexText(value.replace(/^\./, '')));
+        if (workspaceRegexTarget) workspaceRegexTarget.value = 'extension';
+        return '^(?:' + extensions.join('|') + ')$';
+    }
+    const alternatives = values.map(escapeRegexText).join('|');
+    const operator = workspaceRegexOperator ? workspaceRegexOperator.value : 'ends';
+    if (operator === 'exact') return '^(?:' + alternatives + ')$';
+    if (operator === 'starts') return '^(?:' + alternatives + ')';
+    if (operator === 'contains') return '(?:' + alternatives + ')';
+    return '(?:' + alternatives + ')$';
+}
+
+function renderWorkspaceRegexUi() {
+    if (workspaceRegexScope) {
+        const selected = workspaceRegexScope.value;
+        workspaceRegexScope.textContent = '';
+        const whole = document.createElement('option');
+        whole.value = ''; whole.textContent = 'Whole session';
+        workspaceRegexScope.appendChild(whole);
+        (chatWorkspaceState.effectiveRoots || []).forEach(root => {
+            const option = document.createElement('option');
+            option.value = root.id;
+            option.textContent = root.displayName + ' only';
+            workspaceRegexScope.appendChild(option);
+        });
+        workspaceRegexScope.value = Array.from(workspaceRegexScope.options).some(option => option.value === selected) ? selected : '';
+    }
+    if (!workspaceRuleList) return;
+    workspaceRuleList.textContent = '';
+    (chatWorkspaceState.ignoreRules || []).forEach(rule => {
+        const row = document.createElement('div');
+        row.className = 'workspace-rule-row';
+        const text = document.createElement('div');
+        const strong = document.createElement('strong');
+        strong.textContent = rule.name || 'Ignore rule';
+        const code = document.createElement('code');
+        code.textContent = (rule.target || 'path') + ': ' + (rule.pattern || '');
+        text.append(strong, document.createElement('br'), code);
+        const remove = workspaceActionButton('Remove', () => mutateChatWorkspace({ action: 'remove-ignore', ruleId: rule.id }));
+        row.append(text, remove);
+        workspaceRuleList.appendChild(row);
+    });
+    if (!chatWorkspaceState.ignoreRules || !chatWorkspaceState.ignoreRules.length)
+        workspaceRuleList.textContent = 'No custom ignore rules.';
+}
+
+function setWorkspaceRegexStatus(text, error) {
+    if (!workspaceRegexStatus) return;
+    workspaceRegexStatus.textContent = text || '';
+    workspaceRegexStatus.style.color = error ? '#fda4af' : '';
+}
+
+async function testWorkspaceRegex() {
+    const pattern = workspaceRegexPattern ? workspaceRegexPattern.value.trim() : '';
+    const testPath = workspaceRegexTestPath ? workspaceRegexTestPath.value.trim() : '';
+    const response = await fetch('/api/chat-workspaces', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'test-ignore', sessionId: currentSessionId || '', pattern, testPath,
+            target: workspaceRegexTarget ? workspaceRegexTarget.value : 'path',
+            caseSensitive: !!(workspaceRegexCase && workspaceRegexCase.checked) })
+    });
+    const data = await readJsonResponse(response, {});
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Regex test failed.');
+    setWorkspaceRegexStatus(data.matched ? 'MATCH: this path will be blocked.' : 'No match.', false);
+}
+
+async function saveWorkspaceRegex() {
+    const pattern = workspaceRegexPattern ? workspaceRegexPattern.value.trim() : '';
+    if (!pattern) throw new Error('Generate or enter a regex first.');
+    await mutateChatWorkspace({
+        action: 'save-ignore',
+        name: workspaceRegexName ? workspaceRegexName.value.trim() : 'Ignore rule',
+        rootId: workspaceRegexScope ? workspaceRegexScope.value : '',
+        pattern,
+        target: workspaceRegexTarget ? workspaceRegexTarget.value : 'path',
+        caseSensitive: !!(workspaceRegexCase && workspaceRegexCase.checked),
+        enabled: true,
+        builderMode: workspaceRegexMode ? workspaceRegexMode.value : 'raw',
+        builderStateJson: JSON.stringify({
+            operator: workspaceRegexOperator ? workspaceRegexOperator.value : 'ends',
+            value: workspaceRegexValue ? workspaceRegexValue.value : ''
+        })
+    });
+    setWorkspaceRegexStatus('Ignore rule saved and enforced.', false);
 }
 
 function createSolutionNodeMenuButton(symbol, label, title, actionName, handler, disabled) {
@@ -25748,6 +26564,15 @@ async function savePermissions() {
         terminalCommands: !!(permTerminalCommands && permTerminalCommands.checked),
         terminalForeverApproved: !!(permTerminalForeverApproved && permTerminalForeverApproved.checked),
         pcAccess: !!(permPcAccess && permPcAccess.checked),
+        companionEnabled: !!companionPermissionInputs.CompanionEnabled?.checked,
+        companionScreenView: !!companionPermissionInputs.CompanionScreenView?.checked,
+        companionCursorControl: !!companionPermissionInputs.CompanionCursorControl?.checked,
+        companionApplicationLaunch: !!companionPermissionInputs.CompanionApplicationLaunch?.checked,
+        companionApplicationControl: !!companionPermissionInputs.CompanionApplicationControl?.checked,
+        companionTerminalCommands: !!companionPermissionInputs.CompanionTerminalCommands?.checked,
+        companionActivityTranscriptStorage: !!companionPermissionInputs.CompanionActivityTranscriptStorage?.checked,
+        companionSensitiveMemory: !!companionPermissionInputs.CompanionSensitiveMemory?.checked,
+        companionFinancialActions: !!companionPermissionInputs.CompanionFinancialActions?.checked,
         dreamInternetSearch: !!document.getElementById('dreamPermInternetSearch')?.checked,
         dreamVsCopilotTools: !!document.getElementById('dreamPermVsCopilotTools')?.checked,
         dreamAgentAccess: !!document.getElementById('dreamPermAgentAccess')?.checked,
@@ -25922,7 +26747,7 @@ function isNoisySessionOwnershipSaveMessage(value) {
 }
 
 function addMessage(role, content) {
-    if (role === 'error' && isNoisySessionOwnershipSaveMessage(content))
+    if (role === 'error' && (isNoisySessionOwnershipSaveMessage(content) || isWorkstationAuthError(content)))
         return null;
     const shouldScroll = isMessagesNearEnd();
     clearEmpty();
@@ -26112,6 +26937,7 @@ function setAssistantMessage(item, content, reasoning, fileChanges, toolCalls) {
     if (Array.isArray(toolCalls) && toolCalls.length) {
         parts._toolCalls = normalizeToolCallEvents(toolCalls);
         updateAssistantToolActivity(parts, parts._toolCalls);
+        updateJackhammerRunCard(parts, parts._toolCalls, fileChanges, true);
     }
     updateAssistantParts(parts, content, reasoning, true);
 }
@@ -26197,6 +27023,11 @@ function createAssistantParts(item) {
     toolActivity.hidden = true;
     item.appendChild(toolActivity);
 
+    const jackhammerRunCard = document.createElement('details');
+    jackhammerRunCard.className = 'jackhammer-run-card';
+    jackhammerRunCard.hidden = true;
+    item.appendChild(jackhammerRunCard);
+
     const answer = document.createElement('div');
     answer.className = 'answer';
     item.appendChild(answer);
@@ -26221,6 +27052,7 @@ function createAssistantParts(item) {
         details,
         pre,
         toolActivity,
+        jackhammerRunCard,
         answer,
         fileChanges
     };
@@ -26240,6 +27072,60 @@ function createAssistantParts(item) {
     });
     item._assistantParts = parts;
     return parts;
+}
+
+function coordinationPreviewField(call, name) {
+    const text = String((call && (call.argumentsPreview || call.resultPreview)) || '');
+    const pattern = new RegExp('(?:^|[\\n,;])\\s*' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^\\n,;]+)', 'i');
+    const match = text.match(pattern);
+    return match ? match[1].trim() : '';
+}
+function updateJackhammerRunCard(parts, toolCalls, fileChanges, final) {
+    if (!parts || !parts.jackhammerRunCard) return;
+    const calls = normalizeToolCallEvents(toolCalls || []);
+    const checkpoints = calls.filter(call => call && call.name === 'goal_checkpoint');
+    if (!checkpoints.length && !isJackhammerEnabled()) {
+        parts.jackhammerRunCard.hidden = true;
+        return;
+    }
+    const card = parts.jackhammerRunCard;
+    card.hidden = false;
+    card.textContent = '';
+    const summary = document.createElement('summary');
+    const lastCheckpoint = checkpoints.length ? checkpoints[checkpoints.length - 1] : null;
+    const lastStatus = coordinationPreviewField(lastCheckpoint, 'status') || (final ? 'finished' : 'working');
+    const progress = lastCheckpoint && lastCheckpoint.progressPercent >= 0 ? ' · ' + lastCheckpoint.progressPercent + '%' : '';
+    summary.textContent = 'Jackhammer work tree · ' + lastStatus.replace(/_/g, ' ') + progress;
+    card.appendChild(summary);
+    const meta = document.createElement('div');
+    meta.className = 'jackhammer-run-meta';
+    meta.textContent = calls.length + ' activity event' + (calls.length === 1 ? '' : 's') + ' · budget ' + effectiveJackhammerBudget() + ' turns';
+    card.appendChild(meta);
+    const tree = document.createElement('ol');
+    tree.className = 'jackhammer-run-tree';
+    calls.filter(call => call && call.name !== 'goal_checkpoint').forEach(call => {
+        const row = document.createElement('li');
+        const state = normalizeToolCallStatus(call.status);
+        if (state === 'failed') row.className = 'failed';
+        row.textContent = (call.label || call.name || 'Work step') + ' — ' + state + (call.summary ? ': ' + call.summary : '');
+        tree.appendChild(row);
+    });
+    checkpoints.forEach((call, index) => {
+        const row = document.createElement('li');
+        const completed = coordinationPreviewField(call, 'completed');
+        const remaining = coordinationPreviewField(call, 'remaining');
+        row.textContent = 'Checkpoint ' + (index + 1) + (completed ? ': ' + completed : '') + (remaining ? ' · Next: ' + remaining : '');
+        tree.appendChild(row);
+    });
+    if (tree.children.length) card.appendChild(tree);
+    const files = fileChanges && Array.isArray(fileChanges.files) ? fileChanges.files : (Array.isArray(fileChanges) ? fileChanges : []);
+    if (files.length) {
+        const fileText = document.createElement('div');
+        fileText.className = 'jackhammer-run-files';
+        fileText.textContent = 'Changed: ' + files.map(file => file.path || file.name || '').filter(Boolean).join(', ');
+        card.appendChild(fileText);
+    }
+    card.open = !!final;
 }
 
 function normalizeToolCallStatus(status) {
@@ -26989,6 +27875,8 @@ function applyToolCallEvent(streamState, event) {
         : null;
     if (activityStatus)
         setActiveStreamProcessing(streamState, activityProgress, activityStatus);
+    if (activityStatus && isJackhammerEnabled())
+        showJackhammerLiveStatus(activityStatus);
     const changeSessionId = streamState.sessionId || currentSessionId || '';
     const toolFileChanges = normalizeFileChangesPayload(event, changeSessionId);
     if (toolFileChanges && Array.isArray(toolFileChanges.files) && toolFileChanges.files.length) {
@@ -27012,6 +27900,8 @@ function applyToolCallEvent(streamState, event) {
     }
     if (streamState.parts)
         updateAssistantToolActivity(streamState.parts, streamState.toolCalls);
+    if (streamState.parts)
+        updateJackhammerRunCard(streamState.parts, streamState.toolCalls, streamState.fileChanges, false);
     renderSessionToolActivity();
     scrollMessagesToEndIf(isMessagesNearEnd());
 }
@@ -30530,6 +31420,11 @@ function assistantPartsHaveVisibleContent(parts) {
 }
 
 function appendStreamErrorBelowTurn(item, error) {
+    if (isWorkstationAuthError(error)) {
+        if (item && item.isConnected)
+            item.remove();
+        return;
+    }
     const message = 'Model runtime request failed: ' + retryErrorText(error);
     const parts = item && item._assistantParts ? item._assistantParts : null;
     if (parts && assistantPartsHaveVisibleContent(parts)) {
@@ -30946,6 +31841,14 @@ async function processPromptQueue() {
                         stoppedDuringActiveStream = isQueueStopRequestedForSession(sessionId);
                         break;
                     }
+                    if (isWorkstationAuthError(error)) {
+                        const reconnected = await waitForWorkstationAuthentication(sessionId);
+                        if (reconnected) {
+                            attempt = Math.max(0, attempt - 1);
+                            continue;
+                        }
+                        break;
+                    }
                     if (!retryUntilSuccess) {
                         addSessionContextError(sessionContext, error && error.message ? error.message : String(error));
                         break;
@@ -31124,6 +32027,8 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
         const finalReasoning = suppressReasoning ? '' : [explicitReasoning.trim(), finalSplit.reasoning.trim()].filter(Boolean).join('\n\n');
         const finalContent = buildAssistantFinalContent(finalSplit.content, getAssistantAnswerMarkdown(parts), finalReasoning, streamState);
         updateActiveStreamDisplay(streamState, finalContent, finalReasoning, true);
+        if (streamState.parts)
+            updateJackhammerRunCard(streamState.parts, streamState.toolCalls, streamState.fileChanges, true);
         if (streamState.parts) {
             streamState.parts._pendingFileChanges = streamState.fileChanges;
         }
@@ -31417,6 +32322,8 @@ function appendSessionContextMessage(sessionContext, message) {
 
 function addSessionContextError(sessionContext, message) {
     const text = message || 'Session update failed.';
+    if (isWorkstationAuthError(text))
+        return;
     if (isCurrentSessionContext(sessionContext)) {
         addMessage('error', text);
     } else if (sessionContext && sessionContext.id) {
@@ -32237,7 +33144,7 @@ function syncViewMenuState() {
         sessionPanelToggle.checked = !!sessionsPanelOpen;
         sessionPanelToggle.setAttribute('aria-expanded', sessionsPanelOpen ? 'true' : 'false');
         sessionPanelToggle.setAttribute('aria-checked', sessionsPanelOpen ? 'true' : 'false');
-        sessionPanelToggle.title = sessionsPanelOpen ? 'Hide sessions' : 'Show sessions';
+        sessionPanelToggle.title = sessionsPanelOpen ? 'Hide projects' : 'Show projects';
     }
     if (solutionPanelToggle) {
         solutionPanelToggle.checked = !!solutionExplorerOpen;
@@ -33054,7 +33961,7 @@ function updateShareUi(message) {
     const canComment = canCurrentUserComment();
     if (sharePublicWarning) {
         const warning = shareState.enabled
-            ? (shareState.tokenWarning || 'Public mode is on. Visitors with non-public SocketJack.com accounts can comment, and model replies use the sharing account tokens. Turn Public off when you are done.')
+            ? (shareState.tokenWarning || 'Public mode is on. Signed-in users from this Workstation can comment, and model replies use the sharing account tokens. Turn Public off when you are done.')
             : '';
         sharePublicWarning.hidden = !warning;
         sharePublicWarning.textContent = warning;
@@ -33063,9 +33970,9 @@ function updateShareUi(message) {
         if (!hasSession)
             commentAuthStatus.textContent = 'Open or share a session to comment.';
         else if (!isSocketJackAuthenticated(authSession))
-            commentAuthStatus.textContent = 'Sign in with SocketJack.com to comment. Public viewers can read only.';
+            commentAuthStatus.textContent = 'Sign in with an account from this Workstation to comment.';
         else if (isPublicSocketJackAccount(authSession))
-            commentAuthStatus.textContent = 'Public SocketJack.com accounts can view this session but cannot comment.';
+            commentAuthStatus.textContent = 'This Workstation account can view the session but cannot comment.';
         else
             commentAuthStatus.textContent = 'Commenting as ' + (authSession.username || 'SocketJack user') + '.';
     }
@@ -33777,6 +34684,70 @@ function projectById(projectId) {
     return chatProjects.find(project => project && project.id === id) || (id === 'unsorted' ? { id: 'unsorted', name: 'Unsorted', workspaceRoot: '', builtIn: true, sessionCount: 0 } : null);
 }
 
+function projectActivityUtc(project) {
+    return String(project && (project.lastActivityUtc || project.updatedUtc) || '');
+}
+
+function markProjectRead(projectId) {
+    const project = projectById(projectId);
+    projectReadUtc[String(projectId || 'unsorted')] = projectActivityUtc(project) || new Date().toISOString();
+    saveChatProjectUiState();
+}
+
+function projectHasUnreadActivity(project) {
+    if (!project || project.archived || project.id === selectedProjectId) return false;
+    const activity = Date.parse(projectActivityUtc(project));
+    const read = Date.parse(projectReadUtc[project.id] || '');
+    return Number.isFinite(activity) && (!Number.isFinite(read) || activity > read);
+}
+
+function projectHasWorkingPrompt(projectId, sessions) {
+    return (Array.isArray(sessions) ? sessions : []).some(session => {
+        if (!session || (session.projectId || 'unsorted') !== projectId) return false;
+        return !!activeSessionFor(session) || isLocalStreamForSession(session.id) || hasQueuedPromptForSession(session.id);
+    });
+}
+
+function orderedChatProjects(projects) {
+    const list = Array.isArray(projects) ? projects.slice() : [];
+    const currentIds = list.map(project => String(project.id));
+    projectOrderIds = projectOrderIds.filter(id => currentIds.includes(id));
+    currentIds.forEach(id => { if (!projectOrderIds.includes(id)) projectOrderIds.push(id); });
+    const rank = new Map(projectOrderIds.map((id, index) => [id, index]));
+    list.sort((left, right) => (rank.get(String(left.id)) ?? Number.MAX_SAFE_INTEGER) - (rank.get(String(right.id)) ?? Number.MAX_SAFE_INTEGER));
+    return list;
+}
+
+function selectProjectForNextChat(projectId, expand) {
+    const id = String(projectId || 'unsorted');
+    selectedProjectId = id;
+    if (expand !== false) collapsedProjectIds.delete(id);
+    markProjectRead(id);
+    saveChatProjectUiState();
+    renderSessionList();
+}
+
+function clearProjectDragIndicators() {
+    if (!sessionList) return;
+    sessionList.querySelectorAll('.project-group.dragging, .project-group.drag-before, .project-group.drag-after').forEach(group => {
+        group.classList.remove('dragging', 'drag-before', 'drag-after');
+    });
+}
+
+function reorderProjectBeforeTarget(sourceId, targetId, after) {
+    sourceId = String(sourceId || '');
+    targetId = String(targetId || '');
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    const ids = orderedChatProjects(chatProjects).map(project => String(project.id)).filter(id => id !== sourceId);
+    let index = ids.indexOf(targetId);
+    if (index < 0) return;
+    if (after) index++;
+    ids.splice(index, 0, sourceId);
+    projectOrderIds = ids;
+    saveChatProjectUiState();
+    renderSessionList();
+}
+
 function activeWorkspaceRootForProject() {
     return String((projectWorkflowState && projectWorkflowState.activeProject && projectWorkflowState.activeProject.workspaceRoot) || '').trim();
 }
@@ -33788,6 +34759,12 @@ async function loadChatProjects() {
     chatProjects = Array.isArray(data.projects) ? data.projects : [];
     const available = new Set(chatProjects.filter(project => project && !project.archived).map(project => project.id));
     if (!available.has(selectedProjectId)) selectedProjectId = 'unsorted';
+    if (!projectReadStateInitialized) {
+        chatProjects.forEach(project => { projectReadUtc[project.id] = projectActivityUtc(project) || new Date().toISOString(); });
+        projectReadStateInitialized = true;
+    }
+    orderedChatProjects(chatProjects);
+    saveChatProjectUiState();
     return data;
 }
 
@@ -33809,7 +34786,9 @@ async function createChatProject() {
     const created = await mutateChatProject('create', null, { name: name.trim(), workspaceRoot });
     if (created && created.id) {
         selectedProjectId = created.id;
-        expandedProjectIds.add(created.id);
+        collapsedProjectIds.delete(created.id);
+        markProjectRead(created.id);
+        saveChatProjectUiState();
         renderSessionList();
     }
 }
@@ -33822,8 +34801,23 @@ async function runProjectAction(project, action) {
         await mutateChatProject('rename', project, { name: name.trim() });
         return;
     }
-    if (action === 'archive' && !window.confirm('Archive "' + (project.name || 'Project') + '"? Its chats will remain available in Archived Projects.')) return;
+    if (action === 'archive') {
+        const confirmed = await showYesNoConfirm('Archive "' + (project.name || 'Project') + '"? Its chats will remain available in Archived Projects.');
+        if (!confirmed) return;
+    }
     await mutateChatProject(action, project);
+    if (action === 'archive') {
+        collapsedProjectIds.delete(project.id);
+        if (selectedProjectId === project.id) selectedProjectId = 'unsorted';
+        saveChatProjectUiState();
+        renderSessionList();
+    } else if (action === 'restore') {
+        selectedProjectId = project.id;
+        collapsedProjectIds.delete(project.id);
+        markProjectRead(project.id);
+        saveChatProjectUiState();
+        renderSessionList();
+    }
 }
 
 async function moveSessionsToProject(ids) {
@@ -33839,14 +34833,18 @@ async function moveSessionsToProject(ids) {
         await runSessionAction(session, 'assign-project', { projectId: target.id });
     }
     selectedProjectId = target.id;
-    expandedProjectIds.add(target.id);
+    collapsedProjectIds.delete(target.id);
+    markProjectRead(target.id);
+    saveChatProjectUiState();
     await loadSessions(false);
 }
 
 function startNewChatInProject(projectId) {
     selectedProjectId = projectId || 'unsorted';
     currentProjectId = selectedProjectId;
-    expandedProjectIds.add(selectedProjectId);
+    collapsedProjectIds.delete(selectedProjectId);
+    markProjectRead(selectedProjectId);
+    saveChatProjectUiState();
     clearConversation();
     prompt.focus();
 }
@@ -33993,6 +34991,7 @@ function preferredInitialSession(sessions, ownerKey) {
 }
 
 async function loadActiveSessions() {
+    const previousActiveKeys = new Set((activeChatSessions || []).map(active => queueSessionKey(active && active.sessionId)).filter(Boolean));
     const suffix = sharedView && sharedSessionKey ? '?shareKey=' + encodeURIComponent(sharedSessionKey) : '';
     const response = await fetchWithTimeout('/api/chat-active-sessions' + suffix, null, 6000);
     if (!response.ok) throw new Error('Active session list failed: HTTP ' + response.status);
@@ -34002,10 +35001,12 @@ async function loadActiveSessions() {
         return;
     }
     activeChatSessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const currentActiveKeys = new Set(activeChatSessions.map(active => queueSessionKey(active && active.sessionId)).filter(Boolean));
+    if (Array.from(previousActiveKeys).some(key => !currentActiveKeys.has(key)))
+        loadSessions(false).catch(() => { });
     if (locallyStoppedPromptSessionIds.size > 0) {
-        const activeSessionKeys = new Set(activeChatSessions.map(active => queueSessionKey(active && active.sessionId)).filter(Boolean));
         Array.from(locallyStoppedPromptSessionIds).forEach(key => {
-            if (!activeSessionKeys.has(key))
+            if (!currentActiveKeys.has(key))
                 locallyStoppedPromptSessionIds.delete(key);
         });
     }
@@ -34301,8 +35302,11 @@ async function loadSessionOwner() {
     const response = await fetchWithTimeout('/api/chat-session-owner', null, 8000);
     if (!response.ok) return;
     const data = await readJsonResponse(response, null, 8000);
-    if (data && data.ok)
+    if (data && data.ok) {
         currentSessionOwnerKey = data.ownerKey || currentSessionOwnerKey;
+        if (!selectedPermissionOwnerKey && currentSessionOwnerKey)
+            selectedPermissionOwnerKey = currentSessionOwnerKey;
+    }
 }
 
 function coerceSessionCount(value) {
@@ -34890,32 +35894,140 @@ function buildProjectGroups(visibleSessions, sessionItems, query) {
         if (!sessionsByProject.has(projectId)) sessionsByProject.set(projectId, []);
         sessionsByProject.get(projectId).push(session);
     });
-    const projects = chatProjects.filter(project => project && (archivedProjectsVisible || !project.archived));
+    let projects = chatProjects.filter(project => project && (archivedProjectsVisible || !project.archived));
     if (!projects.some(project => project.id === 'unsorted')) projects.push({ id: 'unsorted', name: 'Unsorted', workspaceRoot: '', builtIn: true });
+    projects = orderedChatProjects(projects);
     return projects.filter(project => !query || sessionsByProject.has(project.id) || [project.name, project.workspaceRoot].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase())).map(project => {
         const group = document.createElement('section');
-        group.className = 'project-group' + (project.archived ? ' archived' : '') + (selectedProjectId === project.id ? ' selected' : '');
-        group.dataset.projectId = project.id;
         const sessions = sessionsByProject.get(project.id) || [];
-        const expanded = !!query || expandedProjectIds.has(project.id) || sessions.some(session => session.id === currentSessionId);
+        const working = projectHasWorkingPrompt(project.id, visibleSessions);
+        const unread = projectHasUnreadActivity(project);
+        group.className = 'project-group' +
+            (project.archived ? ' archived' : '') +
+            (selectedProjectId === project.id ? ' selected' : '') +
+            (unread ? ' unread' : '') +
+            (working ? ' working' : '');
+        group.dataset.projectId = project.id;
+        const expanded = !!query || !collapsedProjectIds.has(project.id);
         const header = document.createElement('div'); header.className = 'project-header';
-        const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'ghost project-toggle'; toggle.textContent = expanded ? '▾' : '▸'; toggle.title = expanded ? 'Collapse project' : 'Expand project';
-        const titleWrap = document.createElement('div'); titleWrap.className = 'project-title-wrap'; titleWrap.title = project.workspaceRoot || project.name || 'Project';
+        const dragHandle = document.createElement('span');
+        dragHandle.className = 'project-drag-handle';
+        dragHandle.textContent = '⋮⋮';
+        dragHandle.title = 'Drag to reorder project';
+        dragHandle.setAttribute('aria-label', 'Drag to reorder ' + (project.name || 'project'));
+        dragHandle.draggable = false;
+        const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'ghost project-toggle'; toggle.textContent = expanded ? '▾' : '▸'; toggle.title = expanded ? 'Collapse project' : 'Expand project'; toggle.setAttribute('aria-label', toggle.title); toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        const titleWrap = document.createElement('div'); titleWrap.className = 'project-title-wrap'; titleWrap.title = project.workspaceRoot || project.name || 'Project'; titleWrap.setAttribute('role', 'button'); titleWrap.setAttribute('tabindex', '0');
         const title = document.createElement('span'); title.className = 'project-title'; title.textContent = (project.pinned ? '★ ' : '') + (project.name || 'Project') + ' · ' + sessions.length;
+        if (unread) {
+            const unreadDot = document.createElement('span');
+            unreadDot.className = 'project-state-dot';
+            unreadDot.title = 'Unread responses';
+            title.prepend(unreadDot);
+        }
         const path = document.createElement('span'); path.className = 'project-path'; path.textContent = project.workspaceRoot || (project.builtIn ? 'Chats without a project' : 'Organizational project');
         titleWrap.append(title, path);
         const actions = document.createElement('div'); actions.className = 'project-actions';
-        const add = document.createElement('button'); add.type = 'button'; add.className = 'ghost project-action'; add.textContent = '+'; add.title = 'New chat in project'; add.disabled = !!project.archived;
+        const add = document.createElement('button'); add.type = 'button'; add.className = 'ghost project-action'; add.textContent = '+'; add.title = 'New chat in project'; add.setAttribute('aria-label', add.title); add.disabled = !!project.archived;
         add.addEventListener('click', event => { event.stopPropagation(); startNewChatInProject(project.id); }); actions.appendChild(add);
         if (!project.builtIn) {
             [['pin', project.pinned ? '★' : '☆', project.pinned ? 'unpin' : 'pin'], ['rename', '✎', 'rename'], ['archive', project.archived ? '↺' : '⌂', project.archived ? 'restore' : 'archive']].forEach(spec => {
-                const button = document.createElement('button'); button.type = 'button'; button.className = 'ghost project-action'; button.textContent = spec[1]; button.title = spec[0] === 'archive' ? (project.archived ? 'Restore project' : 'Archive project') : spec[0] + ' project';
+                const button = document.createElement('button'); button.type = 'button'; button.className = 'ghost project-action'; button.textContent = spec[1]; button.title = spec[0] === 'archive' ? (project.archived ? 'Restore project' : 'Archive project') : spec[0] + ' project'; button.setAttribute('aria-label', button.title);
                 button.addEventListener('click', event => { event.stopPropagation(); runProjectAction(project, spec[2]).catch(error => addMessage('error', error.message || String(error))); }); actions.appendChild(button);
             });
         }
-        titleWrap.addEventListener('click', () => { selectedProjectId = project.id; expandedProjectIds.add(project.id); renderSessionList(); });
-        toggle.addEventListener('click', () => { if (expandedProjectIds.has(project.id)) expandedProjectIds.delete(project.id); else expandedProjectIds.add(project.id); selectedProjectId = project.id; renderSessionList(); });
-        header.append(toggle, titleWrap, actions);
+        titleWrap.addEventListener('click', () => selectProjectForNextChat(project.id, true));
+        titleWrap.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            selectProjectForNextChat(project.id, true);
+        });
+        toggle.addEventListener('click', event => {
+            event.stopPropagation();
+            if (collapsedProjectIds.has(project.id)) collapsedProjectIds.delete(project.id);
+            else collapsedProjectIds.add(project.id);
+            selectedProjectId = project.id;
+            markProjectRead(project.id);
+            saveChatProjectUiState();
+            renderSessionList();
+        });
+        dragHandle.addEventListener('pointerdown', event => {
+            if (query || (event.button !== undefined && event.button !== 0)) return;
+            projectPointerDragState = {
+                pointerId: event.pointerId,
+                projectId: project.id,
+                startY: event.clientY,
+                targetId: '',
+                after: false,
+                moved: false
+            };
+            draggedProjectId = project.id;
+            group.classList.add('dragging');
+            if (dragHandle.setPointerCapture) dragHandle.setPointerCapture(event.pointerId);
+        });
+        dragHandle.addEventListener('pointermove', event => {
+            const state = projectPointerDragState;
+            if (!state || state.pointerId !== event.pointerId || state.projectId !== project.id) return;
+            if (!state.moved && Math.abs(event.clientY - state.startY) < 5) return;
+            state.moved = true;
+            event.preventDefault();
+            clearProjectDragIndicators();
+            group.classList.add('dragging');
+            const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.project-group[data-project-id]');
+            if (!target || target.dataset.projectId === project.id) {
+                state.targetId = '';
+                return;
+            }
+            const bounds = target.getBoundingClientRect();
+            state.targetId = target.dataset.projectId;
+            state.after = event.clientY > bounds.top + bounds.height / 2;
+            target.classList.add(state.after ? 'drag-after' : 'drag-before');
+        });
+        const finishPointerProjectDrag = event => {
+            const state = projectPointerDragState;
+            if (!state || state.pointerId !== event.pointerId || state.projectId !== project.id) return;
+            projectPointerDragState = null;
+            draggedProjectId = '';
+            if (dragHandle.releasePointerCapture && dragHandle.hasPointerCapture?.(event.pointerId))
+                dragHandle.releasePointerCapture(event.pointerId);
+            clearProjectDragIndicators();
+            if (state.moved && state.targetId)
+                reorderProjectBeforeTarget(state.projectId, state.targetId, state.after);
+        };
+        dragHandle.addEventListener('pointerup', finishPointerProjectDrag);
+        dragHandle.addEventListener('pointercancel', finishPointerProjectDrag);
+        dragHandle.addEventListener('dragstart', event => {
+            draggedProjectId = project.id;
+            group.classList.add('dragging');
+            if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', project.id);
+            }
+        });
+        dragHandle.addEventListener('dragend', () => {
+            draggedProjectId = '';
+            clearProjectDragIndicators();
+        });
+        group.addEventListener('dragover', event => {
+            if (!draggedProjectId || draggedProjectId === project.id || query) return;
+            event.preventDefault();
+            clearProjectDragIndicators();
+            const bounds = group.getBoundingClientRect();
+            const after = event.clientY > bounds.top + bounds.height / 2;
+            group.classList.add(after ? 'drag-after' : 'drag-before');
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        });
+        group.addEventListener('drop', event => {
+            if (!draggedProjectId || draggedProjectId === project.id || query) return;
+            event.preventDefault();
+            const bounds = group.getBoundingClientRect();
+            const after = event.clientY > bounds.top + bounds.height / 2;
+            const sourceId = draggedProjectId;
+            draggedProjectId = '';
+            clearProjectDragIndicators();
+            reorderProjectBeforeTarget(sourceId, project.id, after);
+        });
+        header.append(dragHandle, toggle, titleWrap, actions);
         const body = document.createElement('div'); body.className = 'project-session-list'; body.hidden = !expanded;
         sessions.forEach(session => { const item = itemById.get(session.id); if (item) body.appendChild(item); });
         if (!sessions.length) { const empty = document.createElement('div'); empty.className = 'project-empty'; empty.textContent = 'No chats yet. Use + to start one.'; body.appendChild(empty); }
@@ -35377,6 +36489,7 @@ function setAdminPermissionInputs(permissions) {
     if (adminPermTerminalCommands) adminPermTerminalCommands.checked = state.terminalCommands !== false;
     if (adminPermTerminalForeverApproved) adminPermTerminalForeverApproved.checked = !!state.terminalForeverApproved;
     if (adminPermPcAccess) adminPermPcAccess.checked = !!state.pcAccess;
+    companionPermissionIds.forEach(name => { const input=adminCompanionPermissionInputs[name]; if(input) input.checked=!!state[name.charAt(0).toLowerCase()+name.slice(1)]; });
 }
 
 function readAdminPermissionInputs() {
@@ -35392,6 +36505,15 @@ function readAdminPermissionInputs() {
         terminalCommands: !!(adminPermTerminalCommands && adminPermTerminalCommands.checked),
         terminalForeverApproved: !!(adminPermTerminalForeverApproved && adminPermTerminalForeverApproved.checked)
         ,pcAccess: !!(adminPermPcAccess && adminPermPcAccess.checked)
+        ,companionEnabled: !!adminCompanionPermissionInputs.CompanionEnabled?.checked
+        ,companionScreenView: !!adminCompanionPermissionInputs.CompanionScreenView?.checked
+        ,companionCursorControl: !!adminCompanionPermissionInputs.CompanionCursorControl?.checked
+        ,companionApplicationLaunch: !!adminCompanionPermissionInputs.CompanionApplicationLaunch?.checked
+        ,companionApplicationControl: !!adminCompanionPermissionInputs.CompanionApplicationControl?.checked
+        ,companionTerminalCommands: !!adminCompanionPermissionInputs.CompanionTerminalCommands?.checked
+        ,companionActivityTranscriptStorage: !!adminCompanionPermissionInputs.CompanionActivityTranscriptStorage?.checked
+        ,companionSensitiveMemory: !!adminCompanionPermissionInputs.CompanionSensitiveMemory?.checked
+        ,companionFinancialActions: !!adminCompanionPermissionInputs.CompanionFinancialActions?.checked
     };
 }
 
@@ -35445,13 +36567,16 @@ function scheduleDraftSessionSave() {
 
 async function loadSession(id) {
     if (!id) return;
+    const requestId = ++sessionLoadRequestId;
     if (!activeAbortController && !isProcessingQueue)
         queuedPrompts = [];
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
 
     const response = await fetchWithTimeout('/api/chat-session?id=' + encodeURIComponent(id), null, 10000);
+    if (requestId !== sessionLoadRequestId) return;
     if (!response.ok) throw new Error('Session load failed: HTTP ' + response.status);
     const data = await readJsonResponse(response, null, 10000);
+    if (requestId !== sessionLoadRequestId) return;
     if (!data || !data.ok || !data.session) {
         if (data && data.error) throw new Error('Session load failed: ' + data.error);
         return;
@@ -35459,7 +36584,9 @@ async function loadSession(id) {
     currentSessionId = data.session.id;
     currentProjectId = data.session.projectId || 'unsorted';
     selectedProjectId = currentProjectId;
-    expandedProjectIds.add(currentProjectId);
+    collapsedProjectIds.delete(currentProjectId);
+    markProjectRead(currentProjectId);
+    saveChatProjectUiState();
     activeGoal = data.session.goal && typeof data.session.goal === 'object' ? data.session.goal : {};
     activePlan = data.session.plan && typeof data.session.plan === 'object' ? data.session.plan : {};
     const sessionInteractionMode = data.session.interactionMode || 'chat';
@@ -35470,11 +36597,25 @@ async function loadSession(id) {
     (Array.isArray(data.session.messages) ? data.session.messages : []).forEach(message => messages.push(message));
     sessionFiles = Array.isArray(data.session.files) ? data.session.files : [];
     recentSessionFileKeys = new Set();
+    window.clearTimeout(solutionExplorerRetryTimer);
+    solutionExplorerRetryTimer = 0;
+    solutionExplorerRetryCount = 0;
+    solutionExplorerLoadRequestId++;
+    solutionExplorerLoadPromise = null;
+    solutionExplorerPendingKey = '';
+    solutionExplorerLoaded = false;
+    solutionExplorerLoading = false;
+    solutionExplorerLoadKey = '';
+    solutionExplorerRoots = [];
+    solutionExplorerSearchResults = [];
+    solutionExplorerExpanded = new Set();
     applyShareStateFromSession(data.session);
     loadComments().catch(error => renderCommentError(error && error.message ? error.message : String(error)));
     prompt.value = typeof data.session.draftPrompt === 'string' ? data.session.draftPrompt : '';
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
     hideFilePreviewOnly();
+    renderConversation();
+    renderSolutionExplorer();
     if (data.session.model && modelSelect) {
         let sessionModel = data.session.model;
         if (isDefaultModelPlaceholder(sessionModel)) {
@@ -37611,9 +38752,26 @@ if (addFilesystemAccess) {
     addFilesystemAccess.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        addFilesystemDirectory().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+        addChatWorkspaceRoot('attached').catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     });
 }
+if (workspaceSetPrimary)
+    workspaceSetPrimary.addEventListener('click', () => addChatWorkspaceRoot('primary').catch(error => addMessage('error', error && error.message ? error.message : String(error))));
+if (workspaceAddAttached)
+    workspaceAddAttached.addEventListener('click', () => addChatWorkspaceRoot('attached').catch(error => addMessage('error', error && error.message ? error.message : String(error))));
+if (workspaceAddGlobal)
+    workspaceAddGlobal.addEventListener('click', () => addChatWorkspaceRoot('global').catch(error => addMessage('error', error && error.message ? error.message : String(error))));
+if (workspaceRefresh)
+    workspaceRefresh.addEventListener('click', () => loadChatWorkspace().catch(error => addMessage('error', error && error.message ? error.message : String(error))));
+if (workspaceRegexGenerate)
+    workspaceRegexGenerate.addEventListener('click', () => {
+        if (workspaceRegexPattern) workspaceRegexPattern.value = generateWorkspaceRegex();
+        setWorkspaceRegexStatus(workspaceRegexPattern && workspaceRegexPattern.value ? 'Regex generated. Test it before saving.' : 'Enter one or more values.', !(workspaceRegexPattern && workspaceRegexPattern.value));
+    });
+if (workspaceRegexTest)
+    workspaceRegexTest.addEventListener('click', () => testWorkspaceRegex().catch(error => setWorkspaceRegexStatus(error && error.message ? error.message : String(error), true)));
+if (workspaceRegexSave)
+    workspaceRegexSave.addEventListener('click', () => saveWorkspaceRegex().catch(error => setWorkspaceRegexStatus(error && error.message ? error.message : String(error), true)));
 if (refreshSolutionExplorer) {
     refreshSolutionExplorer.addEventListener('click', () => {
         if (solutionExplorerLoading) return;
@@ -37784,6 +38942,13 @@ maxTokensInput.addEventListener('input', saveSettings);
 if (reasoningLevelInput) {
     reasoningLevelInput.addEventListener('input', () => { updateReasoningLevelUi(); if (!sessionReasoningInherit || sessionReasoningInherit.checked) saveSettings(); else saveSessionReasoningPreference(); });
     reasoningLevelInput.addEventListener('change', saveSessionReasoningPreference);
+}
+if (jackhammerCustomBudget) {
+    jackhammerCustomBudget.addEventListener('change', () => {
+        const value = Number(jackhammerCustomBudget.value);
+        jackhammerCustomBudget.value = Number.isFinite(value) && value >= 1 ? String(Math.max(1, Math.min(200, Math.round(value)))) : '';
+        saveSettings();
+    });
 }
 if (sessionReasoningInherit) sessionReasoningInherit.addEventListener('change', saveSessionReasoningPreference);
 if (voiceInput)
@@ -38054,6 +39219,7 @@ async function bootstrapChatApp() {
     try {
         await withTimeout('server identity', loadServerIdentity().catch(() => { }), 6000);
         await withTimeout('alignment', loadAlignment().catch(() => { }), 8000);
+        await withTimeout('session owner', loadSessionOwner(), 8000);
         setStartupProgress(28, 'Loading permissions');
         await withTimeout('permissions', loadPermissions(15000), 8000).catch(() => {
             if (permissionNote)
@@ -38065,7 +39231,6 @@ async function bootstrapChatApp() {
         setStartupProgress(48, 'Loading services');
         await withTimeout('services', loadServices(), 8000);
         setStartupProgress(58, 'Loading session');
-        await withTimeout('session owner', loadSessionOwner(), 8000);
         await withTimeout('sessions', loadSessions(true), 30000);
         setStartupProgress(84, 'Opening chat');
         releaseStartupUi();

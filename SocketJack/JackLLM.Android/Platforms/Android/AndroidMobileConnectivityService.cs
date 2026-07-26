@@ -16,8 +16,18 @@ public sealed class AndroidMobileConnectivityService : IMobileConnectivityServic
         bool vpnActive = false;
         if (context.GetSystemService(Context.ConnectivityService) is ConnectivityManager manager)
         {
-            vpnActive = manager.GetAllNetworks().Any(network =>
-                manager.GetNetworkCapabilities(network)?.HasTransport(TransportType.Vpn) == true);
+            if (OperatingSystem.IsAndroidVersionAtLeast(23))
+            {
+                Network? activeNetwork = manager.ActiveNetwork;
+                vpnActive = activeNetwork is not null &&
+                    manager.GetNetworkCapabilities(activeNetwork)?.HasTransport(TransportType.Vpn) == true;
+            }
+            else
+            {
+#pragma warning disable CA1422, CS0618 // API 21-22 compatibility path.
+                vpnActive = manager.ActiveNetworkInfo?.Type == ConnectivityType.Vpn;
+#pragma warning restore CA1422, CS0618
+            }
         }
         bool network = Microsoft.Maui.Networking.Connectivity.Current.NetworkAccess != Microsoft.Maui.Networking.NetworkAccess.None;
         return Task.FromResult(new MobileConnectivityStatus(network, installed, installed && vpnActive));

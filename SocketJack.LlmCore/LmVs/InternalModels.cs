@@ -322,6 +322,11 @@ namespace LmVs
         public string type { get; set; } = "";
         public bool exists { get; set; }
         public bool hasChildren { get; set; }
+        public string rootId { get; set; } = "";
+        public string role { get; set; } = "";
+        public string accessMode { get; set; } = "";
+        public bool inherited { get; set; }
+        public string parentId { get; set; } = "";
         public string extension { get; set; } = "";
         public long size { get; set; }
         public string modifiedUtc { get; set; } = "";
@@ -402,6 +407,15 @@ namespace LmVs
         public bool fileUploads { get; set; } = true;
         public bool imageUploads { get; set; } = true;
         public bool pcAccess { get; set; } = false;
+        public bool companionEnabled { get; set; }
+        public bool companionScreenView { get; set; }
+        public bool companionCursorControl { get; set; }
+        public bool companionApplicationLaunch { get; set; }
+        public bool companionApplicationControl { get; set; }
+        public bool companionTerminalCommands { get; set; }
+        public bool companionActivityTranscriptStorage { get; set; }
+        public bool companionSensitiveMemory { get; set; }
+        public bool companionFinancialActions { get; set; }
         public bool dreamInternetSearch { get; set; }
         public bool dreamVsCopilotTools { get; set; }
         public bool dreamFileDownloads { get; set; }

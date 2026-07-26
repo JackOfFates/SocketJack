@@ -10,7 +10,7 @@ namespace JackLLM.SecurityBroker;
 public sealed record BuildIntegrityResult(bool Success, string Message);
 
 public sealed class BuildIntegrityVerifier {
-    public BuildIntegrityResult Verify(uint processId, bool development) {
+    public BuildIntegrityResult Verify(uint processId, bool development, bool allowHashStampedLocalRelease = false) {
         string? path;
         try { path = Process.GetProcessById(checked((int)processId)).MainModule?.FileName; }
         catch (Exception ex) { return new(false, "Cannot inspect the client executable: " + ex.Message); }
@@ -18,6 +18,8 @@ public sealed class BuildIntegrityVerifier {
             return new(false, "Only JackLLM.exe may request workstation unlocks.");
         if (development)
             return new(true, "Development broker uses isolated credentials.");
+        if (allowHashStampedLocalRelease)
+            return VerifyHashStampedLocalRelease(path);
 
         using RegistryKey? config = Registry.LocalMachine.OpenSubKey(@"Software\SocketJack\JackLLM\Security");
         string expectedPublisher = NormalizeHash(config?.GetValue("PublisherCertificateSha256") as string);
@@ -54,6 +56,29 @@ public sealed class BuildIntegrityVerifier {
                 return new(false, "JackLLM.exe does not match the signed release manifest.");
             return new(true, "Official build verified.");
         } catch (Exception ex) { return new(false, "Release manifest verification failed: " + ex.Message); }
+    }
+
+    private static BuildIntegrityResult VerifyHashStampedLocalRelease(string path) {
+        string[] pathParts = Path.GetFullPath(path).Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries);
+        if (!pathParts.Contains("Release", StringComparer.OrdinalIgnoreCase))
+            return new(false, "Local workstation testing is restricted to a Release output directory.");
+        string markerPath = Path.Combine(Path.GetDirectoryName(path) ?? "", "secure-release.sha256");
+        if (!File.Exists(markerPath))
+            return new(false, "The secure Release hash marker is missing. Rebuild JackLLM in Release mode.");
+        try {
+            string expectedHash = NormalizeHash(File.ReadAllText(markerPath));
+            string actualHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+            if (expectedHash.Length != 64 ||
+                !CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(actualHash),
+                    Convert.FromHexString(expectedHash)))
+                return new(false, "JackLLM.exe does not match the hash-stamped Release build.");
+            return new(true, "Hash-stamped local Release build verified.");
+        } catch (Exception ex) {
+            return new(false, "Local Release verification failed: " + ex.Message);
+        }
     }
 
     private static string NormalizeHash(string? value) => new((value ?? "").Where(Uri.IsHexDigit).Select(char.ToLowerInvariant).ToArray());

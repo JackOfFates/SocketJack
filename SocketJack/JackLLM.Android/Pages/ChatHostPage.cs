@@ -13,6 +13,7 @@ public sealed class ChatHostPage : ContentPage
     private readonly ServerInfo _server;
     private readonly JackLlmClient _client;
     private readonly ServerStore _store;
+    private readonly SecureCredentialStore _credentials;
     private readonly MobileGenerationCoordinator _generation;
     private readonly RecentSessionStore _recentSessions;
     private readonly string _requestedSessionId;
@@ -24,6 +25,10 @@ public sealed class ChatHostPage : ContentPage
     private readonly Picker _services;
     private readonly Slider _reasoningSlider;
     private readonly Label _reasoningLabel;
+    private readonly Entry _jackhammerCustomBudget;
+    private readonly Switch _jackhammerToggle;
+    private readonly Border _jackhammerToggleCard;
+    private readonly Label _jackhammerToggleLabel;
     private readonly Switch _sessionReasoningInherit;
     private readonly Button _generalMode;
     private readonly Button _advancedMode;
@@ -40,8 +45,16 @@ public sealed class ChatHostPage : ContentPage
     private readonly Button _attach;
     private readonly ToolbarItem _speakItem;
     private readonly ToolbarItem _dreamItem;
+    private readonly ToolbarItem _pcAccessItem;
     private readonly BoxView _alignmentTop;
     private readonly BoxView _alignmentBottom;
+    private readonly Border _alignmentDrawer;
+    private readonly Label _alignmentDrawerScore;
+    private readonly Label _alignmentDrawerReason;
+    private readonly Label _alignmentDrawerFeatures;
+    private readonly Label _alignmentDrawerTraits;
+    private readonly Label _alignmentDrawerRecovery;
+    private readonly Label _alignmentDrawerModel;
     private readonly Border _alignmentLockScreen;
     private readonly Grid _contentRoot;
     private IReadOnlyList<ModelInfo> _allModels = Array.Empty<ModelInfo>();
@@ -55,16 +68,19 @@ public sealed class ChatHostPage : ContentPage
     private string _projectId = "unsorted";
     private MobileAlignmentSnapshot _alignment = new();
     private int _loreIndex;
+    private bool _alignmentDrawerOpen;
+    private bool _authenticationPageOpen;
 
     public ChatHostPage(
         ServerInfo server,
         JackLlmClient client,
         ServerStore store,
+        SecureCredentialStore credentials,
         MobileGenerationCoordinator generation,
         RecentSessionStore recentSessions,
         string requestedSessionId = "")
     {
-        _server = server; _client = client; _store = store; _generation = generation;
+        _server = server; _client = client; _store = store; _credentials = credentials; _generation = generation;
         _recentSessions = recentSessions;
         _requestedSessionId = requestedSessionId;
         Title = "JackLLM";
@@ -81,8 +97,23 @@ public sealed class ChatHostPage : ContentPage
             WidthRequest = 142
         };
         _services.SelectedIndexChanged += (_, _) => ApplyModelFilter();
-        _reasoningSlider = new Slider { Minimum = 0, Maximum = 4, Value = Preferences.Default.Get(ReasoningPreferenceKey, 4d), MinimumTrackColor = Color.FromArgb("#60A5FA"), MaximumTrackColor = Color.FromArgb("#334155"), ThumbColor = Color.FromArgb("#93C5FD") };
+        _reasoningSlider = new Slider { Minimum = 0, Maximum = 5, Value = Preferences.Default.Get(ReasoningPreferenceKey, 4d), MinimumTrackColor = Color.FromArgb("#60A5FA"), MaximumTrackColor = Color.FromArgb("#334155"), ThumbColor = Color.FromArgb("#93C5FD") };
         _reasoningLabel = new Label { TextColor = Color.FromArgb("#BFDBFE"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center };
+        _jackhammerCustomBudget = new Entry { Placeholder = "Work cap", Keyboard = Keyboard.Numeric, WidthRequest = 74, TextColor = Colors.White, PlaceholderColor = Color.FromArgb("#64748B"), FontSize = 11 };
+        int savedCustomBudget = Preferences.Default.Get(JackhammerCustomBudgetPreferenceKey, 0);
+        _jackhammerCustomBudget.Text = savedCustomBudget > 0 ? savedCustomBudget.ToString() : "";
+        _jackhammerCustomBudget.Unfocused += (_, _) => SaveJackhammerCustomBudget();
+        _jackhammerToggle = new Switch { OnColor = Color.FromArgb("#2563EB"), ThumbColor = Colors.White };
+        _jackhammerToggleLabel = new Label { Text = "Jackhammer", TextColor = Colors.White, FontSize = 11, VerticalTextAlignment = TextAlignment.Center };
+        _jackhammerToggleCard = new Border
+        {
+            Padding = new Thickness(8, 2),
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            Content = new HorizontalStackLayout { Spacing = 5, Children = { _jackhammerToggle, _jackhammerToggleLabel } }
+        };
+        _jackhammerToggle.IsToggled = Preferences.Default.ContainsKey(JackhammerPreferenceKey) && Preferences.Default.Get(JackhammerPreferenceKey, false);
+        _jackhammerToggle.Toggled += (_, e) => SetJackhammerEnabled(e.Value, persist: true);
+        UpdateJackhammerToggleUi();
         _sessionReasoningInherit = new Switch { IsToggled = true, OnColor = Color.FromArgb("#2563EB") };
         _reasoningSlider.ValueChanged += (_, e) => { _reasoningSlider.Value = Math.Round(e.NewValue); UpdateReasoningUi(); if (_sessionReasoningInherit.IsToggled) Preferences.Default.Set(ReasoningPreferenceKey, _reasoningSlider.Value); };
         _sessionReasoningInherit.Toggled += (_, _) => UpdateReasoningUi();
@@ -109,21 +140,23 @@ public sealed class ChatHostPage : ContentPage
 
         var workspaceItem = new ToolbarItem("▦", null, async () => await Navigation.PushAsync(new SessionsPage(_server, _client, LoadSessionAsync, StartNewSessionAsync))) { AutomationId = "WorkspaceSessions" };
         _dreamItem = new ToolbarItem("☾", null, async () => await Navigation.PushAsync(new DreamManagementPage(_server, _client))) { AutomationId = "DreamManagement" };
+        _pcAccessItem = new ToolbarItem("🖥", null, async () => await OpenPcAccessAsync()) { AutomationId = "PcAccess" };
         var newItem = new ToolbarItem("＋", null, NewSession) { AutomationId = "NewSession" };
         _speakItem = new ToolbarItem("🔊", null, async () => await SpeakLastAsync()) { AutomationId = "SpeakResponse" };
         AutomationProperties.SetHelpText(workspaceItem, "Workspace and synchronized sessions");
         AutomationProperties.SetHelpText(newItem, "New session");
         AutomationProperties.SetHelpText(_speakItem, "Read the latest response aloud");
+        AutomationProperties.SetHelpText(_pcAccessItem, "Open administrator PC Access for this Workstation");
         ToolbarItems.Add(workspaceItem);
         ToolbarItems.Add(_dreamItem);
         ToolbarItems.Add(newItem);
         ToolbarItems.Add(_speakItem);
 
-        var modeRow = new HorizontalStackLayout { Spacing = 7, Padding = new Thickness(10, 6, 10, 3), BackgroundColor = Color.FromArgb("#111827"), Children = { _generalMode, _advancedMode, _planMode } };
+        var modeRow = new HorizontalStackLayout { Spacing = 7, Padding = new Thickness(10, 6, 10, 3), BackgroundColor = Color.FromArgb("#111827"), Children = { _generalMode, _advancedMode, _planMode, _jackhammerToggleCard } };
         var header = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto) }, BackgroundColor = Color.FromArgb("#111827"), Padding = new Thickness(10, 2) };
         header.Add(_models, 0); header.Add(_networkHealth, 1); header.Add(_services, 2);
-        var reasoningRow = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto) }, Padding = new Thickness(12, 2), BackgroundColor = Color.FromArgb("#111827"), ColumnSpacing = 8 };
-        reasoningRow.Add(_reasoningLabel, 0); reasoningRow.Add(_reasoningSlider, 1); reasoningRow.Add(new Label { Text = "Inherit", TextColor = Color.FromArgb("#94A3B8"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center }, 2); reasoningRow.Add(_sessionReasoningInherit, 3);
+        var reasoningRow = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto) }, Padding = new Thickness(12, 2), BackgroundColor = Color.FromArgb("#111827"), ColumnSpacing = 8 };
+        reasoningRow.Add(_reasoningLabel, 0); reasoningRow.Add(_reasoningSlider, 1); reasoningRow.Add(_jackhammerCustomBudget, 2); reasoningRow.Add(new Label { Text = "Inherit", TextColor = Color.FromArgb("#94A3B8"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center }, 3); reasoningRow.Add(_sessionReasoningInherit, 4);
         _liveActivityText = new Label { Text = "Preparing compute…", TextColor = Color.FromArgb("#BFDBFE"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.TailTruncation };
         _liveProgress = new ProgressBar { Progress = 0, ProgressColor = Color.FromArgb("#60A5FA"), BackgroundColor = Color.FromArgb("#26334D"), HeightRequest = 3 };
         _liveIndicator = new ActivityIndicator { IsRunning = false, Color = Color.FromArgb("#60A5FA"), WidthRequest = 20, HeightRequest = 20 };
@@ -131,23 +164,50 @@ public sealed class ChatHostPage : ContentPage
         liveGrid.Add(_liveIndicator, 0, 0); Grid.SetRowSpan(_liveIndicator, 2); liveGrid.Add(_liveActivityText, 1, 0); liveGrid.Add(_liveProgress, 1, 1);
         _liveActivityCard = new Border { IsVisible = false, Margin = new Thickness(10, 4), Padding = new Thickness(10, 7), BackgroundColor = Color.FromArgb("#101D36"), Stroke = Color.FromArgb("#1D4ED8"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 12 }, Content = liveGrid };
         var composer = new Border { Margin = new Thickness(10, 6, 10, 10), Padding = new Thickness(8), BackgroundColor = Color.FromArgb("#151C2F"), Stroke = Color.FromArgb("#26334D"), StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Children = { _attach, _voice.Column(1), _prompt.Column(2), _send.Column(3) } } };
-        _alignmentTop = new BoxView { HeightRequest = 3, BackgroundColor = Color.FromArgb("#64748B") };
+        _alignmentTop = new BoxView { HeightRequest = 3, VerticalOptions = LayoutOptions.Start, BackgroundColor = Color.FromArgb("#64748B") };
         _alignmentBottom = new BoxView { HeightRequest = 3, IsVisible = false };
-        var alignmentTap = new TapGestureRecognizer();
-        alignmentTap.Tapped += async (_, _) => await ShowAlignmentAsync();
-        _alignmentTop.GestureRecognizers.Add(alignmentTap);
-        var bottomAlignmentTap = new TapGestureRecognizer();
-        bottomAlignmentTap.Tapped += async (_, _) => await ShowAlignmentAsync();
-        _alignmentBottom.GestureRecognizers.Add(bottomAlignmentTap);
+        _alignmentDrawerScore = new Label { Text = "Neutral · 0", TextColor = Colors.White, FontSize = 15, FontAttributes = FontAttributes.Bold };
+        _alignmentDrawerReason = new Label { Text = "Every Hero chooses a path.", TextColor = Color.FromArgb("#CBD5E1"), FontSize = 12 };
+        _alignmentDrawerFeatures = new Label { Text = "All granted Guild privileges remain available.", TextColor = Color.FromArgb("#94A3B8"), FontSize = 11 };
+        _alignmentDrawerTraits = new Label { TextColor = Color.FromArgb("#CBD5E1"), FontSize = 11, LineHeight = 1.25 };
+        _alignmentDrawerRecovery = new Label { Text = "You can only help others after you help yourself.", TextColor = Color.FromArgb("#64748B"), FontSize = 10 };
+        _alignmentDrawerModel = new Label { Text = "Awaiting the selected model’s reading", TextColor = Color.FromArgb("#64748B"), FontSize = 9 };
+        _alignmentDrawer = new Border
+        {
+            IsVisible = false, HeightRequest = 0, Padding = new Thickness(16, 12, 16, 9),
+            BackgroundColor = Color.FromArgb("#101827"), Stroke = Color.FromArgb("#334155"), StrokeThickness = 1,
+            StrokeShape = new RoundRectangle { CornerRadius = new CornerRadius(0, 0, 14, 14) },
+            Content = new VerticalStackLayout
+            {
+                Spacing = 7,
+                Children =
+                {
+                    new Label { Text = "HERO ALIGNMENT", TextColor = Color.FromArgb("#7DD3FC"), FontSize = 10, FontAttributes = FontAttributes.Bold, CharacterSpacing = 1.5 },
+                    _alignmentDrawerScore, _alignmentDrawerReason, _alignmentDrawerFeatures, _alignmentDrawerTraits,
+                    _alignmentDrawerRecovery, _alignmentDrawerModel,
+                    new Label { Text = "↑  Slide up to close", TextColor = Color.FromArgb("#64748B"), FontSize = 10, HorizontalTextAlignment = TextAlignment.Center }
+                }
+            }
+        };
+        var alignmentEdgeZone = new Grid { HeightRequest = 16, BackgroundColor = Colors.Transparent, Children = { _alignmentTop } };
+        var openAlignmentSwipe = new SwipeGestureRecognizer { Direction = SwipeDirection.Down, Threshold = 40 };
+        openAlignmentSwipe.Swiped += (_, _) => SetAlignmentDrawerOpen(true);
+        alignmentEdgeZone.GestureRecognizers.Add(openAlignmentSwipe);
+        var closeAlignmentSwipe = new SwipeGestureRecognizer { Direction = SwipeDirection.Up, Threshold = 36 };
+        closeAlignmentSwipe.Swiped += (_, _) => SetAlignmentDrawerOpen(false);
+        _alignmentDrawer.GestureRecognizers.Add(closeAlignmentSwipe);
+        var bottomAlignmentSwipe = new SwipeGestureRecognizer { Direction = SwipeDirection.Up, Threshold = 36 };
+        bottomAlignmentSwipe.Swiped += (_, _) => SetAlignmentDrawerOpen(true);
+        _alignmentBottom.GestureRecognizers.Add(bottomAlignmentSwipe);
         _contentRoot = new Grid
         {
             RowDefinitions =
             {
-                new RowDefinition(3), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
+                new RowDefinition(16), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
                 new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
                 new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto), new RowDefinition(3)
             },
-            Children = { _alignmentTop.Row(0), modeRow.Row(1), header.Row(2), reasoningRow.Row(3), _status.Row(4), _liveActivityCard.Row(5), _messageList.Row(6), composer.Row(7), _alignmentBottom.Row(8) }
+            Children = { alignmentEdgeZone.Row(0), _alignmentDrawer.Row(1), modeRow.Row(2), header.Row(3), reasoningRow.Row(4), _status.Row(5), _liveActivityCard.Row(6), _messageList.Row(7), composer.Row(8), _alignmentBottom.Row(9) }
         };
         _alignmentLockScreen = new Border
         {
@@ -179,11 +239,18 @@ public sealed class ChatHostPage : ContentPage
         _generation.SnapshotChanged += OnGenerationSnapshotChanged;
         _generation.AlignmentChanged -= OnAlignmentChanged;
         _generation.AlignmentChanged += OnAlignmentChanged;
+        _generation.AuthenticationRequired -= OnAuthenticationRequired;
+        _generation.AuthenticationRequired += OnAuthenticationRequired;
         AppVisibilityService.VisibilityChanged -= OnAppVisibilityChanged;
         AppVisibilityService.VisibilityChanged += OnAppVisibilityChanged;
         try
         {
-            await _client.ConnectAsync(_server);
+            MobileGenerationSnapshot activeGeneration = _generation.Current;
+            bool ownsActiveStream = activeGeneration.IsGenerating &&
+                activeGeneration.ServerKey.Equals(_server.LaunchKey, StringComparison.OrdinalIgnoreCase);
+            if (!ownsActiveStream)
+                await _client.ConnectAsync(_server);
+            UpdateAdministratorActions();
             ApplyAlignment(await _client.GetAlignmentAsync());
             var models = await _client.GetModelsAsync();
             bool voiceSupported = await _client.SupportsVoiceAsync();
@@ -201,7 +268,32 @@ public sealed class ChatHostPage : ContentPage
             await InitializeSessionAsync();
             ApplyGenerationSnapshot(_generation.Current);
         }
+        catch (Exception ex) when (RequiresAuthentication(ex))
+        {
+            _status.Text = "Sign in to continue";
+            await ShowAuthenticationAsync();
+        }
         catch (Exception ex) { _status.Text = "Connection failed: " + ex.Message; }
+    }
+
+    private void UpdateAdministratorActions()
+    {
+        bool shouldShow = _client.IsAdministrator || _client.IsOwner;
+        bool isShown = ToolbarItems.Contains(_pcAccessItem);
+        if (shouldShow && !isShown)
+            ToolbarItems.Insert(Math.Min(2, ToolbarItems.Count), _pcAccessItem);
+        else if (!shouldShow && isShown)
+            ToolbarItems.Remove(_pcAccessItem);
+    }
+
+    private async Task OpenPcAccessAsync()
+    {
+        if (!_client.IsAdministrator && !_client.IsOwner)
+        {
+            UpdateAdministratorActions();
+            return;
+        }
+        await Navigation.PushAsync(new PcAccessPage(_server, _client));
     }
 
     protected override void OnDisappearing()
@@ -209,6 +301,7 @@ public sealed class ChatHostPage : ContentPage
         _pageActive = false;
         _generation.SnapshotChanged -= OnGenerationSnapshotChanged;
         _generation.AlignmentChanged -= OnAlignmentChanged;
+        _generation.AuthenticationRequired -= OnAuthenticationRequired;
         AppVisibilityService.VisibilityChanged -= OnAppVisibilityChanged;
         base.OnDisappearing();
         _networkHealthCancellation?.Cancel();
@@ -255,13 +348,19 @@ public sealed class ChatHostPage : ContentPage
         Preferences.Default.Set(ModePreferenceKey, mode.ToString());
         bool advanced = mode == MobileChatMode.Advanced;
         bool planning = mode == MobileChatMode.Plan;
-        _generalMode.BackgroundColor = advanced ? Color.FromArgb("#1F2937") : Color.FromArgb("#2563EB");
+        _generalMode.BackgroundColor = !advanced && !planning ? Color.FromArgb("#2563EB") : Color.FromArgb("#1F2937");
         _advancedMode.BackgroundColor = advanced ? Color.FromArgb("#7C3AED") : Color.FromArgb("#1F2937");
         _planMode.BackgroundColor = planning ? Color.FromArgb("#7C3AED") : Color.FromArgb("#1F2937");
         _services.IsVisible = advanced;
         if (advanced && _services.SelectedIndex < 0) _services.SelectedIndex = 0;
+        if (advanced && !Preferences.Default.ContainsKey(JackhammerPreferenceKey))
+            SetJackhammerEnabled(true, persist: false);
         _prompt.Placeholder = planning ? "Describe what you want planned..." : advanced ? "Ask JackLLM to work, use tools, or generate media..." : "Chat with JackLLM...";
-        _status.Text = advanced ? "Advanced Mode (Work): service controls and tool activity enabled" : "General Mode (chat): streamlined conversation";
+        _status.Text = planning
+            ? "Plan Mode: read-only planning; no changes will be made"
+            : advanced
+                ? "Advanced Mode (Work): service controls and tool activity enabled"
+                : "General Mode (chat): streamlined conversation";
         ApplyModelFilter();
     }
 
@@ -270,7 +369,7 @@ public sealed class ChatHostPage : ContentPage
         var previous = _models.SelectedItem as ModelInfo;
         string selectedService = _services.SelectedItem as string ?? "agent";
         IEnumerable<ModelInfo> candidates;
-        if (_mode == MobileChatMode.General)
+        if (_mode is MobileChatMode.General or MobileChatMode.Plan)
         {
             candidates = _allModels.Where(item => item.IsGeneralChatCandidate);
         }
@@ -303,18 +402,74 @@ public sealed class ChatHostPage : ContentPage
 
     private string ModePreferenceKey => "jackllm.mobile.mode." + _server.LaunchKey;
     private string ReasoningPreferenceKey => "jackllm.mobile.reasoning." + _server.LaunchKey;
-    private static readonly string[] ReasoningLevels = ["Minimal", "Low", "Medium", "High", "Auto"];
-    private string EffectiveReasoningLevel => ReasoningLevels[(int)Math.Clamp(Math.Round(_reasoningSlider.Value), 0, 4)].ToLowerInvariant();
-    private void UpdateReasoningUi() => _reasoningLabel.Text = "Reasoning: " + EffectiveReasoningLevel + (_sessionReasoningInherit.IsToggled ? " (global)" : " (session)");
+    private const string JackhammerPreferenceKey = "jackllm.mobile.jackhammer.enabled";
+    private const string JackhammerCustomBudgetPreferenceKey = "jackllm.mobile.jackhammer.customBudget";
+    private static readonly string[] ReasoningLevels = ["Minimal", "Low", "Medium", "High", "Auto", "Ultra"];
+    private static readonly int[] JackhammerPresetBudgets = [2, 5, 10, 20, 40, 100];
+    private string EffectiveReasoningLevel => ReasoningLevels[(int)Math.Clamp(Math.Round(_reasoningSlider.Value), 0, 5)].ToLowerInvariant();
+    private int EffectiveJackhammerTurnBudget
+    {
+        get
+        {
+            if (int.TryParse(_jackhammerCustomBudget.Text, out int custom) && custom > 0)
+                return Math.Clamp(custom, 1, 200);
+            return JackhammerPresetBudgets[(int)Math.Clamp(Math.Round(_reasoningSlider.Value), 0, 5)];
+        }
+    }
+    private void UpdateReasoningUi() => _reasoningLabel.Text = "Reasoning: " + EffectiveReasoningLevel + $" · {EffectiveJackhammerTurnBudget} work turns" + (_sessionReasoningInherit.IsToggled ? " (global)" : " (session)");
+
+    private void SaveJackhammerCustomBudget()
+    {
+        if (int.TryParse(_jackhammerCustomBudget.Text, out int value) && value > 0)
+        {
+            value = Math.Clamp(value, 1, 200);
+            _jackhammerCustomBudget.Text = value.ToString();
+            Preferences.Default.Set(JackhammerCustomBudgetPreferenceKey, value);
+        }
+        else
+        {
+            _jackhammerCustomBudget.Text = "";
+            Preferences.Default.Remove(JackhammerCustomBudgetPreferenceKey);
+        }
+        UpdateReasoningUi();
+    }
+
+    private void SetJackhammerEnabled(bool enabled, bool persist)
+    {
+        if (_jackhammerToggle.IsToggled != enabled)
+            _jackhammerToggle.IsToggled = enabled;
+        if (persist)
+            Preferences.Default.Set(JackhammerPreferenceKey, enabled);
+        UpdateJackhammerToggleUi();
+        if (enabled && _mode != MobileChatMode.Plan && _mode != MobileChatMode.Advanced)
+            SetMode(MobileChatMode.Advanced);
+        if (enabled && _mode != MobileChatMode.Plan)
+            _services.SelectedIndex = 0;
+    }
+
+    private void UpdateJackhammerToggleUi()
+    {
+        bool enabled = _jackhammerToggle.IsToggled;
+        _jackhammerToggleLabel.Text = "Jackhammer " + (enabled ? "On" : "Off");
+        _jackhammerToggleCard.BackgroundColor = enabled ? Color.FromArgb("#1D4ED8") : Color.FromArgb("#991B1B");
+        _jackhammerToggleCard.Stroke = enabled ? Color.FromArgb("#60A5FA") : Color.FromArgb("#EF4444");
+        AutomationProperties.SetHelpText(_jackhammerToggleCard, enabled
+            ? "Jackhammer autonomous work is on"
+            : "Jackhammer autonomous work is off");
+    }
 
     private async Task SendAsync()
     {
         string text = _prompt.Text?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(text) && _attachments.Count == 0) return;
         if (_models.SelectedItem is not ModelInfo model) { await DisplayAlertAsync("No model", "This Workstation did not report an available chat model.", "OK"); return; }
-        string service = _mode == MobileChatMode.General || _mode == MobileChatMode.Plan
-            ? (_mode == MobileChatMode.Plan ? "agent" : "chat")
-            : _services.SelectedItem as string ?? "agent";
+        string service = _mode == MobileChatMode.Plan
+            ? "chat"
+            : _jackhammerToggle.IsToggled
+                ? "agent"
+                : _mode == MobileChatMode.General
+                    ? "chat"
+                    : _services.SelectedItem as string ?? "agent";
         AttachmentInfo[] attachments = _attachments.ToArray();
         bool hasImages = attachments.Any(attachment => attachment.IsImage);
         if (hasImages && !model.SupportsImages)
@@ -368,8 +523,10 @@ public sealed class ChatHostPage : ContentPage
         }
         _recentSessions.Remember(_server.LaunchKey, _sessionId);
         bool started = await _generation.StartAsync(new MobileGenerationRequest(
-            _server, _client, _sessionId, _projectId, model.Id, service, EffectiveReasoningLevel,
+            _server, _client, _sessionId, _projectId, model.Id, service,
+            _mode == MobileChatMode.Plan ? "plan" : _mode == MobileChatMode.Advanced ? service : "chat", EffectiveReasoningLevel,
             _sessionReasoningInherit.IsToggled ? "inherit" : EffectiveReasoningLevel,
+            _jackhammerToggle.IsToggled, EffectiveJackhammerTurnBudget,
             requestMessages, attachments, priorServerMessageCount, user.Content));
         if (!started)
         {
@@ -388,6 +545,39 @@ public sealed class ChatHostPage : ContentPage
     }
 
     private Task StopAsync() => _generation.StopAsync();
+
+    private void OnAuthenticationRequired(object? sender, EventArgs e)
+    {
+        if (!_pageActive) return;
+        MainThread.BeginInvokeOnMainThread(async () => await ShowAuthenticationAsync());
+    }
+
+    private async Task ShowAuthenticationAsync()
+    {
+        if (_authenticationPageOpen || !_pageActive) return;
+        _authenticationPageOpen = true;
+        var authPage = new WorkstationAuthPage(_credentials, _store, async _ =>
+        {
+            await _client.ConnectAsync(_server);
+            bool resumed = await _generation.RetryPendingAsync();
+            if (!resumed) _status.Text = "Signed in. Your session is ready.";
+            await Navigation.PopAsync();
+        }, _server.Endpoint);
+        authPage.Disappearing += (_, _) => _authenticationPageOpen = false;
+        await Navigation.PushAsync(authPage);
+    }
+
+    private static bool RequiresAuthentication(Exception exception)
+    {
+        if (exception is UnauthorizedAccessException) return true;
+        if (exception is HttpRequestException requestException &&
+            requestException.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            return true;
+        string message = exception.Message ?? "";
+        return message.Contains("authentication required", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("sign in", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("unauthorized", StringComparison.OrdinalIgnoreCase);
+    }
 
     private void OnGenerationSnapshotChanged(object? sender, MobileGenerationSnapshot snapshot)
     {
@@ -415,6 +605,18 @@ public sealed class ChatHostPage : ContentPage
             ? AlignmentGradient(Colors.Red, Colors.Lime, Colors.DeepSkyBlue, Colors.Magenta)
             : new SolidColorBrush(Color.FromArgb("#64748B"));
         _alignmentBottom.Background = AlignmentGradient(Colors.Black, Color.FromArgb("#7F1D1D"), Colors.Red, Colors.Black);
+        _alignmentDrawer.BackgroundColor = negative ? Color.FromArgb("#160003") : Color.FromArgb("#101827");
+        _alignmentDrawer.Stroke = negative ? Color.FromArgb("#991B1B") : Color.FromArgb("#334155");
+        _alignmentDrawerScore.Text = $"{_alignment.Tier} · {_alignment.Score:+0;-0;0}";
+        _alignmentDrawerReason.Text = _alignment.LastReason;
+        _alignmentDrawerFeatures.Text = _alignment.DisabledFeatures is { Length: > 0 }
+            ? "Withdrawn Guild privileges: " + string.Join(", ", _alignment.DisabledFeatures)
+            : "All granted Guild privileges remain available.";
+        _alignmentDrawerTraits.Text = BuildMobileAlignmentTraitText(_alignment.CharacterTraits);
+        _alignmentDrawerRecovery.Text = _alignment.RecoveryGuidance;
+        _alignmentDrawerModel.Text = string.IsNullOrWhiteSpace(_alignment.AssessmentModel)
+            ? "Awaiting the selected model’s reading"
+            : "Judged by " + _alignment.AssessmentModel;
         BackgroundColor = negative ? Color.FromArgb("#090000") : Color.FromArgb("#0B1020");
 
         HashSet<string> disabled = new(_alignment.DisabledFeatures ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
@@ -446,8 +648,8 @@ public sealed class ChatHostPage : ContentPage
         _alignmentLockScreen.IsVisible = _alignment.Locked;
         _contentRoot.IsEnabled = !_alignment.Locked;
         _contentRoot.Opacity = _alignment.Locked ? 0.12 : 1;
-        AutomationProperties.SetHelpText(negative ? _alignmentBottom : _alignmentTop,
-            $"Alignment {_alignment.Tier}, score {_alignment.Score}. Tap for details.");
+        AutomationProperties.SetHelpText(_alignmentTop,
+            $"Alignment {_alignment.Tier}, score {_alignment.Score}. Slide down from the top edge for details.");
     }
 
     private static LinearGradientBrush AlignmentGradient(params Color[] colors)
@@ -458,13 +660,42 @@ public sealed class ChatHostPage : ContentPage
         return brush;
     }
 
-    private async Task ShowAlignmentAsync()
+    private void SetAlignmentDrawerOpen(bool open)
     {
-        string disabled = _alignment.DisabledFeatures is { Length: > 0 }
-            ? string.Join(", ", _alignment.DisabledFeatures)
-            : "None";
-        await DisplayAlertAsync("Hero Alignment",
-            $"{_alignment.Tier} · {_alignment.Score:+0;-0;0}\n\n{_alignment.LastReason}\n\nDisabled: {disabled}\n\n{_alignment.RecoveryGuidance}", "Close");
+        if (_alignment.Locked || _alignmentDrawerOpen == open) return;
+        _alignmentDrawerOpen = open;
+        this.AbortAnimation("AlignmentDrawer");
+        if (open)
+        {
+            _alignmentDrawer.IsVisible = true;
+            _alignmentDrawer.HeightRequest = 0;
+            this.Animate("AlignmentDrawer", value => _alignmentDrawer.HeightRequest = value,
+                0, 356, 16, 280, Easing.CubicOut);
+            return;
+        }
+
+        double start = Math.Max(0, _alignmentDrawer.HeightRequest);
+        this.Animate("AlignmentDrawer", value => _alignmentDrawer.HeightRequest = value,
+            start, 0, 16, 220, Easing.CubicIn, (value, cancelled) =>
+            {
+                if (cancelled || _alignmentDrawerOpen) return;
+                _alignmentDrawer.HeightRequest = 0;
+                _alignmentDrawer.IsVisible = false;
+            });
+    }
+
+    private static string BuildMobileAlignmentTraitText(IReadOnlyDictionary<string, int>? traits)
+    {
+        string[] names = ["Nobility", "Humility", "Compassion", "Courage", "Honesty", "Mercy", "Generosity", "Discipline",
+            "Responsibility", "Self-Respect", "Greed", "Cruelty", "Pride", "Deception", "Coercion", "Self-Sabotage"];
+        HashSet<string> vices = new(["Greed", "Cruelty", "Pride", "Deception", "Coercion", "Self-Sabotage"], StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> readings = names.Select(name =>
+        {
+            int fallback = vices.Contains(name) ? 1 : 5;
+            int value = traits != null && traits.TryGetValue(name, out int reported) ? Math.Clamp(reported, 1, 10) : fallback;
+            return $"{name}: {value}/10";
+        });
+        return string.Join("\n", readings.Chunk(2).Select(pair => string.Join("     ", pair)));
     }
 
     private string AlignmentLoreForActivity(string phase)
@@ -540,6 +771,7 @@ public sealed class ChatHostPage : ContentPage
         assistant.Tools.Clear();
         foreach (ToolActivity tool in snapshot.Tools)
             assistant.Tools.Add(new ToolActivity { Name = tool.Name, Status = tool.Status, Detail = tool.Detail });
+        assistant.WorkSummary = BuildJackhammerWorkSummary(assistant.Tools, snapshot.IsGenerating);
 
         _send.Text = snapshot.IsGenerating ? "■" : "↑";
         _status.Text = snapshot.HasError ? snapshot.Status : snapshot.IsStopped ? "Generation stopped" : snapshot.IsGenerating ? (snapshot.Status.Length > 0 ? snapshot.Status : "Generating…") : "Ready";
@@ -647,6 +879,11 @@ public sealed class ChatHostPage : ContentPage
         _projectId = string.IsNullOrWhiteSpace(detail.ProjectId) ? "unsorted" : detail.ProjectId;
         _recentSessions.Remember(_server.LaunchKey, _sessionId);
         string savedReasoning = string.IsNullOrWhiteSpace(detail.ReasoningLevel) ? "inherit" : detail.ReasoningLevel.ToLowerInvariant();
+        SetMode(detail.InteractionMode.Equals("plan", StringComparison.OrdinalIgnoreCase)
+            ? MobileChatMode.Plan
+            : detail.InteractionMode is "agent" or "companion"
+                ? MobileChatMode.Advanced
+                : MobileChatMode.General);
         _sessionReasoningInherit.IsToggled = savedReasoning == "inherit";
         if (!_sessionReasoningInherit.IsToggled)
         {
@@ -901,10 +1138,36 @@ public sealed class ChatHostPage : ContentPage
             HeightRequest = 36
         };
         tools.SetBinding(ItemsView.ItemsSourceProperty, nameof(ChatMessage.Tools));
-        var border = new Border { Margin = new Thickness(10, 5), Padding = 12, StrokeThickness = 0, StrokeShape = new RoundRectangle { CornerRadius = 16 }, Content = new VerticalStackLayout { Spacing = 7, Children = { role, route, reasoningExpander, content, tools, telemetry, status } } };
+        var workSummary = new MarkdownMessageView();
+        workSummary.SetBinding(MarkdownMessageView.MarkdownProperty, nameof(ChatMessage.WorkSummary));
+        var workCard = new Border { Padding = new Thickness(10, 8), BackgroundColor = Color.FromArgb("#101D36"), Stroke = Color.FromArgb("#2563EB"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 10 }, Content = workSummary };
+        workCard.SetBinding(IsVisibleProperty, nameof(ChatMessage.HasWorkSummary));
+        var border = new Border { Margin = new Thickness(10, 5), Padding = 12, StrokeThickness = 0, StrokeShape = new RoundRectangle { CornerRadius = 16 }, Content = new VerticalStackLayout { Spacing = 7, Children = { role, route, reasoningExpander, content, workCard, tools, telemetry, status } } };
         border.SetBinding(Border.BackgroundColorProperty, nameof(ChatMessage.BubbleColor));
         AttachMessageLongPress(border);
         return border;
+    }
+
+    private static string BuildJackhammerWorkSummary(IEnumerable<ToolActivity> tools, bool isGenerating)
+    {
+        ToolActivity[] items = tools.Take(12).ToArray();
+        if (items.Length == 0) return "";
+        var lines = new List<string> { "### Jackhammer work tree" };
+        foreach (ToolActivity item in items)
+        {
+            string state = item.Status.Equals("completed", StringComparison.OrdinalIgnoreCase) ||
+                           item.Status.Equals("complete", StringComparison.OrdinalIgnoreCase) ||
+                           item.Status.Equals("succeeded", StringComparison.OrdinalIgnoreCase)
+                ? "[x]"
+                : item.Status.Equals("failed", StringComparison.OrdinalIgnoreCase) ||
+                  item.Status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
+                    ? "[!]"
+                    : "[ ]";
+            string detail = string.IsNullOrWhiteSpace(item.Detail) ? "" : " - " + item.Detail.Trim();
+            lines.Add($"- {state} **{item.Name}**{detail}");
+        }
+        lines.Add(isGenerating ? "\n_Work continues automatically._" : "\n_Work run complete._");
+        return string.Join("\n", lines);
     }
 
     private void AttachMessageLongPress(Border bubble)

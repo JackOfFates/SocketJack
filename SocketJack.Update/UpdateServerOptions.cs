@@ -340,14 +340,6 @@ public sealed class UpdateServerOptions {
             AutoStartAfterUpdate = true
         };
         yield return new UpdateChannel {
-            Id = "jackllm-companion",
-            DisplayName = "JackLLM Companion",
-            UpdateDirectory = @"C:\JackLLM\Update\Companion",
-            ManagedProcessName = "JackLLMCompanion",
-            ManagedExecutablePath = "JackLLMCompanion.exe",
-            AutoStartAfterUpdate = false
-        };
-        yield return new UpdateChannel {
             Id = "onlineusers-server",
             DisplayName = "OnlineUsers Server",
             UpdateDirectory = @"C:\Users\jackoffates\Desktop\wShare Server",

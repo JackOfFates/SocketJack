@@ -355,8 +355,7 @@ static string NormalizePublishRelativePath(string path) {
 
 static bool IsJackLlmWorkstationChannel(string channel) {
     string id = (channel ?? "").Trim().ToLowerInvariant();
-    return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase) ||
-           id.Equals("jackllm-companion", StringComparison.OrdinalIgnoreCase);
+    return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
 }
 
 static void AddJobChannelMetadata(Dictionary<string, object> body, PublishJob job) {
@@ -1342,15 +1341,6 @@ sealed class PublisherOptions {
                 AutoStartAfterUpdate = true
             },
             new() {
-                Channel = "jackllm-companion",
-                DisplayName = "JackLLM Companion",
-                SourceDirectory = Path.Combine(root, "JackLLMCompanion", "bin", configuration, "net8.0-windows7.0"),
-                ServerPath = @"C:\JackLLM\Update\Companion",
-                ManagedProcessName = "JackLLMCompanion",
-                ManagedExecutablePath = "JackLLMCompanion.exe",
-                AutoStartAfterUpdate = false
-            },
-            new() {
                 Channel = "onlineusers-server",
                 DisplayName = "OnlineUsers Server",
                 SourceDirectory = @"C:\Users\Vin\source\repos\wShare\OnlineUsers\bin\Debug\net10.0-windows7.0",
@@ -1763,8 +1753,7 @@ sealed class UpdateFile {
 
     private static bool IsJackLlmWorkstationChannel(string channel) {
         string id = (channel ?? "").Trim().ToLowerInvariant();
-        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase) ||
-               id.Equals("jackllm-companion", StringComparison.OrdinalIgnoreCase);
+        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsBlockedJackLlmPayloadPath(string relativePath) {

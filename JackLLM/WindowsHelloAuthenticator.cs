@@ -1,16 +1,13 @@
 using Windows.Security.Credentials;
 using Windows.Security.Cryptography;
+using Windows.Security.Cryptography.Core;
 
 namespace JackLLM;
 
 internal sealed record WindowsHelloProof(string PublicKey, string Signature, string Attestation);
 
 internal static class WindowsHelloAuthenticator {
-#if DEBUG
-    private const string CredentialName = "SocketJack.JackLLM.Workstation.Development.v1";
-#else
     private const string CredentialName = "SocketJack.JackLLM.Workstation.Official.v1";
-#endif
 
     public static async Task<WindowsHelloProof> CreateAndSignAsync(byte[] challenge) {
         if (!await KeyCredentialManager.IsSupportedAsync())
@@ -35,7 +32,9 @@ internal static class WindowsHelloAuthenticator {
         KeyCredentialOperationResult signed = await credential.RequestSignAsync(challengeBuffer);
         if (signed.Status != KeyCredentialStatus.Success)
             throw new InvalidOperationException("Windows Hello did not approve the request: " + signed.Status);
-        CryptographicBuffer.CopyToByteArray(credential.RetrievePublicKey(), out byte[] publicKey);
+        CryptographicBuffer.CopyToByteArray(
+            credential.RetrievePublicKey(CryptographicPublicKeyBlobType.X509SubjectPublicKeyInfo),
+            out byte[] publicKey);
         CryptographicBuffer.CopyToByteArray(signed.Result, out byte[] signature);
         string attestationValue = "";
         if (requireAttestation) {

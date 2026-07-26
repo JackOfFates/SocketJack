@@ -4,7 +4,8 @@ using System.Text.Json.Serialization;
 namespace JackLLM.Security;
 
 public static class SecurityProtocol {
-    public const int Version = 1;
+    public const int Version = 2;
+    public const int BrokerCompatibility = 3;
     public const string OfficialPipeName = "JackLLM.Workstation.Security.v1";
     public const string DevelopmentPipeName = "JackLLM.Workstation.Security.Development.v1";
     public static readonly JsonSerializerOptions Json = new() {
@@ -19,6 +20,7 @@ public enum SecurityOperation {
     Enroll,
     BeginUnlock,
     CompleteUnlock,
+    RememberedUnlock,
     ChangePassword,
     Recover,
     RebindHardware
@@ -50,6 +52,8 @@ public sealed class SecurityRequest {
     public string? Attestation { get; set; }
     public string? RecoveryBackup { get; set; }
     public string? UnlockGrant { get; set; }
+    public bool RememberDevice { get; set; }
+    public string? RememberedDeviceToken { get; set; }
 }
 
 public sealed class SecurityResponse {
@@ -63,8 +67,13 @@ public sealed class SecurityResponse {
     public string? RecoveryKey { get; set; }
     public string? RecoveryBackup { get; set; }
     public string? UnlockGrant { get; set; }
+    public DateTimeOffset? UnlockGrantExpiresUtc { get; set; }
+    public string? RememberedDeviceToken { get; set; }
+    public DateTimeOffset? RememberedDeviceExpiresUtc { get; set; }
     public DateTimeOffset? CooldownUntilUtc { get; set; }
     public bool DevelopmentMode { get; set; }
+    public int BrokerCompatibility { get; set; }
+    public int BrokerProcessId { get; set; }
 }
 
 public sealed class PortableRecoveryFile {

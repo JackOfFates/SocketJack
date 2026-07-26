@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 
 namespace LlmRuntime;
 
-public enum RouterReasoningLevel { Minimal, Low, Medium, High, Auto }
+public enum RouterReasoningLevel { Minimal, Low, Medium, High, Auto, Ultra }
 
 public sealed record ModelRouteRequest(
     string Prompt,
@@ -102,7 +102,7 @@ public sealed class InstantModelRouter
         bool compatible = rejection.Length == 0;
 
         double strength = EstimateStrength(model);
-        double desiredStrength = reasoning switch { RouterReasoningLevel.Minimal => 1, RouterReasoningLevel.Low => 2, RouterReasoningLevel.Medium => 3, RouterReasoningLevel.High => 4, _ => 3 };
+        double desiredStrength = reasoning switch { RouterReasoningLevel.Minimal => 1, RouterReasoningLevel.Low => 2, RouterReasoningLevel.Medium => 3, RouterReasoningLevel.High => 4, RouterReasoningLevel.Ultra => 5, _ => 3 };
         double score = 100 - Math.Abs(strength - desiredStrength) * 14;
         if (loaded) score += 22;
         if (features.IsCoding && HasAny(model, "code", "coder")) score += 18;

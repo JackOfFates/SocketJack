@@ -287,8 +287,8 @@ public partial class LmVsProxy
 
     private string HandlePcAccessDisconnect(NetworkConnection connection, HttpRequest request)
     {
-        MobileDeviceRecord device = AuthenticateMobileDevice(request);
-        if (device == null) return BuildJsonError(request, 401, "Unauthorized", "A paired mobile token is required.");
+        if (!TryAuthorizePcAccess(connection, request, out MobileDeviceRecord device, out _, out _, out string error))
+            return BuildJsonError(request, AuthenticateMobileDevice(request) == null ? 401 : 403, "Forbidden", error);
         lock (_pcAccessLock) if (_activePcAccessDeviceId != device.Id) return JsonSerializer.Serialize(new { ok = true });
         StopPcAccessStream("disconnected");
         AuditPcAccess("desktop", device.Id, "disconnected");
@@ -299,6 +299,12 @@ public partial class LmVsProxy
     {
         device = AuthenticateMobileDevice(request); ownerKey = ""; source = ""; error = "A paired mobile token is required.";
         if (device == null || !MobileAccessEnabled) return false;
+        if (!IsMobileDeviceAdministrator(device))
+        {
+            error = "PC Access is available only to Workstation administrators.";
+            AuditPcAccess("denied", device.Id, "administrator-required");
+            return false;
+        }
         ownerKey = string.IsNullOrWhiteSpace(device.OwnerKey) ? "mobile:" + device.Id : device.OwnerKey;
         ChatPermissionState owner = GetStoredChatPermissions(ownerKey, false);
         if (owner != null) { source = ownerKey; if (owner.pcAccess) return true; error = "PC Access is disabled for this device/account."; return false; }

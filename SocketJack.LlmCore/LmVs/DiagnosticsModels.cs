@@ -129,6 +129,40 @@ namespace LmVs
         public string CreatedUtc { get; set; } = "";
     }
 
+    public sealed class ChatWorkspaceRootSnapshot
+    {
+        public string Id { get; set; } = "";
+        public string OwnerKey { get; set; } = "";
+        public string SessionId { get; set; } = "";
+        public string Role { get; set; } = "attached";
+        public string DisplayName { get; set; } = "";
+        public string Path { get; set; } = "";
+        public string AccessMode { get; set; } = "read-write";
+        public bool Exists { get; set; }
+        public bool IsSandbox { get; set; }
+        public bool IsInherited { get; set; }
+        public string ParentId { get; set; } = "";
+        public string CreatedUtc { get; set; } = "";
+        public string UpdatedUtc { get; set; } = "";
+    }
+
+    public sealed class ChatWorkspaceIgnoreRuleSnapshot
+    {
+        public string Id { get; set; } = "";
+        public string OwnerKey { get; set; } = "";
+        public string SessionId { get; set; } = "";
+        public string RootId { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Pattern { get; set; } = "";
+        public string Target { get; set; } = "path";
+        public bool CaseSensitive { get; set; }
+        public bool Enabled { get; set; } = true;
+        public string BuilderMode { get; set; } = "raw";
+        public string BuilderStateJson { get; set; } = "{}";
+        public string CreatedUtc { get; set; } = "";
+        public string UpdatedUtc { get; set; } = "";
+    }
+
     public sealed class GpuTdpDetectionSnapshot
     {
         public string GpuName { get; set; } = "";
@@ -466,6 +500,15 @@ namespace LmVs
         public bool FileUploads { get; set; } = true;
         public bool ImageUploads { get; set; } = true;
         public bool PcAccess { get; set; }
+        public bool CompanionEnabled { get; set; }
+        public bool CompanionScreenView { get; set; }
+        public bool CompanionCursorControl { get; set; }
+        public bool CompanionApplicationLaunch { get; set; }
+        public bool CompanionApplicationControl { get; set; }
+        public bool CompanionTerminalCommands { get; set; }
+        public bool CompanionActivityTranscriptStorage { get; set; }
+        public bool CompanionSensitiveMemory { get; set; }
+        public bool CompanionFinancialActions { get; set; }
         public bool DreamInternetSearch { get; set; }
         public bool DreamVsCopilotTools { get; set; }
         public bool DreamFileDownloads { get; set; }

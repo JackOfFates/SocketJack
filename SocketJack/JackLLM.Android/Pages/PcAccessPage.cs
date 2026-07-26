@@ -18,9 +18,6 @@ public sealed class PcAccessPage : ContentPage
     private readonly GraphicsView _cursorView = new() { InputTransparent = true, BackgroundColor = Colors.Transparent, ZIndex = 10 };
     private readonly RemoteCursorDrawable _cursor = new();
     private readonly Label _status = new() { Text = "Preparing secure PC Access…", TextColor = Color.FromArgb("#CBD5E1"), LineBreakMode = LineBreakMode.TailTruncation };
-    private readonly Label _zoomLabel = new() { Text = "1.0×", TextColor = Color.FromArgb("#67E8F9"), VerticalTextAlignment = TextAlignment.Center };
-    private readonly VerticalStackLayout _files = new() { Spacing = 6 };
-    private readonly Border _filesPanel;
     private readonly RefreshView _refreshView;
     private LibVLC? _libVlc;
     private VlcMediaPlayer? _player;
@@ -28,7 +25,6 @@ public sealed class PcAccessPage : ContentPage
     private CancellationTokenSource? _streamCancellation;
     private CancellationTokenSource? _backgroundGrace;
     private PcAccessStreamSession? _session;
-    private string _path = "";
     private double _zoom = 1d;
     private double _panX;
     private double _panY;
@@ -46,16 +42,6 @@ public sealed class PcAccessPage : ContentPage
         _cursorView.Drawable = _cursor;
         _surface.Children.Add(_video);
         _surface.Children.Add(_cursorView);
-        _filesPanel = new Border
-        {
-            IsVisible = false,
-            MaximumHeightRequest = 280,
-            Padding = 8,
-            BackgroundColor = Color.FromArgb("#111827"),
-            Stroke = Color.FromArgb("#334155"),
-            Content = new ScrollView { Content = _files }
-        };
-
         var keyboardInput = new Entry { Opacity = 0.01, WidthRequest = 1, HeightRequest = 1, Keyboard = Keyboard.Default, ReturnType = ReturnType.Send };
         keyboardInput.Completed += async (_, _) =>
         {
@@ -68,33 +54,39 @@ public sealed class PcAccessPage : ContentPage
             }
             catch (Exception ex) { ShowError(ex); }
         };
-        var keyboard = ActionButton("⌨", "Open keyboard");
-        keyboard.Clicked += (_, _) => keyboardInput.Focus();
-        var filesButton = ActionButton("📁", "Browse approved files");
-        filesButton.Clicked += async (_, _) => await Navigation.PushAsync(new PcFileTransferPage(_client));
-        var resetZoom = ActionButton("⊙", "Reset zoom and pan");
-        resetZoom.Clicked += (_, _) => { _zoom = 1; _panX = _panY = 0; ApplyViewportTransform(); };
-        var disconnect = ActionButton("✕", "Disconnect PC Access", "#991B1B");
-        disconnect.Clicked += async (_, _) => { await StopAndDisconnectAsync(); await Navigation.PopAsync(); };
+        var keyboard = new ToolbarItem("⌨", null, () => keyboardInput.Focus(), ToolbarItemOrder.Primary, 0) { AutomationId = "PcKeyboard" };
+        var filesButton = new ToolbarItem("📁", null, async () => await Navigation.PushAsync(new PcFileTransferPage(_client)), ToolbarItemOrder.Primary, 1) { AutomationId = "PcFiles" };
+        var resetZoom = new ToolbarItem("⊙", null, () => { _zoom = 1; _panX = _panY = 0; ApplyViewportTransform(); }, ToolbarItemOrder.Primary, 2) { AutomationId = "PcResetZoom" };
+        var disconnect = new ToolbarItem("✕", null, async () => { await StopAndDisconnectAsync(); await Navigation.PopAsync(); }, ToolbarItemOrder.Primary, 3) { AutomationId = "PcDisconnect" };
+        AutomationProperties.SetHelpText(keyboard, "Open remote keyboard");
+        AutomationProperties.SetHelpText(filesButton, "Open phone and Workstation FTP files");
+        AutomationProperties.SetHelpText(resetZoom, "Reset remote desktop zoom and pan");
+        AutomationProperties.SetHelpText(disconnect, "Disconnect PC Access");
+        ToolbarItems.Add(keyboard);
+        ToolbarItems.Add(filesButton);
+        ToolbarItems.Add(resetZoom);
+        ToolbarItems.Add(disconnect);
 
-        var toolbar = new Grid
+        var statusOverlay = new Border
         {
-            ColumnDefinitions =
-            {
-                new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto),
-                new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto)
-            },
-            ColumnSpacing = 6,
-            Children = { _status, _zoomLabel.Column(1), keyboard.Column(2), filesButton.Column(3), resetZoom.Column(4), disconnect.Column(5), keyboardInput }
+            Padding = new Thickness(9, 5),
+            Margin = new Thickness(8),
+            HorizontalOptions = LayoutOptions.Start,
+            VerticalOptions = LayoutOptions.Start,
+            BackgroundColor = Color.FromArgb("#CC0F172A"),
+            Stroke = Color.FromArgb("#334155"),
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+            Content = _status,
+            ZIndex = 20
         };
-        Grid.SetColumnSpan(keyboardInput, 1);
+        var remoteFrame = new Grid { Children = { _surface, statusOverlay, keyboardInput } };
 
         var pageContent = new Grid
         {
             Padding = new Thickness(8),
             RowSpacing = 7,
-            RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) },
-            Children = { toolbar.Row(0), _surface.Row(1), _filesPanel.Row(2) }
+            RowDefinitions = { new RowDefinition(GridLength.Star) },
+            Children = { remoteFrame }
         };
         _refreshView = new RefreshView { Content = pageContent, RefreshColor = Color.FromArgb("#60A5FA") };
         _refreshView.Refreshing += async (_, _) =>
@@ -358,7 +350,6 @@ public sealed class PcAccessPage : ContentPage
         _video.Scale = _zoom;
         _video.TranslationX = _panX;
         _video.TranslationY = _panY;
-        _zoomLabel.Text = $"{_zoom:0.0}×";
         if (_session is not null) UpdateCursor(_session.Cursor);
     }
 
@@ -413,35 +404,6 @@ public sealed class PcAccessPage : ContentPage
         _video.MediaPlayer = null;
         _player?.Dispose(); _player = null;
         _libVlc?.Dispose(); _libVlc = null;
-    }
-
-    private async Task LoadFilesAsync(string path)
-    {
-        try
-        {
-            using JsonDocument json = await _client.BrowsePcFilesAsync(path);
-            _files.Children.Clear();
-            _path = json.RootElement.TryGetProperty("path", out JsonElement current) ? current.GetString() ?? "" : path;
-            _files.Children.Add(new Label { Text = _path, TextColor = Colors.White, FontAttributes = FontAttributes.Bold });
-            if (!json.RootElement.TryGetProperty("entries", out JsonElement entries)) return;
-            foreach (JsonElement entry in entries.EnumerateArray())
-            {
-                string name = entry.GetProperty("name").GetString() ?? "";
-                string itemPath = entry.GetProperty("path").GetString() ?? "";
-                bool directory = entry.GetProperty("directory").GetBoolean();
-                var button = new Button { Text = (directory ? "📁 " : "📄 ") + name, HorizontalOptions = LayoutOptions.Fill, BackgroundColor = Color.FromArgb("#151C2F"), TextColor = Colors.White };
-                if (directory) button.Clicked += async (_, _) => await LoadFilesAsync(itemPath);
-                _files.Children.Add(button);
-            }
-        }
-        catch (Exception ex) { ShowError(ex); }
-    }
-
-    private static Button ActionButton(string text, string help, string background = "#1F2937")
-    {
-        var button = new Button { Text = text, FontSize = 18, WidthRequest = 46, HeightRequest = 42, Padding = 0, BackgroundColor = Color.FromArgb(background), TextColor = Colors.White };
-        AutomationProperties.SetHelpText(button, help);
-        return button;
     }
 
     private void ShowError(Exception exception)

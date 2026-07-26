@@ -11,8 +11,11 @@ public sealed record MobileGenerationRequest(
     string ProjectId,
     string Model,
     string Service,
+    string InteractionMode,
     string ReasoningLevel,
     string SessionReasoningLevel,
+    bool JackhammerEnabled,
+    int JackhammerTurnBudget,
     IReadOnlyList<ChatMessage> Messages,
     IReadOnlyList<AttachmentInfo> Attachments,
     int PriorServerMessageCount,
@@ -51,11 +54,14 @@ public sealed class MobileGenerationCoordinator
     private bool _capturingEmbeddedReasoning;
     private DateTimeOffset _lastPublished = DateTimeOffset.MinValue;
     private bool _publishScheduled;
+    private MobileGenerationRequest? _pendingRequest;
+    private bool _awaitingAuthentication;
 
     public MobileGenerationCoordinator(IMobileNotificationService notifications) => _notifications = notifications;
 
     public event EventHandler<MobileGenerationSnapshot>? SnapshotChanged;
     public event EventHandler<MobileAlignmentSnapshot>? AlignmentChanged;
+    public event EventHandler? AuthenticationRequired;
 
     public MobileGenerationSnapshot Current
     {
@@ -72,6 +78,8 @@ public sealed class MobileGenerationCoordinator
             _cancellation?.Dispose();
             _cancellation = new CancellationTokenSource();
             _client = request.Client;
+            _pendingRequest = request;
+            _awaitingAuthentication = false;
             _streamId = "mobile_" + Guid.NewGuid().ToString("N");
             _milestonePolicy.Reset();
             _capturingEmbeddedReasoning = false;
@@ -86,6 +94,17 @@ public sealed class MobileGenerationCoordinator
         _notifications.StartGeneration(request.Server.LaunchKey);
         _ = Task.Run(() => RunAsync(request, _streamId, _cancellation.Token));
         return true;
+    }
+
+    public Task<bool> RetryPendingAsync()
+    {
+        MobileGenerationRequest? request;
+        lock (_gate)
+        {
+            request = _pendingRequest;
+            _awaitingAuthentication = false;
+        }
+        return request is null ? Task.FromResult(false) : StartAsync(request);
     }
 
     public async Task StopAsync()
@@ -114,12 +133,7 @@ public sealed class MobileGenerationCoordinator
         try
         {
             SetState(snapshot => snapshot with { Status = RunningStatus(request.Service), Progress = 0 });
-            await foreach (ChatStreamEvent item in request.Client.StreamChatAsync(
-                request.Model, request.Service, request.SessionId, request.ProjectId, request.ReasoningLevel,
-                request.SessionReasoningLevel, request.Messages, request.Attachments, streamId, cancellationToken))
-            {
-                ApplyStreamEvent(item, request.Server.LaunchKey);
-            }
+            await StreamOnceAsync(request, streamId, cancellationToken);
 
             await ReconcileAsync(request, cancellationToken, 10, TimeSpan.FromMilliseconds(300));
             SetState(snapshot => snapshot with
@@ -142,6 +156,11 @@ public sealed class MobileGenerationCoordinator
         {
             SetState(snapshot => snapshot with { IsGenerating = false, IsRecovering = false, IsStopped = true, Status = "Stopped" });
         }
+        catch (Exception ex) when (RequiresAuthentication(ex))
+        {
+            Debug.WriteLine("JackLLM Mobile authentication required: " + ex.Message);
+            PauseForAuthentication();
+        }
         catch (MobileStreamErrorException ex)
         {
             Debug.WriteLine("JackLLM Mobile stream error: " + ex.Message);
@@ -158,7 +177,22 @@ public sealed class MobileGenerationCoordinator
         {
             Debug.WriteLine("JackLLM Mobile stream interrupted: " + ex);
             SetState(snapshot => snapshot with { IsRecovering = true, Status = "Connection interrupted — recovering…" });
-            bool recovered = await ReconcileAsync(request, CancellationToken.None, 24, TimeSpan.FromMilliseconds(500));
+            RecoveryResult result;
+            try
+            {
+                result = await RecoverOrRetryAsync(request, streamId, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                SetState(snapshot => snapshot with { IsGenerating = false, IsRecovering = false, IsStopped = true, Status = "Stopped" });
+                return;
+            }
+            if (result == RecoveryResult.AuthenticationRequired)
+            {
+                PauseForAuthentication();
+                return;
+            }
+            bool recovered = result == RecoveryResult.Recovered;
             SetState(snapshot => snapshot with
             {
                 IsGenerating = false,
@@ -183,9 +217,97 @@ public sealed class MobileGenerationCoordinator
                     _cancellation = null;
                     _client = null;
                     _streamId = "";
+                    if (!_awaitingAuthentication)
+                        _pendingRequest = null;
                 }
             }
         }
+    }
+
+    private async Task StreamOnceAsync(MobileGenerationRequest request, string streamId, CancellationToken cancellationToken)
+    {
+        await foreach (ChatStreamEvent item in request.Client.StreamChatAsync(
+            request.Model, request.Service, request.InteractionMode, request.SessionId, request.ProjectId, request.ReasoningLevel,
+            request.SessionReasoningLevel, request.JackhammerEnabled, request.JackhammerTurnBudget,
+            request.Messages, request.Attachments, streamId, cancellationToken))
+        {
+            ApplyStreamEvent(item, request.Server.LaunchKey);
+        }
+    }
+
+    private async Task<RecoveryResult> RecoverOrRetryAsync(MobileGenerationRequest request, string streamId, CancellationToken cancellationToken)
+    {
+        int[] reconnectDelaysMs = [0, 500, 1500, 3000, 5000];
+        foreach (int delayMs in reconnectDelaysMs)
+        {
+            if (delayMs > 0) await Task.Delay(delayMs, cancellationToken);
+            try
+            {
+                await request.Client.ConnectAsync(request.Server, cancellationToken);
+                if (await ReconcileAsync(request, cancellationToken, 8, TimeSpan.FromMilliseconds(500)))
+                    return RecoveryResult.Recovered;
+                break;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (RequiresAuthentication(ex))
+            {
+                return RecoveryResult.AuthenticationRequired;
+            }
+            catch
+            {
+                // Try the next bounded reconnect delay.
+            }
+        }
+
+        try
+        {
+            SetState(snapshot => snapshot with { Status = "Reconnected — retrying your request…", IsRecovering = true });
+            await StreamOnceAsync(request, streamId, cancellationToken);
+            bool reconciled = await ReconcileAsync(request, cancellationToken, 12, TimeSpan.FromMilliseconds(500));
+            bool hasVisible = !string.IsNullOrWhiteSpace(ModelOutputSanitizer.Sanitize(Current.Content));
+            return reconciled || hasVisible ? RecoveryResult.Recovered : RecoveryResult.Failed;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (RequiresAuthentication(ex))
+        {
+            return RecoveryResult.AuthenticationRequired;
+        }
+        catch (Exception retryError)
+        {
+            Debug.WriteLine("JackLLM Mobile automatic retry failed: " + retryError);
+            return RecoveryResult.Failed;
+        }
+    }
+
+    private void PauseForAuthentication()
+    {
+        lock (_gate) _awaitingAuthentication = true;
+        SetState(snapshot => snapshot with
+        {
+            IsGenerating = false,
+            IsRecovering = false,
+            HasError = false,
+            Status = "Sign in to continue this request"
+        });
+        MainThread.BeginInvokeOnMainThread(() => AuthenticationRequired?.Invoke(this, EventArgs.Empty));
+    }
+
+    private static bool RequiresAuthentication(Exception exception)
+    {
+        if (exception is UnauthorizedAccessException) return true;
+        if (exception is HttpRequestException requestException &&
+            requestException.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            return true;
+        string message = exception.Message ?? "";
+        return message.Contains("authentication required", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("sign in", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("unauthorized", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ApplyStreamEvent(ChatStreamEvent item, string serverKey)
@@ -423,6 +545,13 @@ public sealed class MobileGenerationCoordinator
     }
 
     private sealed class MobileStreamErrorException(string message) : Exception(message);
+
+    private enum RecoveryResult
+    {
+        Failed,
+        Recovered,
+        AuthenticationRequired
+    }
 
     private static void ExtractEmbeddedReasoning(ref string content, ref string reasoning)
     {

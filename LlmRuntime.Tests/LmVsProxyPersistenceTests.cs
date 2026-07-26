@@ -57,6 +57,64 @@ public sealed class LmVsProxyPersistenceTests
     }
 
     [TestMethod]
+    public void CompanionPermissionsPersistAndRemainDefaultOffForLocalhost()
+    {
+        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-companion-permissions-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using (var first = CreateProxy(dataRoot))
+            {
+                ChatClientPermissionSnapshot snapshot = first.GetChatClientPermissionsDiagnostics("global");
+                Assert.IsFalse(snapshot.CompanionEnabled);
+                snapshot.CompanionEnabled = true;
+                snapshot.CompanionScreenView = true;
+                snapshot.CompanionCursorControl = true;
+                snapshot.CompanionApplicationLaunch = true;
+                snapshot.CompanionApplicationControl = true;
+                snapshot.CompanionTerminalCommands = true;
+                snapshot.CompanionActivityTranscriptStorage = true;
+                snapshot.CompanionSensitiveMemory = true;
+                snapshot.CompanionFinancialActions = true;
+                first.SaveChatClientPermissionsDiagnostics(snapshot);
+            }
+            using (var second = CreateProxy(dataRoot))
+            {
+                ChatClientPermissionSnapshot saved = second.GetChatClientPermissionsDiagnostics("global");
+                Assert.IsTrue(saved.CompanionEnabled);
+                Assert.IsTrue(saved.CompanionScreenView);
+                Assert.IsTrue(saved.CompanionCursorControl);
+                Assert.IsTrue(saved.CompanionApplicationLaunch);
+                Assert.IsTrue(saved.CompanionApplicationControl);
+                Assert.IsTrue(saved.CompanionTerminalCommands);
+                Assert.IsTrue(saved.CompanionActivityTranscriptStorage);
+                Assert.IsTrue(saved.CompanionSensitiveMemory);
+                Assert.IsTrue(saved.CompanionFinancialActions);
+
+                ChatClientPermissionSnapshot owner = second.GetChatClientPermissionsDiagnostics("webauth:new-owner");
+                owner.CompanionEnabled = false;
+                owner.CompanionScreenView = false;
+                owner.CompanionCursorControl = false;
+                owner.CompanionApplicationLaunch = false;
+                owner.CompanionApplicationControl = false;
+                owner.CompanionTerminalCommands = false;
+                owner.CompanionActivityTranscriptStorage = false;
+                owner.CompanionSensitiveMemory = false;
+                owner.CompanionFinancialActions = false;
+                second.SaveChatClientPermissionsDiagnostics(owner);
+                ChatClientPermissionSnapshot local = second.GetChatClientPermissionsDiagnostics("ip:127.0.0.1");
+                Assert.IsTrue(local.CompanionEnabled, "Loopback inherits the explicit global rule but must not manufacture a grant.");
+                ChatClientPermissionSnapshot explicitLocal = second.GetChatClientPermissionsDiagnostics("ip:127.0.0.1");
+                explicitLocal.CompanionEnabled = false;
+                explicitLocal.CompanionScreenView = false;
+                second.SaveChatClientPermissionsDiagnostics(explicitLocal);
+                Assert.IsFalse(second.GetChatClientPermissionsDiagnostics("ip:127.0.0.1").CompanionEnabled);
+                Assert.IsFalse(second.GetChatClientPermissionsDiagnostics("ip:127.0.0.1").CompanionScreenView);
+            }
+        }
+        finally { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, true); }
+    }
+
+    [TestMethod]
     public void DreamPermissionRequiresBasePermissionAndTerminalTrust()
     {
         string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-dream-permissions-" + Guid.NewGuid().ToString("N"));

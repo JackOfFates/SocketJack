@@ -45,6 +45,10 @@ public partial class LmVsProxy
         }
         string serverName = WebUtility.HtmlEncode(Environment.MachineName);
         string endpoint = WebUtility.HtmlEncode(ChatServerUrl.TrimEnd('/'));
+        string userOptions = string.Join("", GetWebAuthUserDiagnostics()
+            .Where(user => user.Enabled && !string.IsNullOrWhiteSpace(user.OwnerKey))
+            .Select(user => "<option value=\"" + WebUtility.HtmlEncode(user.OwnerKey) + "\">" +
+                            WebUtility.HtmlEncode(user.UserName) + "</option>"));
         return @"<!doctype html>
 <html lang=""en"">
 <head>
@@ -59,7 +63,7 @@ main{max-width:940px;margin:0 auto;padding:28px 18px 44px}
 .hero{padding:24px;margin-bottom:16px}.card{padding:18px;margin-top:14px}
 h1{margin:0 0 6px;font-size:30px}h2{margin:0 0 12px;font-size:18px}.muted{color:var(--muted)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.space{justify-content:space-between}
-button{border:0;border-radius:12px;padding:10px 14px;color:white;background:#334155;cursor:pointer;font-weight:700}
+button,select{border:1px solid var(--line);border-radius:12px;padding:10px 14px;color:white;background:#334155;cursor:pointer;font-weight:700}
 button.primary{background:var(--blue)}button.good{background:var(--green)}button.danger{background:var(--red)}
 button:disabled{opacity:.55;cursor:not-allowed}.pill{border:1px solid var(--line);border-radius:999px;padding:6px 10px;color:var(--muted)}
 code,.code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.code{background:#020617;border:1px solid var(--line);border-radius:14px;padding:13px;overflow:auto;white-space:pre-wrap}
@@ -76,7 +80,7 @@ table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px s
 <div class=""row space""><div><h2>Mobile Access</h2><div class=""muted"">Disabled by default. Enable only when pairing or using trusted phones.</div></div><div class=""row""><button id=""enable"" class=""good"">Enable</button><button id=""disable"" class=""danger"">Disable</button></div></div>
 </section>
 <section class=""card"">
-<div class=""row space""><div><h2>Pair a phone</h2><div class=""muted"">Open JackLLM Mobile, choose manual/LAN pairing, then enter this code. Codes expire in five minutes and can be used once.</div></div><button id=""pair"" class=""primary"">Start pairing</button></div>
+<div class=""row space""><div><h2>Pair a phone</h2><div class=""muted"">Choose the Workstation user this phone belongs to, then enter the one-time code in JackLLM Mobile. Codes expire in five minutes and can be used once.</div></div><div class=""row""><select id=""pairOwner"">" + userOptions + @"</select><button id=""pair"" class=""primary"">Start pairing</button></div></div>
 <div id=""pairing"" class=""code"" hidden></div>
 </section>
 <section class=""card"">
@@ -86,14 +90,14 @@ table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px s
 <p id=""note"" class=""note""></p>
 </main>
 <script>
-const state=document.getElementById('state'),enable=document.getElementById('enable'),disable=document.getElementById('disable'),pair=document.getElementById('pair'),pairing=document.getElementById('pairing'),devices=document.getElementById('devices'),reload=document.getElementById('reload'),note=document.getElementById('note');
+const state=document.getElementById('state'),enable=document.getElementById('enable'),disable=document.getElementById('disable'),pair=document.getElementById('pair'),pairOwner=document.getElementById('pairOwner'),pairing=document.getElementById('pairing'),devices=document.getElementById('devices'),reload=document.getElementById('reload'),note=document.getElementById('note');
 function esc(v){return String(v||'').replace(/[&<>""']/g,c=>c==='&'?'&amp;':c==='<'?'&lt;':c==='>'?'&gt;':c==='""'?'&quot;':'&#39;');}
 async function json(res){const text=await res.text();const data=text?JSON.parse(text):{};if(!res.ok||data.ok===false)throw new Error(data.error||data.message||('HTTP '+res.status));return data;}
 function setNote(text,err){note.textContent=text||'';note.classList.toggle('error',!!err);}
-async function load(){setNote('');const status=await json(await fetch('/api/mobile/status'));state.textContent=status.enabled?'Enabled':'Disabled';state.style.color=status.enabled?'#86efac':'#fca5a5';enable.disabled=!!status.enabled;disable.disabled=!status.enabled;pair.disabled=!status.enabled;const data=await json(await fetch('/api/mobile/devices'));renderDevices(data.devices||[]);}
+async function load(){setNote('');const status=await json(await fetch('/api/mobile/status'));state.textContent=status.enabled?'Enabled':'Disabled';state.style.color=status.enabled?'#86efac':'#fca5a5';enable.disabled=!!status.enabled;disable.disabled=!status.enabled;pair.disabled=!status.enabled||!pairOwner.value;const data=await json(await fetch('/api/mobile/devices'));renderDevices(data.devices||[]);if(!pairOwner.value)setNote('Create or approve a Workstation user before pairing a phone.',true);}
 function renderDevices(list){if(!list.length){devices.innerHTML='<div class=""empty"">No phones are paired yet.</div>';return;}devices.innerHTML='<table><thead><tr><th>Name</th><th>Platform</th><th>Created</th><th>Last seen</th><th>Scopes</th><th></th></tr></thead><tbody>'+list.map(d=>'<tr><td>'+esc(d.Name||d.name)+'</td><td>'+esc(d.Platform||d.platform)+'</td><td>'+esc(d.CreatedAtUtc||d.createdAtUtc)+'</td><td>'+esc(d.LastSeenAtUtc||d.lastSeenAtUtc)+'</td><td>'+esc((d.Scopes||d.scopes||[]).join(', '))+'</td><td><button class=""danger"" data-id=""'+esc(d.Id||d.id)+'"">Revoke</button></td></tr>').join('')+'</tbody></table>';devices.querySelectorAll('button[data-id]').forEach(b=>b.addEventListener('click',()=>revoke(b.dataset.id)));}
 async function setAccess(enabled){await json(await fetch('/api/mobile/access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})}));await load();setNote(enabled?'Mobile Access enabled.':'Mobile Access disabled. Existing phones cannot call APIs until it is enabled again.');}
-async function startPairing(){const data=await json(await fetch('/api/mobile/pairing/start',{method:'POST'}));pairing.hidden=false;pairing.textContent='Code: '+data.code+'\nEndpoint: '+data.endpoint+'\nExpires: '+data.expiresAt+'\nDeep link: '+data.qr;setNote('Pairing code is live for five minutes.');}
+async function startPairing(){if(!pairOwner.value)throw new Error('Choose a Workstation user first.');const data=await json(await fetch('/api/mobile/pairing/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ownerKey:pairOwner.value})}));pairing.hidden=false;pairing.textContent='User: '+data.username+'\nCode: '+data.code+'\nEndpoint: '+data.endpoint+'\nExpires: '+data.expiresAt+'\nDeep link: '+data.qr;setNote('Pairing code is live for five minutes.');}
 async function revoke(id){if(!id||!confirm('Revoke this phone?'))return;await json(await fetch('/api/mobile/devices/'+encodeURIComponent(id),{method:'DELETE'}));await load();setNote('Phone revoked.');}
 enable.addEventListener('click',()=>setAccess(true).catch(e=>setNote(e.message,true)));disable.addEventListener('click',()=>setAccess(false).catch(e=>setNote(e.message,true)));pair.addEventListener('click',()=>startPairing().catch(e=>setNote(e.message,true)));reload.addEventListener('click',()=>load().catch(e=>setNote(e.message,true)));
 load().catch(e=>setNote(e.message,true));
@@ -123,6 +127,7 @@ load().catch(e=>setNote(e.message,true));
     private string HandleMobileStatus(NetworkConnection connection, HttpRequest request)
     {
         MobileDeviceRecord device = AuthenticateMobileDevice(request);
+        bool isAdministrator = IsMobileDeviceAdministrator(device);
         return JsonSerializer.Serialize(new
         {
             ok = true,
@@ -132,9 +137,25 @@ load().catch(e=>setNote(e.message,true));
             ownerKey = device?.OwnerKey ?? "",
             scopes = device?.Scopes ?? Array.Empty<string>(),
             dreamAdmin = device?.Scopes?.Contains("dream.admin", StringComparer.OrdinalIgnoreCase) == true,
+            isAdministrator,
+            isOwner = isAdministrator && IsConfiguredServerOwnerUserName(GetUserNameFromOwnerKey(device?.OwnerKey ?? "")),
+            pcAccessEligible = isAdministrator,
             serverName = Environment.MachineName,
             pairingAvailable = MobileAccessEnabled && IsLocalAdmin(connection, request)
         });
+    }
+
+    private bool IsMobileDeviceAdministrator(MobileDeviceRecord device)
+    {
+        if (device == null || string.IsNullOrWhiteSpace(device.OwnerKey)) return false;
+        string ownerKey = device.OwnerKey.Trim();
+        LmVs.WebAuthUserDiagnosticsSnapshot owner = GetWebAuthUserDiagnostics()
+            .FirstOrDefault(user => user.Enabled && string.Equals(user.OwnerKey, ownerKey, StringComparison.OrdinalIgnoreCase));
+        if (owner != null && owner.IsAdministrator) return true;
+        string userName = GetUserNameFromOwnerKey(ownerKey);
+        return IsDefaultAdministratorUserName(userName) ||
+               IsWebAuthAdministrator(userName) ||
+               IsConfiguredServerOwnerUserName(userName);
     }
 
     private string HandleMobilePairingStart(NetworkConnection connection, HttpRequest request)
@@ -143,6 +164,21 @@ load().catch(e=>setNote(e.message,true));
             return BuildJsonError(request, 403, "Forbidden", "Mobile Access is disabled on this Workstation.");
         if (!IsLocalAdmin(connection, request))
             return BuildJsonError(request, 403, "Forbidden", "Pairing can only be started from the local Workstation.");
+
+        string ownerKey = "";
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
+            ownerKey = MobileJsonString(document.RootElement, "ownerKey").Trim().ToLowerInvariant();
+        }
+        catch (JsonException ex)
+        {
+            return BuildJsonError(request, 400, "Bad Request", "Invalid JSON: " + ex.Message);
+        }
+        LmVs.WebAuthUserDiagnosticsSnapshot owner = GetWebAuthUserDiagnostics()
+            .FirstOrDefault(user => user.Enabled && string.Equals(user.OwnerKey, ownerKey, StringComparison.OrdinalIgnoreCase));
+        if (owner == null)
+            return BuildJsonError(request, 400, "Bad Request", "Choose an enabled account from this Workstation before pairing.");
 
         lock (_mobilePairingLock)
         {
@@ -154,7 +190,7 @@ load().catch(e=>setNote(e.message,true));
                 CodeHash = HashSecret(code),
                 CreatedAtUtc = DateTimeOffset.UtcNow,
                 ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(5),
-                OwnerKey = GetChatSessionOwnerKey(connection, request)
+                OwnerKey = owner.OwnerKey
             });
             SaveMobileAccessState(state);
             return JsonSerializer.Serialize(new
@@ -163,6 +199,7 @@ load().catch(e=>setNote(e.message,true));
                 code,
                 expiresAt = state.Pairings[^1].ExpiresAtUtc,
                 expiresInSeconds = 300,
+                username = owner.UserName,
                 endpoint = ChatServerUrl.TrimEnd('/'),
                 qr = "jackllm://pair?endpoint=" + Uri.EscapeDataString(ChatServerUrl.TrimEnd('/')) + "&code=" + code
             });

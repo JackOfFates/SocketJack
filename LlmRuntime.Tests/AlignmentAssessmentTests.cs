@@ -138,6 +138,36 @@ public sealed class AlignmentAssessmentTests
         }
     }
 
+    [TestMethod]
+    public void SelectedModelCharacterSheetPersistsAllTraits()
+    {
+        using var proxy = CreateProxy();
+        var assessment = new AlignmentAssessmentSnapshot
+        {
+            Category = "neutral",
+            Confidence = 0.98,
+            Delta = 0,
+            AssessmentModel = "selected-hero-model",
+            CharacterTraits = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Nobility"] = 8,
+                ["Humility"] = 10,
+                ["Greed"] = 2,
+                ["Self-Sabotage"] = 1
+            }
+        };
+
+        proxy.ApplyAlignmentAssessmentForDiagnostics("trait-owner", "distinct trait reading", assessment);
+        AlignmentSnapshot snapshot = proxy.GetAlignmentSnapshot("trait-owner");
+
+        Assert.AreEqual("selected-hero-model", snapshot.AssessmentModel);
+        Assert.AreEqual(16, snapshot.CharacterTraits.Count);
+        Assert.AreEqual(8, snapshot.CharacterTraits["Nobility"]);
+        Assert.AreEqual(10, snapshot.CharacterTraits["Humility"]);
+        Assert.AreEqual(2, snapshot.CharacterTraits["Greed"]);
+        Assert.AreEqual(1, snapshot.CharacterTraits["Self-Sabotage"]);
+    }
+
     private static LmVsProxy CreateProxy() => new("127.0.0.1", 1234, 21434, 21436,
         Path.Combine(Path.GetTempPath(), "jackllm-alignment-tests", Guid.NewGuid().ToString("N")));
 }

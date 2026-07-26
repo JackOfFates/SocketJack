@@ -10,10 +10,50 @@ namespace LlmRuntime.Tests;
 public sealed class LmVsProxyAgentToolRoutingTests
 {
     [TestMethod]
+    public void JackhammerUsesReasoningDependentToolRoundBudget()
+    {
+        Assert.AreEqual(36, GetJackhammerToolRoundBudget("""{"messages":[]}"""));
+        Assert.AreEqual(2, GetJackhammerToolRoundBudget("""{"messages":[{"role":"system","content":"[Jackhammer work mode]\nJackhammer turn budget: 2"}]}"""));
+        Assert.AreEqual(100, GetJackhammerToolRoundBudget("""{"messages":[{"role":"system","content":"[Jackhammer work mode]\nJackhammer turn budget: 100"}]}"""));
+        Assert.AreEqual(200, GetJackhammerToolRoundBudget("""{"messages":[{"role":"system","content":"[Jackhammer work mode]\nJackhammer turn budget: 999"}]}"""));
+    }
+
+    [TestMethod]
+    public void PlanModeNeverAdvertisesWriteCapableAgentTools()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("IsChatAgentServiceSelected", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        Assert.IsTrue((bool)method.Invoke(proxy, new object[] { """{"service":"agent","interactionMode":"chat"}""" })!);
+        Assert.IsFalse((bool)method.Invoke(proxy, new object[] { """{"service":"agent","interactionMode":"plan"}""" })!);
+    }
+
+    [TestMethod]
+    public void JackhammerRepromptsDirectAnswerBeforeCheckpoint()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("ShouldContinueJackhammerAfterDirectCompletion", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments =
+        [
+            """{"messages":[{"role":"system","content":"[Jackhammer work mode]\nJackhammer turn budget: 10"},{"role":"user","content":"Do the work."}]}""",
+            null
+        ];
+
+        Assert.IsTrue((bool)method.Invoke(proxy, arguments)!);
+        StringAssert.Contains((string)arguments[1]!, "Call goal_checkpoint now");
+    }
+
+    [TestMethod]
     public void ExactFinalAnswerInstructionDoesNotSuppressRequiredFileTools()
     {
         Assert.IsTrue(PromptLikelyNeedsProxyTools(
             "Create C:\\Users\\Vin\\project\\socketjack.md with a summary. When finished, final answer exactly DONE."));
+    }
+
+    private static int GetJackhammerToolRoundBudget(string requestBody)
+    {
+        MethodInfo method = typeof(LmVsProxy).GetMethod("GetJackhammerToolRoundBudget", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return (int)method.Invoke(null, new object[] { requestBody })!;
     }
 
     [TestMethod]

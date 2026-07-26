@@ -2097,8 +2097,7 @@ public sealed class UpdateServerHost : IDisposable {
 
     private static bool IsUserWorkstationChannel(UpdateChannel channel) {
         string id = UpdateServerOptions.NormalizeChannelId(channel?.Id ?? "");
-        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase) ||
-               id.Equals("jackllm-companion", StringComparison.OrdinalIgnoreCase);
+        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsExecutableRunning(string executablePath) {
@@ -2435,15 +2434,7 @@ public sealed class UpdateServerHost : IDisposable {
                !IsAllowedJsonUpdateFile(fileName);
     }
 
-    private static bool IsProtectedSiblingChannelFile(string channelId, string relativePath) {
-        if (!string.Equals(UpdateServerOptions.NormalizeChannelId(channelId), "jackllm", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        string normalized = NormalizeRelativePath(relativePath);
-        const string prefix = "Companion/";
-        return normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-               IsAllowedUpdateFile(normalized.Substring(prefix.Length), "jackllm-companion", out _);
-    }
+    private static bool IsProtectedSiblingChannelFile(string channelId, string relativePath) => false;
 
     private static bool IsAllowedJsonUpdateFile(string fileName) {
         return fileName.EndsWith(".runtimeconfig.json", StringComparison.OrdinalIgnoreCase) ||
@@ -2453,8 +2444,7 @@ public sealed class UpdateServerHost : IDisposable {
 
     private static bool IsJackLlmWorkstationChannel(string channelId) {
         string id = UpdateServerOptions.NormalizeChannelId(channelId);
-        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase) ||
-               id.Equals("jackllm-companion", StringComparison.OrdinalIgnoreCase);
+        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsBlockedJackLlmPayloadPath(string relativePath, out string error) {

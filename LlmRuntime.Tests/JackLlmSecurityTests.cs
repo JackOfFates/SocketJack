@@ -8,6 +8,19 @@ namespace LlmRuntime.Tests;
 [TestClass]
 public sealed class JackLlmSecurityTests
 {
+    [TestMethod]
+    public void CompanionPolicyDetectsFinancialAndSensitiveActions()
+    {
+        Assert.IsTrue(SocketJack.Net.LmVsProxy.IsCompanionFinancialAction("open checkout and purchase the subscription"));
+        Assert.IsTrue(SocketJack.Net.LmVsProxy.IsCompanionFinancialAction("Invoke-RestMethod https://api.stripe.com/v1/payment_intents"));
+        Assert.IsTrue(SocketJack.Net.LmVsProxy.IsCompanionFinancialAction("transfer bitcoin to this wallet"));
+        Assert.IsFalse(SocketJack.Net.LmVsProxy.IsCompanionFinancialAction("open Notepad and type a draft"));
+        Assert.IsTrue(SocketJack.Net.LmVsProxy.IsCompanionSensitiveText("api_key=sk-example"));
+        Assert.IsTrue(SocketJack.Net.LmVsProxy.IsCompanionSensitiveText("password: hunter2"));
+        Assert.IsFalse(SocketJack.Net.LmVsProxy.IsCompanionSensitiveText("the user prefers dark mode"));
+        StringAssert.Contains(SocketJack.Net.LmVsProxy.RedactCompanionSensitiveText("password=hunter2"), "[redacted]");
+    }
+
     [DataTestMethod]
     [DataRow("http://127.0.0.1:11435/")]
     [DataRow("http://10.0.0.1/")]
@@ -155,5 +168,19 @@ public sealed class JackLlmSecurityTests
         StringAssert.Contains(html, "const showFiles = agentMode && permissionState.fileUploads !== false;");
         StringAssert.Contains(html, "body:not(.agent-mode) .composer-attach-stack");
         StringAssert.Contains(html, "body.agent-mode .composer.mobile-compact-composer > #composerAttachStack:not([hidden])");
+    }
+
+    [TestMethod]
+    public void WebChatRecoversWorkstationAuthenticationWithoutRenderingChatErrors()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "async function recoverWorkstationAuthentication()");
+        StringAssert.Contains(html, "if (await recoverWorkstationAuthentication())");
+        StringAssert.Contains(html, "return performRequest(retryResource);");
+        StringAssert.Contains(html, "async function waitForWorkstationAuthentication(sessionId)");
+        StringAssert.Contains(html, "if (isWorkstationAuthError(error))");
+        StringAssert.Contains(html, "Your Workstation session expired. Sign in again to reconnect; your chat will resume automatically.");
+        StringAssert.Contains(html, "isNoisySessionOwnershipSaveMessage(content) || isWorkstationAuthError(content)");
     }
 }

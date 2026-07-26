@@ -68,7 +68,7 @@ public class App : Application
             CredentialKey = saved.LaunchKey
         };
         var client = new JackLlmClient(_credentials);
-        var chat = new ChatHostPage(launch, client, _serverStore, _generation, _recentSessions, target.SessionId);
+        var chat = new ChatHostPage(launch, client, _serverStore, _credentials, _generation, _recentSessions, target.SessionId);
         await _navigation.PopToRootAsync(false);
         await _navigation.PushAsync(chat, true);
     }

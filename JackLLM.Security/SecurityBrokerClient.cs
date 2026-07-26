@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -16,14 +17,21 @@ public sealed class SecurityBrokerClient {
             await pipe.ConnectAsync(timeout.Token);
             using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
             using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
+            GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out uint serverProcessId);
             await writer.WriteLineAsync(JsonSerializer.Serialize(request, SecurityProtocol.Json));
             string? line = await reader.ReadLineAsync(timeout.Token);
-            return JsonSerializer.Deserialize<SecurityResponse>(line ?? "", SecurityProtocol.Json)
+            SecurityResponse response = JsonSerializer.Deserialize<SecurityResponse>(line ?? "", SecurityProtocol.Json)
                 ?? new SecurityResponse { State = SecurityStateKind.Error, Message = "Security broker returned an invalid response." };
+            if (response.BrokerProcessId == 0)
+                response.BrokerProcessId = checked((int)serverProcessId);
+            return response;
         } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
             return new SecurityResponse { State = SecurityStateKind.Error, Message = "The JackLLM Security Broker did not respond." };
         } catch (Exception ex) {
             return new SecurityResponse { State = SecurityStateKind.Error, Message = "The JackLLM Security Broker is unavailable: " + ex.Message };
         }
     }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint serverProcessId);
 }
