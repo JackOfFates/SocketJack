@@ -21,3 +21,9 @@ public sealed class WorkstationAuthResult
     public bool IsAdministrator { get; set; }
     public bool IsOwner { get; set; }
 }
+
+public sealed class MobileMenuPermissionSnapshot
+{
+    public bool SqlAdmin { get; set; }
+    public bool PcAccess { get; set; }
+}

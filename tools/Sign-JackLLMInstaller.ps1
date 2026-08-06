@@ -47,7 +47,11 @@ if ($CertificatePath) {
 }
 
 $args += $Path
-& $signTool.Source @args
+$signToolPath = if ($signTool -is [System.Management.Automation.CommandInfo]) { $signTool.Source } else { $signTool.FullName }
+if ([string]::IsNullOrWhiteSpace($signToolPath)) {
+    throw "signtool.exe was located but its executable path could not be resolved."
+}
+& $signToolPath @args
 if ($LASTEXITCODE -ne 0) {
     throw "signtool failed with exit code $LASTEXITCODE"
 }

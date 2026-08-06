@@ -83,7 +83,7 @@ public sealed class LlmChatRequest
             ApplySessionMetadata(request, session);
 
         if (root.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array)
-            request.Messages = messages.EnumerateArray().Select(ParseMessage).Where(message => !string.IsNullOrWhiteSpace(message.Content)).ToArray();
+            request.Messages = messages.EnumerateArray().Select(ParseMessage).Where(message => !string.IsNullOrWhiteSpace(message.Content) || message.HasImageContent).ToArray();
 
         if (root.TryGetProperty("tools", out var tools) && tools.ValueKind == JsonValueKind.Array)
             request.Tools = tools.EnumerateArray().Select(tool => tool.Clone()).ToArray();

@@ -102,8 +102,11 @@ internal abstract class JackLlmLocalViewModel : NotifyPropertyChangedObject
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            this.authService.Clear();
-            this.authState = new JackLlmWorkstationAuthState();
+            if (ex is JackLlmWorkstationAuthenticationException)
+            {
+                this.authService.Clear();
+                this.authState = new JackLlmWorkstationAuthState();
+            }
             this.ShowLocalSignIn(ex.Message);
             throw;
         }
@@ -194,7 +197,7 @@ internal sealed class JackLlmWorkstationAuthService
 
         using HttpResponseMessage response = await this.httpClient.PostAsJsonAsync(
             WorkstationBaseUrl + "/api/web-auth/login",
-            new { username = userName.Trim(), password },
+            new { username = userName.Trim(), password, remember },
             cancellationToken).ConfigureAwait(false);
         string json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
@@ -205,6 +208,7 @@ internal sealed class JackLlmWorkstationAuthService
         JsonObject root = JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject ?? new JsonObject();
         string token = FirstString(root, "accessToken", "token", "bearerToken");
         string normalizedUserName = FirstString(root, "username", "userName", "user");
+        string expiresUtc = FirstString(root, "expiresUtc", "expirationUtc");
         if (string.IsNullOrWhiteSpace(token))
         {
             throw new InvalidOperationException("JackLLM Workstation did not return an access token.");
@@ -213,7 +217,8 @@ internal sealed class JackLlmWorkstationAuthService
         var state = new JackLlmWorkstationAuthState
         {
             AccessToken = token,
-            UserName = string.IsNullOrWhiteSpace(normalizedUserName) ? userName.Trim() : normalizedUserName
+            UserName = string.IsNullOrWhiteSpace(normalizedUserName) ? userName.Trim() : normalizedUserName,
+            ExpiresUtc = expiresUtc
         };
         if (remember)
         {
@@ -233,7 +238,7 @@ internal sealed class JackLlmWorkstationAuthService
     {
         if (string.IsNullOrWhiteSpace(current.AccessToken))
         {
-            throw new InvalidOperationException("No saved JackLLM Workstation sign-in was found.");
+            throw new JackLlmWorkstationAuthenticationException("No saved JackLLM Workstation sign-in was found.");
         }
 
         using HttpRequestMessage request = new(HttpMethod.Get, WorkstationBaseUrl + "/api/web-auth/session");
@@ -242,7 +247,13 @@ internal sealed class JackLlmWorkstationAuthService
         string json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException("JackLLM Workstation session check failed: " + ExtractError(json, response.StatusCode));
+            string message = "JackLLM Workstation session check failed: " + ExtractError(json, response.StatusCode);
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            {
+                throw new JackLlmWorkstationAuthenticationException(message);
+            }
+
+            throw new InvalidOperationException(message);
         }
 
         JsonObject root = JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject ?? new JsonObject();
@@ -250,10 +261,11 @@ internal sealed class JackLlmWorkstationAuthService
             root["active"]?.GetValue<bool?>() == true;
         if (!authenticated)
         {
-            throw new InvalidOperationException("The saved JackLLM Workstation sign-in expired or was rejected.");
+            throw new JackLlmWorkstationAuthenticationException("The saved JackLLM Workstation sign-in expired or was rejected. Sign in again; remembered Visual Studio sessions now last 30 days.");
         }
 
         current.UserName = FirstNonEmpty(FirstString(root, "username", "userName", "user"), current.UserName);
+        current.ExpiresUtc = FirstNonEmpty(FirstString(root, "expiresUtc", "expirationUtc"), current.ExpiresUtc);
         return current;
     }
 
@@ -279,7 +291,8 @@ internal sealed class JackLlmWorkstationAuthService
                 return new JackLlmWorkstationAuthState
                 {
                     AccessToken = Encoding.UTF8.GetString(tokenBytes),
-                    UserName = stored.UserName ?? ""
+                    UserName = stored.UserName ?? "",
+                    ExpiresUtc = stored.ExpiresUtc ?? ""
                 };
             }
             finally
@@ -308,7 +321,8 @@ internal sealed class JackLlmWorkstationAuthService
             var stored = new JackLlmStoredAuth
             {
                 UserName = state.UserName,
-                ProtectedToken = Convert.ToBase64String(protectedBytes)
+                ProtectedToken = Convert.ToBase64String(protectedBytes),
+                ExpiresUtc = state.ExpiresUtc
             };
             File.WriteAllText(this.AuthFilePath, JsonSerializer.Serialize(stored), new UTF8Encoding(false));
         }
@@ -386,10 +400,20 @@ internal sealed class JackLlmWorkstationAuthState
 {
     public string AccessToken { get; set; } = "";
     public string UserName { get; set; } = "";
+    public string ExpiresUtc { get; set; } = "";
 }
 
 internal sealed class JackLlmStoredAuth
 {
     public string UserName { get; set; } = "";
     public string ProtectedToken { get; set; } = "";
+    public string ExpiresUtc { get; set; } = "";
+}
+
+internal sealed class JackLlmWorkstationAuthenticationException : InvalidOperationException
+{
+    public JackLlmWorkstationAuthenticationException(string message)
+        : base(message)
+    {
+    }
 }

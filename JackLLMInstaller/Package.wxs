@@ -17,10 +17,7 @@
     <Feature Id="MainFeature" Title="JackLLM" Level="1">
       <ComponentGroupRef Id="ApplicationFiles" />
       <ComponentRef Id="ApplicationRegistry" />
-      <ComponentRef Id="ApplicationWritableInstallFolder" />
       <ComponentRef Id="ApplicationStartMenuShortcut" />
-      <ComponentRef Id="RuntimeSessionsFolderComponent" />
-      <ComponentRef Id="RuntimeSessionFilesFolderComponent" />
       <ComponentRef Id="SecurityBrokerService" />
       <ComponentRef Id="SecurityEnrollmentMarker" />
     </Feature>
@@ -66,47 +63,8 @@
 
   <Fragment>
     <DirectoryRef Id="INSTALLFOLDER">
-      <Directory Id="RuntimeSessionsFolder" Name="Sessions" />
-      <Directory Id="RuntimeSocketJackFolder" Name="SocketJack">
-        <Directory Id="RuntimeJackLLMChatFolder" Name="JackLLMChat">
-          <Directory Id="RuntimeSessionFilesFolder" Name="SessionFiles" />
-        </Directory>
-      </Directory>
-    </DirectoryRef>
-  </Fragment>
-
-  <Fragment>
-    <DirectoryRef Id="RuntimeSessionsFolder">
-      <Component Id="RuntimeSessionsFolderComponent" Guid="{C1F3733D-E981-44E5-A6E5-CE9E70208B57}">
-        <CreateFolder>
-          <util:PermissionEx User="Users" GenericAll="yes" />
-        </CreateFolder>
-        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="RuntimeSessionsFolder" Type="integer" Value="1" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
-  </Fragment>
-
-  <Fragment>
-    <DirectoryRef Id="RuntimeSessionFilesFolder">
-      <Component Id="RuntimeSessionFilesFolderComponent" Guid="{3FD0D050-9B80-4F0E-9C49-843B64C7776A}">
-        <CreateFolder>
-          <util:PermissionEx User="Users" GenericAll="yes" />
-        </CreateFolder>
-        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="RuntimeSessionFilesFolder" Type="integer" Value="1" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
-  </Fragment>
-
-  <Fragment>
-    <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="ApplicationRegistry" Guid="{208953B7-201D-4F4A-9947-5DF235EA8B3B}">
         <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="InstallLocation" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
-      </Component>
-      <Component Id="ApplicationWritableInstallFolder" Guid="{F469F8F2-5C09-47F6-B2C6-3F3E5A527048}">
-        <CreateFolder>
-          <util:PermissionEx User="Users" GenericAll="yes" />
-        </CreateFolder>
-        <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM" Name="WritableInstallFolder" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </DirectoryRef>
   </Fragment>

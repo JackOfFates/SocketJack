@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -23,6 +24,9 @@ internal static class Program {
     private const string UninstallRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\JackLLM";
     private const int MaxParallelDownloads = 6;
     private const int DownloadBufferSize = 1024 * 1024;
+    private const string EmbeddedMsiResourceName = "JackLLM-Setup.msi";
+    private const string SecurityBrokerExecutableName = "JackLLM.SecurityBroker.exe";
+    private const string SecurityBrokerServiceName = "JackLLMSecurityBroker";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNameCaseInsensitive = true,
@@ -36,11 +40,29 @@ internal static class Program {
             PrintHelp();
             return 0;
         }
+        if (options.HardwareReportOnly) {
+            Console.WriteLine(BuildHardwarePreflightReport());
+            return 0;
+        }
+        if (options.PackageReportOnly) {
+            using Stream? embeddedMsi = OpenEmbeddedMsi();
+            Console.WriteLine("Embedded MSI: " + (embeddedMsi == null ? "no" : "yes"));
+            Console.WriteLine("Embedded MSI bytes: " + (embeddedMsi?.Length ?? 0).ToString(CultureInfo.InvariantCulture));
+            Console.WriteLine("Security Broker: required and installed as Windows service");
+            return embeddedMsi == null ? 1 : 0;
+        }
 
         if (options.DiffOnly) {
             DownloadDiffResult diff = await DownloadDiff(args);
             Console.WriteLine(JsonSerializer.Serialize(diff, JsonOptions));
             return diff.HasError ? 1 : 0;
+        }
+
+        if (!options.Uninstall && !options.Quiet && !IsAdministrator()) {
+            string report = BuildHardwarePreflightReport();
+            int choice = MessageBoxW(IntPtr.Zero, report + "\n\nContinue with installation?", ProductName + " Hardware Check", (uint)MessageBoxType.YesNo | (uint)MessageBoxIcon.Information);
+            if (choice != 6)
+                return 2;
         }
 
         if (!IsAdministrator())
@@ -74,6 +96,8 @@ internal static class Program {
         Console.WriteLine("--launch             Start the app hidden after install.");
         Console.WriteLine("--quiet              Do not show completion or failure dialogs.");
         Console.WriteLine("--diff               Print the files that would be downloaded.");
+        Console.WriteLine("--hardware-report    Print GPU inference compatibility and exit.");
+        Console.WriteLine("--package-report     Verify the MSI and Security Broker are bundled.");
         Console.WriteLine("--force              Overwrite newer local files and allow reverting.");
         Console.WriteLine("--uninstall          Remove registry entries, shortcut, and install files.");
     }
@@ -83,6 +107,11 @@ internal static class Program {
             ManifestUrl = RequireSecureSocketJackUrl(options.ManifestUrl, "manifest"),
             InstallDirectory = Path.GetFullPath(options.InstallDirectory)
         };
+
+        RecordLegacyInstallRoot(options.InstallDirectory);
+        StopStaleSecurityBrokerProcesses();
+        if (await TryInstallPackagedMsiAsync(options))
+            return;
 
         Console.WriteLine("Downloading manifest from " + options.ManifestUrl);
         using var http = new HttpClient {
@@ -120,6 +149,8 @@ internal static class Program {
             if (!File.Exists(mainExe))
                 throw new InvalidOperationException(MainExecutableName + " was not installed. Verify the update folder contains the JackLLM executable.");
 
+            EnsureSecurityBrokerServiceInstalled(options.InstallDirectory);
+
             WriteDefaultGuiSettings(options);
             WriteRegistry(options, mainExe);
             CreateStartMenuShortcut(mainExe, options.InstallDirectory);
@@ -128,6 +159,44 @@ internal static class Program {
                 Process.Start(new ProcessStartInfo(mainExe, "--tray") { UseShellExecute = true, WorkingDirectory = options.InstallDirectory });
         } finally {
             TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    private static Stream? OpenEmbeddedMsi() =>
+        Assembly.GetExecutingAssembly().GetManifestResourceStream(EmbeddedMsiResourceName);
+
+    private static async Task<bool> TryInstallPackagedMsiAsync(InstallerOptions options) {
+        string msiPath = Path.Combine(AppContext.BaseDirectory, "JackLLM-Setup.msi");
+        string? extractionRoot = null;
+        if (!File.Exists(msiPath)) {
+            await using Stream? embeddedMsi = OpenEmbeddedMsi();
+            if (embeddedMsi == null)
+                return false;
+
+            extractionRoot = Path.Combine(Path.GetTempPath(), "JackLLMInstaller-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(extractionRoot);
+            msiPath = Path.Combine(extractionRoot, "JackLLM-Setup.msi");
+            await using FileStream destination = new(msiPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, DownloadBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await embeddedMsi.CopyToAsync(destination, DownloadBufferSize);
+        }
+
+        try {
+            var startInfo = new ProcessStartInfo("msiexec.exe") { UseShellExecute = false };
+            startInfo.ArgumentList.Add("/i");
+            startInfo.ArgumentList.Add(msiPath);
+            if (options.Quiet)
+                startInfo.ArgumentList.Add("/qn");
+            startInfo.ArgumentList.Add("/norestart");
+            using Process? process = Process.Start(startInfo);
+            if (process == null)
+                throw new InvalidOperationException("Windows Installer could not be started.");
+            await process.WaitForExitAsync();
+            if (process.ExitCode is not (0 or 1641 or 3010))
+                throw new InvalidOperationException("Windows Installer returned code " + process.ExitCode.ToString(CultureInfo.InvariantCulture) + ".");
+            return true;
+        } finally {
+            if (extractionRoot != null)
+                TryDeleteDirectory(extractionRoot);
         }
     }
 
@@ -288,7 +357,9 @@ internal static class Program {
     }
 
     private static void WriteDefaultGuiSettings(InstallerOptions options) {
-        string settingsPath = Path.Combine(options.InstallDirectory, "JackLLM.settings.json");
+        string settingsRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM");
+        Directory.CreateDirectory(settingsRoot);
+        string settingsPath = Path.Combine(settingsRoot, "JackLLM.settings.json");
         JsonObject settings = new();
         if (File.Exists(settingsPath)) {
             try {
@@ -302,7 +373,106 @@ internal static class Program {
         settings["WindowsStartupEnabled"] = options.RegisterStartup;
         settings["HideToTrayOnStartup"] = true;
         settings["MasterServerUrl"] = "https://socketjack.com";
+        settings["ModelsLocation"] = settingsRoot;
         File.WriteAllText(settingsPath, settings.ToJsonString(JsonOptions));
+    }
+
+    private static void RecordLegacyInstallRoot(string fallbackRoot) {
+        var candidates = new List<string> { fallbackRoot };
+        try {
+            using RegistryKey? key = Registry.LocalMachine.OpenSubKey(ProductRegistryPath);
+            string registryRoot = key?.GetValue("InstallLocation") as string ?? "";
+            if (!string.IsNullOrWhiteSpace(registryRoot))
+                candidates.Add(registryRoot);
+        } catch { }
+        foreach (Process process in Process.GetProcessesByName("JackLLM")) {
+            try {
+                string processRoot = Path.GetDirectoryName(process.MainModule?.FileName ?? "") ?? "";
+                if (!string.IsNullOrWhiteSpace(processRoot))
+                    candidates.Add(processRoot);
+            } catch { }
+            finally { process.Dispose(); }
+        }
+        string userRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM");
+        Directory.CreateDirectory(userRoot);
+        string path = Path.Combine(userRoot, "migration-sources.txt");
+        var roots = File.Exists(path) ? File.ReadAllLines(path).Where(line => !string.IsNullOrWhiteSpace(line)).ToList() : new List<string>();
+        foreach (string sourceRoot in candidates.Where(root => !string.IsNullOrWhiteSpace(root))) {
+            string full = Path.GetFullPath(sourceRoot);
+            if (!roots.Any(root => string.Equals(Path.GetFullPath(root), full, StringComparison.OrdinalIgnoreCase)))
+                roots.Add(full);
+        }
+        File.WriteAllLines(path, roots);
+    }
+
+    private static void StopStaleSecurityBrokerProcesses() {
+        foreach (Process process in Process.GetProcessesByName("JackLLM.SecurityBroker")) {
+            try {
+                if (process.HasExited)
+                    continue;
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(5000);
+            } catch { }
+            finally { process.Dispose(); }
+        }
+    }
+
+    private static void EnsureSecurityBrokerServiceInstalled(string installDirectory) {
+        string brokerPath = Path.Combine(installDirectory, SecurityBrokerExecutableName);
+        if (!File.Exists(brokerPath)) {
+            throw new InvalidOperationException(
+                SecurityBrokerExecutableName + " was not installed. The update payload is incomplete and JackLLM cannot securely start.");
+        }
+
+        ScResult config = RunServiceControl(
+            "config", SecurityBrokerServiceName,
+            "binPath=", brokerPath,
+            "start=", "auto",
+            "obj=", "LocalSystem",
+            "DisplayName=", "JackLLM Security Broker");
+        if (config.ExitCode == 1060) {
+            ScResult create = RunServiceControl(
+                "create", SecurityBrokerServiceName,
+                "binPath=", brokerPath,
+                "start=", "auto",
+                "obj=", "LocalSystem",
+                "DisplayName=", "JackLLM Security Broker");
+            if (create.ExitCode != 0)
+                throw new InvalidOperationException("Windows could not install the JackLLM Security Broker service: " + create.Output);
+        } else if (config.ExitCode != 0) {
+            throw new InvalidOperationException("Windows could not configure the JackLLM Security Broker service: " + config.Output);
+        }
+
+        _ = RunServiceControl("description", SecurityBrokerServiceName, "Protects JackLLM workstation enrollment, TPM, Windows Hello, and hardware identity operations.");
+        ScResult start = RunServiceControl("start", SecurityBrokerServiceName);
+        if (start.ExitCode != 0 && start.ExitCode != 1056)
+            throw new InvalidOperationException("Windows could not start the JackLLM Security Broker service: " + start.Output);
+
+        for (int attempt = 0; attempt < 20; attempt++) {
+            ScResult query = RunServiceControl("query", SecurityBrokerServiceName);
+            if (query.ExitCode == 0 && query.Output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase))
+                return;
+            Thread.Sleep(250);
+        }
+
+        throw new InvalidOperationException("The JackLLM Security Broker service was installed but did not reach the running state.");
+    }
+
+    private static ScResult RunServiceControl(params string[] arguments) {
+        var startInfo = new ProcessStartInfo("sc.exe") {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        foreach (string argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+
+        using Process process = Process.Start(startInfo) ?? throw new InvalidOperationException("Windows Service Control Manager could not be started.");
+        string output = process.StandardOutput.ReadToEnd();
+        string error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return new ScResult(process.ExitCode, (output + Environment.NewLine + error).Trim());
     }
 
     private static void WriteRegistry(InstallerOptions options, string mainExe) {
@@ -370,8 +540,8 @@ internal static class Program {
         if (File.Exists(shortcutPath))
             File.Delete(shortcutPath);
 
-        if (CanRemoveInstallDirectory(installDirectory) && Directory.Exists(installDirectory))
-            Directory.Delete(installDirectory, recursive: true);
+        // User databases, settings, sessions, and models are deliberately outside Program Files.
+        // Do not recursively delete an install directory that may contain data from an older build.
     }
 
     private static bool CanRemoveInstallDirectory(string path) {
@@ -380,6 +550,89 @@ internal static class Program {
                path.StartsWith(programFiles.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
                (path.EndsWith("JackLLM", StringComparison.OrdinalIgnoreCase) ||
                 path.EndsWith("LMVS Bridge", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string BuildHardwarePreflightReport() {
+        var lines = new List<string> { "JackLLM checked this PC before requesting administrator access.", "" };
+        List<(string Name, long VramMiB, string Compute)> gpus = DetectNvidiaGpus();
+        if (gpus.Count == 0) {
+            string names = RunAndCapture("powershell.exe", "-NoProfile -NonInteractive -Command \"Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }\"");
+            foreach (string name in names.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                gpus.Add((name.Trim(), 0, ""));
+        }
+        bool vulkanAvailable = !string.IsNullOrWhiteSpace(RunAndCapture("vulkaninfo.exe", "--summary"));
+        if (gpus.Count == 0)
+            lines.Add("GPU: not detected - CPU inference remains available, but will be slower.");
+        foreach ((string name, long vram, string compute) in gpus) {
+            int score = EstimatePassMarkScore(name);
+            (string tier, string tokens) = EstimateInference(score);
+            bool cuda = !string.IsNullOrWhiteSpace(compute);
+            double cc = double.TryParse(compute, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) ? parsed : 0;
+            lines.Add("GPU: " + name + (vram > 0 ? " (" + vram.ToString("N0") + " MiB VRAM)" : ""));
+            lines.Add("Estimated LLM performance: " + tier + ", about " + tokens + " tokens/sec for a typical 7B Q4 model (model/context dependent).");
+            lines.Add("PassMark G3D basis: " + (score > 0 ? score.ToString("N0") : "not in bundled lookup; conservative estimate"));
+            lines.Add("CUDA: " + (cuda ? "available, compute capability " + compute : "not detected") + " | Vulkan: " + (vulkanAvailable ? "available" : "not detected"));
+            var unavailable = new List<string>();
+            if (cc < 8.0) unavailable.Add("accelerated BF16");
+            if (cc < 8.9) unavailable.Add("accelerated FP8");
+            if (cc < 10.0) unavailable.Add("accelerated FP4");
+            if (unavailable.Count > 0)
+                lines.Add("Warning: " + string.Join(", ", unavailable) + " unavailable on this GPU. GGUF Q4 quantization is still usable; it is not native FP4 tensor hardware.");
+            lines.Add("");
+        }
+        string systemDrive = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) ?? "C:\\";
+        try { lines.Add("Available storage: " + FormatBytes(new DriveInfo(systemDrive).AvailableFreeSpace) + " on " + systemDrive); } catch { }
+        lines.Add("All user data will be kept under %LOCALAPPDATA%\\SocketJack\\JackLLM.");
+        lines.Add("Capability basis: PassMark High End GPU list, NVIDIA CUDA Programming Guide, and installed CUDA/Vulkan driver tools.");
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static List<(string Name, long VramMiB, string Compute)> DetectNvidiaGpus() {
+        string output = RunAndCapture("nvidia-smi.exe", "--query-gpu=name,memory.total,compute_cap --format=csv,noheader,nounits");
+        var result = new List<(string, long, string)>();
+        foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) {
+            string[] parts = line.Split(',').Select(part => part.Trim()).ToArray();
+            if (parts.Length >= 3)
+                result.Add((parts[0], long.TryParse(parts[1], out long memory) ? memory : 0, parts[2]));
+        }
+        return result;
+    }
+
+    private static string RunAndCapture(string fileName, string arguments) {
+        try {
+            using Process? process = Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true });
+            if (process == null) return "";
+            string output = process.StandardOutput.ReadToEnd();
+            _ = process.StandardError.ReadToEnd();
+            return process.WaitForExit(5000) && process.ExitCode == 0 ? output : "";
+        } catch { return ""; }
+    }
+
+    private static int EstimatePassMarkScore(string name) {
+        string normalized = name.ToUpperInvariant().Replace("GEFORCE", "").Replace("NVIDIA", "").Trim();
+        if (normalized.Contains("GTX TITAN X")) return 13660;
+        if (normalized.Contains("RTX 4090")) return 38300;
+        if (normalized.Contains("RTX 4080")) return 34600;
+        if (normalized.Contains("RTX 4070")) return 27000;
+        if (normalized.Contains("RTX 3090")) return 26900;
+        if (normalized.Contains("RTX 3080")) return 25300;
+        if (normalized.Contains("RX 7900 XTX")) return 31000;
+        if (normalized.Contains("RX 7800 XT")) return 24500;
+        return 0;
+    }
+
+    private static (string Tier, string Tokens) EstimateInference(int score) => score switch {
+        >= 30000 => ("Excellent", "45-100"),
+        >= 20000 => ("Very good", "25-60"),
+        >= 10000 => ("Usable", "12-35"),
+        >= 5000 => ("Limited", "6-15"),
+        _ => ("Basic / CPU fallback", "2-7")
+    };
+
+    private static string FormatBytes(long bytes) {
+        string[] units = { "B", "KiB", "MiB", "GiB", "TiB" }; double value = Math.Max(0, bytes); int unit = 0;
+        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
+        return value.ToString(value >= 100 || unit == 0 ? "0" : "0.0", CultureInfo.InvariantCulture) + " " + units[unit];
     }
 
     private static bool IsSafeRelativePath(string path) {
@@ -620,7 +873,8 @@ internal static class Program {
 }
 
 internal enum MessageBoxType : uint {
-    Ok = 0x00000000
+    Ok = 0x00000000,
+    YesNo = 0x00000004
 }
 
 internal enum MessageBoxIcon : uint {
@@ -638,6 +892,8 @@ internal sealed record InstallerOptions {
     public bool DiffOnly { get; init; }
     public bool ForceOverwrite { get; init; }
     public bool ShowHelp { get; init; }
+    public bool HardwareReportOnly { get; init; }
+    public bool PackageReportOnly { get; init; }
 
     public static InstallerOptions Parse(string[] args) {
         var options = new InstallerOptions();
@@ -676,6 +932,12 @@ internal sealed record InstallerOptions {
                 case "--download-diff":
                     options = options with { DiffOnly = true };
                     break;
+                case "--hardware-report":
+                    options = options with { HardwareReportOnly = true };
+                    break;
+                case "--package-report":
+                    options = options with { PackageReportOnly = true };
+                    break;
                 case "--force":
                 case "--revert":
                     options = options with { ForceOverwrite = true };
@@ -688,6 +950,8 @@ internal sealed record InstallerOptions {
         return options;
     }
 }
+
+internal readonly record struct ScResult(int ExitCode, string Output);
 
 internal sealed class UpdateManifest {
     public bool Available { get; set; }

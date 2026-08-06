@@ -1,4 +1,6 @@
 using System.Net;
+using System.Reflection;
+using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack;
 using SocketJack.Net;
@@ -89,12 +91,83 @@ public sealed class JackLlmSecurityTests
     }
 
     [TestMethod]
+    public void WebChatNativeVisionPayloadUsesRuntimeChatMessageContract()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 1234, 23434, 23436);
+        MethodInfo? buildRequest = typeof(LmVsProxy).GetMethod(
+            "BuildChatUiNativeChatRequestJson",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(buildRequest);
+
+        const string imageDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+        string requestBody = $$"""
+        {
+          "model": "vision-model",
+          "messages": [
+          {
+            "role": "user",
+            "content": "What is in the previous image?"
+          },
+          {
+            "role": "assistant",
+            "content": "The previous image is Google Search in a Chrome browser."
+          },
+          {
+            "role": "user",
+            "content": [
+              { "type": "text", "text": "Describe this image." },
+              { "type": "image_url", "image_url": { "url": "{{imageDataUrl}}" } }
+            ]
+          }]
+        }
+        """;
+
+        string nativeJson = (string)buildRequest.Invoke(proxy, [requestBody, null, null, null, false])!;
+        using JsonDocument document = JsonDocument.Parse(nativeJson);
+        JsonElement root = document.RootElement;
+        Assert.IsTrue(root.TryGetProperty("messages", out JsonElement messages));
+        Assert.IsFalse(root.TryGetProperty("input", out _));
+        JsonElement user = messages.EnumerateArray().Last(message =>
+            message.GetProperty("role").GetString() == "user");
+        StringAssert.Contains(user.GetProperty("content").GetRawText(), "\"type\":\"image_url\"");
+        StringAssert.Contains(user.GetProperty("content").GetRawText(), imageDataUrl);
+        JsonElement system = messages.EnumerateArray().First(message =>
+            message.GetProperty("role").GetString() == "system");
+        StringAssert.Contains(system.GetProperty("content").GetString(), "current user message contains actual image pixels");
+        StringAssert.Contains(system.GetProperty("content").GetString(), "Do not claim that images are unavailable");
+        Assert.IsFalse(nativeJson.Contains("Google Search", StringComparison.OrdinalIgnoreCase),
+            "A stale assistant image description must not be promoted into the system prompt for fresh pixels.");
+
+        LlmChatRequest parsed = LlmChatRequest.FromJson(root);
+        Assert.IsTrue(parsed.Messages.Last().HasImageContent);
+        Assert.IsNotNull(parsed.Messages.Last().StructuredContent);
+    }
+
+    [TestMethod]
     public void VisibleWebChatBrowserNavigatesThroughTheSessionProxy()
     {
         string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
 
         StringAssert.Contains(html, "chatBrowserFrame.src = buildChatBrowserProxyUrl(url);");
+        StringAssert.Contains(html, "chatBrowserFrame.src = buildChatBrowserProxyUrl(chatBrowserUrl);");
         StringAssert.Contains(html, "function buildChatBrowserProxyUrl(value)");
+        StringAssert.Contains(html, "function serializeBrowserSkillLiveDocument(doc)");
+        StringAssert.Contains(html, "snapshot.html = truncateBrowserSkillText(serializeBrowserSkillLiveDocument(doc), 60000);");
+        StringAssert.Contains(html, "copy.setAttribute('value', '[redacted]');");
+    }
+
+    [TestMethod]
+    public void WebChatStreamsAllToolCallsAndShowsCodexStyleChangedFiles()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "const visibleCalls = calls;");
+        StringAssert.Contains(html, "row.open = status === 'failed' || status === 'started' || status === 'progress';");
+        StringAssert.Contains(html, "updateAssistantFileChanges(streamState.parts, streamState.fileChanges);");
+        StringAssert.Contains(html, "title.textContent = changedFilesHeading(fileEntries);");
+        StringAssert.Contains(html, "createFileChangeActionButton('Review', 'Review the changed files')");
+        StringAssert.Contains(html, "appendChangedFileStats(totals, totalAdditions, totalDeletions, true);");
+        StringAssert.Contains(html, "animation: throbber-spin 850ms linear infinite;");
     }
 
     [TestMethod]
@@ -176,6 +249,12 @@ public sealed class JackLlmSecurityTests
         string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
 
         StringAssert.Contains(html, "async function recoverWorkstationAuthentication()");
+        StringAssert.Contains(html, "function resetWebChatApiTransport()");
+        StringAssert.Contains(html, "transport.close('Workstation authentication changed.')");
+        StringAssert.Contains(html, "return { request, close };");
+        StringAssert.Contains(html, "if (accessToken)\n            clearSocketJackUrlTokenFromUrl();");
+        StringAssert.Contains(html, "function sessionUploadHeaders(headers)");
+        StringAssert.Contains(html, "result.set('Authorization', 'Bearer ' + token);");
         StringAssert.Contains(html, "if (await recoverWorkstationAuthentication())");
         StringAssert.Contains(html, "return performRequest(retryResource);");
         StringAssert.Contains(html, "async function waitForWorkstationAuthentication(sessionId)");

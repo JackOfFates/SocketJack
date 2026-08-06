@@ -20,6 +20,8 @@ public sealed class ChatHostPage : ContentPage
     private readonly MobileAudioService _audio = new();
     private readonly ObservableCollection<ChatMessage> _messages = new();
     private readonly List<AttachmentInfo> _attachments = new();
+    private readonly HorizontalStackLayout _attachmentStrip;
+    private readonly ScrollView _attachmentScroll;
     private readonly CollectionView _messageList;
     private readonly Picker _models;
     private readonly Picker _services;
@@ -43,9 +45,14 @@ public sealed class ChatHostPage : ContentPage
     private readonly ActivityIndicator _liveIndicator;
     private readonly Button _voice;
     private readonly Button _attach;
-    private readonly ToolbarItem _speakItem;
-    private readonly ToolbarItem _dreamItem;
-    private readonly ToolbarItem _pcAccessItem;
+    private readonly Button _speakItem;
+    private readonly Button _dreamItem;
+    private readonly Button _pcAccessItem;
+    private readonly Button _sqlManagerItem;
+    private readonly Button _administrativeToolsItem;
+    private readonly MobileNavigationDrawer _mobileDrawer;
+    private readonly Label _drawerProjectStatus;
+    private readonly Label _compactContextLabel;
     private readonly BoxView _alignmentTop;
     private readonly BoxView _alignmentBottom;
     private readonly Border _alignmentDrawer;
@@ -66,10 +73,16 @@ public sealed class ChatHostPage : ContentPage
     private ChatMessage? _activeAssistant;
     private string _sessionId = Guid.NewGuid().ToString("N");
     private string _projectId = "unsorted";
+    private string _projectName = "Unsorted";
+    private string _sessionTitle = "New chat";
+    private bool _dreamAvailable = true;
+    private bool _sqlAdminAllowed;
+    private bool _pcAccessAllowed;
     private MobileAlignmentSnapshot _alignment = new();
     private int _loreIndex;
     private bool _alignmentDrawerOpen;
     private bool _authenticationPageOpen;
+    private bool _sessionKnownToServer;
 
     public ChatHostPage(
         ServerInfo server,
@@ -85,6 +98,7 @@ public sealed class ChatHostPage : ContentPage
         _requestedSessionId = requestedSessionId;
         Title = "JackLLM";
         BackgroundColor = Color.FromArgb("#0B1020");
+        NavigationPage.SetHasNavigationBar(this, false);
         _status = new Label { Text = "Connecting…", TextColor = Color.FromArgb("#94A3B8"), FontSize = 11, Margin = new Thickness(4, 0) };
         _networkHealth = new NetworkHealthView { Margin = new Thickness(6, 0), VerticalOptions = LayoutOptions.Center };
         _models = new Picker { Title = "Model", TextColor = Colors.White, TitleColor = Color.FromArgb("#94A3B8"), HorizontalOptions = LayoutOptions.Fill };
@@ -137,26 +151,104 @@ public sealed class ChatHostPage : ContentPage
         _attach.Clicked += async (_, _) => await AddAttachmentAsync();
         _voice = new Button { Text = "🎙", FontSize = 18, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 48 };
         _voice.Clicked += async (_, _) => await RecordVoiceAsync();
+        _attachmentStrip = new HorizontalStackLayout { Spacing = 8, Padding = new Thickness(10, 4) };
+        _attachmentScroll = new ScrollView { Orientation = ScrollOrientation.Horizontal, Content = _attachmentStrip, IsVisible = false, MaximumHeightRequest = 112 };
 
-        var workspaceItem = new ToolbarItem("▦", null, async () => await Navigation.PushAsync(new SessionsPage(_server, _client, LoadSessionAsync, StartNewSessionAsync))) { AutomationId = "WorkspaceSessions" };
-        _dreamItem = new ToolbarItem("☾", null, async () => await Navigation.PushAsync(new DreamManagementPage(_server, _client))) { AutomationId = "DreamManagement" };
-        _pcAccessItem = new ToolbarItem("🖥", null, async () => await OpenPcAccessAsync()) { AutomationId = "PcAccess" };
-        var newItem = new ToolbarItem("＋", null, NewSession) { AutomationId = "NewSession" };
-        _speakItem = new ToolbarItem("🔊", null, async () => await SpeakLastAsync()) { AutomationId = "SpeakResponse" };
-        AutomationProperties.SetHelpText(workspaceItem, "Workspace and synchronized sessions");
-        AutomationProperties.SetHelpText(newItem, "New session");
-        AutomationProperties.SetHelpText(_speakItem, "Read the latest response aloud");
-        AutomationProperties.SetHelpText(_pcAccessItem, "Open administrator PC Access for this Workstation");
-        ToolbarItems.Add(workspaceItem);
-        ToolbarItems.Add(_dreamItem);
-        ToolbarItems.Add(newItem);
-        ToolbarItems.Add(_speakItem);
-
-        var modeRow = new HorizontalStackLayout { Spacing = 7, Padding = new Thickness(10, 6, 10, 3), BackgroundColor = Color.FromArgb("#111827"), Children = { _generalMode, _advancedMode, _planMode, _jackhammerToggleCard } };
-        var header = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto) }, BackgroundColor = Color.FromArgb("#111827"), Padding = new Thickness(10, 2) };
-        header.Add(_models, 0); header.Add(_networkHealth, 1); header.Add(_services, 2);
+        var modeRow = new Grid
+        {
+            ColumnDefinitions = { new(GridLength.Star), new(GridLength.Star), new(GridLength.Star) },
+            ColumnSpacing = 6
+        };
+        modeRow.Add(_generalMode, 0); modeRow.Add(_advancedMode, 1); modeRow.Add(_planMode, 2);
+        var modelOptions = new Grid
+        {
+            ColumnDefinitions = { new(GridLength.Star), new(GridLength.Auto) },
+            ColumnSpacing = 8
+        };
+        modelOptions.Add(_models, 0); modelOptions.Add(_services, 1);
         var reasoningRow = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto) }, Padding = new Thickness(12, 2), BackgroundColor = Color.FromArgb("#111827"), ColumnSpacing = 8 };
         reasoningRow.Add(_reasoningLabel, 0); reasoningRow.Add(_reasoningSlider, 1); reasoningRow.Add(_jackhammerCustomBudget, 2); reasoningRow.Add(new Label { Text = "Inherit", TextColor = Color.FromArgb("#94A3B8"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center }, 3); reasoningRow.Add(_sessionReasoningInherit, 4);
+
+        _mobileDrawer = new MobileNavigationDrawer("JackLLM Mobile", _server.DisplayName);
+        _mobileDrawer.ActionFailed += async (_, ex) => await DisplayAlertAsync("Menu action failed", ex.Message, "OK");
+        VerticalStackLayout fileSection = _mobileDrawer.AddSection("File");
+        _mobileDrawer.AddAction(fileSection, "⌂", "Workstations", async () => await Navigation.PopToRootAsync(false), "MenuWorkstations");
+        _mobileDrawer.AddAction(fileSection, "▦", "Projects & Sessions", OpenSessionsAsync, "MenuProjectsSessions");
+        _mobileDrawer.AddAction(fileSection, "📁", "Project Files", async () => await Navigation.PushAsync(new ProjectFilesPage(_client, _sessionId)), "MenuProjectFiles");
+
+        VerticalStackLayout editSection = _mobileDrawer.AddSection("Edit");
+        _drawerProjectStatus = _mobileDrawer.AddStatus(editSection, "Project: Unsorted", "MenuCurrentProject");
+        _mobileDrawer.AddAction(editSection, "＋", "New Session", () => { NewSession(); return Task.CompletedTask; }, "MenuNewSession");
+        _mobileDrawer.AddAction(editSection, "✎", "Edit Session Title", RenameCurrentSessionAsync, "MenuRenameSession");
+        _mobileDrawer.AddAction(editSection, "↪", "Move Session to Project", MoveCurrentSessionAsync, "MenuMoveSession");
+        _mobileDrawer.AddAction(editSection, "⌫", "Delete Session", DeleteCurrentSessionAsync, "MenuDeleteSession", danger: true);
+
+        VerticalStackLayout toolsSection = _mobileDrawer.AddSection("Tools");
+        _mobileDrawer.AddAction(toolsSection, "J", "JackDirector", async () => await OpenWorkstationRouteAsync("/JackDirector"), "MenuJackDirector");
+        _mobileDrawer.AddAction(toolsSection, "A", "Agent Builder", async () => await OpenWorkstationRouteAsync("/Builder"), "MenuAgentBuilder");
+        _pcAccessItem = _mobileDrawer.AddAction(toolsSection, "🖥", "PC Access", OpenPcAccessAsync, "PcAccess");
+        _sqlManagerItem = _mobileDrawer.AddAction(toolsSection, "SQL", "SQL Manager", async () => await OpenWorkstationRouteAsync("/sql"), "MenuSqlManager");
+        _administrativeToolsItem = _mobileDrawer.AddAction(toolsSection, "⚙", "Administrative Tools", async () => await Navigation.PushAsync(new MobileDiagnosticsPage(_client, showUsers: true)), "MenuAdministrativeTools");
+        _speakItem = _mobileDrawer.AddAction(toolsSection, "🔊", "Read Latest Response", SpeakLastAsync, "SpeakResponse");
+
+        VerticalStackLayout optionsSection = _mobileDrawer.AddSection("Options");
+        _mobileDrawer.AddContent(optionsSection, new Border
+        {
+            Padding = 10,
+            BackgroundColor = Color.FromArgb("#111A2B"),
+            Stroke = Color.FromArgb("#26334D"),
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            Content = new VerticalStackLayout
+            {
+                Spacing = 9,
+                Children = { modeRow, modelOptions, reasoningRow, _jackhammerToggleCard }
+            }
+        });
+        _dreamItem = _mobileDrawer.AddAction(optionsSection, "☾", "Dreaming", async () => await Navigation.PushAsync(new DreamManagementPage(_server, _client)), "DreamManagement");
+
+        VerticalStackLayout helpSection = _mobileDrawer.AddSection("Help");
+        _mobileDrawer.AddAction(helpSection, "!", "Errors / Diagnosis", async () => await Navigation.PushAsync(new MobileDiagnosticsPage(_client)), "MenuDiagnostics");
+        _mobileDrawer.AddAction(helpSection, "?", "API Reference", async () => await OpenWorkstationRouteAsync("/api"), "MenuApiReference");
+        _mobileDrawer.AddAction(helpSection, "ⓘ", "About / System Information", ShowAboutAsync, "MenuAbout");
+
+        var menuButton = new Button
+        {
+            Text = "☰",
+            FontSize = 25,
+            TextColor = Colors.White,
+            BackgroundColor = Colors.Transparent,
+            WidthRequest = 48,
+            HeightRequest = 48,
+            Padding = 0,
+            AutomationId = "OpenMobileMenu"
+        };
+        AutomationProperties.SetHelpText(menuButton, "Open navigation menu");
+        menuButton.Clicked += async (_, _) => await _mobileDrawer.OpenAsync();
+        _compactContextLabel = new Label
+        {
+            Text = "General · Unsorted",
+            FontSize = 10,
+            TextColor = Color.FromArgb("#94A3B8"),
+            LineBreakMode = LineBreakMode.TailTruncation
+        };
+        var compactTitle = new VerticalStackLayout
+        {
+            Spacing = 0,
+            VerticalOptions = LayoutOptions.Center,
+            Children =
+            {
+                new Label { Text = "JackLLM", FontSize = 16, FontAttributes = FontAttributes.Bold, TextColor = Colors.White },
+                _compactContextLabel
+            }
+        };
+        var compactTopBar = new Grid
+        {
+            HeightRequest = 50,
+            Padding = new Thickness(4, 1, 10, 1),
+            ColumnDefinitions = { new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto) },
+            BackgroundColor = Color.FromArgb("#111827")
+        };
+        compactTopBar.Add(menuButton, 0); compactTopBar.Add(compactTitle, 1); compactTopBar.Add(_networkHealth, 2);
         _liveActivityText = new Label { Text = "Preparing compute…", TextColor = Color.FromArgb("#BFDBFE"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.TailTruncation };
         _liveProgress = new ProgressBar { Progress = 0, ProgressColor = Color.FromArgb("#60A5FA"), BackgroundColor = Color.FromArgb("#26334D"), HeightRequest = 3 };
         _liveIndicator = new ActivityIndicator { IsRunning = false, Color = Color.FromArgb("#60A5FA"), WidthRequest = 20, HeightRequest = 20 };
@@ -203,11 +295,11 @@ public sealed class ChatHostPage : ContentPage
         {
             RowDefinitions =
             {
-                new RowDefinition(16), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
-                new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
-                new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto), new RowDefinition(3)
+                new RowDefinition(16), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
+                new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star),
+                new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(3)
             },
-            Children = { alignmentEdgeZone.Row(0), _alignmentDrawer.Row(1), modeRow.Row(2), header.Row(3), reasoningRow.Row(4), _status.Row(5), _liveActivityCard.Row(6), _messageList.Row(7), composer.Row(8), _alignmentBottom.Row(9) }
+            Children = { alignmentEdgeZone.Row(0), _alignmentDrawer.Row(1), compactTopBar.Row(2), _status.Row(3), _liveActivityCard.Row(4), _messageList.Row(5), _attachmentScroll.Row(6), composer.Row(7), _alignmentBottom.Row(8) }
         };
         _alignmentLockScreen = new Border
         {
@@ -225,7 +317,7 @@ public sealed class ChatHostPage : ContentPage
                 }
             }
         };
-        Content = new Grid { Children = { _contentRoot, _alignmentLockScreen } };
+        Content = new Grid { Children = { _contentRoot, _alignmentLockScreen, _mobileDrawer } };
         RestoreModePreference();
         UpdateReasoningUi();
         SetMode(_mode);
@@ -250,7 +342,7 @@ public sealed class ChatHostPage : ContentPage
                 activeGeneration.ServerKey.Equals(_server.LaunchKey, StringComparison.OrdinalIgnoreCase);
             if (!ownsActiveStream)
                 await _client.ConnectAsync(_server);
-            UpdateAdministratorActions();
+            await RefreshMobileMenuPermissionsAsync();
             ApplyAlignment(await _client.GetAlignmentAsync());
             var models = await _client.GetModelsAsync();
             bool voiceSupported = await _client.SupportsVoiceAsync();
@@ -278,22 +370,142 @@ public sealed class ChatHostPage : ContentPage
 
     private void UpdateAdministratorActions()
     {
-        bool shouldShow = _client.IsAdministrator || _client.IsOwner;
-        bool isShown = ToolbarItems.Contains(_pcAccessItem);
-        if (shouldShow && !isShown)
-            ToolbarItems.Insert(Math.Min(2, ToolbarItems.Count), _pcAccessItem);
-        else if (!shouldShow && isShown)
-            ToolbarItems.Remove(_pcAccessItem);
+        bool administrator = _client.IsAdministrator || _client.IsOwner;
+        _pcAccessItem.IsVisible = administrator && _pcAccessAllowed;
+        _sqlManagerItem.IsVisible = administrator && _sqlAdminAllowed;
+        _administrativeToolsItem.IsVisible = administrator;
+        _mobileDrawer.SetIdentity(string.IsNullOrWhiteSpace(_client.AuthenticatedUserName)
+            ? _server.DisplayName
+            : _server.DisplayName + " · " + _client.AuthenticatedUserName);
+    }
+
+    private async Task RefreshMobileMenuPermissionsAsync()
+    {
+        _sqlAdminAllowed = false;
+        _pcAccessAllowed = false;
+        if (_client.IsAdministrator || _client.IsOwner)
+        {
+            try
+            {
+                MobileMenuPermissionSnapshot permissions = await _client.GetMobileMenuPermissionsAsync();
+                _sqlAdminAllowed = permissions.SqlAdmin;
+                _pcAccessAllowed = permissions.PcAccess;
+            }
+            catch
+            {
+                // Keep privileged actions hidden until their permission state is confirmed.
+            }
+        }
+        UpdateAdministratorActions();
     }
 
     private async Task OpenPcAccessAsync()
     {
-        if (!_client.IsAdministrator && !_client.IsOwner)
+        if ((!_client.IsAdministrator && !_client.IsOwner) || !_pcAccessAllowed)
         {
             UpdateAdministratorActions();
             return;
         }
         await Navigation.PushAsync(new PcAccessPage(_server, _client));
+    }
+
+    private Task OpenSessionsAsync() => Navigation.PushAsync(new SessionsPage(_server, _client, LoadSessionAsync, StartNewSessionAsync));
+
+    private async Task OpenWorkstationRouteAsync(string route)
+    {
+        string endpoint = (_server.Endpoint ?? "").TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(endpoint)) throw new InvalidOperationException("The Workstation endpoint is unavailable.");
+        string normalizedRoute = "/" + (route ?? "").TrimStart('/');
+        await Browser.Default.OpenAsync(new Uri(endpoint + normalizedRoute), BrowserLaunchMode.SystemPreferred);
+    }
+
+    private Task ShowAboutAsync() => DisplayAlertAsync(
+        "JackLLM Mobile",
+        $"Workstation: {_server.DisplayName}\nEndpoint: {_server.Endpoint}\nUser: {(_client.AuthenticatedUserName.Length > 0 ? _client.AuthenticatedUserName : "Not signed in")}\nSession: {_sessionTitle}",
+        "OK");
+
+    private async Task RenameCurrentSessionAsync()
+    {
+        if (!_sessionKnownToServer)
+        {
+            await DisplayAlertAsync("Edit Session Title", "Send a message or add a file before naming this new session.", "OK");
+            return;
+        }
+        string? title = await DisplayPromptAsync("Edit Session Title", "Session title", "Save", "Cancel", _sessionTitle, 160);
+        title = (title ?? "").Trim();
+        if (title.Length == 0 || title.Equals(_sessionTitle, StringComparison.Ordinal)) return;
+        string previous = _sessionTitle;
+        _sessionTitle = title;
+        UpdateMobileMenuContext();
+        try { await _client.RenameSessionAsync(_sessionId, title); }
+        catch
+        {
+            _sessionTitle = previous;
+            UpdateMobileMenuContext();
+            throw;
+        }
+    }
+
+    private async Task MoveCurrentSessionAsync()
+    {
+        if (!_sessionKnownToServer)
+        {
+            await DisplayAlertAsync("Move Session", "Send a message or add a file before moving this new session.", "OK");
+            return;
+        }
+        ChatProjectInfo[] projects = (await _client.GetProjectsAsync(false)).Where(project => !project.Archived).ToArray();
+        if (projects.Length == 0)
+        {
+            await DisplayAlertAsync("Move Session", "No available projects were found.", "OK");
+            return;
+        }
+        string? selected = await DisplayActionSheetAsync("Move Session to Project", "Cancel", null, projects.Select(project => project.Name).ToArray());
+        ChatProjectInfo? target = projects.FirstOrDefault(project => project.Name.Equals(selected, StringComparison.Ordinal));
+        if (target is null || target.Id.Equals(_projectId, StringComparison.OrdinalIgnoreCase)) return;
+        string previousId = _projectId;
+        string previousName = _projectName;
+        _projectId = target.Id;
+        _projectName = target.Name;
+        UpdateMobileMenuContext();
+        try { await _client.MoveSessionAsync(_sessionId, target.Id); }
+        catch
+        {
+            _projectId = previousId;
+            _projectName = previousName;
+            UpdateMobileMenuContext();
+            throw;
+        }
+    }
+
+    private async Task DeleteCurrentSessionAsync()
+    {
+        if (!_sessionKnownToServer)
+        {
+            if (await DisplayAlertAsync("Discard New Session", "Discard this unsaved conversation?", "Discard", "Cancel")) NewSession();
+            return;
+        }
+        bool confirmed = await DisplayAlertAsync("Delete Session", $"Delete “{_sessionTitle}” permanently? This cannot be undone.", "Delete Session", "Cancel");
+        if (!confirmed) return;
+        await _client.DeleteSessionAsync(_sessionId);
+        NewSession();
+        _status.Text = "Session deleted";
+    }
+
+    private void UpdateMobileMenuContext()
+    {
+        string project = string.IsNullOrWhiteSpace(_projectName) ? (string.IsNullOrWhiteSpace(_projectId) ? "Unsorted" : _projectId) : _projectName;
+        _drawerProjectStatus.Text = "Project: " + project;
+        _compactContextLabel.Text = _mode + " · " + project + " · " + _sessionTitle;
+    }
+
+    protected override bool OnBackButtonPressed()
+    {
+        if (_mobileDrawer.IsOpen)
+        {
+            _ = _mobileDrawer.CloseAsync();
+            return true;
+        }
+        return base.OnBackButtonPressed();
     }
 
     protected override void OnDisappearing()
@@ -362,6 +574,7 @@ public sealed class ChatHostPage : ContentPage
                 ? "Advanced Mode (Work): service controls and tool activity enabled"
                 : "General Mode (chat): streamlined conversation";
         ApplyModelFilter();
+        UpdateMobileMenuContext();
     }
 
     private void ApplyModelFilter()
@@ -462,6 +675,11 @@ public sealed class ChatHostPage : ContentPage
     {
         string text = _prompt.Text?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(text) && _attachments.Count == 0) return;
+        if (_attachments.Any(attachment => attachment.IsUploading || attachment.NeedsAttention))
+        {
+            await DisplayAlertAsync("Attachments not ready", "Wait for uploads to finish. Failed uploads must be retried or removed.", "OK");
+            return;
+        }
         if (_models.SelectedItem is not ModelInfo model) { await DisplayAlertAsync("No model", "This Workstation did not report an available chat model.", "OK"); return; }
         string service = _mode == MobileChatMode.Plan
             ? "chat"
@@ -498,6 +716,8 @@ public sealed class ChatHostPage : ContentPage
         var assistant = new ChatMessage { Role = "assistant", Status = "Starting…", IsGenerating = true, IsReasoningExpanded = true };
         _messages.Add(user); _messages.Add(assistant); _prompt.Text = ""; _prompt.Unfocus();
         _attachments.Clear();
+        _attachmentStrip.Clear();
+        _attachmentScroll.IsVisible = false;
         _send.Text = "■"; _status.Text = "Generating…";
         SetLiveActivity(true, AlignmentLoreForActivity("Warming up model"), 0);
         if (service.Equals("agent", StringComparison.OrdinalIgnoreCase) && !model.SupportsTools)
@@ -505,6 +725,7 @@ public sealed class ChatHostPage : ContentPage
             _messages.Remove(assistant);
             _messages.Remove(user);
             _attachments.AddRange(attachments);
+            RestoreAttachmentCards();
             _prompt.Text = text;
             _status.Text = "Choose a tool-capable model for Agent";
             _send.Text = "↑";
@@ -533,6 +754,7 @@ public sealed class ChatHostPage : ContentPage
             _messages.Remove(assistant);
             _messages.Remove(user);
             _attachments.AddRange(attachments);
+            RestoreAttachmentCards();
             _prompt.Text = text;
             _status.Text = "Another mobile response is still generating";
             _send.Text = "↑";
@@ -620,9 +842,8 @@ public sealed class ChatHostPage : ContentPage
         BackgroundColor = negative ? Color.FromArgb("#090000") : Color.FromArgb("#0B1020");
 
         HashSet<string> disabled = new(_alignment.DisabledFeatures ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-        bool dreamAvailable = _alignment.DreamsEnabled && !disabled.Contains("dream");
-        if (!dreamAvailable && ToolbarItems.Contains(_dreamItem)) ToolbarItems.Remove(_dreamItem);
-        else if (dreamAvailable && !ToolbarItems.Contains(_dreamItem)) ToolbarItems.Insert(Math.Min(1, ToolbarItems.Count), _dreamItem);
+        _dreamAvailable = _alignment.DreamsEnabled && !disabled.Contains("dream");
+        _dreamItem.IsVisible = _dreamAvailable;
         _advancedMode.IsVisible = !disabled.Contains("agent");
         _attach.IsVisible = !disabled.Contains("uploads") && !disabled.Contains("filesystem");
         _voice.IsVisible = !disabled.Contains("media");
@@ -761,13 +982,17 @@ public sealed class ChatHostPage : ContentPage
             _activeAssistant = assistant;
         }
 
+        bool reasoningJustStarted = string.IsNullOrWhiteSpace(assistant.Reasoning) && !string.IsNullOrWhiteSpace(snapshot.Reasoning);
         assistant.Content = snapshot.Content;
         assistant.Reasoning = snapshot.Reasoning;
         assistant.Status = snapshot.Status;
         assistant.Telemetry = snapshot.Telemetry;
         assistant.RouteSummary = snapshot.RouteSummary;
         assistant.IsGenerating = snapshot.IsGenerating;
-        assistant.IsReasoningExpanded = snapshot.IsGenerating && string.IsNullOrWhiteSpace(snapshot.Content);
+        if (reasoningJustStarted)
+            assistant.IsReasoningExpanded = true;
+        else if (!snapshot.IsGenerating && !string.IsNullOrWhiteSpace(snapshot.Content))
+            assistant.IsReasoningExpanded = false;
         assistant.Tools.Clear();
         foreach (ToolActivity tool in snapshot.Tools)
             assistant.Tools.Add(new ToolActivity { Name = tool.Name, Status = tool.Status, Detail = tool.Detail });
@@ -788,6 +1013,11 @@ public sealed class ChatHostPage : ContentPage
     {
         if (_generation.IsGenerating) _ = StopAsync();
         _sessionId = Guid.NewGuid().ToString("N");
+        _sessionTitle = "New chat";
+        _sessionKnownToServer = false;
+        _attachments.Clear();
+        _attachmentStrip.Clear();
+        _attachmentScroll.IsVisible = false;
         _messages.Clear();
         _messages.Add(CreateWelcomeMessage());
         _sessionReasoningInherit.IsToggled = true;
@@ -795,11 +1025,13 @@ public sealed class ChatHostPage : ContentPage
         UpdateReasoningUi();
         _status.Text = "New conversation";
         _recentSessions.Remember(_server.LaunchKey, _sessionId);
+        UpdateMobileMenuContext();
     }
 
     private Task StartNewSessionAsync(string projectId)
     {
         _projectId = string.IsNullOrWhiteSpace(projectId) ? "unsorted" : projectId;
+        _projectName = _projectId.Equals("unsorted", StringComparison.OrdinalIgnoreCase) ? "Unsorted" : _projectId;
         NewSession();
         _status.Text = "New conversation in " + _projectId;
         return Task.CompletedTask;
@@ -875,8 +1107,13 @@ public sealed class ChatHostPage : ContentPage
     public async Task LoadSessionAsync(string id)
     {
         ChatSessionDetail detail = await _client.GetSessionAsync(id);
+        _sessionKnownToServer = true;
         _sessionId = detail.Id;
         _projectId = string.IsNullOrWhiteSpace(detail.ProjectId) ? "unsorted" : detail.ProjectId;
+        _projectName = string.IsNullOrWhiteSpace(detail.ProjectName)
+            ? (_projectId.Equals("unsorted", StringComparison.OrdinalIgnoreCase) ? "Unsorted" : _projectId)
+            : detail.ProjectName;
+        _sessionTitle = detail.Title;
         _recentSessions.Remember(_server.LaunchKey, _sessionId);
         string savedReasoning = string.IsNullOrWhiteSpace(detail.ReasoningLevel) ? "inherit" : detail.ReasoningLevel.ToLowerInvariant();
         SetMode(detail.InteractionMode.Equals("plan", StringComparison.OrdinalIgnoreCase)
@@ -910,6 +1147,7 @@ public sealed class ChatHostPage : ContentPage
             if (index >= 0) _models.SelectedIndex = index;
         }
         _status.Text = $"Loaded {detail.Title} ({detail.Messages.Count} messages, {detail.Files.Count} files)";
+        UpdateMobileMenuContext();
         if (_messages.Count > 0) _messageList.ScrollTo(_messages[^1], position: ScrollToPosition.End, animate: false);
     }
 
@@ -921,10 +1159,120 @@ public sealed class ChatHostPage : ContentPage
             FileResult? file = action switch { "Take photo" => await MediaPicker.Default.CapturePhotoAsync(), "Choose photo" => (await MediaPicker.Default.PickPhotosAsync()).FirstOrDefault(), "Choose file" => await FilePicker.Default.PickAsync(), _ => null };
             if (file is null) return;
             await using Stream stream = await file.OpenReadAsync(); using var memory = new MemoryStream(); await stream.CopyToAsync(memory);
-            _attachments.Add(new AttachmentInfo { Name = file.FileName, ContentType = file.ContentType ?? "application/octet-stream", Data = memory.ToArray() });
-            _status.Text = $"{_attachments.Count} attachment{(_attachments.Count == 1 ? "" : "s")} ready";
+            var attachment = new AttachmentInfo { Name = file.FileName, ContentType = file.ContentType ?? "application/octet-stream", Data = memory.ToArray() };
+            _attachments.Add(attachment);
+            AddAttachmentCard(attachment);
+            if (!_sessionKnownToServer)
+            {
+                await _client.EnsureSessionAsync(_sessionId, _projectId, (_models.SelectedItem as ModelInfo)?.Id ?? "");
+                _sessionKnownToServer = true;
+            }
+            await UploadAttachmentAsync(attachment);
         }
         catch (Exception ex) { await DisplayAlertAsync("Attachment", ex.Message, "OK"); }
+    }
+
+    private async Task UploadAttachmentAsync(AttachmentInfo attachment)
+    {
+        try
+        {
+            await _client.UploadProjectFileAsync(_sessionId, attachment, "\\", false, new Progress<double>(_ => RefreshAttachmentState()));
+            _status.Text = $"{attachment.Name} saved to Project Files";
+        }
+        catch (Exception ex)
+        {
+            attachment.UploadState = "failed";
+            attachment.UploadError = ex.Message;
+            _status.Text = "Upload failed: " + ex.Message;
+        }
+        RefreshAttachmentState();
+    }
+
+    private void AddAttachmentCard(AttachmentInfo attachment)
+    {
+        View preview = attachment.IsImage
+            ? new Image { Source = ImageSource.FromStream(() => new MemoryStream(attachment.Data)), Aspect = Aspect.AspectFill, WidthRequest = 96, HeightRequest = 82 }
+            : new Label { Text = "📄\n" + attachment.Name, TextColor = Colors.White, WidthRequest = 124, HeightRequest = 82, LineBreakMode = LineBreakMode.TailTruncation };
+        var scrim = new BoxView { BackgroundColor = Color.FromArgb("#880B1020"), InputTransparent = true };
+        var progress = new ProgressBar { ProgressColor = Color.FromArgb("#60A5FA"), BackgroundColor = Color.FromArgb("#334155"), VerticalOptions = LayoutOptions.End, Margin = 5 };
+        progress.SetBinding(ProgressBar.ProgressProperty, nameof(AttachmentInfo.UploadProgress));
+        var percent = new Label { TextColor = Colors.White, FontAttributes = FontAttributes.Bold, FontSize = 11, HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center };
+        percent.SetBinding(Label.TextProperty, nameof(AttachmentInfo.UploadPercent));
+        var retry = new Button { Text = "Retry", FontSize = 10, Padding = new Thickness(5, 1), BackgroundColor = Color.FromArgb("#991B1B"), TextColor = Colors.White, IsVisible = false, HorizontalOptions = LayoutOptions.End, VerticalOptions = LayoutOptions.Start };
+        var remove = new Button { Text = "×", FontSize = 14, Padding = 0, WidthRequest = 28, HeightRequest = 28, BackgroundColor = Color.FromArgb("#99000000"), TextColor = Colors.White, HorizontalOptions = LayoutOptions.Start, VerticalOptions = LayoutOptions.Start };
+        var grid = new Grid { BindingContext = attachment, WidthRequest = attachment.IsImage ? 96 : 124, HeightRequest = 82, Children = { preview, scrim, percent, progress, retry, remove } };
+        void UpdateCard()
+        {
+            ApplyAttachmentBlur(preview, attachment.IsUploading);
+            scrim.IsVisible = attachment.IsUploading || attachment.NeedsAttention;
+            progress.IsVisible = attachment.IsUploading;
+            percent.IsVisible = attachment.IsUploading;
+            retry.IsVisible = attachment.NeedsAttention;
+        }
+        attachment.PropertyChanged += (_, _) => MainThread.BeginInvokeOnMainThread(UpdateCard);
+        preview.HandlerChanged += (_, _) => UpdateCard();
+        retry.Clicked += async (_, _) => await UploadAttachmentAsync(attachment);
+        remove.Clicked += (_, _) =>
+        {
+            _attachments.Remove(attachment);
+            _attachmentStrip.Remove(grid);
+            RefreshAttachmentState();
+        };
+        UpdateCard();
+        _attachmentStrip.Add(grid);
+        _attachmentScroll.IsVisible = true;
+        RefreshAttachmentState();
+    }
+
+    private static void ApplyAttachmentBlur(View preview, bool uploading)
+    {
+        preview.Opacity = uploading ? .58 : 1;
+#if ANDROID
+        if (preview.Handler?.PlatformView is Android.Views.View nativeView && OperatingSystem.IsAndroidVersionAtLeast(31))
+        {
+            nativeView.SetRenderEffect(uploading
+                ? Android.Graphics.RenderEffect.CreateBlurEffect(18f, 18f, Android.Graphics.Shader.TileMode.Clamp!)
+                : null);
+        }
+#elif IOS
+        if (preview.Handler?.PlatformView is UIKit.UIView nativeView)
+        {
+            const int blurTag = 0x4A41434B;
+            UIKit.UIView? existing = nativeView.ViewWithTag(blurTag);
+            if (uploading && existing is null)
+            {
+                var blur = new UIKit.UIVisualEffectView(UIKit.UIBlurEffect.FromStyle(UIKit.UIBlurEffectStyle.SystemMaterialDark))
+                {
+                    Tag = blurTag,
+                    Frame = nativeView.Bounds,
+                    AutoresizingMask = UIKit.UIViewAutoresizing.FlexibleWidth | UIKit.UIViewAutoresizing.FlexibleHeight,
+                    UserInteractionEnabled = false
+                };
+                nativeView.AddSubview(blur);
+            }
+            else if (!uploading)
+            {
+                existing?.RemoveFromSuperview();
+            }
+        }
+#endif
+    }
+
+    private void RestoreAttachmentCards()
+    {
+        _attachmentStrip.Clear();
+        foreach (AttachmentInfo attachment in _attachments) AddAttachmentCard(attachment);
+    }
+
+    private void RefreshAttachmentState()
+    {
+        _attachmentScroll.IsVisible = _attachmentStrip.Count > 0;
+        bool blocked = _attachments.Any(item => item.IsUploading || item.NeedsAttention);
+        if (!_generation.IsGenerating)
+        {
+            _send.IsEnabled = !blocked;
+            _send.Opacity = blocked ? .45 : 1;
+        }
     }
 
     private async Task RecordVoiceAsync()

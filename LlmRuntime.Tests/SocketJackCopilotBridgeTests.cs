@@ -37,7 +37,40 @@ public sealed class SocketJackCopilotBridgeTests
         Assert.AreEqual(11600, options.ListenPort);
         Assert.AreEqual("token-value", options.AuthToken);
         Assert.AreEqual("JACK", options.AuthUserName);
+        Assert.IsTrue(options.HasUpstreamAuthentication);
+        Assert.AreEqual(SocketJackAuthFingerprint.Compute("token-value"), options.AuthFingerprint);
+        Assert.AreEqual(24, options.AuthFingerprint.Length);
         Assert.AreEqual("https://socketjack.com/proxy/TitanX/", options.ServerEndpoint.ToString());
+    }
+
+    [TestMethod]
+    public void BridgeOptionsReportMissingUpstreamAuthentication()
+    {
+        CopilotBridgeOptions options = CopilotBridgeOptions.Parse(new[]
+        {
+            "--http-proxy",
+            "--server-endpoint",
+            "http://127.0.0.1:11436",
+            "--server-id",
+            "local-jackllm-workstation",
+            "--model",
+            "local-model",
+            "--listen-port",
+            "11574"
+        });
+
+        Assert.IsFalse(options.HasUpstreamAuthentication);
+        Assert.AreEqual("", options.AuthFingerprint);
+    }
+
+    [TestMethod]
+    public void BridgeAuthFingerprintIsStableWithoutExposingToken()
+    {
+        string fingerprint = SocketJackAuthFingerprint.Compute("secret-workstation-token");
+
+        Assert.AreEqual(fingerprint, SocketJackAuthFingerprint.Compute("secret-workstation-token"));
+        Assert.AreNotEqual(fingerprint, SocketJackAuthFingerprint.Compute("different-token"));
+        Assert.IsFalse(fingerprint.Contains("secret", StringComparison.OrdinalIgnoreCase));
     }
 
     [TestMethod]
@@ -564,10 +597,43 @@ public sealed class SocketJackCopilotBridgeTests
         """);
         byte[] plainRequest = Encoding.UTF8.GetBytes("""{ "model": "qwen-tools", "messages": [{ "role": "user", "content": "hello" }] }""");
 
-        Assert.AreEqual(300, SocketJackOpenAiChatAdapter.GetEffectiveOpenAiStreamTimeoutSeconds(visualStudioRequest, 120));
+        Assert.AreEqual(1200, SocketJackOpenAiChatAdapter.GetEffectiveOpenAiStreamTimeoutSeconds(visualStudioRequest, 120));
         Assert.AreEqual(120, SocketJackOpenAiChatAdapter.GetEffectiveOpenAiStreamTimeoutSeconds(plainRequest, 120));
         Assert.IsTrue(SocketJackOpenAiChatAdapter.IsVisualStudioToolRequest(visualStudioRequest));
         Assert.IsFalse(SocketJackOpenAiChatAdapter.IsVisualStudioToolRequest(plainRequest));
+    }
+
+    [TestMethod]
+    public void OpenAiAdapterBuildsNoToolsVisibleAnswerRecoveryRequest()
+    {
+        JsonObject request = JsonNode.Parse("""
+        {
+          "model": "qwen-tools",
+          "stream": true,
+          "max_tokens": 256,
+          "messages": [
+            { "role": "user", "content": "Find and summarize the security flaws." },
+            { "role": "assistant", "tool_calls": [{ "id": "read_1", "type": "function", "function": { "name": "get_file", "arguments": "{}" } }] },
+            { "role": "tool", "tool_call_id": "read_1", "content": "Security finding evidence" }
+          ],
+          "tools": [
+            { "type": "function", "function": { "name": "get_file", "description": "Read a file." } }
+          ],
+          "tool_choice": "auto"
+        }
+        """)!.AsObject();
+
+        JsonObject recovery = SocketJackOpenAiChatAdapter.BuildNoVisibleAssistantRecoveryRequest(request, "qwen-tools");
+        JsonArray messages = recovery["messages"]!.AsArray();
+
+        Assert.AreEqual("false", recovery["stream"]!.ToString().ToLowerInvariant());
+        Assert.AreEqual("8192", recovery["max_tokens"]!.ToString());
+        Assert.IsNull(recovery["tools"]);
+        Assert.IsNull(recovery["tool_choice"]);
+        StringAssert.Contains(messages.Select(message => message?["content"]?.ToString() ?? "").First(text => text.Contains("Security finding evidence", StringComparison.Ordinal)), "Security finding evidence");
+        Assert.AreEqual("user", messages[^1]!["role"]!.ToString());
+        StringAssert.Contains(messages[^1]!["content"]!.ToString(), "complete visible final answer");
+        StringAssert.Contains(messages[^1]!["content"]!.ToString(), "/no_think");
     }
 
     [TestMethod]
@@ -1887,9 +1953,11 @@ public sealed class SocketJackCopilotBridgeTests
     {
         string fallback = SocketJackOpenAiChatAdapter.BuildNoVisibleAssistantTextFallback();
         string legacyCopilotFallback = "The model finished without a visible reply. Please try again, or select another enabled chat model.";
+        string runtimeFallback = "The model used the response budget without producing visible assistant text. Retry with a higher max_tokens value.";
 
         Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(fallback));
         Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(legacyCopilotFallback));
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(runtimeFallback));
         Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText("data: {\"choices\":[{\"delta\":{\"content\":\"" + fallback + "\"}}]}"));
         Assert.IsTrue(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText("data: {\"choices\":[{\"delta\":{\"content\":\"" + legacyCopilotFallback + "\"}}]}"));
         Assert.IsFalse(SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText("The model paused before writing a final answer."));

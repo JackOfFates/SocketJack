@@ -8,6 +8,7 @@ using JackLLM.Security;
 using Microsoft.Win32;
 using System.IO;
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Principal;
 using System.ServiceProcess;
 
@@ -199,14 +200,15 @@ public partial class StartupLoadingWindow : Window {
                 // pipe and machine-protected credential store.
             }
 
-            string brokerPath = Path.Combine(AppContext.BaseDirectory, "SecurityBroker", "JackLLM.SecurityBroker.exe");
+            string brokerPath = ResolveBundledSecurityBrokerPath();
             if (!File.Exists(brokerPath)) {
                 throw new FileNotFoundException(
                     "The official Release Security Broker is not installed or bundled. Rebuild JackLLM Workstation in Release mode.",
                     brokerPath);
             }
 
-            using Process brokerProcess = Process.Start(new ProcessStartInfo(brokerPath, "--local-release") {
+            string brokerArguments = "--local-release --parent-pid " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+            using Process brokerProcess = Process.Start(new ProcessStartInfo(brokerPath, brokerArguments) {
                 UseShellExecute = true,
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden,
@@ -215,8 +217,19 @@ public partial class StartupLoadingWindow : Window {
 
             for (int attempt = 0; attempt < 40; attempt++) {
                 await Task.Delay(250, cancellationToken);
-                if (brokerProcess.HasExited)
+                if (brokerProcess.HasExited) {
+                    if (brokerProcess.ExitCode == 0) {
+                        SecurityResponse existingResponse = await _securityBroker.SendAsync(
+                            new SecurityRequest { Operation = SecurityOperation.Status },
+                            cancellationToken,
+                            TimeSpan.FromMilliseconds(500));
+                        if (existingResponse.State != SecurityStateKind.Error &&
+                            existingResponse.BrokerCompatibility == SecurityProtocol.BrokerCompatibility &&
+                            !existingResponse.DevelopmentMode)
+                            return;
+                    }
                     throw new InvalidOperationException($"The official Release Security Broker exited with code {brokerProcess.ExitCode}.");
+                }
                 SecurityResponse response = await _securityBroker.SendAsync(
                     new SecurityRequest { Operation = SecurityOperation.Status },
                     cancellationToken,
@@ -231,6 +244,16 @@ public partial class StartupLoadingWindow : Window {
             App.WriteCrashLog("Official Release security broker failed to start", ex);
             throw;
         }
+    }
+
+    private static string ResolveBundledSecurityBrokerPath() {
+        string installedPath = Path.Combine(AppContext.BaseDirectory, "JackLLM.SecurityBroker.exe");
+        if (File.Exists(installedPath))
+            return installedPath;
+
+        // Source-tree Release builds place the broker in this subdirectory. The MSI
+        // installs the same signed executable beside JackLLM.exe in Program Files.
+        return Path.Combine(AppContext.BaseDirectory, "SecurityBroker", "JackLLM.SecurityBroker.exe");
     }
 
     private void ConfigureAuthenticationMode(AuthenticationMode mode, string title, string detail, string action) {

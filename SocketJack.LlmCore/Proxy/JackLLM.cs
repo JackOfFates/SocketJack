@@ -14,6 +14,7 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -28,6 +29,13 @@ using SocketJack.Net.Services;
 using SocketJack.Sandbox;
 
 namespace SocketJack.Net;
+
+public sealed class LmVsProxyStorageOptions
+{
+	public string ChatDataRoot { get; init; } = "";
+	public string SessionFilesRoot { get; init; } = "";
+	public string RemoteSessionsRoot { get; init; } = "";
+}
 
 public partial class LmVsProxy : IDisposable
 {
@@ -272,6 +280,12 @@ private sealed class WebChatModelManagerLoadSettings
 		public string Extension { get; set; } = "";
 
 		public string ChangeKind { get; set; } = "modified";
+
+		public int Additions { get; set; }
+
+		public int Deletions { get; set; }
+
+		public bool LineStatsAvailable { get; set; }
 	}
 
 	private sealed class ChatFileUndoEntry
@@ -526,6 +540,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private const int WebAuthPasswordHashIterations = 100000;
 
 	private static readonly TimeSpan WebAuthTokenLifetime = TimeSpan.FromHours(24.0);
+	private static readonly TimeSpan RememberedWebAuthTokenLifetime = TimeSpan.FromDays(30.0);
+	private const int MaxWebAuthSessionsPerUser = 32;
 
 	private const string WebAuthCookieName = "LmVsProxyAuth";
 
@@ -550,6 +566,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private const string ChatCostsTableName = "Costs";
 
 	private const string ChatUserCostsTableName = "UserCosts";
+
+	private const string UserResourceQuotasTableName = "UserResourceQuotas";
 
 	private const string FinanceDatabaseName = "Finance";
 
@@ -590,6 +608,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private const int ChatSessionListMaxTake = 250;
 
 	private const int ChatPrivatePayloadCacheMaxEntries = 512;
+	private const int ChatPrivatePayloadCacheMaxEntryChars = 8 * 1024 * 1024;
+	private const int ChatPrivatePayloadCacheMaxTotalChars = 32 * 1024 * 1024;
 
 	private static readonly TimeSpan SolutionExplorerStorageCacheTtl = TimeSpan.FromSeconds(10.0);
 
@@ -778,6 +798,18 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private int _chatDataVersion;
 
+	private readonly object _observabilitySnapshotLock = new object();
+
+	private ObservabilitySnapshot _observabilitySnapshotCache;
+
+	private DateTimeOffset _observabilitySnapshotCreatedUtc = DateTimeOffset.MinValue;
+
+	private int _observabilitySnapshotDataVersion = -1;
+
+	private int _observabilitySnapshotRefreshInFlight;
+
+	private static readonly TimeSpan ObservabilitySnapshotTtl = TimeSpan.FromSeconds(2);
+
 	private readonly HashSet<string> _socketJackServerOwnerUserNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 	private readonly object _activePromptSessionLock = new object();
@@ -795,6 +827,18 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	private readonly Dictionary<string, DateTimeOffset> _pendingChatStreamStops = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
 
 	private readonly Dictionary<string, PendingChatStreamSteering> _pendingChatStreamSteering = new Dictionary<string, PendingChatStreamSteering>(StringComparer.Ordinal);
+
+	private readonly Dictionary<string, DateTimeOffset> _closedChatStreamSteering = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+
+	private readonly object _userNetworkTrafficLock = new object();
+
+	private readonly Dictionary<string, UserNetworkTrafficState> _userNetworkTraffic = new Dictionary<string, UserNetworkTrafficState>(StringComparer.OrdinalIgnoreCase);
+
+	private readonly ConditionalWeakTable<HttpRequest, object> _trafficCountedRequests = new ConditionalWeakTable<HttpRequest, object>();
+
+	private readonly Dictionary<string, DateTimeOffset> _webAuthPresencePersistUtc = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+
+	private readonly Dictionary<string, DateTimeOffset> _userQuotaPersistUtc = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
 
 	private readonly object _chatFileUndoLock = new object();
 
@@ -1304,8 +1348,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			lock (_chatSessionLock)
 			{
 				Table table = GetChatCostsTable();
-				UpsertChatCostSetting(table, "gpuTdpWatts", snapshot.TdpWatts);
-				SaveChatSessionDataAndInvalidateCaches();
+				string detected = NormalizeCostNumber(snapshot.TdpWatts).ToString("0.########", CultureInfo.InvariantCulture);
+				if (!string.Equals(ReadChatCostSettingRaw(table, "gpuTdpWatts", ""), detected, StringComparison.Ordinal))
+				{
+					UpsertChatCostSetting(table, "gpuTdpWatts", snapshot.TdpWatts);
+					SaveChatSessionDataAndInvalidateCaches();
+				}
 			}
 		}
 		return snapshot;
@@ -1506,36 +1554,108 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	public IReadOnlyList<ChatSessionDiagnosticsSnapshot> GetChatSessionDiagnostics()
 	{
-		List<ChatSessionDiagnosticsSnapshot> sessions = new List<ChatSessionDiagnosticsSnapshot>();
+		List<object[]> rows;
 		lock (_chatSessionLock)
 		{
 			Table table = GetChatSessionsTable();
-			foreach (object[] sourceRow in table.Rows)
-			{
-				object[] row = NormalizeChatSessionRow(sourceRow);
-				sessions.Add(new ChatSessionDiagnosticsSnapshot
-				{
-					Id = GetRowValue(row, 0),
-					Title = GetRowValue(row, 1),
-					CreatedUtc = GetRowValue(row, 2),
-					UpdatedUtc = GetRowValue(row, 3),
-					Model = GetRowValue(row, 4),
-					Runtime = GetRowValue(row, 18),
-					OwnerKey = GetRowValue(row, 7),
-					MessageCount = CountJsonArrayItems(GetChatSessionPrivateValue(row, 5, "messages", "[]")),
-					FileCount = CountJsonArrayItems(GetChatSessionPrivateValue(row, 6, "files", "[]")),
-					TitleLocked = ParseStoredBool(GetRowValue(row, 11), fallback: false),
-					SavedUtc = GetRowValue(row, 12),
-					Locked = ParseStoredBool(GetRowValue(row, 13), fallback: false),
-					LockedUtc = GetRowValue(row, 14),
-					ClonedFromSessionId = GetRowValue(row, 15),
-					PromptTokenCount = ParseStoredLong(GetRowValue(row, 16), 0L),
-					PromptTokenBudget = ParseStoredLong(GetRowValue(row, 17), 8192L)
-				});
-			}
+			rows = table.Rows.Select(sourceRow => NormalizeChatSessionRow(sourceRow)).ToList();
 		}
+		ChatSessionDiagnosticsSnapshot[] snapshots = new ChatSessionDiagnosticsSnapshot[rows.Count];
+		Parallel.For(0, rows.Count, new ParallelOptions
+		{
+			MaxDegreeOfParallelism = Math.Min(4, Math.Max(1, Environment.ProcessorCount - 1))
+		}, index =>
+		{
+			object[] row = rows[index];
+			string ownerKey = GetRowValue(row, 7);
+			snapshots[index] = new ChatSessionDiagnosticsSnapshot
+			{
+				Id = GetRowValue(row, 0),
+				Title = GetRowValue(row, 1),
+				CreatedUtc = GetRowValue(row, 2),
+				UpdatedUtc = GetRowValue(row, 3),
+				Model = GetRowValue(row, 4),
+				Runtime = GetRowValue(row, 18),
+				OwnerKey = ownerKey,
+				MessageCount = CountChatSessionPrivateArrayItems(row, 5, "messages", "[]", ownerKey, allowDecrypt: true),
+				FileCount = CountChatSessionPrivateArrayItems(row, 6, "files", "[]", ownerKey, allowDecrypt: true),
+				TitleLocked = ParseStoredBool(GetRowValue(row, 11), fallback: false),
+				SavedUtc = GetRowValue(row, 12),
+				Locked = ParseStoredBool(GetRowValue(row, 13), fallback: false),
+				LockedUtc = GetRowValue(row, 14),
+				ClonedFromSessionId = GetRowValue(row, 15),
+				PromptTokenCount = ParseStoredLong(GetRowValue(row, 16), 0L),
+				PromptTokenBudget = ParseStoredLong(GetRowValue(row, 17), 8192L)
+			};
+		});
+		List<ChatSessionDiagnosticsSnapshot> sessions = snapshots.Where(item => item != null).ToList();
 		sessions.Sort((ChatSessionDiagnosticsSnapshot a, ChatSessionDiagnosticsSnapshot b) => string.CompareOrdinal(b.UpdatedUtc, a.UpdatedUtc));
 		return sessions;
+	}
+
+	private ObservabilitySnapshot GetCachedObservabilityDiagnostics()
+	{
+		ObservabilitySnapshot cached;
+		DateTimeOffset created;
+		int dataVersion = Volatile.Read(ref _chatDataVersion);
+		lock (_observabilitySnapshotLock)
+		{
+			cached = _observabilitySnapshotCache;
+			created = _observabilitySnapshotCreatedUtc;
+		}
+		if (cached == null)
+		{
+			RefreshObservabilitySnapshot();
+			lock (_observabilitySnapshotLock)
+			{
+				cached = _observabilitySnapshotCache;
+				created = _observabilitySnapshotCreatedUtc;
+			}
+		}
+		else if (DateTimeOffset.UtcNow - created >= ObservabilitySnapshotTtl || _observabilitySnapshotDataVersion != dataVersion)
+		{
+			_ = Task.Run((Action)RefreshObservabilitySnapshot);
+		}
+		if (cached == null)
+		{
+			cached = new ObservabilitySnapshot { GeneratedUtc = DateTimeOffset.UtcNow.ToString("O") };
+		}
+		cached.SnapshotAgeMs = Math.Max(0L, (long)(DateTimeOffset.UtcNow - created).TotalMilliseconds);
+		cached.Refreshing = Volatile.Read(ref _observabilitySnapshotRefreshInFlight) != 0;
+		return cached;
+	}
+
+	private void RefreshObservabilitySnapshot()
+	{
+		if (Interlocked.CompareExchange(ref _observabilitySnapshotRefreshInFlight, 1, 0) != 0)
+			return;
+		int refreshDataVersion = Volatile.Read(ref _chatDataVersion);
+		try
+		{
+			ObservabilitySnapshot snapshot = GetObservabilityDiagnostics();
+			snapshot.SnapshotAgeMs = 0;
+			lock (_observabilitySnapshotLock)
+			{
+				_observabilitySnapshotCache = snapshot;
+				_observabilitySnapshotCreatedUtc = DateTimeOffset.UtcNow;
+				_observabilitySnapshotDataVersion = refreshDataVersion;
+			}
+		}
+		catch (Exception ex)
+		{
+			lock (_observabilitySnapshotLock)
+			{
+				if (_observabilitySnapshotCache != null && !_observabilitySnapshotCache.DegradedSections.Contains("refresh"))
+					_observabilitySnapshotCache.DegradedSections.Add("refresh");
+			}
+			LogMessage("[Observability] Background refresh failed: " + ex.Message);
+		}
+		finally
+		{
+			Volatile.Write(ref _observabilitySnapshotRefreshInFlight, 0);
+			if (Volatile.Read(ref _chatDataVersion) != refreshDataVersion)
+				_ = Task.Run((Action)RefreshObservabilitySnapshot);
+		}
 	}
 
 	public IReadOnlyList<ActivePromptSessionDiagnosticsSnapshot> GetActivePromptSessionDiagnostics()
@@ -2071,6 +2191,20 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				}
 			}
 		}
+		Dictionary<string, int> authenticatedSessionCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, string> authenticatedLastSeen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		lock (_chatSessionLock)
+		{
+			DateTimeOffset now = DateTimeOffset.UtcNow;
+			foreach (object[] row in GetWebAuthSessionsTable().Rows)
+			{
+				WebAuthSessionRecord authSession = WebAuthSessionRecordFromRow(row);
+				if (authSession == null || string.IsNullOrWhiteSpace(authSession.userName) || !DateTimeOffset.TryParse(authSession.expiresUtc, out var expires) || expires <= now) continue;
+				string owner = "webauth:" + authSession.userName.Trim().ToLowerInvariant();
+				authenticatedSessionCounts[owner] = authenticatedSessionCounts.TryGetValue(owner, out var count) ? count + 1 : 1;
+				if (!authenticatedLastSeen.TryGetValue(owner, out var seen) || IsLaterIsoUtc(authSession.lastSeenUtc, seen)) authenticatedLastSeen[owner] = authSession.lastSeenUtc ?? "";
+			}
+		}
 		foreach (ServerUserUsageDiagnosticsSnapshot user3 in users.Values)
 		{
 			ChatPermissionState permissions = (string.Equals(user3.OwnerKey, "global", StringComparison.OrdinalIgnoreCase) ? GetChatPermissions() : GetChatPermissions(user3.OwnerKey));
@@ -2081,10 +2215,28 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			user3.IsMuted = IsChatMuted(permissions);
 			user3.IsBanned = IsChatBanned(permissions);
 			ChatUsageDiagnosticsSnapshot usage = (user3.Usage = BuildChatUsageDiagnosticsSnapshot(string.Equals(user3.OwnerKey, "global", StringComparison.OrdinalIgnoreCase) ? BuildAnonymousChatUsageSnapshot() : GetChatUsageSnapshot(user3.OwnerKey)));
+			user3.ResourceQuota = GetUserResourceQuotaDiagnostics(user3.OwnerKey);
 			user3.TokensUsed = Math.Max(user3.TokensUsed, usage.TokensUsed);
 			user3.TokenLimit = Math.Max(user3.TokenLimit, usage.TokenLimit);
 			user3.TokensRemaining = (usage.Unlimited ? 0 : Math.Max(0L, user3.TokenLimit - user3.TokensUsed));
 			user3.Unlimited = user3.Unlimited || usage.Unlimited;
+			user3.AuthenticatedSessionCount = authenticatedSessionCounts.TryGetValue(user3.OwnerKey, out var authCount) ? authCount : 0;
+			user3.LastSeenUtc = authenticatedLastSeen.TryGetValue(user3.OwnerKey, out var persistedSeen) ? persistedSeen : "";
+			lock (_userNetworkTrafficLock)
+			{
+				if (_userNetworkTraffic.TryGetValue(user3.OwnerKey, out var traffic))
+				{
+					DateTimeOffset cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(5.0);
+					while (traffic.Samples.Count > 0 && traffic.Samples.Peek().CreatedUtc < cutoff) traffic.Samples.Dequeue();
+					user3.InboundBytesPerSecond = Math.Round(traffic.Samples.Sum(sample => sample.InboundBytes) / 5.0, 2);
+					user3.OutboundBytesPerSecond = Math.Round(traffic.Samples.Sum(sample => sample.OutboundBytes) / 5.0, 2);
+					user3.InboundBytesTotal = traffic.InboundBytesTotal;
+					user3.OutboundBytesTotal = traffic.OutboundBytesTotal;
+					if (string.IsNullOrWhiteSpace(user3.LastSeenUtc) || IsLaterIsoUtc(traffic.LastSeenUtc.ToString("O"), user3.LastSeenUtc)) user3.LastSeenUtc = traffic.LastSeenUtc.ToString("O");
+				}
+			}
+			bool recentlySeen = DateTimeOffset.TryParse(user3.LastSeenUtc, out var lastSeen) && DateTimeOffset.UtcNow - lastSeen <= TimeSpan.FromSeconds(60.0);
+			user3.ConnectionState = (user3.ActiveSessionCount > 0 || recentlySeen) ? "online" : (user3.AuthenticatedSessionCount > 0 ? "signed_in_idle" : "offline");
 		}
 		return (from serverUserUsageDiagnosticsSnapshot in users.Values
 			where !string.Equals(serverUserUsageDiagnosticsSnapshot.OwnerKey, "global", StringComparison.OrdinalIgnoreCase)
@@ -2682,14 +2834,244 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 	}
 
+	public UserResourceQuotaDiagnosticsSnapshot GetUserResourceQuotaDiagnostics(string ownerKey)
+	{
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		lock (_chatSessionLock)
+		{
+			object[] row = GetOrCreateUserResourceQuotaRowLocked(ownerKey, create: false);
+			return BuildUserResourceQuotaSnapshotLocked(ownerKey, row);
+		}
+	}
+
+	public UserResourceQuotaDiagnosticsSnapshot SaveUserResourceQuotaDiagnostics(UserResourceQuotaDiagnosticsSnapshot snapshot)
+	{
+		if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
+		string ownerKey = NormalizeChatFilesystemOwnerKey(snapshot.OwnerKey);
+		if (string.IsNullOrWhiteSpace(ownerKey) || string.Equals(ownerKey, "global", StringComparison.OrdinalIgnoreCase) || string.Equals(ownerKey, "unauthenticated", StringComparison.OrdinalIgnoreCase))
+			throw new InvalidOperationException("Select an authenticated Workstation user before saving resource limits.");
+		lock (_chatSessionLock)
+		{
+			Table table = GetUserResourceQuotasTable();
+			object[] row = GetOrCreateUserResourceQuotaRowLocked(ownerKey, create: true);
+			row[1] = Math.Max(0L, snapshot.StorageLimitBytes).ToString(CultureInfo.InvariantCulture);
+			row[2] = Math.Max(0L, snapshot.BandwidthBytesPerSecond).ToString(CultureInfo.InvariantCulture);
+			row[3] = Math.Max(0L, snapshot.DailyBandwidthLimitBytes).ToString(CultureInfo.InvariantCulture);
+			row[4] = Math.Max(0L, snapshot.WeeklyBandwidthLimitBytes).ToString(CultureInfo.InvariantCulture);
+			row[5] = Math.Max(0L, snapshot.DailyTokenLimit).ToString(CultureInfo.InvariantCulture);
+			row[6] = Math.Max(0L, snapshot.WeeklyTokenLimit).ToString(CultureInfo.InvariantCulture);
+			row[7] = Math.Max(1, Math.Min(100, snapshot.TokenLimitPercent <= 0 ? 100 : snapshot.TokenLimitPercent)).ToString(CultureInfo.InvariantCulture);
+			row[8] = Math.Max(1, Math.Min(100, snapshot.WarningPercent <= 0 ? 80 : snapshot.WarningPercent)).ToString(CultureInfo.InvariantCulture);
+			row[15] = DateTimeOffset.UtcNow.ToString("O");
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				if (string.Equals(GetRowValue(table.Rows[i], 0), ownerKey, StringComparison.OrdinalIgnoreCase)) { table.Rows[i] = row; break; }
+			}
+			SaveChatSessionDataAndInvalidateCaches();
+			return BuildUserResourceQuotaSnapshotLocked(ownerKey, row);
+		}
+	}
+
+	private object[] GetOrCreateUserResourceQuotaRowLocked(string ownerKey, bool create)
+	{
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		Table table = GetUserResourceQuotasTable();
+		for (int i = 0; i < table.Rows.Count; i++)
+		{
+			object[] row = NormalizeUserResourceQuotaRow(table.Rows[i]);
+			table.Rows[i] = row;
+			if (string.Equals(GetRowValue(row, 0), ownerKey, StringComparison.OrdinalIgnoreCase)) return row;
+		}
+		object[] created = NormalizeUserResourceQuotaRow(new object[] { ownerKey });
+		if (create) table.Rows.Add(created);
+		return created;
+	}
+
+	private UserResourceQuotaDiagnosticsSnapshot BuildUserResourceQuotaSnapshotLocked(string ownerKey, object[] row, bool includeStorageUsage = true)
+	{
+		row = NormalizeUserResourceQuotaRow(row);
+		double rate = 0.0;
+		lock (_userNetworkTrafficLock)
+		{
+			if (_userNetworkTraffic.TryGetValue(ownerKey, out var traffic))
+			{
+				DateTimeOffset cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(5.0);
+				while (traffic.Samples.Count > 0 && traffic.Samples.Peek().CreatedUtc < cutoff) traffic.Samples.Dequeue();
+				rate = (traffic.Samples.Sum(sample => sample.InboundBytes) + traffic.Samples.Sum(sample => sample.OutboundBytes)) / 5.0;
+			}
+		}
+		return new UserResourceQuotaDiagnosticsSnapshot
+		{
+			OwnerKey = ownerKey,
+			StorageLimitBytes = ParseStoredLong(GetRowValue(row, 1), 0L),
+			BandwidthBytesPerSecond = ParseStoredLong(GetRowValue(row, 2), 0L),
+			DailyBandwidthLimitBytes = ParseStoredLong(GetRowValue(row, 3), 0L),
+			WeeklyBandwidthLimitBytes = ParseStoredLong(GetRowValue(row, 4), 0L),
+			DailyTokenLimit = ParseStoredLong(GetRowValue(row, 5), 0L),
+			WeeklyTokenLimit = ParseStoredLong(GetRowValue(row, 6), 0L),
+			TokenLimitPercent = (int)ParseStoredLong(GetRowValue(row, 7), 100L),
+			WarningPercent = (int)ParseStoredLong(GetRowValue(row, 8), 80L),
+			DailyPeriodUtc = GetRowValue(row, 9), WeeklyPeriodUtc = GetRowValue(row, 10),
+			DailyBandwidthUsedBytes = ParseStoredLong(GetRowValue(row, 11), 0L),
+			WeeklyBandwidthUsedBytes = ParseStoredLong(GetRowValue(row, 12), 0L),
+			DailyTokensUsed = ParseStoredLong(GetRowValue(row, 13), 0L),
+			WeeklyTokensUsed = ParseStoredLong(GetRowValue(row, 14), 0L),
+			UpdatedUtc = GetRowValue(row, 15), StorageBytesUsed = includeStorageUsage ? GetChatStorageUsageBytes(ownerKey) : 0L,
+			CurrentBandwidthBytesPerSecond = Math.Round(Math.Max(0.0, rate), 2)
+		};
+	}
+
+	private void RecordUserNetworkTraffic(string ownerKey, long inboundBytes, long outboundBytes)
+	{
+		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
+		if (string.IsNullOrWhiteSpace(ownerKey) || string.Equals(ownerKey, "unauthenticated", StringComparison.OrdinalIgnoreCase)) return;
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		lock (_userNetworkTrafficLock)
+		{
+			if (!_userNetworkTraffic.TryGetValue(ownerKey, out var state))
+			{
+				state = new UserNetworkTrafficState { OwnerKey = ownerKey };
+				_userNetworkTraffic[ownerKey] = state;
+			}
+			state.LastSeenUtc = now;
+			state.InboundBytesTotal = SaturatingAdd(state.InboundBytesTotal, Math.Max(0L, inboundBytes));
+			state.OutboundBytesTotal = SaturatingAdd(state.OutboundBytesTotal, Math.Max(0L, outboundBytes));
+			if (inboundBytes > 0L || outboundBytes > 0L)
+				state.Samples.Enqueue(new UserNetworkTrafficSample { CreatedUtc = now, InboundBytes = Math.Max(0L, inboundBytes), OutboundBytes = Math.Max(0L, outboundBytes) });
+			DateTimeOffset cutoff = now - TimeSpan.FromSeconds(5.0);
+			while (state.Samples.Count > 0 && state.Samples.Peek().CreatedUtc < cutoff) state.Samples.Dequeue();
+		}
+		RecordUserResourceBandwidthUsage(ownerKey, Math.Max(0L, inboundBytes), Math.Max(0L, outboundBytes));
+	}
+
+	private void RecordUserResourceBandwidthUsage(string ownerKey, long inboundBytes, long outboundBytes)
+	{
+		long delta = SaturatingAdd(inboundBytes, outboundBytes);
+		if (delta <= 0L) return;
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		lock (_chatSessionLock)
+		{
+			object[] row = GetOrCreateUserResourceQuotaRowLocked(ownerKey, create: true);
+			RollUserResourceQuotaPeriods(row, now);
+			row[11] = SaturatingAdd(ParseStoredLong(GetRowValue(row, 11), 0L), delta).ToString(CultureInfo.InvariantCulture);
+			row[12] = SaturatingAdd(ParseStoredLong(GetRowValue(row, 12), 0L), delta).ToString(CultureInfo.InvariantCulture);
+			row[15] = now.ToString("O");
+			if (!_userQuotaPersistUtc.TryGetValue(ownerKey, out var persisted) || now - persisted >= TimeSpan.FromSeconds(5.0))
+			{
+				_userQuotaPersistUtc[ownerKey] = now;
+				SaveChatSessionDataAndInvalidateCaches();
+			}
+		}
+	}
+
+	private void RecordUserResourceTokenUsageLocked(string ownerKey, int tokens)
+	{
+		if (tokens <= 0) return;
+		object[] row = GetOrCreateUserResourceQuotaRowLocked(ownerKey, create: true);
+		RollUserResourceQuotaPeriods(row, DateTimeOffset.UtcNow);
+		row[13] = SaturatingAdd(ParseStoredLong(GetRowValue(row, 13), 0L), tokens).ToString(CultureInfo.InvariantCulture);
+		row[14] = SaturatingAdd(ParseStoredLong(GetRowValue(row, 14), 0L), tokens).ToString(CultureInfo.InvariantCulture);
+		row[15] = DateTimeOffset.UtcNow.ToString("O");
+	}
+
+	private bool CanConsumeUserResourceQuota(string ownerKey, ChatUsageSnapshot usage, int additionalTokens, long additionalNetworkBytes, out string error)
+	{
+		error = "";
+		if (IsAdminOwnerKey(ownerKey)) return true;
+		UserResourceQuotaDiagnosticsSnapshot quota;
+		lock (_chatSessionLock)
+		{
+			quota = BuildUserResourceQuotaSnapshotLocked(ownerKey, GetOrCreateUserResourceQuotaRowLocked(ownerKey, create: false), includeStorageUsage: false);
+		}
+		long networkDelta = Math.Max(0L, additionalNetworkBytes);
+		if (quota.BandwidthBytesPerSecond > 0L && quota.CurrentBandwidthBytesPerSecond + networkDelta / 5.0 > quota.BandwidthBytesPerSecond)
+		{
+			error = "SocketJack Networking bandwidth rate limit reached. Try again when current traffic drops.";
+			return false;
+		}
+		if (quota.DailyBandwidthLimitBytes > 0L && SaturatingAdd(quota.DailyBandwidthUsedBytes, networkDelta) > quota.DailyBandwidthLimitBytes)
+		{
+			error = "Daily SocketJack Networking transfer cap reached. The cap resets at 00:00 UTC.";
+			return false;
+		}
+		if (quota.WeeklyBandwidthLimitBytes > 0L && SaturatingAdd(quota.WeeklyBandwidthUsedBytes, networkDelta) > quota.WeeklyBandwidthLimitBytes)
+		{
+			error = "Weekly SocketJack Networking transfer cap reached. The cap resets Monday UTC.";
+			return false;
+		}
+		long tokenDelta = Math.Max(0, additionalTokens);
+		if (quota.DailyTokenLimit > 0L && SaturatingAdd(quota.DailyTokensUsed, tokenDelta) > quota.DailyTokenLimit)
+		{
+			error = "Daily token cap reached. The cap resets at 00:00 UTC.";
+			return false;
+		}
+		if (quota.WeeklyTokenLimit > 0L && SaturatingAdd(quota.WeeklyTokensUsed, tokenDelta) > quota.WeeklyTokenLimit)
+		{
+			error = "Weekly token cap reached. The cap resets Monday UTC.";
+			return false;
+		}
+		if (quota.TokenLimitPercent < 100 && usage != null && usage.tokenLimit > 0L)
+		{
+			long percentageLimit = Math.Max(1L, (long)Math.Floor(usage.tokenLimit * (quota.TokenLimitPercent / 100.0)));
+			if (SaturatingAdd(usage.tokensUsed, tokenDelta) > percentageLimit)
+			{
+				error = "Token percentage limit reached (" + quota.TokenLimitPercent.ToString(CultureInfo.InvariantCulture) + "% of this account's token allocation).";
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static long SaturatingAdd(long left, long right)
+	{
+		return right > 0L && left > long.MaxValue - right ? long.MaxValue : left + right;
+	}
+
+	private void RecordAuthenticatedRequestActivity(string ownerKey, HttpRequest request, WebAuthPrincipal principal)
+	{
+		long inbound = 0L;
+		if (request != null)
+		{
+			lock (_userNetworkTrafficLock)
+			{
+				if (!_trafficCountedRequests.TryGetValue(request, out _))
+				{
+					_trafficCountedRequests.Add(request, new object());
+					inbound = Math.Max(0L, request.ContentLength);
+				}
+			}
+		}
+		RecordUserNetworkTraffic(ownerKey, inbound, 0L);
+		if (principal == null || string.IsNullOrWhiteSpace(principal.AccessToken) || string.IsNullOrWhiteSpace(principal.UserName)) return;
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		string tokenHash = HashWebAuthToken(principal.AccessToken);
+		lock (_chatSessionLock)
+		{
+			if (_webAuthPresencePersistUtc.TryGetValue(tokenHash, out var persisted) && now - persisted < TimeSpan.FromSeconds(30.0)) return;
+			Table sessions = GetWebAuthSessionsTable();
+			for (int index = 0; index < sessions.Rows.Count; index++)
+			{
+				WebAuthSessionRecord session = WebAuthSessionRecordFromRow(sessions.Rows[index]);
+				if (!ConstantTimeEquals(session.tokenHash, tokenHash)) continue;
+				session.lastSeenUtc = now.ToString("O");
+				sessions.Rows[index] = WebAuthSessionRecordToRow(session);
+				_webAuthPresencePersistUtc[tokenHash] = now;
+				SaveChatSessionDataAndInvalidateCaches();
+				break;
+			}
+		}
+	}
+
 	private string ObserveChatRoute(string method, string route, string category, Func<string> handler, Func<string> ownerKey = null)
 	{
 		Stopwatch stopwatch = Stopwatch.StartNew();
 		bool success = false;
 		string detail = "";
+		long outboundBytes = 0L;
 		try
 		{
 			string result = handler();
+			outboundBytes = Encoding.UTF8.GetByteCount(result ?? "");
 			success = JsonResponseLooksSuccessful(result);
 			if (!success)
 			{
@@ -2705,7 +3087,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		finally
 		{
 			stopwatch.Stop();
-			RecordObservabilityRequest(method, route, category, success, stopwatch.Elapsed.TotalMilliseconds, 0L, SafeOwnerKey(ownerKey), detail);
+			string safeOwner = SafeOwnerKey(ownerKey);
+			RecordUserNetworkTraffic(safeOwner, 0L, outboundBytes);
+			RecordObservabilityRequest(method, route, category, success, stopwatch.Elapsed.TotalMilliseconds, 0L, safeOwner, detail);
 		}
 	}
 
@@ -3658,11 +4042,21 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	}
 
 	public LmVsProxy(string lmStudioHost, int lmStudioPort, int proxyPort, int chatServerPort = 0)
-		: this(lmStudioHost, lmStudioPort, proxyPort, chatServerPort, null)
+		: this(lmStudioHost, lmStudioPort, proxyPort, chatServerPort, null, null)
 	{
 	}
 
 	public LmVsProxy(string lmStudioHost, int lmStudioPort, int proxyPort, int chatServerPort, string dataRoot)
+		: this(lmStudioHost, lmStudioPort, proxyPort, chatServerPort, dataRoot, null)
+	{
+	}
+
+	public LmVsProxy(string lmStudioHost, int lmStudioPort, int proxyPort, int chatServerPort, LmVsProxyStorageOptions storageOptions)
+		: this(lmStudioHost, lmStudioPort, proxyPort, chatServerPort, null, storageOptions)
+	{
+	}
+
+	private LmVsProxy(string lmStudioHost, int lmStudioPort, int proxyPort, int chatServerPort, string dataRoot, LmVsProxyStorageOptions storageOptions)
 	{
 		if (string.IsNullOrWhiteSpace(lmStudioHost))
 		{
@@ -3707,9 +4101,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		_browserSkillHttpClient.Timeout = _promptTimeout;
 		_upstreamAdapter = new UpstreamAdapter(ChatModel);
 		string sessionBaseDirectory = GetSessionBaseDirectory(dataRoot);
-		_chatSessionRoot = GetDefaultChatSessionRoot(sessionBaseDirectory);
-		_chatSessionFilesRoot = Path.Combine(_chatSessionRoot, "SessionFiles");
-		_remoteSessionCloneRoot = GetDefaultRemoteSessionCloneRoot(sessionBaseDirectory);
+		_chatSessionRoot = PrepareExplicitRoot(storageOptions?.ChatDataRoot, GetDefaultChatSessionRoot(sessionBaseDirectory));
+		_chatSessionFilesRoot = PrepareExplicitRoot(storageOptions?.SessionFilesRoot, Path.Combine(_chatSessionRoot, "SessionFiles"));
+		_remoteSessionCloneRoot = PrepareExplicitRoot(storageOptions?.RemoteSessionsRoot, GetDefaultRemoteSessionCloneRoot(sessionBaseDirectory));
 		_sockJackDml = new SockJackDmlService(_chatSessionRoot);
 		_sockJackDmlWorkflows = new SockJackDmlWorkflowService(_chatSessionRoot);
 		StartRemoteSessionFileCloneWatcher();
@@ -3719,12 +4113,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			DefaultDatabase = "SocketJack",
 			ServerName = "JackLLMChat",
 			AutoSave = true,
-			AutoSaveDebounceMs = 250
+			AutoSaveDebounceMs = 1000
 		};
 		_chatSessionData.LogOutput += RelaySocketJackLogOutput;
 		_chatSessionData.OnError += RelaySocketJackError;
 		_chatSessionData.Load();
 		EnsureChatSessionTables();
+		_ = Task.Run((Action)RefreshObservabilitySnapshot);
 		TryRegisterWpfRemoteControlProvider();
 	}
 
@@ -3846,6 +4241,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			throw new ArgumentException("Session file path is required.", "fullPath");
 		}
 		sessionId = EnsureChatUiSessionId(sessionId);
+		string hostPath = Path.GetFullPath(fullPath);
+		string hostDirectory = Path.GetDirectoryName(hostPath);
+		if (!string.IsNullOrWhiteSpace(hostDirectory))
+		{
+			Directory.CreateDirectory(hostDirectory);
+		}
+		File.WriteAllBytes(hostPath, bytes ?? Array.Empty<byte>());
 		string sandboxPath = BuildChatSessionSandboxPath(sessionId, fullPath);
 		SandboxSession sandbox = GetOrCreateChatSessionSandbox(sessionId, ownerKey);
 		SandboxFileEntry entry = sandbox.FileSystem.WriteAllBytes(sandboxPath, bytes ?? Array.Empty<byte>(), new SandboxFileWriteOptions
@@ -4445,6 +4847,14 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		string fullDataRoot = Path.GetFullPath(Environment.ExpandEnvironmentVariables(dataRoot.Trim()));
 		Directory.CreateDirectory(fullDataRoot);
 		return fullDataRoot;
+	}
+
+	private static string PrepareExplicitRoot(string configuredRoot, string fallbackRoot)
+	{
+		string selected = string.IsNullOrWhiteSpace(configuredRoot) ? fallbackRoot : configuredRoot;
+		string fullRoot = Path.GetFullPath(Environment.ExpandEnvironmentVariables(selected.Trim()));
+		Directory.CreateDirectory(fullRoot);
+		return fullRoot;
 	}
 
 	private async Task EnsureLmStudioForPromptAsync()
@@ -5179,6 +5589,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("GET", "/api/observability", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/observability", "observability", () => HandleObservabilityGetRequest(connection, request), () => GetChatSessionOwnerKey(connection, request)));
 		server.Map("GET", "/api/observability/events", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/observability/events", "observability", () => HandleObservabilityEventsRequest(connection, request), () => GetChatSessionOwnerKey(connection, request)));
 		server.Map("GET", "/api/observability/prometheus", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/observability/prometheus", "observability", () => HandleObservabilityPrometheusRequest(connection, request), () => GetChatSessionOwnerKey(connection, request)));
+		server.Map("GET", "/api/diagnostics", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => ObserveChatRoute("GET", "/api/diagnostics", "diagnostics", () => HandleDiagnosticsGetRequest(connection, request), () => GetChatSessionOwnerKey(connection, request)));
 		server.Map("OPTIONS", "/api/observability", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("OPTIONS", "/api/observability/events", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
 		server.Map("OPTIONS", "/api/observability/prometheus", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleWebAuthCorsPreflight(request));
@@ -5301,6 +5712,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("GET", "/api/chat-solution-explorer", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatSolutionExplorerRequest(connection, request));
 		server.Map("GET", "/api/chat-file-preview", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleChatFilePreviewRequest(connection, request));
 		server.Map("GET", "/api/chat-file-download", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatFileDownloadRequest(connection, request)));
+		server.Map("DELETE", "/api/chat-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatFileDeleteRequest(connection, request)));
+		server.Map("GET", "/api/project-file-versions", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleProjectFileVersionsRequest(connection, request)));
+		server.Map("POST", "/api/project-file-versions", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleProjectFileVersionsMutationRequest(connection, request)));
 		server.Map("GET", "/api/chat-session-zip", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatSessionZipRequest(connection, request)));
 		server.Map("GET", "/api/chat-sessions", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatSessionsListRequest(connection, request)));
 		server.Map("GET", "/api/chat-projects", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatProjectsListRequest(connection, request)));
@@ -9189,6 +9603,56 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return builder.ToString();
 	}
 
+	private string HandleDiagnosticsGetRequest(NetworkConnection connection, HttpRequest request)
+	{
+		AddWebAuthCorsHeaders(request);
+		try
+		{
+			if (!TryAuthenticateWebAuthRequest(request, out var principal, out var authError) || principal == null || string.IsNullOrWhiteSpace(principal.UserName))
+				return BuildJsonError(request, 401, "Unauthorized", authError ?? "Sign in to view diagnostics.");
+			string ownerKey = "webauth:" + principal.UserName.Trim().ToLowerInvariant();
+			RecordAuthenticatedRequestActivity(ownerKey, request, principal);
+			bool admin = principal.IsAdministrator || IsDefaultAdministratorUserName(principal.UserName) || IsWebAuthAdministrator(principal.UserName) || IsServerOwnerPrincipal(principal);
+			ObservabilitySnapshot snapshot = GetCachedObservabilityDiagnostics();
+			string since = GetQueryParameter(request, "since") ?? "";
+			DateTimeOffset.TryParse(since, out var sinceUtc);
+			List<ObservabilityRecentEventSnapshot> events = snapshot.RecentEvents
+				.Where(item => item != null && (admin || string.Equals(NormalizeChatFilesystemOwnerKey(item.OwnerKey), ownerKey, StringComparison.OrdinalIgnoreCase)))
+				.Where(item => sinceUtc == default(DateTimeOffset) || !DateTimeOffset.TryParse(item.CreatedUtc, out var created) || created > sinceUtc)
+				.Select(item => new ObservabilityRecentEventSnapshot
+				{
+					Id = item.Id, Category = item.Category, Name = item.Name, Status = item.Status,
+					Detail = RedactDiagnosticDetail(item.Detail), OwnerKey = admin ? item.OwnerKey : "",
+					Route = item.Route, Tokens = item.Tokens, LatencyMs = item.LatencyMs, CreatedUtc = item.CreatedUtc
+				}).ToList();
+			string cursor = DateTimeOffset.UtcNow.ToString("O");
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				generatedUtc = snapshot.GeneratedUtc,
+				cursor,
+				isAdministrator = admin,
+				health = new { score = snapshot.HealthScore, tier = snapshot.HealthTier, uptimeSeconds = snapshot.UptimeSeconds, failedRequests = snapshot.FailedRequests, activePrompts = snapshot.ActivePromptSessions },
+				events,
+				routes = admin ? snapshot.Routes : new List<ObservabilityRouteSnapshot>(),
+				users = admin ? GetServerUserUsageDiagnostics() : new List<ServerUserUsageDiagnosticsSnapshot>()
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Diagnostics] Snapshot failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private static string RedactDiagnosticDetail(string detail)
+	{
+		detail = detail ?? "";
+		detail = Regex.Replace(detail, "(?i)(authorization|password|token|cookie|secret)\\s*[:=]\\s*[^\\s,;]+", "$1=[redacted]");
+		detail = Regex.Replace(detail, "(?i)Bearer\\s+[A-Za-z0-9._~+/-]+", "Bearer [redacted]");
+		return detail.Length <= 500 ? detail : detail.Substring(0, 500);
+	}
+
 	private string HandleObservabilityGetRequest(NetworkConnection connection, HttpRequest request)
 	{
 		AddWebAuthCorsHeaders(request);
@@ -9198,7 +9662,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return BuildDatabaseAdminOnlyJsonError(request, authError);
 			}
-			return JsonSerializer.Serialize(GetObservabilityDiagnostics());
+			return JsonSerializer.Serialize(GetCachedObservabilityDiagnostics());
 		}
 		catch (Exception ex)
 		{
@@ -9216,7 +9680,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return BuildDatabaseAdminOnlyJsonError(request, authError);
 			}
-			ObservabilitySnapshot snapshot = GetObservabilityDiagnostics();
+			ObservabilitySnapshot snapshot = GetCachedObservabilityDiagnostics();
 			return JsonSerializer.Serialize(new
 			{
 				ok = true,
@@ -9241,7 +9705,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				return BuildDatabaseAdminOnlyJsonError(request, authError);
 			}
-			return BuildObservabilityPrometheusText(GetObservabilityDiagnostics());
+			return BuildObservabilityPrometheusText(GetCachedObservabilityDiagnostics());
 		}
 		catch (Exception ex)
 		{
@@ -15095,6 +15559,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			JsonElement root = document.RootElement;
 			string username = ExtractStringProperty(root, "username") ?? ExtractStringProperty(root, "user") ?? ExtractStringProperty(root, "login");
 			string password = ExtractStringProperty(root, "password") ?? ExtractStringProperty(root, "pass");
+			bool remember = root.TryGetProperty("remember", out JsonElement rememberElement) && rememberElement.ValueKind == JsonValueKind.True;
 			JsonElement overwriteElement;
 			bool overwrite = accountAdmin && root.TryGetProperty("overwrite", out overwriteElement) && ReadJsonBool(overwriteElement, fallback: false);
 			if (!TryNormalizeWebAuthUserName(username, out var normalizedUserName, out var userError))
@@ -15117,13 +15582,11 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				return BuildJsonError(request, 409, "Conflict", "A WebAuth user with that name already exists.");
 			}
 			string token = "";
-			DateTimeOffset expires = DateTimeOffset.UtcNow.Add(WebAuthTokenLifetime);
+			DateTimeOffset expires = DateTimeOffset.UtcNow.Add(remember ? RememberedWebAuthTokenLifetime : WebAuthTokenLifetime);
 			if (!accountAdmin)
 			{
 				token = GenerateWebAuthToken();
-				record.tokenHash = HashWebAuthToken(token);
-				record.tokenExpiresUtc = expires.ToString("O");
-				UpsertWebAuthRecord(record);
+				StoreIssuedWebAuthSession(record, token, expires, record.lastClientIp);
 				SetWebAuthCookie(request, token, expires);
 				LinkWebAuthUserToIp(record.userName, record.lastClientIp);
 				RememberChatOwnerEncryptionSecret("webauth:" + record.userName.ToLowerInvariant(), password);
@@ -15165,6 +15628,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			JsonElement root = document.RootElement;
 			string username = ExtractStringProperty(root, "username") ?? ExtractStringProperty(root, "user") ?? ExtractStringProperty(root, "login");
 			string password = ExtractStringProperty(root, "password") ?? ExtractStringProperty(root, "pass");
+			bool remember = root.TryGetProperty("remember", out JsonElement rememberElement) && rememberElement.ValueKind == JsonValueKind.True;
 			if (!TryNormalizeWebAuthUserName(username, out var normalizedUserName, out var userError))
 			{
 				return BuildJsonError(request, 400, "Bad Request", userError);
@@ -15187,10 +15651,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 					return BuildJsonError(request, 409, "Conflict", "A WebAuth user with that name already exists.");
 				}
 				string token = GenerateWebAuthToken();
-				DateTimeOffset expires = DateTimeOffset.UtcNow.Add(WebAuthTokenLifetime);
-				record.tokenHash = HashWebAuthToken(token);
-				record.tokenExpiresUtc = expires.ToString("O");
-				UpsertWebAuthRecord(record);
+				DateTimeOffset expires = DateTimeOffset.UtcNow.Add(remember ? RememberedWebAuthTokenLifetime : WebAuthTokenLifetime);
+				StoreIssuedWebAuthSession(record, token, expires, clientIp);
 				SetWebAuthCookie(request, token, expires);
 				LinkWebAuthUserToIp(record.userName, clientIp);
 				RememberChatOwnerEncryptionSecret("webauth:" + record.userName.ToLowerInvariant(), password);
@@ -15244,18 +15706,17 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			JsonElement root = document.RootElement;
 			string username = ExtractStringProperty(root, "username") ?? ExtractStringProperty(root, "user") ?? ExtractStringProperty(root, "login");
 			string password = ExtractStringProperty(root, "password") ?? ExtractStringProperty(root, "pass");
+			bool remember = root.TryGetProperty("remember", out JsonElement rememberElement) && rememberElement.ValueKind == JsonValueKind.True;
 			if (!TryValidateWebAuthCredentials(username, password, out var record, out var error))
 			{
 				return BuildJsonError(request, 401, "Unauthorized", error);
 			}
 			string token = GenerateWebAuthToken();
-			DateTimeOffset expires = DateTimeOffset.UtcNow.Add(WebAuthTokenLifetime);
-			record.tokenHash = HashWebAuthToken(token);
-			record.tokenExpiresUtc = expires.ToString("O");
+			DateTimeOffset expires = DateTimeOffset.UtcNow.Add(remember ? RememberedWebAuthTokenLifetime : WebAuthTokenLifetime);
 			record.lastLoginUtc = DateTimeOffset.UtcNow.ToString("O");
 			record.lastClientIp = ExtractClientIp(connection, request) ?? "";
 			record.updatedUtc = DateTimeOffset.UtcNow.ToString("O");
-			UpsertWebAuthRecord(record);
+			StoreIssuedWebAuthSession(record, token, expires, record.lastClientIp);
 			SetWebAuthCookie(request, token, expires);
 			LinkWebAuthUserToIp(record.userName, record.lastClientIp);
 			RememberChatOwnerEncryptionSecret("webauth:" + record.userName.ToLowerInvariant(), password);
@@ -15288,7 +15749,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			if (StoreLocalWebAuthAccounts)
 			{
-				ClearWebAuthToken(principal.UserName);
+				ClearWebAuthSession(principal.UserName, ExtractWebAuthRequestToken(request));
 			}
 			ClearWebAuthCookie(request);
 			return JsonSerializer.Serialize(new
@@ -16869,7 +17330,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 						liveContent.Append(text3);
 						return WriteChatUiDeltaWithUsage(output, ownerKey, text3, "", "", usageMeter, cancellationToken);
 					}, lmRequestJson: toolRequestJson, ownerKey: ownerKey, sessionId: sessionId, cancellationToken: cancellationToken), toolRequestJson);
-					if (!HasChatUiCompletionOutput(completion))
+					if (!HasChatUiVisibleAssistantText(completion))
 					{
 						WriteChatUiNoContentStreamError(output, agentMode ? "Agent mode" : "Terminal mode", completion?.Raw);
 						return;
@@ -16990,7 +17451,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				}
 				if (TryFlushChatUiDeltaBatch(output, ownerKey, pendingContentDelta, pendingReasoningDelta, usageMeter, ref lastDeltaFlushUtc, force: true, cancellationToken))
 				{
-					if (!HasChatUiCompletionOutput(completedContent, completedReasoning))
+					if (!HasChatUiVisibleAssistantText(completedContent))
 					{
 						WriteChatUiNoContentStreamError(output, GetLocalModelRuntimeDisplayName());
 					}
@@ -17439,7 +17900,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			permissions = GetChatPermissions();
 		}
-		List<string> services = new List<string> { "Prompt Intellisense is available in the Web UI composer for completions, file/path suggestions, and parameter hints.", "Saved sessions and the session files area are available; uploaded, downloaded, and generated files should stay tied to the current session." };
+		List<string> services = new List<string> { "Prompt Intellisense is available in the Web UI composer for completions, file/path suggestions, and parameter hints.", "Saved sessions and Project Files are available; sessions assigned to the same project share uploaded, downloaded, and generated files." };
 		if (permissions != null && permissions.imageUploads)
 		{
 			services.Add("Image attachments are allowed for this session when the selected model supports images.");
@@ -17883,6 +18344,17 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 	}
 
+	private string ExtractChatUiSteeringId(string requestBody)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody)) return "";
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			return SanitizeFileName(ExtractStringProperty(document.RootElement, "steeringId") ?? "");
+		}
+		catch { return ""; }
+	}
+
 	private string NormalizeChatUiStreamId(string streamId)
 	{
 		streamId = (streamId ?? "").Trim();
@@ -17910,6 +18382,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			PruneActiveChatStreamCancellationsLocked();
 			string key = BuildActiveChatStreamCancellationKey(ownerKey, streamId);
+			_closedChatStreamSteering.Remove(key);
 			if (_activeChatStreamCancellations.TryGetValue(key, out var existing))
 			{
 				existing.Cancellation.Cancel();
@@ -17925,6 +18398,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				lock (active.SteeringMessages)
 				{
 					active.SteeringMessages.AddRange(pendingSteering.Messages);
+					active.SteeringIds.UnionWith(pendingSteering.SteeringIds);
 				}
 				_pendingChatStreamSteering.Remove(key);
 			}
@@ -18062,30 +18536,56 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 	private bool AddActiveChatStreamSteering(string ownerKey, string streamId, string sessionId, string steering)
 	{
+		return AcceptActiveChatStreamSteering(ownerKey, streamId, sessionId, steering, "", out var _);
+	}
+
+	private bool AcceptActiveChatStreamSteering(string ownerKey, string streamId, string sessionId, string steering, string steeringId, out string state)
+	{
+		state = "rejected";
 		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
 		streamId = NormalizeChatUiStreamId(streamId);
 		sessionId = (string.IsNullOrWhiteSpace(sessionId) ? "" : EnsureChatUiSessionId(sessionId));
 		steering = NormalizeChatStreamSteeringText(steering);
+		steeringId = string.IsNullOrWhiteSpace(steeringId) ? "steer_" + Guid.NewGuid().ToString("N") : SanitizeFileName(steeringId);
 		if (string.IsNullOrWhiteSpace(steering))
 		{
 			return false;
 		}
 		lock (_activeChatStreamCancellationLock)
 		{
+			PruneActiveChatStreamCancellationsLocked();
+			string key = BuildActiveChatStreamCancellationKey(ownerKey, streamId);
+			if (_closedChatStreamSteering.ContainsKey(key))
+			{
+				state = "stream_closed";
+				return false;
+			}
 			if (!TryFindActiveChatStreamCancellationLocked(ownerKey, streamId, sessionId, out var active))
 			{
-				AddPendingChatStreamSteeringLocked(ownerKey, streamId, sessionId, steering);
+				AddPendingChatStreamSteeringLocked(ownerKey, streamId, sessionId, steering, steeringId);
+				state = "buffered";
 				return true;
 			}
 			lock (active.SteeringMessages)
 			{
+				if (!active.AcceptingSteering)
+				{
+					state = "stream_closed";
+					return false;
+				}
+				if (!active.SteeringIds.Add(steeringId))
+				{
+					state = "accepted";
+					return true;
+				}
 				active.SteeringMessages.Add(steering);
 			}
+			state = "accepted";
 			return true;
 		}
 	}
 
-	private void AddPendingChatStreamSteeringLocked(string ownerKey, string streamId, string sessionId, string steering)
+	private void AddPendingChatStreamSteeringLocked(string ownerKey, string streamId, string sessionId, string steering, string steeringId)
 	{
 		string key = BuildActiveChatStreamCancellationKey(ownerKey, streamId);
 		if (!_pendingChatStreamSteering.TryGetValue(key, out var pending) || pending == null)
@@ -18103,6 +18603,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			pending.SessionId = sessionId;
 		}
 		pending.UpdatedUtc = DateTimeOffset.UtcNow;
+		if (!pending.SteeringIds.Add(steeringId)) return;
 		pending.Messages.Add(steering);
 	}
 
@@ -18145,10 +18646,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		lock (_activeChatStreamCancellationLock)
 		{
 			string key = BuildActiveChatStreamCancellationKey(active.OwnerKey, active.StreamId);
+			lock (active.SteeringMessages) active.AcceptingSteering = false;
 			if (_activeChatStreamCancellations.TryGetValue(key, out var current) && current == active)
 			{
 				_activeChatStreamCancellations.Remove(key);
 			}
+			_closedChatStreamSteering[key] = DateTimeOffset.UtcNow;
 		}
 		active.Cancellation.Dispose();
 	}
@@ -18202,6 +18705,12 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		{
 			_pendingChatStreamSteering.Remove(key3);
 		}
+		remove.Clear();
+		foreach (KeyValuePair<string, DateTimeOffset> pair4 in _closedChatStreamSteering)
+		{
+			if (pair4.Value < pendingCutoff) remove.Add(pair4.Key);
+		}
+		foreach (string key4 in remove) _closedChatStreamSteering.Remove(key4);
 	}
 
 	private string HandleChatUiStreamStopRequest(NetworkConnection connection, HttpRequest request)
@@ -18275,15 +18784,24 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				return BuildJsonError(request, 400, "Bad Request", "steering text is required.");
 			}
 			string sessionId2 = ExtractChatUiSessionId(request?.Body);
-			if (!AddActiveChatStreamSteering(ownerKey, streamId, sessionId2, steering))
+			string steeringId = ExtractChatUiSteeringId(request?.Body);
+			if (string.IsNullOrWhiteSpace(steeringId)) steeringId = "steer_" + Guid.NewGuid().ToString("N");
+			if (!AcceptActiveChatStreamSteering(ownerKey, streamId, sessionId2, steering, steeringId, out var state))
 			{
+				if (string.Equals(state, "stream_closed", StringComparison.Ordinal))
+				{
+					BuildJsonError(request, 409, "Conflict", "The Agent stream closed before this steering update was accepted.");
+					return JsonSerializer.Serialize(new { ok = false, error = "The Agent stream closed before this steering update was accepted.", code = "stream_closed", steeringId });
+				}
 				return BuildJsonError(request, 404, "Not Found", "No active stream was found to steer.");
 			}
 			LogMessage("[Chat UI] Steering added for stream " + NormalizeChatUiStreamId(streamId) + " by " + ownerKey + ".");
 			return JsonSerializer.Serialize(new
 			{
 				ok = true,
-				accepted = true
+				accepted = true,
+				state,
+				steeringId
 			});
 		}
 		catch (Exception ex)
@@ -22194,7 +22712,7 @@ except Exception as exc:
 		string value = (GetQueryParameter(request, "take") ?? GetQueryParameter(request, "limit") ?? "").Trim();
 		if (value.Equals("all", StringComparison.OrdinalIgnoreCase) || value.Equals("none", StringComparison.OrdinalIgnoreCase))
 		{
-			return -1;
+			return ChatSessionListMaxTake;
 		}
 		if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var take))
 		{
@@ -22202,7 +22720,7 @@ except Exception as exc:
 		}
 		if (take < 0)
 		{
-			return -1;
+			return ChatSessionListMaxTake;
 		}
 		return Math.Min(ChatSessionListMaxTake, Math.Max(1, take));
 	}
@@ -22275,8 +22793,8 @@ except Exception as exc:
 
 	private void SaveChatSessionDataAndInvalidateCaches(string ownerKey = null, string sessionId = null)
 	{
-		_chatSessionData.Save();
 		InvalidateChatSessionDerivedCaches(ownerKey, sessionId);
+		_chatSessionData.ScheduleSave();
 	}
 
 	private Dictionary<string, int> CountChatSessionCommentsBySessionSnapshot(IEnumerable<string> sessionIds)
@@ -22330,29 +22848,28 @@ except Exception as exc:
 		{
 			return false;
 		}
-		string payloadText = protectedValue.Substring(ChatPrivatePayloadPrefixV2.Length);
-		int first = payloadText.IndexOf(':');
-		if (first <= 0)
+		int payloadOffset = ChatPrivatePayloadPrefixV2.Length;
+		int first = protectedValue.IndexOf(':', payloadOffset);
+		if (first <= payloadOffset)
 		{
 			return false;
 		}
-		int second = payloadText.IndexOf(':', first + 1);
+		int second = protectedValue.IndexOf(':', first + 1);
 		if (second <= first)
 		{
 			return false;
 		}
-		int third = payloadText.IndexOf(':', second + 1);
+		int third = protectedValue.IndexOf(':', second + 1);
 		if (third <= second)
 		{
 			return false;
 		}
-		string storedPurpose = payloadText.Substring(0, first);
-		if (!string.Equals(storedPurpose, purpose, StringComparison.Ordinal))
+		if (purpose == null || first - payloadOffset != purpose.Length ||
+			string.Compare(protectedValue, payloadOffset, purpose, 0, purpose.Length, StringComparison.Ordinal) != 0)
 		{
 			return false;
 		}
-		string countText = payloadText.Substring(second + 1, third - second - 1);
-		return int.TryParse(countText, NumberStyles.Integer, CultureInfo.InvariantCulture, out count) && count >= 0;
+		return int.TryParse(protectedValue.AsSpan(second + 1, third - second - 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out count) && count >= 0;
 	}
 
 	private string HandleChatActiveSessionsRequest(NetworkConnection connection, HttpRequest request)
@@ -25680,6 +26197,372 @@ except Exception as exc:
 		input.CopyTo(output);
 	}
 
+	private string HandleChatFileDeleteRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			string ownerKey = GetChatSessionOwnerKey(connection, request);
+			string requestedPath = GetQueryParameter(request, "path");
+			string kind = (GetQueryParameter(request, "kind") ?? "session").Trim();
+			bool deleteDirectory = string.Equals((GetQueryParameter(request, "type") ?? "file").Trim(), "directory", StringComparison.OrdinalIgnoreCase);
+			string sessionId = EnsureChatUiSessionId(GetQueryParameter(request, "sessionId"));
+			if (!kind.Equals("session", StringComparison.OrdinalIgnoreCase))
+			{
+				return BuildJsonError(request, 403, "Forbidden", "Only Project Files can be deleted here.");
+			}
+			if (!ChatSessionBelongsToOwner(sessionId, ownerKey))
+			{
+				return BuildJsonError(request, 403, "Forbidden", "The project files do not belong to this user.");
+			}
+			string fullPath;
+			string error;
+			bool resolved = deleteDirectory
+				? TryResolveSolutionExplorerDirectory(ownerKey, sessionId, kind, requestedPath, out fullPath, out error)
+				: TryResolveSolutionExplorerFile(ownerKey, sessionId, kind, requestedPath, out fullPath, out error);
+			if (!resolved)
+			{
+				return BuildJsonError(request, 404, "Not Found", error);
+			}
+			string projectRoot = GetChatSessionFilesDirectory(sessionId);
+			if (string.IsNullOrWhiteSpace(projectRoot) || !IsPathInsideRoot(fullPath, projectRoot))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "Requested item is outside Project Files.");
+			}
+			if (deleteDirectory && PathsEqual(fullPath, projectRoot))
+			{
+				return BuildJsonError(request, 400, "Bad Request", "The Project Files root cannot be deleted.");
+			}
+
+			IReadOnlyList<string> relatedSessionIds = GetChatProjectSessionIds(sessionId, ownerKey);
+			foreach (string relatedSessionId in relatedSessionIds)
+			{
+				if (deleteDirectory)
+				{
+					foreach (string sandboxFilePath in EnumerateChatSessionSandboxHostFiles(fullPath, ownerKey, relatedSessionId, recursive: true)
+						.Select(item => item.FullPath)
+						.Distinct(StringComparer.OrdinalIgnoreCase)
+						.ToArray())
+					{
+						TryDeleteChatSessionSandboxFile(relatedSessionId, ownerKey, sandboxFilePath);
+					}
+				}
+				else
+				{
+					TryDeleteChatSessionSandboxFile(relatedSessionId, ownerKey, fullPath);
+				}
+			}
+			if (deleteDirectory)
+			{
+				if (Directory.Exists(fullPath))
+				{
+					Directory.Delete(fullPath, recursive: true);
+				}
+			}
+			else if (File.Exists(fullPath))
+			{
+				File.Delete(fullPath);
+			}
+			RemoveChatProjectFileRegistrations(sessionId, ownerKey, fullPath, recursive: deleteDirectory);
+			InvalidateSolutionExplorerStorageCache(ownerKey, sessionId);
+			return JsonSerializer.Serialize(new
+			{
+				ok = true,
+				sessionId = sessionId,
+				projectId = GetChatSessionProjectId(sessionId),
+				type = deleteDirectory ? "directory" : "file",
+				deleted = ToChatSessionVirtualPath(sessionId, fullPath)
+			});
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Project Files] Delete failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandleProjectFileVersionsRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			string ownerKey = GetChatSessionOwnerKey(connection, request);
+			string sessionId = EnsureChatUiSessionId(GetQueryParameter(request, "sessionId"));
+			if (!ChatSessionBelongsToOwner(sessionId, ownerKey))
+			{
+				return BuildJsonError(request, 403, "Forbidden", "The project files do not belong to this user.");
+			}
+			return BuildProjectFileVersionsPayload(sessionId);
+		}
+		catch (Exception ex)
+		{
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private string HandleProjectFileVersionsMutationRequest(NetworkConnection connection, HttpRequest request)
+	{
+		try
+		{
+			string ownerKey = GetChatSessionOwnerKey(connection, request);
+			using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
+			JsonElement root = document.RootElement;
+			string sessionId = EnsureChatUiSessionId(ExtractStringProperty(root, "sessionId"));
+			if (!ChatSessionBelongsToOwner(sessionId, ownerKey))
+			{
+				return BuildJsonError(request, 403, "Forbidden", "The project files do not belong to this user.");
+			}
+			string action = (ExtractStringProperty(root, "action") ?? "create").Trim().ToLowerInvariant();
+			string versionId = SanitizeFileName(ExtractStringProperty(root, "versionId") ?? "");
+			if (action == "create")
+			{
+				CreateProjectFileVersion(sessionId, ownerKey, ExtractStringProperty(root, "name"), false);
+			}
+			else if (action == "restore")
+			{
+				RestoreProjectFileVersion(sessionId, ownerKey, versionId);
+			}
+			else if (action == "delete")
+			{
+				DeleteProjectFileVersion(sessionId, versionId);
+			}
+			else
+			{
+				return BuildJsonError(request, 400, "Bad Request", "Use create, restore, or delete.");
+			}
+			return BuildProjectFileVersionsPayload(sessionId);
+		}
+		catch (JsonException ex)
+		{
+			return BuildJsonError(request, 400, "Bad Request", ex.Message);
+		}
+		catch (Exception ex)
+		{
+			LogMessage("[Project Files] Version operation failed: " + ex.Message);
+			return BuildJsonError(request, 500, "Internal Server Error", ex.Message);
+		}
+	}
+
+	private bool ChatSessionBelongsToOwner(string sessionId, string ownerKey)
+	{
+		List<string> equivalentOwnerKeys = GetEquivalentFilesystemOwnerKeys(ownerKey);
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatSessionsTable();
+			foreach (object[] sourceRow in table.Rows)
+			{
+				object[] row = NormalizeChatSessionRow(sourceRow);
+				if (string.Equals(GetRowValue(row, 0), sessionId, StringComparison.Ordinal) &&
+					OwnerKeyListContains(equivalentOwnerKeys, GetRowValue(row, 7)))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private IReadOnlyList<string> GetChatProjectSessionIds(string sessionId, string ownerKey)
+	{
+		string projectId = GetChatSessionProjectId(sessionId);
+		if (projectId.Equals("unsorted", StringComparison.OrdinalIgnoreCase))
+		{
+			return new[] { sessionId };
+		}
+		List<string> equivalentOwnerKeys = GetEquivalentFilesystemOwnerKeys(ownerKey);
+		List<string> sessionIds = new List<string>();
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatSessionsTable();
+			foreach (object[] sourceRow in table.Rows)
+			{
+				object[] row = NormalizeChatSessionRow(sourceRow);
+				if (OwnerKeyListContains(equivalentOwnerKeys, GetRowValue(row, 7)) &&
+					string.Equals(NormalizeChatProjectId(GetRowValue(row, 23)), projectId, StringComparison.OrdinalIgnoreCase))
+				{
+					sessionIds.Add(GetRowValue(row, 0));
+				}
+			}
+		}
+		return sessionIds;
+	}
+
+	private void RemoveChatProjectFileRegistrations(string sessionId, string ownerKey, string fullPath, bool recursive = false)
+	{
+		HashSet<string> sessionIds = new HashSet<string>(GetChatProjectSessionIds(sessionId, ownerKey), StringComparer.Ordinal);
+		string normalizedPath = Path.GetFullPath(fullPath);
+		bool changed = false;
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatSessionsTable();
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				object[] row = NormalizeChatSessionRow(table.Rows[i]);
+				if (!sessionIds.Contains(GetRowValue(row, 0)))
+				{
+					continue;
+				}
+				row = DecryptChatSessionRowForOwner(row, ownerKey);
+				List<ChatSessionFile> files = new List<ChatSessionFile>();
+				AddChatSessionFilesFromJson(files, new HashSet<string>(StringComparer.OrdinalIgnoreCase), GetRowValue(row, 6));
+				int removed = files.RemoveAll(file =>
+				{
+					try
+					{
+						string registeredPath = Path.GetFullPath(file.path ?? "");
+						return PathsEqual(registeredPath, normalizedPath) || (recursive && IsPathInsideRoot(registeredPath, normalizedPath));
+					}
+					catch { return false; }
+				});
+				if (removed == 0)
+				{
+					continue;
+				}
+				row[6] = JsonSerializer.Serialize(files);
+				ProtectChatSessionRowSensitiveValues(row);
+				table.Rows[i] = row;
+				changed = true;
+			}
+			if (changed)
+			{
+				SaveChatSessionDataAndInvalidateCaches();
+			}
+		}
+	}
+
+	private string GetProjectFileVersionsDirectory(string sessionId)
+	{
+		string projectId = GetChatSessionProjectId(sessionId);
+		string scope = projectId.Equals("unsorted", StringComparison.OrdinalIgnoreCase)
+			? "session_" + SanitizeFileName(sessionId)
+			: "project_" + SanitizeFileName(projectId);
+		return Path.Combine(_chatSessionFilesRoot, ".versions", scope);
+	}
+
+	private string BuildProjectFileVersionsPayload(string sessionId)
+	{
+		string versionsRoot = GetProjectFileVersionsDirectory(sessionId);
+		List<object> versions = new List<object>();
+		if (Directory.Exists(versionsRoot))
+		{
+			foreach (string directory in Directory.EnumerateDirectories(versionsRoot).OrderByDescending(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
+			{
+				string id = Path.GetFileName(directory);
+				string labelPath = Path.Combine(directory, "label.txt");
+				string label = File.Exists(labelPath) ? File.ReadAllText(labelPath).Trim() : id;
+				DateTime createdUtc = Directory.GetCreationTimeUtc(directory);
+				versions.Add(new
+				{
+					id = id,
+					name = string.IsNullOrWhiteSpace(label) ? id : label,
+					createdUtc = createdUtc.ToString("O"),
+					fileCount = Directory.Exists(Path.Combine(directory, "files")) ? Directory.EnumerateFiles(Path.Combine(directory, "files"), "*", SearchOption.AllDirectories).Count() : 0
+				});
+			}
+		}
+		return JsonSerializer.Serialize(new
+		{
+			ok = true,
+			sessionId = sessionId,
+			projectId = GetChatSessionProjectId(sessionId),
+			shared = !GetChatSessionProjectId(sessionId).Equals("unsorted", StringComparison.OrdinalIgnoreCase),
+			versions = versions
+		});
+	}
+
+	private string CreateProjectFileVersion(string sessionId, string ownerKey, string name, bool automatic)
+	{
+		string projectRoot = GetChatSessionFilesDirectory(sessionId);
+		MaterializeChatSessionSandboxFiles(sessionId, ownerKey, projectRoot);
+		string versionsRoot = GetProjectFileVersionsDirectory(sessionId);
+		Directory.CreateDirectory(versionsRoot);
+		string id = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+		string versionRoot = Path.GetFullPath(Path.Combine(versionsRoot, id));
+		if (!IsPathInsideRoot(versionRoot, versionsRoot))
+		{
+			throw new InvalidOperationException("Invalid Project Files version path.");
+		}
+		string filesRoot = Path.Combine(versionRoot, "files");
+		CopyDirectoryTree(projectRoot, filesRoot);
+		Directory.CreateDirectory(versionRoot);
+		string label = string.IsNullOrWhiteSpace(name) ? (automatic ? "Before restore" : "Version " + DateTime.Now.ToString("g", CultureInfo.CurrentCulture)) : name.Trim();
+		File.WriteAllText(Path.Combine(versionRoot, "label.txt"), label);
+		return id;
+	}
+
+	private void RestoreProjectFileVersion(string sessionId, string ownerKey, string versionId)
+	{
+		if (string.IsNullOrWhiteSpace(versionId))
+		{
+			throw new InvalidOperationException("versionId is required.");
+		}
+		string versionsRoot = GetProjectFileVersionsDirectory(sessionId);
+		string versionRoot = Path.GetFullPath(Path.Combine(versionsRoot, versionId));
+		string snapshotRoot = Path.Combine(versionRoot, "files");
+		if (!IsPathInsideRoot(versionRoot, versionsRoot) || !Directory.Exists(snapshotRoot))
+		{
+			throw new FileNotFoundException("Project Files version was not found.");
+		}
+		CreateProjectFileVersion(sessionId, ownerKey, "Before restoring " + versionId, true);
+		string projectRoot = GetChatSessionFilesDirectory(sessionId);
+		if (!IsPathInsideRoot(projectRoot, _chatSessionFilesRoot))
+		{
+			throw new InvalidOperationException("Project Files root is invalid.");
+		}
+		if (Directory.Exists(projectRoot))
+		{
+			foreach (string file in Directory.EnumerateFiles(projectRoot, "*", SearchOption.AllDirectories))
+				File.Delete(file);
+			foreach (string directory in Directory.EnumerateDirectories(projectRoot, "*", SearchOption.AllDirectories).OrderByDescending(path => path.Length))
+				if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+		}
+		CopyDirectoryTree(snapshotRoot, projectRoot);
+		foreach (string relatedSessionId in GetChatProjectSessionIds(sessionId, ownerKey))
+			DiscardChatSessionSandbox(relatedSessionId);
+		InvalidateSolutionExplorerStorageCache(ownerKey, sessionId);
+	}
+
+	private void DeleteProjectFileVersion(string sessionId, string versionId)
+	{
+		string versionsRoot = GetProjectFileVersionsDirectory(sessionId);
+		string versionRoot = Path.GetFullPath(Path.Combine(versionsRoot, versionId ?? ""));
+		if (string.IsNullOrWhiteSpace(versionId) || !IsPathInsideRoot(versionRoot, versionsRoot) || !Directory.Exists(versionRoot))
+		{
+			throw new FileNotFoundException("Project Files version was not found.");
+		}
+		Directory.Delete(versionRoot, recursive: true);
+	}
+
+	private void MaterializeChatSessionSandboxFiles(string sessionId, string ownerKey, string projectRoot)
+	{
+		foreach ((string fullPath, SandboxFileEntry _) in EnumerateChatSessionSandboxHostFiles(projectRoot, ownerKey, sessionId, recursive: true))
+		{
+			if (TryReadChatSessionSandboxFileBytes(sessionId, ownerKey, fullPath, out byte[] bytes))
+			{
+				string targetPath = Path.GetFullPath(fullPath);
+				if (!IsPathInsideRoot(targetPath, projectRoot)) continue;
+				Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? projectRoot);
+				File.WriteAllBytes(targetPath, bytes ?? Array.Empty<byte>());
+			}
+		}
+	}
+
+	private static void CopyDirectoryTree(string sourceRoot, string destinationRoot)
+	{
+		Directory.CreateDirectory(destinationRoot);
+		if (!Directory.Exists(sourceRoot)) return;
+		foreach (string directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
+		{
+			string relative = Path.GetRelativePath(sourceRoot, directory);
+			Directory.CreateDirectory(Path.Combine(destinationRoot, relative));
+		}
+		foreach (string file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+		{
+			string relative = Path.GetRelativePath(sourceRoot, file);
+			string destination = Path.Combine(destinationRoot, relative);
+			Directory.CreateDirectory(Path.GetDirectoryName(destination) ?? destinationRoot);
+			File.Copy(file, destination, overwrite: true);
+		}
+	}
+
 	private static void AddBytesZipEntry(ZipArchive archive, byte[] bytes, string entryName, string sourceKey, HashSet<string> addedSources, HashSet<string> addedEntries)
 	{
 		sourceKey = string.IsNullOrWhiteSpace(sourceKey) ? Guid.NewGuid().ToString("N") : sourceKey;
@@ -26063,6 +26946,12 @@ except Exception as exc:
 		try
 		{
 			DiscardChatSessionSandbox(sessionId);
+			string projectId = GetChatSessionProjectId(sessionId);
+			if (!string.IsNullOrWhiteSpace(projectId) && !projectId.Equals("unsorted", StringComparison.OrdinalIgnoreCase))
+			{
+				LogMessage("[Project Files] Preserved shared project files while deleting session " + sessionId + ".");
+				return;
+			}
 			string sessionRoot = GetChatSessionFilesDirectory(sessionId);
 			if (Directory.Exists(sessionRoot) && IsPathInsideRoot(sessionRoot, _chatSessionFilesRoot))
 			{
@@ -27472,7 +28361,8 @@ except Exception as exc:
 			bool asFile = root.TryGetProperty("asFile", out asFileElement) && ReadJsonBool(asFileElement, fallback: false);
 			JsonElement extractZipElement;
 			bool extractZip = root.TryGetProperty("extractZip", out extractZipElement) && ReadJsonBool(extractZipElement, fallback: false);
-			bool isImage = !asFile && (type.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || (!string.IsNullOrWhiteSpace(dataUrl) && dataUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase)));
+			bool isImage = type.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+				(!string.IsNullOrWhiteSpace(dataUrl) && dataUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase));
 			if (isImage && !permissions.imageUploads)
 			{
 				SetHttpStatus(request, 403, "Forbidden");
@@ -27482,7 +28372,7 @@ except Exception as exc:
 					error = "Image uploads are disabled for this client."
 				});
 			}
-			if (!isImage && !permissions.fileUploads)
+			if ((!isImage || asFile) && !permissions.fileUploads)
 			{
 				SetHttpStatus(request, 403, "Forbidden");
 				return JsonSerializer.Serialize(new
@@ -27617,6 +28507,7 @@ except Exception as exc:
 			GetTokenRateRequestsTable();
 			GetChatCostsTable();
 			GetChatUserCostsTable();
+			GetUserResourceQuotasTable();
 			GetFinanceProfilesTable();
 			GetFinancePaymentsTable();
 			GetFinancePayoutsTable();
@@ -28984,7 +29875,76 @@ except Exception as exc:
 		{
 			return null;
 		}
-		return Path.Combine(_chatSessionFilesRoot, SanitizeFileName(sessionId.Trim()));
+		string normalizedSessionId = SanitizeFileName(sessionId.Trim());
+		string projectId = GetChatSessionProjectId(sessionId);
+		if (string.IsNullOrWhiteSpace(projectId) || projectId.Equals("unsorted", StringComparison.OrdinalIgnoreCase))
+		{
+			return Path.Combine(_chatSessionFilesRoot, normalizedSessionId);
+		}
+
+		string projectRoot = Path.Combine(_chatSessionFilesRoot, "projects", SanitizeFileName(projectId));
+		MigrateLegacySessionFilesToProject(normalizedSessionId, projectRoot);
+		return projectRoot;
+	}
+
+	private string GetChatSessionProjectId(string sessionId)
+	{
+		if (string.IsNullOrWhiteSpace(sessionId))
+		{
+			return "unsorted";
+		}
+		lock (_chatSessionLock)
+		{
+			Table table = GetChatSessionsTable();
+			for (int i = 0; i < table.Rows.Count; i++)
+			{
+				object[] row = NormalizeChatSessionRow(table.Rows[i]);
+				table.Rows[i] = row;
+				if (string.Equals(GetRowValue(row, 0), sessionId, StringComparison.Ordinal))
+				{
+					return NormalizeChatProjectId(GetRowValue(row, 23));
+				}
+			}
+		}
+		return "unsorted";
+	}
+
+	private void MigrateLegacySessionFilesToProject(string normalizedSessionId, string projectRoot)
+	{
+		string legacyRoot = Path.Combine(_chatSessionFilesRoot, normalizedSessionId);
+		if (!Directory.Exists(legacyRoot) || PathsEqual(legacyRoot, projectRoot))
+		{
+			return;
+		}
+		lock (_chatSessionLock)
+		{
+			Directory.CreateDirectory(projectRoot);
+			foreach (string sourcePath in Directory.EnumerateFiles(legacyRoot, "*", SearchOption.AllDirectories))
+			{
+				string relativePath = Path.GetRelativePath(legacyRoot, sourcePath);
+				string destinationPath = Path.GetFullPath(Path.Combine(projectRoot, relativePath));
+				if (!IsPathInsideRoot(destinationPath, projectRoot))
+				{
+					continue;
+				}
+				Directory.CreateDirectory(Path.GetDirectoryName(destinationPath) ?? projectRoot);
+				if (!File.Exists(destinationPath))
+				{
+					File.Move(sourcePath, destinationPath);
+				}
+			}
+			foreach (string directory in Directory.EnumerateDirectories(legacyRoot, "*", SearchOption.AllDirectories).OrderByDescending(path => path.Length))
+			{
+				if (!Directory.EnumerateFileSystemEntries(directory).Any())
+				{
+					Directory.Delete(directory);
+				}
+			}
+			if (!Directory.EnumerateFileSystemEntries(legacyRoot).Any())
+			{
+				Directory.Delete(legacyRoot);
+			}
+		}
 	}
 
 	private bool TryResolveSolutionExplorerDirectory(string ownerKey, string sessionId, string kind, string requestedPath, out string fullPath, out string error)
@@ -29691,7 +30651,7 @@ except Exception as exc:
 		string displayName = GetExplorerDisplayName(path);
 		if (sessionKind && publicPath == "\\")
 		{
-			displayName = "Current Session Files";
+			displayName = "Project Files";
 		}
 		SolutionExplorerEntry entry = new SolutionExplorerEntry
 		{
@@ -29768,6 +30728,16 @@ except Exception as exc:
 		return metrics;
 	}
 
+	private void InvalidateSolutionExplorerStorageCache(string ownerKey, string sessionId)
+	{
+		string prefix = NormalizeChatFilesystemOwnerKey(ownerKey) + "|";
+		lock (_solutionExplorerStorageCacheLock)
+		{
+			foreach (string key in _solutionExplorerStorageCache.Keys.Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray())
+				_solutionExplorerStorageCache.Remove(key);
+		}
+	}
+
 	private string GetExplorerDisplayName(string path)
 	{
 		if (string.IsNullOrWhiteSpace(path))
@@ -29778,6 +30748,11 @@ except Exception as exc:
 		{
 			string trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 			string name = Path.GetFileName(trimmed);
+			Match uploadedName = Regex.Match(name ?? "", "^file_[0-9a-f]{32}_(.+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+			if (uploadedName.Success)
+			{
+				name = uploadedName.Groups[1].Value;
+			}
 			return string.IsNullOrWhiteSpace(name) ? path : name;
 		}
 		catch
@@ -30738,6 +31713,7 @@ except Exception as exc:
 		if (TryAuthenticateWebAuthRequest(request, out var principal, out var _) && !string.IsNullOrWhiteSpace(principal?.UserName))
 		{
 			string ownerKey = "webauth:" + principal.UserName.Trim().ToLowerInvariant();
+			RecordAuthenticatedRequestActivity(ownerKey, request, principal);
 			RememberSocketJackBearerToken(ownerKey, principal.AccessToken);
 			RememberChatOwnerEncryptionSecret(ownerKey, ExtractChatSessionEncryptionSecret(request, principal));
 			RememberSocketJackServerOwnerPrincipal(principal);
@@ -31456,6 +32432,44 @@ except Exception as exc:
 		{
 			lock (_chatSessionLock)
 			{
+				Table sessions = GetWebAuthSessionsTable();
+				bool sessionsChanged = false;
+				for (int i = sessions.Rows.Count - 1; i >= 0; i--)
+				{
+					WebAuthSessionRecord session = WebAuthSessionRecordFromRow(sessions.Rows[i]);
+					if (!DateTimeOffset.TryParse(session.expiresUtc, out DateTimeOffset sessionExpires) || sessionExpires <= DateTimeOffset.UtcNow)
+					{
+						sessions.Rows.RemoveAt(i);
+						sessionsChanged = true;
+						continue;
+					}
+					if (!string.IsNullOrWhiteSpace(session.tokenHash) && ConstantTimeEquals(session.tokenHash, tokenHash))
+					{
+						WebAuthRecord sessionUser = GetWebAuthRecord(session.userName);
+						if (sessionUser == null || !sessionUser.enabled)
+						{
+							error = "The Workstation account for this session is disabled or unavailable.";
+							if (sessionsChanged) SaveChatSessionDataAndInvalidateCaches();
+							return false;
+						}
+						principal = new WebAuthPrincipal
+						{
+							UserName = sessionUser.userName,
+							AuthType = "Bearer",
+							AccountType = "local",
+							AccessToken = token,
+							EncryptionSecret = "",
+							ExpiresUtc = session.expiresUtc,
+							IsAdministrator = (sessionUser.isAdministrator || IsDefaultAdministratorUserName(sessionUser.userName)),
+							IsServerOwner = IsConfiguredServerOwnerUserName(sessionUser.userName),
+							ServerOwnerUserName = GetConfiguredServerOwnerUserName()
+						};
+						if (sessionsChanged) SaveChatSessionDataAndInvalidateCaches();
+						return true;
+					}
+				}
+				if (sessionsChanged) SaveChatSessionDataAndInvalidateCaches();
+
 				Table table = GetWebAuthTable();
 				for (int i = 0; i < table.Rows.Count; i++)
 				{
@@ -31763,28 +32777,135 @@ except Exception as exc:
 		}
 	}
 
-	private void ClearWebAuthToken(string username)
+	private void StoreIssuedWebAuthSession(WebAuthRecord record, string token, DateTimeOffset expires, string clientIp)
 	{
-		if (!TryNormalizeWebAuthUserName(username, out var normalizedUserName, out var _))
+		if (record == null || string.IsNullOrWhiteSpace(record.userName) || string.IsNullOrWhiteSpace(token))
 		{
 			return;
 		}
 		lock (_chatSessionLock)
 		{
-			Table table = GetWebAuthTable();
-			for (int i = 0; i < table.Rows.Count; i++)
+			string previousHash = record.tokenHash ?? "";
+			string previousExpiresUtc = record.tokenExpiresUtc ?? "";
+			record.tokenHash = HashWebAuthToken(token);
+			record.tokenExpiresUtc = expires.ToString("O");
+			UpsertWebAuthRecord(record);
+
+			Table sessions = GetWebAuthSessionsTable();
+			DateTimeOffset now = DateTimeOffset.UtcNow;
+			if (!string.IsNullOrWhiteSpace(previousHash) &&
+				DateTimeOffset.TryParse(previousExpiresUtc, out DateTimeOffset previousExpires) &&
+				previousExpires > now)
 			{
-				object[] row = NormalizeWebAuthRow(table.Rows[i]);
-				if (string.Equals(GetRowValue(row, 0), normalizedUserName, StringComparison.OrdinalIgnoreCase))
+				AddOrUpdateWebAuthSession(sessions, new WebAuthSessionRecord
+				{
+					tokenHash = previousHash,
+					userName = record.userName,
+					createdUtc = string.IsNullOrWhiteSpace(record.lastLoginUtc) ? now.ToString("O") : record.lastLoginUtc,
+					expiresUtc = previousExpiresUtc,
+					lastSeenUtc = now.ToString("O"),
+					clientIp = record.lastClientIp ?? ""
+				});
+			}
+
+			AddOrUpdateWebAuthSession(sessions, new WebAuthSessionRecord
+			{
+				tokenHash = record.tokenHash,
+				userName = record.userName,
+				createdUtc = now.ToString("O"),
+				expiresUtc = record.tokenExpiresUtc,
+				lastSeenUtc = now.ToString("O"),
+				clientIp = clientIp ?? ""
+			});
+			PruneWebAuthSessions(sessions, record.userName, now);
+			SaveChatSessionDataAndInvalidateCaches();
+		}
+	}
+
+	private void AddOrUpdateWebAuthSession(Table sessions, WebAuthSessionRecord session)
+	{
+		for (int i = 0; i < sessions.Rows.Count; i++)
+		{
+			WebAuthSessionRecord existing = WebAuthSessionRecordFromRow(sessions.Rows[i]);
+			if (ConstantTimeEquals(existing.tokenHash, session.tokenHash))
+			{
+				sessions.Rows[i] = WebAuthSessionRecordToRow(session);
+				return;
+			}
+		}
+		sessions.Rows.Add(WebAuthSessionRecordToRow(session));
+	}
+
+	private void PruneWebAuthSessions(Table sessions, string username, DateTimeOffset now)
+	{
+		for (int i = sessions.Rows.Count - 1; i >= 0; i--)
+		{
+			WebAuthSessionRecord session = WebAuthSessionRecordFromRow(sessions.Rows[i]);
+			if (string.IsNullOrWhiteSpace(session.tokenHash) ||
+				!DateTimeOffset.TryParse(session.expiresUtc, out DateTimeOffset expires) ||
+				expires <= now)
+			{
+				sessions.Rows.RemoveAt(i);
+			}
+		}
+
+		List<int> userSessionIndexes = Enumerable.Range(0, sessions.Rows.Count)
+			.Where(i => string.Equals(GetRowValue(NormalizeWebAuthSessionRow(sessions.Rows[i]), 1), username, StringComparison.OrdinalIgnoreCase))
+			.OrderBy(i => GetRowValue(NormalizeWebAuthSessionRow(sessions.Rows[i]), 2), StringComparer.Ordinal)
+			.ToList();
+		while (userSessionIndexes.Count > MaxWebAuthSessionsPerUser)
+		{
+			int removeIndex = userSessionIndexes[0];
+			sessions.Rows.RemoveAt(removeIndex);
+			userSessionIndexes = userSessionIndexes.Skip(1).Select(i => i > removeIndex ? i - 1 : i).ToList();
+		}
+	}
+
+	private string ExtractWebAuthRequestToken(HttpRequest request)
+	{
+		string token = ExtractBearerToken(request);
+		if (!string.IsNullOrWhiteSpace(token)) return token;
+		token = GetCookieValue(request, "SocketJackAuth");
+		if (!string.IsNullOrWhiteSpace(token)) return token;
+		return GetCookieValue(request, "LmVsProxyAuth") ?? "";
+	}
+
+	private void ClearWebAuthSession(string username, string token)
+	{
+		if (!TryNormalizeWebAuthUserName(username, out var normalizedUserName, out var _) || string.IsNullOrWhiteSpace(token))
+		{
+			return;
+		}
+		string tokenHash = HashWebAuthToken(token);
+		lock (_chatSessionLock)
+		{
+			bool changed = false;
+			Table sessions = GetWebAuthSessionsTable();
+			for (int i = sessions.Rows.Count - 1; i >= 0; i--)
+			{
+				WebAuthSessionRecord session = WebAuthSessionRecordFromRow(sessions.Rows[i]);
+				if (string.Equals(session.userName, normalizedUserName, StringComparison.OrdinalIgnoreCase) && ConstantTimeEquals(session.tokenHash, tokenHash))
+				{
+					sessions.Rows.RemoveAt(i);
+					changed = true;
+				}
+			}
+
+			Table users = GetWebAuthTable();
+			for (int i = 0; i < users.Rows.Count; i++)
+			{
+				object[] row = NormalizeWebAuthRow(users.Rows[i]);
+				if (string.Equals(GetRowValue(row, 0), normalizedUserName, StringComparison.OrdinalIgnoreCase) && ConstantTimeEquals(GetRowValue(row, 6), tokenHash))
 				{
 					row[6] = "";
 					row[7] = "";
 					row[4] = DateTimeOffset.UtcNow.ToString("O");
-					table.Rows[i] = row;
-					SaveChatSessionDataAndInvalidateCaches();
+					users.Rows[i] = row;
+					changed = true;
 					break;
 				}
 			}
+			if (changed) SaveChatSessionDataAndInvalidateCaches();
 		}
 	}
 
@@ -32247,6 +33368,22 @@ except Exception as exc:
 		return table;
 	}
 
+	private Table GetWebAuthSessionsTable()
+	{
+		SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd("Auth", (string _) => new SocketJack.Net.Database.Database("Auth"));
+		Table table = db.Tables.GetOrAdd("Sessions", (string _) => new Table("Sessions"));
+		EnsureWebAuthSessionColumns(table);
+		if (table.Rows == null)
+		{
+			table.Rows = new List<object[]>();
+		}
+		for (int i = 0; i < table.Rows.Count; i++)
+		{
+			table.Rows[i] = NormalizeWebAuthSessionRow(table.Rows[i]);
+		}
+		return table;
+	}
+
 	private Table GetWebAuthIpLinksTable()
 	{
 		SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd("Auth", (string _) => new SocketJack.Net.Database.Database("Auth"));
@@ -32340,6 +33477,22 @@ except Exception as exc:
 		for (int i = 0; i < table.Rows.Count; i++)
 		{
 			table.Rows[i] = NormalizeChatUserCostRow(table.Rows[i]);
+		}
+		return table;
+	}
+
+	private Table GetUserResourceQuotasTable()
+	{
+		SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd(WebAuthDatabaseName, (string _) => new SocketJack.Net.Database.Database(WebAuthDatabaseName));
+		Table table = db.Tables.GetOrAdd(UserResourceQuotasTableName, (string _) => new Table(UserResourceQuotasTableName));
+		EnsureUserResourceQuotaColumns(table);
+		if (table.Rows == null)
+		{
+			table.Rows = new List<object[]>();
+		}
+		for (int i = 0; i < table.Rows.Count; i++)
+		{
+			table.Rows[i] = NormalizeUserResourceQuotaRow(table.Rows[i]);
 		}
 		return table;
 	}
@@ -32722,6 +33875,20 @@ except Exception as exc:
 		EnsureColumn(table, 12, "IsAdministrator", 16);
 	}
 
+	private void EnsureWebAuthSessionColumns(Table table)
+	{
+		if (table.Columns == null)
+		{
+			table.Columns = new List<Column>();
+		}
+		EnsureColumn(table, 0, "TokenHash", 256);
+		EnsureColumn(table, 1, "UserName", 160);
+		EnsureColumn(table, 2, "CreatedUtc", 80);
+		EnsureColumn(table, 3, "ExpiresUtc", 80);
+		EnsureColumn(table, 4, "LastSeenUtc", 80);
+		EnsureColumn(table, 5, "ClientIp", 160);
+	}
+
 	private void EnsureWebAuthIpLinkColumns(Table table)
 	{
 		if (table.Columns == null)
@@ -32838,6 +34005,30 @@ except Exception as exc:
 		EnsureColumn(table, 13, "RamElectricityCostUsd", 64);
 		EnsureColumn(table, 14, "SystemElectricityCostUsd", 64);
 		EnsureColumn(table, 15, "IoElectricityCostUsd", 64);
+	}
+
+	private void EnsureUserResourceQuotaColumns(Table table)
+	{
+		if (table.Columns == null)
+		{
+			table.Columns = new List<Column>();
+		}
+		EnsureColumn(table, 0, "OwnerKey", 180);
+		EnsureColumn(table, 1, "StorageLimitBytes", 64);
+		EnsureColumn(table, 2, "BandwidthBytesPerSecond", 64);
+		EnsureColumn(table, 3, "DailyBandwidthLimitBytes", 64);
+		EnsureColumn(table, 4, "WeeklyBandwidthLimitBytes", 64);
+		EnsureColumn(table, 5, "DailyTokenLimit", 64);
+		EnsureColumn(table, 6, "WeeklyTokenLimit", 64);
+		EnsureColumn(table, 7, "TokenLimitPercent", 16);
+		EnsureColumn(table, 8, "WarningPercent", 16);
+		EnsureColumn(table, 9, "DailyPeriodUtc", 32);
+		EnsureColumn(table, 10, "WeeklyPeriodUtc", 32);
+		EnsureColumn(table, 11, "DailyBandwidthUsedBytes", 64);
+		EnsureColumn(table, 12, "WeeklyBandwidthUsedBytes", 64);
+		EnsureColumn(table, 13, "DailyTokensUsed", 64);
+		EnsureColumn(table, 14, "WeeklyTokensUsed", 64);
+		EnsureColumn(table, 15, "UpdatedUtc", 80);
 	}
 
 	private void EnsureFinanceProfileColumns(Table table)
@@ -33793,18 +34984,30 @@ except Exception as exc:
 		{
 			return;
 		}
+		plainText ??= "";
+		if (plainText.Length > ChatPrivatePayloadCacheMaxEntryChars)
+		{
+			return;
+		}
 		lock (_chatPrivatePayloadCacheLock)
 		{
-			if (_chatPrivatePayloadCache.Count >= ChatPrivatePayloadCacheMaxEntries)
+			_chatPrivatePayloadCache.Remove(cacheKey);
+			while (_chatPrivatePayloadCache.Count >= ChatPrivatePayloadCacheMaxEntries ||
+				_chatPrivatePayloadCache.Values.Sum(entry => entry?.Text?.Length ?? 0) + plainText.Length > ChatPrivatePayloadCacheMaxTotalChars)
 			{
-				foreach (string key in _chatPrivatePayloadCache.OrderBy((KeyValuePair<string, ChatPrivatePayloadCacheEntry> pair) => pair.Value?.CreatedUtc ?? DateTimeOffset.MinValue).Take(Math.Max(1, ChatPrivatePayloadCacheMaxEntries / 4)).Select((KeyValuePair<string, ChatPrivatePayloadCacheEntry> pair) => pair.Key).ToList())
+				string oldestKey = _chatPrivatePayloadCache
+					.OrderBy(pair => pair.Value?.CreatedUtc ?? DateTimeOffset.MinValue)
+					.Select(pair => pair.Key)
+					.FirstOrDefault();
+				if (string.IsNullOrWhiteSpace(oldestKey))
 				{
-					_chatPrivatePayloadCache.Remove(key);
+					break;
 				}
+				_chatPrivatePayloadCache.Remove(oldestKey);
 			}
 			_chatPrivatePayloadCache[cacheKey] = new ChatPrivatePayloadCacheEntry
 			{
-				Text = plainText ?? "",
+				Text = plainText,
 				CreatedUtc = DateTimeOffset.UtcNow
 			};
 		}
@@ -35461,6 +36664,26 @@ except Exception as exc:
 		return normalized;
 	}
 
+	private object[] NormalizeWebAuthSessionRow(object[] row)
+	{
+		string now = DateTimeOffset.UtcNow.ToString("O");
+		object[] normalized = new object[6] { "", "", now, "", now, "" };
+		if (row != null)
+		{
+			int copy = Math.Min(row.Length, normalized.Length);
+			for (int i = 0; i < copy; i++)
+			{
+				if (row[i] != null)
+				{
+					normalized[i] = row[i];
+				}
+			}
+		}
+		if (string.IsNullOrWhiteSpace(normalized[2]?.ToString())) normalized[2] = now;
+		if (string.IsNullOrWhiteSpace(normalized[4]?.ToString())) normalized[4] = normalized[2];
+		return normalized;
+	}
+
 	private object[] NormalizeWebAuthIpLinkRow(object[] row)
 	{
 		object[] normalized = new object[3]
@@ -35753,6 +36976,53 @@ except Exception as exc:
 		normalized[14] = Math.Max(0.0, ParseStoredDouble(normalized[14]?.ToString(), 0.0)).ToString("0.########", CultureInfo.InvariantCulture);
 		normalized[15] = Math.Max(0.0, ParseStoredDouble(normalized[15]?.ToString(), 0.0)).ToString("0.########", CultureInfo.InvariantCulture);
 		return normalized;
+	}
+
+	private object[] NormalizeUserResourceQuotaRow(object[] row)
+	{
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		object[] normalized = new object[16]
+		{
+			"", "0", "0", "0", "0", "0", "0", "100", "80",
+			now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), GetUtcWeekKey(now),
+			"0", "0", "0", "0", now.ToString("O")
+		};
+		if (row != null)
+		{
+			int copy = Math.Min(row.Length, normalized.Length);
+			for (int i = 0; i < copy; i++) if (row[i] != null) normalized[i] = row[i];
+		}
+		for (int i = 1; i <= 6; i++) normalized[i] = Math.Max(0L, ParseStoredLong(normalized[i]?.ToString(), 0L)).ToString(CultureInfo.InvariantCulture);
+		normalized[7] = Math.Max(1, Math.Min(100, (int)ParseStoredLong(normalized[7]?.ToString(), 100L))).ToString(CultureInfo.InvariantCulture);
+		normalized[8] = Math.Max(1, Math.Min(100, (int)ParseStoredLong(normalized[8]?.ToString(), 80L))).ToString(CultureInfo.InvariantCulture);
+		for (int i = 11; i <= 14; i++) normalized[i] = Math.Max(0L, ParseStoredLong(normalized[i]?.ToString(), 0L)).ToString(CultureInfo.InvariantCulture);
+		RollUserResourceQuotaPeriods(normalized, now);
+		if (string.IsNullOrWhiteSpace(normalized[15]?.ToString())) normalized[15] = now.ToString("O");
+		return normalized;
+	}
+
+	private static string GetUtcWeekKey(DateTimeOffset value)
+	{
+		DateTime utc = value.UtcDateTime;
+		return ISOWeek.GetYear(utc).ToString("0000", CultureInfo.InvariantCulture) + "-W" + ISOWeek.GetWeekOfYear(utc).ToString("00", CultureInfo.InvariantCulture);
+	}
+
+	private static void RollUserResourceQuotaPeriods(object[] row, DateTimeOffset now)
+	{
+		string day = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+		string week = GetUtcWeekKey(now);
+		if (!string.Equals(row[9]?.ToString(), day, StringComparison.Ordinal))
+		{
+			row[9] = day;
+			row[11] = "0";
+			row[13] = "0";
+		}
+		if (!string.Equals(row[10]?.ToString(), week, StringComparison.Ordinal))
+		{
+			row[10] = week;
+			row[12] = "0";
+			row[14] = "0";
+		}
 	}
 
 	private object[] NormalizeFinanceProfileRow(object[] row)
@@ -40569,22 +41839,34 @@ except Exception as exc:
 		{
 			return 0L;
 		}
-		try
+		long total = 2L;
+		for (int index = 0; index < row.Length; index++)
 		{
-			return Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(row));
-		}
-		catch
-		{
-			long total = 0L;
-			foreach (object value in row)
+			if (index > 0)
 			{
-				if (value != null)
-				{
-					AddStorageUsageBytes(ref total, Encoding.UTF8.GetByteCount(value.ToString() ?? ""));
-				}
+				AddStorageUsageBytes(ref total, 1L);
 			}
-			return total;
+			object value = row[index];
+			if (value == null)
+			{
+				AddStorageUsageBytes(ref total, 4L);
+				continue;
+			}
+			if (value is string text && IsProtectedChatSessionPrivateValue(text))
+			{
+				AddStorageUsageBytes(ref total, text.Length + 2L);
+				continue;
+			}
+			try
+			{
+				AddStorageUsageBytes(ref total, Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(value)));
+			}
+			catch
+			{
+				AddStorageUsageBytes(ref total, Encoding.UTF8.GetByteCount(value.ToString() ?? "") + 2L);
+			}
 		}
+		return total;
 	}
 
 	private void AddStorageUsageBytes(ref long total, long bytes)
@@ -40771,6 +42053,7 @@ except Exception as exc:
 					{
 						RecordFinanceTokenOperation(ownerKey, "usage_charge", tokenDelta, tokenCostDelta, electricityCostDelta, serviceTaxDelta, tokenCostDelta + electricityCostDelta + serviceTaxDelta, "LmVs token usage", "", resourceDelta, gpuElectricityCostDelta, cpuElectricityCostDelta, ramElectricityCostDelta, systemElectricityCostDelta, ioElectricityCostDelta);
 					}
+					RecordUserResourceTokenUsageLocked(ownerKey, tokenDelta);
 					SaveChatSessionDataAndInvalidateCaches();
 					return new ChatCostTotals
 					{
@@ -40835,6 +42118,7 @@ except Exception as exc:
 			{
 				RecordFinanceTokenOperation(ownerKey, "usage_charge", tokenDelta, tokenCostDelta, electricityCostDelta, serviceTaxDelta, tokenCostDelta + electricityCostDelta + serviceTaxDelta, "LmVs token usage", "", resourceDelta, gpuElectricityCostDelta, cpuElectricityCostDelta, ramElectricityCostDelta, systemElectricityCostDelta, ioElectricityCostDelta);
 			}
+			RecordUserResourceTokenUsageLocked(ownerKey, tokenDelta);
 			SaveChatSessionDataAndInvalidateCaches();
 			return totals;
 		}
@@ -41641,8 +42925,14 @@ except Exception as exc:
 		string normalizedSessionId = (sessionId ?? "").Trim();
 		long storageBytes = GetChatStorageUsageBytes(snapshot.ownerKey);
 		long currentSessionStorageBytes = string.IsNullOrWhiteSpace(normalizedSessionId) ? 0L : GetChatSessionStorageUsageBytes(snapshot.ownerKey, normalizedSessionId);
-		bool storageUnlimited = snapshot.unlimited || IsAdminOwnerKey(snapshot.ownerKey);
-		long storageLimit = (storageUnlimited ? (-1) : GetEffectiveTotalStorageLimitBytes(settings));
+		long ownerStorageLimit = 0L;
+		lock (_chatSessionLock)
+		{
+			ownerStorageLimit = ParseStoredLong(GetRowValue(GetOrCreateUserResourceQuotaRowLocked(snapshot.ownerKey, create: false), 1), 0L);
+		}
+		bool storageUnlimited = IsAdminOwnerKey(snapshot.ownerKey) || (ownerStorageLimit <= 0L && snapshot.unlimited);
+		long serverStorageLimit = GetEffectiveTotalStorageLimitBytes(settings);
+		long storageLimit = storageUnlimited ? -1L : (ownerStorageLimit > 0L ? (serverStorageLimit > 0L ? Math.Min(ownerStorageLimit, serverStorageLimit) : ownerStorageLimit) : serverStorageLimit);
 		double storageCost = CalculateStorageCostUsd(storageBytes, settings);
 		double storageTax = NormalizeCostNumber(storageCost * settings.serviceTaxRate);
 		snapshot.gpuSecondsUsed = totals.gpuSecondsUsed;
@@ -42293,6 +43583,12 @@ except Exception as exc:
 	{
 		ChatUsageSnapshot snapshot = GetChatUsageSnapshot(ownerKey);
 		WriteChatUsageEvent(output, 0, snapshot);
+		int promptTokens = EstimatePromptTokensFromRequestBody(requestBody);
+		if (!CanConsumeUserResourceQuota(ownerKey, snapshot, promptTokens, 0L, out var quotaError))
+		{
+			WriteChatUiStreamEvent(output, "error", quotaError, "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
+			return false;
+		}
 		if (!snapshot.tokensRequired)
 		{
 			return true;
@@ -42306,7 +43602,6 @@ except Exception as exc:
 			WriteChatUiStreamEvent(output, "error", "Login is required before using LmVsProxy Chat.", "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
 			return false;
 		}
-		int promptTokens = EstimatePromptTokensFromRequestBody(requestBody);
 		if (snapshot.tokensRemaining < promptTokens)
 		{
 			WriteChatUiStreamEvent(output, "error", "Token balance is empty or too low. Ask the server administrator to update your tokens before sending this prompt.", "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
@@ -42326,6 +43621,12 @@ except Exception as exc:
 	{
 		snapshot = GetChatUsageSnapshot(ownerKey);
 		error = null;
+		int promptTokens = EstimatePromptTokensFromRequestBody(requestBody);
+		if (!CanConsumeUserResourceQuota(ownerKey, snapshot, promptTokens, 0L, out error))
+		{
+			SetHttpStatus(request, 429, "Too Many Requests");
+			return false;
+		}
 		if (!snapshot.tokensRequired)
 		{
 			return true;
@@ -42340,7 +43641,6 @@ except Exception as exc:
 			SetHttpStatus(request, 401, "Unauthorized");
 			return false;
 		}
-		int promptTokens = EstimatePromptTokensFromRequestBody(requestBody);
 		if (snapshot.tokensRemaining < promptTokens)
 		{
 			error = "Token balance is empty or too low. Ask the server administrator to update your tokens before sending this prompt.";
@@ -42358,6 +43658,13 @@ except Exception as exc:
 	private bool WriteChatUiDeltaWithUsage(ChunkedStream output, string ownerKey, string content, string reasoning, string body, ChatUsageMeter meter = null, CancellationToken cancellationToken = default(CancellationToken), string activePromptSessionId = null)
 	{
 		int tokenDelta = EstimateTokenCount(content) + EstimateTokenCount(reasoning);
+		long networkDelta = Encoding.UTF8.GetByteCount(content ?? "") + Encoding.UTF8.GetByteCount(reasoning ?? "") + Encoding.UTF8.GetByteCount(body ?? "");
+		ChatUsageSnapshot quotaUsage = GetChatUsageSnapshot(ownerKey);
+		if (!CanConsumeUserResourceQuota(ownerKey, quotaUsage, tokenDelta, networkDelta, out var quotaError))
+		{
+			WriteChatUiStreamEvent(output, "error", quotaError, "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
+			return false;
+		}
 		if (tokenDelta > 0)
 		{
 			if (!IsAdminOwnerKey(ownerKey) && !IsServerOwnerOwnerKey(ownerKey))
@@ -42381,6 +43688,7 @@ except Exception as exc:
 		}
 		AppendActivePromptSessionOutput(activePromptSessionId, content, reasoning);
 		ThrottleChatUiTokenThroughput(ownerKey, tokenDelta, cancellationToken);
+		RecordUserNetworkTraffic(ownerKey, 0L, networkDelta);
 		WriteChatUiStreamEvent(output, "delta", content ?? "", reasoning ?? "", body ?? "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
 		if (tokenDelta > 0)
 		{
@@ -42521,6 +43829,21 @@ except Exception as exc:
 		return completion != null && (!string.IsNullOrWhiteSpace(completion.Content) || !string.IsNullOrWhiteSpace(completion.Reasoning));
 	}
 
+	private bool HasChatUiVisibleAssistantText(ChatUiCompletion completion)
+	{
+		return completion != null && HasChatUiVisibleAssistantText(completion.Content);
+	}
+
+	private bool HasChatUiVisibleAssistantText(StringBuilder content)
+	{
+		return content != null && HasChatUiVisibleAssistantText(content.ToString());
+	}
+
+	private bool HasChatUiVisibleAssistantText(string content)
+	{
+		return !string.IsNullOrWhiteSpace(content) && !IsNoVisibleAssistantTextDiagnostic(content);
+	}
+
 	private bool HasChatUiCompletionOutput(StringBuilder content, StringBuilder reasoning)
 	{
 		return (content != null && !string.IsNullOrWhiteSpace(content.ToString())) || (reasoning != null && !string.IsNullOrWhiteSpace(reasoning.ToString()));
@@ -42620,12 +43943,16 @@ except Exception as exc:
 	{
 		stopReason = "";
 		string normalized = NormalizeChatUiFinishReason(finishReason);
-		if (string.IsNullOrWhiteSpace(normalized))
+		bool needsVisibleAnswerRecovery = !HasChatUiVisibleAssistantText(content) &&
+			(!string.IsNullOrWhiteSpace(reasoning) || IsNoVisibleAssistantTextDiagnostic(content));
+		if (string.IsNullOrWhiteSpace(normalized) && !needsVisibleAnswerRecovery)
 		{
 			return false;
 		}
-		bool shouldContinue = IsChatUiOutputLimitFinishReason(normalized) ||
-			((normalized == "stream_closed" || normalized == "stream_eof") && ChatUiAnswerLooksAbruptlyIncomplete(content));
+		bool shouldContinue = needsVisibleAnswerRecovery ||
+			IsChatUiOutputLimitFinishReason(normalized) ||
+			((normalized == "stream_closed" || normalized == "stream_eof") && ChatUiAnswerLooksAbruptlyIncomplete(content)) ||
+			IsChatUiAbruptStopContinuationCandidate(normalized, content);
 		if (!shouldContinue)
 		{
 			return false;
@@ -42736,7 +44063,13 @@ except Exception as exc:
 		return text;
 	}
 
-	private bool ChatUiAnswerLooksAbruptlyIncomplete(string content)
+	private static bool IsChatUiAbruptStopContinuationCandidate(string normalizedFinishReason, string content)
+	{
+		string text = (content ?? "").TrimEnd();
+		return normalizedFinishReason == "stop" && text.Length >= 80 && ChatUiAnswerLooksAbruptlyIncomplete(text);
+	}
+
+	private static bool ChatUiAnswerLooksAbruptlyIncomplete(string content)
 	{
 		string text = (content ?? "").TrimEnd();
 		if (text.Length == 0)
@@ -42759,13 +44092,26 @@ except Exception as exc:
 	private string BuildChatUiAutoContinuationRequest(string requestBody, string completedContent, string completedReasoning, string finishReason, int continuationNumber)
 	{
 		string prompt = FirstNonEmpty(ExtractChatUiLastUserPromptText(requestBody), ExtractLastUserMessage(requestBody) ?? "");
+		bool needsVisibleAnswerRecovery = !HasChatUiVisibleAssistantText(completedContent) &&
+			(!string.IsNullOrWhiteSpace(completedReasoning) || IsNoVisibleAssistantTextDiagnostic(completedContent));
+		if (needsVisibleAnswerRecovery)
+		{
+			string recoveryInstruction = "[JackLLM visible answer recovery] The previous pass completed without a usable visible answer. " +
+				"Answer the user's latest request now in normal final-answer form. Start with the answer immediately. Do not emit thinking tags, analysis, a diagnostic, an apology, or this recovery instruction. /no_think" +
+				(string.IsNullOrWhiteSpace(prompt) ? "" : ("\nOriginal user request: " + TruncateForLog(prompt, 700))) +
+				"\nRecovery pass " + continuationNumber.ToString(CultureInfo.InvariantCulture) + ".";
+			return AppendAssistantAndUserMessage(requestBody, "", recoveryInstruction);
+		}
 		string visibleTail = TailText((completedContent ?? "").Trim(), 1200);
 		string instruction = "[JackLLM auto continuation] The previous assistant draft stopped before the answer was complete" +
 			(string.IsNullOrWhiteSpace(finishReason) ? "." : (" (`finish_reason: " + SanitizeChatUiFinishReason(finishReason) + "`).")) +
 			" Continue the same answer from exactly where the previous draft ended. Do not restart, apologize, mention token limits, mention this continuation instruction, or repeat earlier content. Reason internally about what remains, close any unfinished list/table/code block, and emit only the missing continuation text. If the answer is already complete, emit only a short closing sentence if needed. Continuation pass " + continuationNumber.ToString(CultureInfo.InvariantCulture) + "." +
 			(string.IsNullOrWhiteSpace(prompt) ? "" : ("\nOriginal user request: " + TruncateForLog(prompt, 700))) +
 			(string.IsNullOrWhiteSpace(visibleTail) ? "" : ("\nPrevious visible answer tail:\n" + visibleTail));
-		return AppendAssistantAndSystemMessage(requestBody, completedContent ?? "", instruction);
+		// Continuation is a fresh user turn after the partial assistant draft.
+		// Qwen chat templates can treat a system message after an assistant turn as
+		// conversation metadata and replay the draft instead of continuing it.
+		return AppendAssistantAndUserMessage(requestBody, completedContent ?? "", instruction);
 	}
 
 	private ChatUiCompletion MergeChatUiAutoContinuation(ChatUiCompletion completion, StringBuilder accumulatedContent, StringBuilder accumulatedReasoning, string priorFinishReason)
@@ -42897,6 +44243,15 @@ except Exception as exc:
 	{
 		return !string.IsNullOrWhiteSpace(value) &&
 			value.TrimStart().StartsWith("The model used the response budget without producing visible assistant text.", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private bool IsPotentialNoVisibleAssistantTextDiagnostic(string value)
+	{
+		const string diagnosticPrefix = "The model used the response budget without producing visible assistant text.";
+		string text = (value ?? "").TrimStart();
+		return text.Length > 0 &&
+			(diagnosticPrefix.StartsWith(text, StringComparison.OrdinalIgnoreCase) ||
+			 text.StartsWith(diagnosticPrefix, StringComparison.OrdinalIgnoreCase));
 	}
 
 	private string BuildChatUiNoContentErrorMessage(string source)
@@ -43191,7 +44546,7 @@ except Exception as exc:
 					}
 					usageSnapshot = GetChatUsageSnapshot(ownerKey);
 				}
-				if (!HasChatUiCompletionOutput(completion))
+				if (!HasChatUiVisibleAssistantText(completion))
 				{
 					string noContentError = BuildChatUiNoContentErrorMessage(agentMode ? "Agent mode" : (browserMode ? "Browser Skill mode" : (terminalMode ? "Terminal mode" : "Chat mode")));
 					LogMessage("[Chat UI] " + noContentError + " Raw: " + TruncateForLog(completion?.Raw ?? "", 1000));
@@ -43450,7 +44805,7 @@ except Exception as exc:
 						liveContent.Append(text2);
 						return WriteChatUiDeltaWithUsage(output, streamOwnerKey, text2, "", "", usageMeter, cancellationToken, promptSessionId);
 					}, emitToolCall).ConfigureAwait(continueOnCapturedContext: false);
-					if (!HasChatUiCompletionOutput(completion))
+					if (!HasChatUiVisibleAssistantText(completion))
 					{
 						CompleteActivePromptSession(promptSessionId, "Failed");
 						WriteChatUiNoContentStreamError(output, agentMode ? "Agent mode" : (browserMode ? "Browser Skill mode" : "Terminal mode"), completion?.Raw);
@@ -43481,10 +44836,11 @@ except Exception as exc:
 						{
 						case ChatUiNativeStreamResult.Completed:
 						{
-							if (!HasChatUiCompletionOutput(nativeCompletion))
+							if (!HasChatUiVisibleAssistantText(nativeCompletion))
 							{
-								LogMessage("[Chat UI] Native " + selectedRuntimeDisplayName + " stream completed with no assistant content; falling back to OpenAI-compatible stream.");
-								UpdateActivePromptSessionPhase(promptSessionId, "Native stream empty; falling back");
+								LogMessage("[Chat UI] Native " + selectedRuntimeDisplayName + " stream completed without visible assistant text; falling back to OpenAI-compatible recovery.");
+								UpdateActivePromptSessionPhase(promptSessionId, "Native stream had no visible answer; recovering");
+								WriteChatUiProgressWithUsage(output, streamOwnerKey, usageMeter, null, "answer_recovery", "Thinking finished without an answer; retrying the final response...", 0L, 0L);
 								break;
 							}
 							completedContent.Append(nativeCompletion.Content ?? "");
@@ -43612,7 +44968,8 @@ except Exception as exc:
 									completedReasoning.Append(ExtractNovelChatUiStreamDelta(completedReasoning.ToString(), delta.Reasoning));
 								}
 								ChatUiCompletion splitDelta = SplitThinkTags(openAiRawContent.ToString(), completedReasoning.ToString(), preserveWhitespace: true);
-								string answerDelta = ExtractUnsentNativeSuffix(splitDelta.Content, openAiEmittedContent.ToString());
+								bool holdNoVisibleDiagnostic = IsPotentialNoVisibleAssistantTextDiagnostic(splitDelta.Content);
+								string answerDelta = holdNoVisibleDiagnostic ? "" : ExtractUnsentNativeSuffix(splitDelta.Content, openAiEmittedContent.ToString());
 								string reasoningDelta = suppressOpenAiReasoning ? "" : ExtractUnsentNativeSuffix(splitDelta.Reasoning, openAiEmittedReasoning.ToString());
 								if (!string.IsNullOrEmpty(answerDelta) || !string.IsNullOrEmpty(reasoningDelta))
 								{
@@ -43648,13 +45005,24 @@ except Exception as exc:
 					}
 					string completedContentText = completedContent.ToString();
 					string completedReasoningText = completedReasoning.ToString();
+					bool recoveringNoVisibleAnswer = !HasChatUiVisibleAssistantText(completedContentText) &&
+						(!string.IsNullOrWhiteSpace(completedReasoningText) || IsNoVisibleAssistantTextDiagnostic(completedContentText));
 					if (ShouldAutoContinueChatUiCompletion(openAiFinishReason, completedContentText, completedReasoningText, openAiContinuationCount, openAiContinuationLastOutputLength, streamOwnerKey, usageMeter, out var openAiContinuationStopReason))
 					{
 						openAiContinuationLastOutputLength = GetChatUiContinuationOutputLength(completedContentText, completedReasoningText);
 						openAiContinuationCount++;
-						LogMessage("[Chat UI] Streaming completion hit an output limit; recursively continuing answer pass " + openAiContinuationCount.ToString(CultureInfo.InvariantCulture) + ".");
-						WriteChatUiProgressWithUsage(output, streamOwnerKey, usageMeter, null, "auto_continuation", "Continuing clipped response...", 0L, 0L);
+						LogMessage(recoveringNoVisibleAnswer
+							? "[Chat UI] Streaming completion produced no usable visible answer; running answer-only recovery pass " + openAiContinuationCount.ToString(CultureInfo.InvariantCulture) + "."
+							: "[Chat UI] Streaming completion hit an output limit; recursively continuing answer pass " + openAiContinuationCount.ToString(CultureInfo.InvariantCulture) + ".");
+						WriteChatUiProgressWithUsage(output, streamOwnerKey, usageMeter, null, recoveringNoVisibleAnswer ? "answer_recovery" : "auto_continuation", recoveringNoVisibleAnswer ? "Thinking finished; retrying the final answer..." : "Continuing clipped response...", 0L, 0L);
 						currentOpenAiRequestJson = BuildChatUiAutoContinuationRequest(currentOpenAiRequestJson, completedContentText, completedReasoningText, openAiFinishReason, openAiContinuationCount);
+						if (recoveringNoVisibleAnswer)
+						{
+							openAiRawContent.Clear();
+							completedContent.Clear();
+							openAiPendingContentDelta.Clear();
+							openAiEmittedContent.Clear();
+						}
 						continue;
 					}
 					if (!string.IsNullOrWhiteSpace(openAiContinuationStopReason))
@@ -43663,7 +45031,7 @@ except Exception as exc:
 					}
 					break;
 				}
-				if (!HasChatUiCompletionOutput(completedContent, completedReasoning))
+				if (!HasChatUiVisibleAssistantText(completedContent))
 				{
 					CompleteActivePromptSession(promptSessionId, "Failed");
 					WriteChatUiNoContentStreamError(output, runtimeDisplayName);
@@ -44001,6 +45369,34 @@ except Exception as exc:
 					arguments = arguments
 				}
 			}
+		});
+	}
+
+	private WebAuthSessionRecord WebAuthSessionRecordFromRow(object[] row)
+	{
+		row = NormalizeWebAuthSessionRow(row);
+		return new WebAuthSessionRecord
+		{
+			tokenHash = GetRowValue(row, 0),
+			userName = GetRowValue(row, 1),
+			createdUtc = GetRowValue(row, 2),
+			expiresUtc = GetRowValue(row, 3),
+			lastSeenUtc = GetRowValue(row, 4),
+			clientIp = GetRowValue(row, 5)
+		};
+	}
+
+	private object[] WebAuthSessionRecordToRow(WebAuthSessionRecord record)
+	{
+		record = record ?? new WebAuthSessionRecord();
+		return NormalizeWebAuthSessionRow(new object[6]
+		{
+			record.tokenHash ?? "",
+			record.userName ?? "",
+			record.createdUtc ?? "",
+			record.expiresUtc ?? "",
+			record.lastSeenUtc ?? "",
+			record.clientIp ?? ""
 		});
 	}
 
@@ -45459,7 +46855,10 @@ except Exception as exc:
 				previousPath = file.PreviousPath ?? "",
 				name = file.Name ?? "",
 				extension = file.Extension ?? "",
-				changeKind = file.ChangeKind ?? "modified"
+				changeKind = file.ChangeKind ?? "modified",
+				additions = file.Additions,
+				deletions = file.Deletions,
+				lineStatsAvailable = file.LineStatsAvailable
 			}).ToArray()
 		});
 		try
@@ -45604,7 +47003,7 @@ except Exception as exc:
 		return transaction;
 	}
 
-	private static List<ChatUiFileChangeStreamEntry> BuildChatFileChangeStreamEntries(ChatFileUndoTransaction transaction)
+	private List<ChatUiFileChangeStreamEntry> BuildChatFileChangeStreamEntries(ChatFileUndoTransaction transaction)
 	{
 		var files = new List<ChatUiFileChangeStreamEntry>();
 		if (transaction == null)
@@ -45614,15 +47013,122 @@ except Exception as exc:
 		foreach (ChatFileUndoEntry entry in transaction.Entries)
 		{
 			string path = entry.Path ?? "";
+			bool currentExists = false;
+			byte[] currentBytes = Array.Empty<byte>();
+			if (!string.IsNullOrWhiteSpace(path))
+			{
+				if (IsJackLlmSessionManagedPath(path))
+				{
+					currentExists = TryReadChatSessionSandboxFileBytes(transaction.SessionId, transaction.OwnerKey, path, out currentBytes);
+				}
+				else if (File.Exists(path))
+				{
+					currentExists = true;
+					try
+					{
+						currentBytes = File.ReadAllBytes(path);
+					}
+					catch
+					{
+						currentBytes = Array.Empty<byte>();
+						currentExists = false;
+					}
+				}
+			}
+			int[] lineChanges = CalculateChatFileLineChanges(entry.PreviousBytes, currentBytes, entry.ExistedBefore, currentExists);
 			files.Add(new ChatUiFileChangeStreamEntry
 			{
 				Path = path,
 				Name = string.IsNullOrWhiteSpace(path) ? "file" : Path.GetFileName(path),
 				Extension = string.IsNullOrWhiteSpace(path) ? "" : Path.GetExtension(path),
-				ChangeKind = entry.ChangeKind ?? (entry.ExistedBefore ? "modified" : "created")
+				ChangeKind = entry.ChangeKind ?? (entry.ExistedBefore ? "modified" : "created"),
+				Additions = lineChanges[0],
+				Deletions = lineChanges[1],
+				LineStatsAvailable = lineChanges[2] == 1
 			});
 		}
 		return files;
+	}
+
+	private static int[] CalculateChatFileLineChanges(byte[] previousBytes, byte[] currentBytes, bool previousExists, bool currentExists)
+	{
+		if (!TryDecodeChatFileLines(previousBytes, previousExists, out var previousLines) ||
+			!TryDecodeChatFileLines(currentBytes, currentExists, out var currentLines))
+		{
+			return new[] { 0, 0, 0 };
+		}
+		int prefix = 0;
+		int shared = Math.Min(previousLines.Length, currentLines.Length);
+		while (prefix < shared && string.Equals(previousLines[prefix], currentLines[prefix], StringComparison.Ordinal))
+		{
+			prefix++;
+		}
+		int previousEnd = previousLines.Length - 1;
+		int currentEnd = currentLines.Length - 1;
+		while (previousEnd >= prefix && currentEnd >= prefix && string.Equals(previousLines[previousEnd], currentLines[currentEnd], StringComparison.Ordinal))
+		{
+			previousEnd--;
+			currentEnd--;
+		}
+		int previousCount = Math.Max(0, previousEnd - prefix + 1);
+		int currentCount = Math.Max(0, currentEnd - prefix + 1);
+		if (previousCount == 0 || currentCount == 0)
+		{
+			return new[] { currentCount, previousCount, 1 };
+		}
+		if ((long)previousCount * currentCount > 4000000L)
+		{
+			return new[] { currentCount, previousCount, 1 };
+		}
+		int[] lcs = new int[currentCount + 1];
+		for (int oldIndex = 0; oldIndex < previousCount; oldIndex++)
+		{
+			int diagonal = 0;
+			for (int newIndex = 0; newIndex < currentCount; newIndex++)
+			{
+				int above = lcs[newIndex + 1];
+				if (string.Equals(previousLines[prefix + oldIndex], currentLines[prefix + newIndex], StringComparison.Ordinal))
+				{
+					lcs[newIndex + 1] = diagonal + 1;
+				}
+				else if (lcs[newIndex] > lcs[newIndex + 1])
+				{
+					lcs[newIndex + 1] = lcs[newIndex];
+				}
+				diagonal = above;
+			}
+		}
+		int commonLines = lcs[currentCount];
+		return new[] { currentCount - commonLines, previousCount - commonLines, 1 };
+	}
+
+	private static bool TryDecodeChatFileLines(byte[] bytes, bool exists, out string[] lines)
+	{
+		lines = Array.Empty<string>();
+		if (!exists)
+		{
+			return true;
+		}
+		bytes ??= Array.Empty<byte>();
+		if (bytes.Length > 16777216 || Array.IndexOf(bytes, (byte)0) >= 0)
+		{
+			return false;
+		}
+		try
+		{
+			string text = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes);
+			text = text.Replace("\r\n", "\n").Replace('\r', '\n');
+			lines = text.Split('\n');
+			if (lines.Length > 0 && lines[^1].Length == 0)
+			{
+				Array.Resize(ref lines, lines.Length - 1);
+			}
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
 	}
 
 	private void AttachChatFileUndoToToolEvent(ChatUiToolCallStreamEvent toolEvent, ChatFileUndoTransaction transaction)
@@ -46998,7 +48504,7 @@ except Exception as exc:
 			currentRequestJson = ApplyPendingChatUiSteering(currentRequestJson, consumeSteering);
 			bool finalAnswerOnlyRound = IsProxyToolExecutionDisabled(currentRequestJson);
 			bool hasCurrentProxyToolResult = ExtractLatestProxyToolResultText(currentRequestJson, 1).Count > 0;
-			Func<string, bool> roundReasoningEmitter = ((finalAnswerOnlyRound && hasCurrentProxyToolResult) ? null : emitLiveReasoning);
+			Func<string, bool> roundReasoningEmitter = emitLiveReasoning;
 			bool timeboxFinalAnswer = finalAnswerOnlyRound && hasCurrentProxyToolResult;
 			CancellationTokenSource finalAnswerTimeoutCts = null;
 			CancellationToken roundCancellationToken = cancellationToken;
@@ -47024,11 +48530,7 @@ except Exception as exc:
 				final.Raw = responseBody;
 				final = NormalizeChatUiCompletionForDisplay(final, currentRequestJson);
 				bool hasFinalProxyToolResult = ExtractLatestProxyToolResultText(currentRequestJson, 1).Count > 0;
-				if (hasFinalProxyToolResult)
-				{
-					final.Reasoning = "";
-				}
-				if (hasFinalProxyToolResult && string.IsNullOrWhiteSpace(final.Content))
+				if (hasFinalProxyToolResult && !HasChatUiVisibleAssistantText(final.Content))
 				{
 					if (toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model produced no final answer after tool results", out var digestRetryRequest))
 					{
@@ -47170,7 +48672,7 @@ except Exception as exc:
 				}
 			}
 			bool malformedPostToolAttempt = !string.IsNullOrWhiteSpace(direct.Content) && direct.Content.IndexOf("attempted a tool call but returned malformed JSON", StringComparison.OrdinalIgnoreCase) >= 0;
-			if (hasProxyToolResult && ((string.IsNullOrWhiteSpace(direct.Content) && string.IsNullOrWhiteSpace(direct.Reasoning)) || malformedPostToolAttempt))
+			if (hasProxyToolResult && ((!HasChatUiVisibleAssistantText(direct.Content) && string.IsNullOrWhiteSpace(direct.Reasoning)) || malformedPostToolAttempt || IsNoVisibleAssistantTextDiagnostic(direct.Content)))
 			{
 				if (toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, malformedPostToolAttempt ? "the model attempted malformed post-tool JSON" : "the model produced no final answer after tool results", out var digestRetryRequest))
 				{
@@ -47188,10 +48690,6 @@ except Exception as exc:
 				continue;
 			}
 			direct = NormalizeChatUiCompletionForDisplay(direct, currentRequestJson);
-			if (hasProxyToolResult)
-			{
-				direct.Reasoning = "";
-			}
 			if (toolRound < lastToolRound && ShouldContinueForRequiredProxyFileWrite(currentRequestJson, direct.Content, out var missingFileWriteInstruction))
 			{
 				LogMessage("[Chat UI] Rejected final answer for file-write prompt without a successful vs_write_file result; continuing the agent loop.");
@@ -47226,7 +48724,7 @@ except Exception as exc:
 				LogMessage("[Chat UI] Model final content after proxy tool use contained unsafe transcript/markup leakage; returning latest tool result fallback.");
 				return BuildAndStreamProxyToolLoopFallbackCompletion(currentRequestJson, emitLiveContent, toolRound >= lastToolRound, emitLiveReasoning: emitLiveReasoning, fallbackReason: "The final answer pass leaked tool markup after completed tool results, so I am rendering the clean tool fallback.");
 			}
-			if (hasProxyToolResult && string.IsNullOrWhiteSpace(direct.Content))
+			if (hasProxyToolResult && !HasChatUiVisibleAssistantText(direct.Content))
 			{
 				if (toolRound < lastToolRound && TryBuildProxyToolDigestContinuationRequest(currentRequestJson, "the model produced empty content after tool results", out var digestRetryRequest))
 				{
@@ -47581,7 +49079,7 @@ except Exception as exc:
 		return urls.Count;
 	}
 
-	private int CountTextOccurrences(string value, string needle)
+	private static int CountTextOccurrences(string value, string needle)
 	{
 		if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(needle))
 		{
@@ -49352,12 +50850,20 @@ except Exception as exc:
 		}
 		ChatUiCompletion accumulated = completion ?? new ChatUiCompletion();
 		string continuationRequest = requestBody;
-		for (int pass = 0; pass < 3; pass++)
+		for (int pass = 0; ; pass++)
 		{
 			string lateSteering = NormalizeChatStreamSteeringText(ConsumeActiveChatStreamSteering(activeStream));
 			if (string.IsNullOrWhiteSpace(lateSteering))
 			{
-				break;
+				lock (activeStream.SteeringMessages)
+				{
+					if (activeStream.SteeringMessages.Count == 0)
+					{
+						activeStream.AcceptingSteering = false;
+						break;
+					}
+				}
+				continue;
 			}
 			string previousAnswer = CleanAssistantVisibleContent(accumulated.Content ?? "");
 			string instruction = "[JackLLM late steering continuation] A steering update arrived after the previous draft was ready but before the stream closed. Continue this same visible assistant turn by satisfying the steering update now. Do not repeat earlier text, do not mention this instruction, and apply every steering update in order.";
@@ -50821,23 +52327,30 @@ except Exception as exc:
 			writer.WriteNumber("max_output_tokens", GetDefaultChatUiCompletionMaxTokens(agentMode));
 		}
 		string systemPrompt = BuildChatUiNativeSystemPrompt(root, messageList, lastUserIndex, permissions, promptUserName, ownerKey, includeMemories);
+		writer.WritePropertyName("messages");
+		writer.WriteStartArray();
 		if (!string.IsNullOrWhiteSpace(systemPrompt))
 		{
-			writer.WriteString("system_prompt", systemPrompt);
+			WriteChatUiSystemMessage(writer, systemPrompt);
 		}
-		writer.WritePropertyName("input");
+		int messageCount = 0;
 		if (lastUserIndex >= 0)
 		{
-			if (!WriteChatUiNativeInputValue(writer, messageList[lastUserIndex]))
-			{
-				string currentText = ExtractChatUiMessageContentText(messageList[lastUserIndex]);
-				writer.WriteStringValue(string.IsNullOrWhiteSpace(currentText) ? fallbackInput : currentText);
-			}
+			WriteChatUiMessage(writer, messageList[lastUserIndex], ref messageCount);
 		}
-		else
+		if (messageCount == 0 && !string.IsNullOrWhiteSpace(fallbackInput))
 		{
-			writer.WriteStringValue(fallbackInput);
+			writer.WriteStartObject();
+			writer.WriteString("role", "user");
+			writer.WriteString("content", fallbackInput);
+			writer.WriteEndObject();
+			messageCount++;
 		}
+		if (messageCount == 0)
+		{
+			throw new InvalidOperationException("Chat UI request did not include a message.");
+		}
+		writer.WriteEndArray();
 		writer.WriteEndObject();
 		writer.Flush();
 		return Encoding.UTF8.GetString(jsonStream.ToArray());
@@ -50913,6 +52426,9 @@ except Exception as exc:
 	private List<string> BuildChatUiSystemPromptParts(JsonElement root, List<JsonElement> messages, int lastUserIndex, ChatPermissionState permissions = null, string promptUserName = null, string ownerKey = null, bool uploadedFilesRequireReadFile = false, bool includeMemories = true)
 	{
 		List<string> parts = new List<string>();
+		bool currentMessageContainsImage = lastUserIndex >= 0 &&
+			lastUserIndex < messages.Count &&
+			ChatUiMessageContainsImageContent(messages[lastUserIndex]);
 		foreach (JsonElement message in messages)
 		{
 			string role = ExtractStringProperty(message, "role") ?? "";
@@ -50963,6 +52479,11 @@ except Exception as exc:
 		{
 			parts.Add(selectedServiceHint.Trim());
 		}
+		string visionInputHint = BuildChatVisionInputSystemHint(messages, lastUserIndex);
+		if (!string.IsNullOrWhiteSpace(visionInputHint))
+		{
+			parts.Add(visionInputHint);
+		}
 		string browserSkillHint = BuildChatBrowserSkillSystemHint(root);
 		if (!string.IsNullOrWhiteSpace(browserSkillHint))
 		{
@@ -50983,12 +52504,49 @@ except Exception as exc:
 		{
 			parts.Add(uploadedFilesHint.Trim());
 		}
-		string priorConversationHint = BuildChatUiPriorConversationSystemHint(messages, lastUserIndex);
+		// A prior assistant hallucination about an earlier image must never become
+		// authoritative system context for fresh pixels. Small local VLM contexts
+		// are especially susceptible to repeating that stale description instead
+		// of grounding the current image.
+		string priorConversationHint = currentMessageContainsImage
+			? ""
+			: BuildChatUiPriorConversationSystemHint(messages, lastUserIndex);
 		if (!string.IsNullOrWhiteSpace(priorConversationHint))
 		{
 			parts.Add(priorConversationHint.Trim());
 		}
 		return parts;
+	}
+
+	private string BuildChatVisionInputSystemHint(List<JsonElement> messages, int lastUserIndex)
+	{
+		if (messages == null || lastUserIndex < 0 || lastUserIndex >= messages.Count ||
+			!ChatUiMessageContainsImageContent(messages[lastUserIndex]))
+		{
+			return "";
+		}
+		return "[JackLLM vision input]\nThe current user message contains actual image pixels available to the vision backend. Inspect the image directly and answer from visible evidence. Do not claim that images are unavailable or that you are text-only while this vision input is present. If a detail is genuinely unreadable, describe what is visible and identify only that specific limitation.";
+	}
+
+	private bool ChatUiMessageContainsImageContent(JsonElement message)
+	{
+		if (message.ValueKind != JsonValueKind.Object ||
+			!message.TryGetProperty("content", out var content) ||
+			content.ValueKind != JsonValueKind.Array)
+		{
+			return false;
+		}
+		foreach (JsonElement part in content.EnumerateArray())
+		{
+			string imageUrl;
+			if (part.ValueKind == JsonValueKind.Object &&
+				string.Equals(ExtractStringProperty(part, "type"), "image_url", StringComparison.OrdinalIgnoreCase) &&
+				TryExtractChatUiImageUrl(part, out imageUrl))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static string BuildPlanModeSystemHint()
@@ -51158,7 +52716,7 @@ except Exception as exc:
 
 	private string BuildPlainChatModeSystemHint()
 	{
-		return "[JackLLM plain chat mode] This is ordinary chatbot mode. Do not call, request, or imply access to tools, files, downloads, terminal commands, internet search, Agent, Companion, or media generation. Answer only the current user's request in final-answer form. Prior turns and saved memories are continuity evidence, not pending work: do not surface unrelated code, file paths, FTP configuration, credentials, tool schemas, or fragments from an earlier task unless the current user explicitly asks for that subject. Never expose passwords, tokens, or connection credentials from context. Keep any private reasoning internal; do not write a thought process, analysis, reasoning section, thinking section, or <think> block.";
+		return "[JackLLM plain chat mode] This is ordinary chatbot mode. Do not call, request, or imply access to tools, files, downloads, terminal commands, internet search, Agent, Companion, or media generation. Answer only the current user's request in final-answer form. Prior turns and saved memories are continuity evidence, not pending work: do not surface unrelated code, file paths, FTP configuration, credentials, tool schemas, or fragments from an earlier task unless the current user explicitly asks for that subject. Never expose passwords, tokens, or connection credentials from context. When the runtime supports a dedicated reasoning channel, use it for live thinking before the answer. Keep reasoning out of the visible final-answer text and do not write reasoning headings or <think> markup into that final answer.";
 	}
 
 	private string BuildChatBrowserSkillSystemHint(JsonElement root)
@@ -51255,87 +52813,6 @@ except Exception as exc:
 			}
 		}
 		return string.Join(Environment.NewLine, rows);
-	}
-
-	private bool WriteChatUiNativeInputValue(Utf8JsonWriter writer, JsonElement message)
-	{
-		if (message.ValueKind != JsonValueKind.Object)
-		{
-			return false;
-		}
-		if (!message.TryGetProperty("content", out var contentElement))
-		{
-			return false;
-		}
-		if (contentElement.ValueKind == JsonValueKind.String)
-		{
-			string content = contentElement.GetString();
-			if (string.IsNullOrWhiteSpace(content))
-			{
-				return false;
-			}
-			writer.WriteStringValue(content);
-			return true;
-		}
-		if (contentElement.ValueKind != JsonValueKind.Array)
-		{
-			return false;
-		}
-		List<JsonElement> validParts = new List<JsonElement>();
-		foreach (JsonElement part in contentElement.EnumerateArray())
-		{
-			if (IsSupportedChatUiNativeInputPart(part))
-			{
-				validParts.Add(part);
-			}
-		}
-		if (validParts.Count == 0)
-		{
-			return false;
-		}
-		writer.WriteStartArray();
-		foreach (JsonElement part2 in validParts)
-		{
-			WriteChatUiNativeInputPart(writer, part2);
-		}
-		writer.WriteEndArray();
-		return true;
-	}
-
-	private bool IsSupportedChatUiNativeInputPart(JsonElement part)
-	{
-		if (part.ValueKind != JsonValueKind.Object)
-		{
-			return false;
-		}
-		string type = ExtractStringProperty(part, "type") ?? "";
-		if (type.Equals("text", StringComparison.OrdinalIgnoreCase))
-		{
-			return !string.IsNullOrWhiteSpace(ExtractStringProperty(part, "text") ?? ExtractStringProperty(part, "content"));
-		}
-		if (type.Equals("image_url", StringComparison.OrdinalIgnoreCase) && TryExtractChatUiImageUrl(part, out var imageUrl))
-		{
-			return imageUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase);
-		}
-		return false;
-	}
-
-	private void WriteChatUiNativeInputPart(Utf8JsonWriter writer, JsonElement part)
-	{
-		string type = ExtractStringProperty(part, "type") ?? "";
-		writer.WriteStartObject();
-		string imageUrl;
-		if (type.Equals("text", StringComparison.OrdinalIgnoreCase))
-		{
-			writer.WriteString("type", "text");
-			writer.WriteString("text", ExtractStringProperty(part, "text") ?? ExtractStringProperty(part, "content") ?? "");
-		}
-		else if (type.Equals("image_url", StringComparison.OrdinalIgnoreCase) && TryExtractChatUiImageUrl(part, out imageUrl))
-		{
-			writer.WriteString("type", "image");
-			writer.WriteString("data_url", imageUrl);
-		}
-		writer.WriteEndObject();
 	}
 
 	private string ExtractChatUiMessageContentText(JsonElement message)
@@ -51768,7 +53245,7 @@ except Exception as exc:
 		{
 			Id = "fsctx_" + ComputeStableShortHash(full),
 			Label = (label ?? "Root"),
-			DisplayName = string.Equals(source, "session", StringComparison.OrdinalIgnoreCase) ? "Current Session Files" : GetAgentFilesystemContextDisplayName(full),
+			DisplayName = string.Equals(source, "session", StringComparison.OrdinalIgnoreCase) ? "Project Files" : GetAgentFilesystemContextDisplayName(full),
 			Source = (source ?? "root"),
 			Path = full,
 			Exists = Directory.Exists(full) || string.Equals(source, "session", StringComparison.OrdinalIgnoreCase)
@@ -52564,6 +54041,10 @@ except Exception as exc:
 		{
 			return preserveWhitespace ? segment : segment.Trim();
 		}
+		string normalizedReasoning = reasoning.Trim();
+		string normalizedSegment = segment.Trim();
+		if (normalizedReasoning.Contains(normalizedSegment, StringComparison.Ordinal)) return reasoning;
+		if (normalizedSegment.Contains(normalizedReasoning, StringComparison.Ordinal)) return preserveWhitespace ? segment : normalizedSegment;
 		return (preserveWhitespace ? reasoning : reasoning.Trim()) + Environment.NewLine + Environment.NewLine + (preserveWhitespace ? segment : segment.Trim());
 	}
 
@@ -52572,7 +54053,7 @@ except Exception as exc:
 		content = content ?? "";
 		reasoning = reasoning ?? "";
 		string[] openTags = new string[4] { "<think>", "<thinking>", "<thought>", "<analysis>" };
-		string[] closeTags = new string[4] { "</think>", "</thinking>", "</thought>", "</analysis>" };
+		string[] closeTags = new string[6] { "</think>", "</thinking>", "</thought>", "</analysis>", "</end_of_thought>", "<|end_of_thought|>" };
 		StringBuilder answer = new StringBuilder();
 		int cursor = 0;
 		while (cursor < content.Length)
@@ -52703,7 +54184,7 @@ except Exception as exc:
 			return content ?? "";
 		}
 		string cleaned = Regex.Replace(content, "(?im)^\\s*(?:ing|king|nking|hinking|thinking)\\s*$", "", RegexOptions.CultureInvariant);
-		cleaned = Regex.Replace(cleaned, "(?im)^\\s*</?\\s*(?:think|thinking|thought|analysis)\\s*>?\\s*$", "", RegexOptions.CultureInvariant);
+		cleaned = Regex.Replace(cleaned, "(?im)^\\s*(?:</?\\s*(?:think|thinking|thought|analysis|end_of_thought)\\s*>?|<\\|\\s*(?:end_of_)?(?:think|thought|analysis)\\s*\\|>)\\s*$", "", RegexOptions.CultureInvariant);
 		return Regex.Replace(cleaned, "\\n{3,}", "\n\n", RegexOptions.CultureInvariant);
 	}
 
@@ -52862,48 +54343,17 @@ except Exception as exc:
 		{
 			return false;
 		}
-		if (ShouldSuppressChatUiReasoningByDefault(requestBody))
-		{
-			return true;
-		}
 		string prompt = ExtractChatUiLastUserPromptText(requestBody);
 		if (string.IsNullOrWhiteSpace(prompt))
 		{
 			prompt = ExtractLastUserMessage(requestBody) ?? "";
 		}
-		string text = (requestBody ?? "") + "\n" + prompt;
+		string text = prompt;
 		return text.IndexOf("/no_think", StringComparison.OrdinalIgnoreCase) >= 0
 			|| Regex.IsMatch(text, "\\bdo\\s+not\\s+(?:write|show|include|return|display)\\b.{0,80}\\b(?:thought\\s+process|analysis|reasoning|thinking|<think>)\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
 			|| Regex.IsMatch(text, "\\b(?:no|without)\\s+(?:thought\\s+process|analysis|reasoning|thinking|<think>)\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 	}
 
-	private bool ShouldSuppressChatUiReasoningByDefault(string requestBody)
-	{
-		if (requestBody.IndexOf("[JackLLM plain chat mode]", StringComparison.OrdinalIgnoreCase) >= 0)
-		{
-			return true;
-		}
-		if (requestBody.IndexOf("[LmVsProxy service selection]", StringComparison.OrdinalIgnoreCase) >= 0 ||
-			requestBody.IndexOf("[LmVsProxy agent mode]", StringComparison.OrdinalIgnoreCase) >= 0 ||
-			requestBody.IndexOf("[LmVsProxy permissions]", StringComparison.OrdinalIgnoreCase) >= 0)
-		{
-			return false;
-		}
-		try
-		{
-			using JsonDocument document = JsonDocument.Parse(requestBody);
-			if (document.RootElement.ValueKind != JsonValueKind.Object)
-			{
-				return false;
-			}
-			string service = ExtractStringProperty(document.RootElement, "service") ?? "";
-			return string.IsNullOrWhiteSpace(service);
-		}
-		catch
-		{
-			return false;
-		}
-	}
 
 	private string CleanAssistantFinalAnswerMarkup(string content)
 	{
@@ -53111,7 +54561,7 @@ except Exception as exc:
 			return content ?? "";
 		}
 		string working = content;
-		string[] closeTags = new string[4] { "</think>", "</thinking>", "</thought>", "</analysis>" };
+		string[] closeTags = new string[7] { "</think>", "</thinking>", "</thought>", "</analysis>", "</end_of_thought>", "<|end_of_thought|>", "<|end_of_analysis|>" };
 		string[] array = closeTags;
 		foreach (string closeTag in array)
 		{
@@ -53133,7 +54583,7 @@ except Exception as exc:
 				{
 					working = ((before.Length >= after.Length) ? before : after);
 				}
-				else if (LooksLikeReasoningLeak(before))
+				else if (closeTag.IndexOf("end_of_", StringComparison.OrdinalIgnoreCase) >= 0 || LooksLikeReasoningLeak(before))
 				{
 					AppendReasoning(ref reasoning, before);
 					working = after;
@@ -53153,7 +54603,9 @@ except Exception as exc:
 		addition = (addition ?? "").Trim();
 		if (!string.IsNullOrWhiteSpace(addition))
 		{
-			reasoning = (string.IsNullOrWhiteSpace(reasoning) ? addition : (reasoning.Trim() + Environment.NewLine + Environment.NewLine + addition));
+			if (string.IsNullOrWhiteSpace(reasoning)) reasoning = addition;
+			else if (!reasoning.Contains(addition, StringComparison.Ordinal) && !addition.Contains(reasoning.Trim(), StringComparison.Ordinal)) reasoning = reasoning.Trim() + Environment.NewLine + Environment.NewLine + addition;
+			else if (addition.Contains(reasoning.Trim(), StringComparison.Ordinal)) reasoning = addition;
 		}
 	}
 
@@ -53221,7 +54673,7 @@ except Exception as exc:
 			return content ?? "";
 		}
 		string cleaned = content;
-		string[] tags = new string[8] { "<think>", "</think>", "<thinking>", "</thinking>", "<thought>", "</thought>", "<analysis>", "</analysis>" };
+		string[] tags = new string[11] { "<think>", "</think>", "<thinking>", "</thinking>", "<thought>", "</thought>", "<analysis>", "</analysis>", "</end_of_thought>", "<|end_of_thought|>", "<|end_of_analysis|>" };
 		string[] array = tags;
 		foreach (string tag in array)
 		{
@@ -68973,6 +70425,44 @@ except Exception as exc:
 		return continuationRequest;
 	}
 
+	private string AppendAssistantAndUserMessage(string requestBody, string assistantContent, string userContent)
+	{
+		using JsonDocument document = JsonDocument.Parse(requestBody);
+		using MemoryStream stream = new MemoryStream();
+		using Utf8JsonWriter writer = new Utf8JsonWriter(stream);
+		bool wroteMessages = false;
+		writer.WriteStartObject();
+		foreach (JsonProperty property in document.RootElement.EnumerateObject())
+		{
+			if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array)
+			{
+				wroteMessages = true;
+				writer.WritePropertyName("messages");
+				writer.WriteStartArray();
+				foreach (JsonElement item in property.Value.EnumerateArray())
+				{
+					item.WriteTo(writer);
+				}
+				WriteAssistantAndUserMessages(writer, assistantContent, userContent);
+				writer.WriteEndArray();
+			}
+			else
+			{
+				property.WriteTo(writer);
+			}
+		}
+		if (!wroteMessages)
+		{
+			writer.WritePropertyName("messages");
+			writer.WriteStartArray();
+			WriteAssistantAndUserMessages(writer, assistantContent, userContent);
+			writer.WriteEndArray();
+		}
+		writer.WriteEndObject();
+		writer.Flush();
+		return Encoding.UTF8.GetString(stream.ToArray());
+	}
+
 	private static void WriteAssistantAndSystemMessages(Utf8JsonWriter writer, string assistantContent, string systemContent)
 	{
 		if (!string.IsNullOrWhiteSpace(assistantContent))
@@ -68985,6 +70475,21 @@ except Exception as exc:
 		writer.WriteStartObject();
 		writer.WriteString("role", "system");
 		writer.WriteString("content", systemContent ?? "");
+		writer.WriteEndObject();
+	}
+
+	private static void WriteAssistantAndUserMessages(Utf8JsonWriter writer, string assistantContent, string userContent)
+	{
+		if (!string.IsNullOrWhiteSpace(assistantContent))
+		{
+			writer.WriteStartObject();
+			writer.WriteString("role", "assistant");
+			writer.WriteString("content", assistantContent);
+			writer.WriteEndObject();
+		}
+		writer.WriteStartObject();
+		writer.WriteString("role", "user");
+		writer.WriteString("content", userContent ?? "");
 		writer.WriteEndObject();
 	}
 
@@ -69709,6 +71214,14 @@ except Exception as exc:
 			DisposeChatBrowserClientSessions();
 			_jackDirector?.Dispose();
 			DisposeDreaming();
+			try
+			{
+				_chatSessionData?.SaveIfDirty();
+			}
+			catch (Exception ex)
+			{
+				LogMessage("[JACK] Failed to flush pending chat data during shutdown: " + ex.Message);
+			}
 			_httpListener = null;
 			try
 			{

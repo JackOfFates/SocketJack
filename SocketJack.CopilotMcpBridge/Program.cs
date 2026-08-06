@@ -104,8 +104,11 @@ public static class Program
             ok = true,
             server = "SocketJack.CopilotMcpBridge",
             mode = "http-proxy",
+            processId = Environment.ProcessId,
             selectedServer = bridgeOptions.ServerId,
             selectedModel = bridgeOptions.ModelId,
+            authConfigured = bridgeOptions.HasUpstreamAuthentication,
+            authFingerprint = bridgeOptions.AuthFingerprint,
             endpoint = SocketJackSecretRedactor.Redact(bridgeOptions.ServerEndpoint.ToString()),
             webSocket = SocketJackSecretRedactor.Redact(SocketJackWebChatApiClient.BuildWebSocketUri(bridgeOptions.ServerEndpoint).ToString())
         }));
@@ -392,6 +395,8 @@ public sealed class CopilotBridgeOptions
     public string ModelId { get; private init; } = "";
     public string AuthToken { get; private init; } = "";
     public string AuthUserName { get; private init; } = "";
+    public bool HasUpstreamAuthentication => !string.IsNullOrWhiteSpace(this.AuthToken);
+    public string AuthFingerprint => SocketJackAuthFingerprint.Compute(this.AuthToken);
     public int ListenPort { get; private init; } = 11574;
     public int TimeoutSeconds { get; private init; } = 60;
     public bool Verbose { get; private init; }
@@ -594,6 +599,26 @@ public sealed class CopilotBridgeOptions
     }
 }
 
+public static class SocketJackAuthFingerprint
+{
+    public static string Compute(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return "";
+
+        byte[] tokenBytes = Encoding.UTF8.GetBytes(token.Trim());
+        try
+        {
+            byte[] hash = SHA256.HashData(tokenBytes);
+            return Convert.ToHexString(hash.AsSpan(0, 12));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(tokenBytes);
+        }
+    }
+}
+
 [McpServerToolType]
 public sealed class SocketJackCopilotTools
 {
@@ -727,6 +752,7 @@ public sealed class SocketJackModelProxyForwarder
         "SOCKETJACK_COPILOT_BRIDGE_STREAM_MAX_SECONDS",
         TimeSpan.FromMinutes(20));
     internal const int VisualStudioAutopilotMinimumMaxTokens = 8192;
+    internal const int VisualStudioStreamMinimumTimeoutSeconds = 1200;
 
     private readonly HttpClient _httpClient;
     private readonly SocketJackWebChatApiClient _webChatClient;
@@ -861,7 +887,7 @@ public sealed class SocketJackModelProxyForwarder
 
         if (preferDirectOpenAiFirst)
         {
-            if (await TryStreamOpenAiChatViaDirectOpenAiAsync(context, directOpenAiBody!, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
+            if (await TryStreamOpenAiChatViaDirectOpenAiAsync(context, directOpenAiBody!, openAiBody, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
                 return true;
             if (await TryStreamOpenAiChatViaWebSocketOpenAiAsync(context, directOpenAiBody!, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
                 return true;
@@ -875,7 +901,7 @@ public sealed class SocketJackModelProxyForwarder
 
         if (directOpenAiBody != null && !preferDirectOpenAiFirst)
         {
-            if (await TryStreamOpenAiChatViaDirectOpenAiAsync(context, directOpenAiBody, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
+            if (await TryStreamOpenAiChatViaDirectOpenAiAsync(context, directOpenAiBody, openAiBody, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
                 return true;
             if (await TryStreamOpenAiChatViaWebSocketOpenAiAsync(context, directOpenAiBody, shape, completionId, created, model, cancellationToken).ConfigureAwait(false))
                 return true;
@@ -1232,8 +1258,7 @@ public sealed class SocketJackModelProxyForwarder
                             continue;
                         }
                         if (visualStudioToolRequest &&
-                            SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(chunkText) &&
-                            SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(recoveryRequestBody, out _))
+                            SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(chunkText))
                         {
                             suppressedRecoverableNoVisibleFallback = true;
                             continue;
@@ -1298,6 +1323,8 @@ public sealed class SocketJackModelProxyForwarder
                             if (!wroteContent && !suppressedRecoverableMalformedToolAttempt && !suppressedRecoverableToolTranscript && !suppressedRecoverablePrematureClarification && !suppressedRecoverableNoVisibleFallback)
                                 wroteContent = await TryWriteCapturedChatStreamTextAsync(context, captured.ToString(), assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
                             if (!wroteContent)
+                                wroteContent = await TryWriteNoVisibleAssistantRecoveryAsync(context, recoveryRequestBody, assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
+                            if (!wroteContent)
                                 wroteContent = await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, BuildNoVisibleAssistantTextFallback(), cancellationToken).ConfigureAwait(false);
                             await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, assistantText.VisibleText, cancellationToken).ConfigureAwait(false);
                             return true;
@@ -1326,8 +1353,7 @@ public sealed class SocketJackModelProxyForwarder
                     suppressedRecoverablePrematureClarification = true;
                 }
                 else if (visualStudioToolRequest &&
-                    SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(lineBuffer) &&
-                    SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(recoveryRequestBody, out _))
+                    SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(lineBuffer))
                 {
                     suppressedRecoverableNoVisibleFallback = true;
                 }
@@ -1357,6 +1383,8 @@ public sealed class SocketJackModelProxyForwarder
 
             if (!wroteContent && !suppressedRecoverableMalformedToolAttempt && !suppressedRecoverableToolTranscript && !suppressedRecoverablePrematureClarification && !suppressedRecoverableNoVisibleFallback)
                 wroteContent = await TryWriteCapturedChatStreamTextAsync(context, captured.ToString(), assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
+            if (!wroteContent)
+                wroteContent = await TryWriteNoVisibleAssistantRecoveryAsync(context, recoveryRequestBody, assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
             if (!wroteContent)
                 wroteContent = await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, BuildNoVisibleAssistantTextFallback(), cancellationToken).ConfigureAwait(false);
             await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, assistantText.VisibleText, cancellationToken).ConfigureAwait(false);
@@ -1389,7 +1417,7 @@ public sealed class SocketJackModelProxyForwarder
         }
     }
 
-    private async Task<bool> TryStreamOpenAiChatViaDirectOpenAiAsync(HttpContext context, byte[] openAiBody, OpenAiProxyResponseShape shape, string completionId, long created, string model, CancellationToken cancellationToken)
+    private async Task<bool> TryStreamOpenAiChatViaDirectOpenAiAsync(HttpContext context, byte[] openAiBody, byte[] recoveryRequestBody, OpenAiProxyResponseShape shape, string completionId, long created, string model, CancellationToken cancellationToken)
     {
         using var client = new HttpClient
         {
@@ -1455,11 +1483,21 @@ public sealed class SocketJackModelProxyForwarder
                 byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
                 string lineBuffer = "";
                 var captured = new StringBuilder();
+                Task<int>? pendingRead = null;
                 try
                 {
                     while (!upstreamToken.IsCancellationRequested)
                     {
-                        int read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), upstreamToken).ConfigureAwait(false);
+                        pendingRead ??= stream.ReadAsync(buffer.AsMemory(0, buffer.Length), upstreamToken).AsTask();
+                        Task completed = await Task.WhenAny(pendingRead, Task.Delay(DirectChatStreamHeartbeatInterval, cancellationToken)).ConfigureAwait(false);
+                        if (!ReferenceEquals(completed, pendingRead))
+                        {
+                            await WriteOpenAiSseAsync(context, ": socketjack keepalive\n\n", cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        int read = await pendingRead.ConfigureAwait(false);
+                        pendingRead = null;
                         if (read <= 0)
                             break;
 
@@ -1487,8 +1525,7 @@ public sealed class SocketJackModelProxyForwarder
                                 continue;
                             }
                             if (visualStudioToolRequest &&
-                                SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(chunkText) &&
-                                SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(openAiBody, out _))
+                                SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(chunkText))
                             {
                                 suppressedRecoverableNoVisibleFallback = true;
                                 continue;
@@ -1554,6 +1591,8 @@ public sealed class SocketJackModelProxyForwarder
                                 if (!wroteContent && !suppressedRecoverableMalformedToolAttempt && !suppressedRecoverableToolTranscript && !suppressedRecoverablePrematureClarification && !suppressedRecoverableNoVisibleFallback)
                                     wroteContent = await TryWriteCapturedChatStreamTextAsync(context, captured.ToString(), assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
                                 if (!wroteContent)
+                                    wroteContent = await TryWriteNoVisibleAssistantRecoveryAsync(context, recoveryRequestBody, assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
+                                if (!wroteContent)
                                     wroteContent = await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, BuildNoVisibleAssistantTextFallback(), cancellationToken).ConfigureAwait(false);
                                 await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, assistantText.VisibleText, cancellationToken).ConfigureAwait(false);
                                 return true;
@@ -1563,6 +1602,7 @@ public sealed class SocketJackModelProxyForwarder
                 }
                 finally
                 {
+                    await ObserveCancelledReadAsync(pendingRead).ConfigureAwait(false);
                     ArrayPool<byte>.Shared.Return(buffer);
                 }
 
@@ -1583,8 +1623,7 @@ public sealed class SocketJackModelProxyForwarder
                         suppressedRecoverablePrematureClarification = true;
                     }
                     else if (visualStudioToolRequest &&
-                        SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(lineBuffer) &&
-                        SocketJackOpenAiChatAdapter.TryBuildVisualStudioMalformedRecoveryToolCalls(openAiBody, out _))
+                        SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(lineBuffer))
                     {
                         suppressedRecoverableNoVisibleFallback = true;
                     }
@@ -1615,6 +1654,8 @@ public sealed class SocketJackModelProxyForwarder
                 if (!wroteContent && !suppressedRecoverableMalformedToolAttempt && !suppressedRecoverableToolTranscript && !suppressedRecoverablePrematureClarification && !suppressedRecoverableNoVisibleFallback)
                     wroteContent = await TryWriteCapturedChatStreamTextAsync(context, captured.ToString(), assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
                 if (!wroteContent)
+                    wroteContent = await TryWriteNoVisibleAssistantRecoveryAsync(context, recoveryRequestBody, assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
+                if (!wroteContent)
                     wroteContent = await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, BuildNoVisibleAssistantTextFallback(), cancellationToken).ConfigureAwait(false);
                 await FinishOpenAiSseAsync(context, shape, completionId, created, model, true, assistantText.VisibleText, cancellationToken).ConfigureAwait(false);
                 return true;
@@ -1627,6 +1668,9 @@ public sealed class SocketJackModelProxyForwarder
                 {
                     return true;
                 }
+
+                if (!wroteContent && lastForwardStatusCode == 0)
+                    wroteContent = await TryWriteNoVisibleAssistantRecoveryAsync(context, recoveryRequestBody, assistantText, shape, completionId, created, model, cancellationToken).ConfigureAwait(false);
 
                 if (!wroteContent)
                 {
@@ -1692,6 +1736,80 @@ public sealed class SocketJackModelProxyForwarder
 
             return false;
         }
+    }
+
+    private async Task<bool> TryWriteNoVisibleAssistantRecoveryAsync(
+        HttpContext context,
+        byte[] originalRequestBody,
+        SocketJackAssistantTextAccumulator assistantText,
+        OpenAiProxyResponseShape shape,
+        string completionId,
+        long created,
+        string model,
+        CancellationToken cancellationToken)
+    {
+        JsonObject recoveryRequest;
+        try
+        {
+            JsonObject originalRequest = JsonNode.Parse(originalRequestBody) as JsonObject ?? new JsonObject();
+            recoveryRequest = SocketJackOpenAiChatAdapter.BuildNoVisibleAssistantRecoveryRequest(originalRequest, model);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        using var client = new HttpClient
+        {
+            BaseAddress = _options.ServerEndpoint,
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("SocketJack.CopilotMcpBridge/1.0");
+        _options.ApplyAuthHeaders(client.DefaultRequestHeaders);
+
+        using var recoveryCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        recoveryCancellation.CancelAfter(DirectChatStreamMaxDuration);
+        byte[] body = Encoding.UTF8.GetBytes(recoveryRequest.ToJsonString());
+        foreach (string path in OpenAiChatForwardPaths)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, SocketJackModelDiscoveryUri(path));
+                request.Headers.Accept.ParseAdd("application/json");
+                request.Content = new ByteArrayContent(body);
+                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+                Task<HttpResponseMessage> sendTask = client.SendAsync(request, HttpCompletionOption.ResponseContentRead, recoveryCancellation.Token);
+                while (!sendTask.IsCompleted)
+                {
+                    Task completed = await Task.WhenAny(sendTask, Task.Delay(DirectChatStreamHeartbeatInterval, cancellationToken)).ConfigureAwait(false);
+                    if (ReferenceEquals(completed, sendTask))
+                        break;
+
+                    await WriteOpenAiSseAsync(context, ": socketjack recovery keepalive\n\n", cancellationToken).ConfigureAwait(false);
+                }
+
+                using HttpResponseMessage response = await sendTask.ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                    continue;
+
+                string responseText = await response.Content.ReadAsStringAsync(recoveryCancellation.Token).ConfigureAwait(false);
+                string visibleText = SocketJackOpenAiChatAdapter.ExtractAssistantText(responseText);
+                if (string.IsNullOrWhiteSpace(visibleText) || SocketJackOpenAiChatAdapter.IsNoVisibleAssistantFallbackText(visibleText))
+                    continue;
+
+                return await WriteSyntheticAssistantDeltaAsync(context, assistantText, shape, completionId, created, model, visibleText, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+            }
+        }
+
+        return false;
     }
 
     private static async Task<HttpResponseMessage> SendOpenAiStreamingRequestAsync(HttpClient client, HttpRequestMessage request, HttpContext context, bool sendKeepalive, CancellationToken upstreamToken, CancellationToken cancellationToken)
@@ -3787,7 +3905,7 @@ public static class SocketJackOpenAiChatAdapter
 
             HashSet<string> availableTools = ReadAvailableToolNames(root);
             if (availableTools.Count > 0 && LooksLikeVisualStudioToolRequest(root, availableTools))
-                return Math.Max(configuredTimeoutSeconds, 300);
+                return Math.Max(configuredTimeoutSeconds, SocketJackModelProxyForwarder.VisualStudioStreamMinimumTimeoutSeconds);
         }
         catch (JsonException)
         {
@@ -4312,6 +4430,34 @@ public static class SocketJackOpenAiChatAdapter
         RequireVisualStudioToolChoiceWhenWorkingPlan(openAiRequest, payload);
         CompactVisualStudioMessagesForLocalRuntime(payload);
         CopyMaxTokens(openAiRequest, payload);
+        return payload;
+    }
+
+    public static JsonObject BuildNoVisibleAssistantRecoveryRequest(JsonObject openAiRequest, string selectedModelId)
+    {
+        JsonObject payload = BuildOpenAiChatCompletionsForwardRequest(openAiRequest, selectedModelId);
+        payload.Remove("tools");
+        payload.Remove("tool_choice");
+        payload.Remove("functions");
+        payload.Remove("function_call");
+        payload.Remove("parallel_tool_calls");
+        payload.Remove("response_format");
+        payload.Remove("stream_options");
+        payload["stream"] = false;
+        payload["temperature"] = 0;
+
+        int requestedMaxTokens = ReadPositiveInt(FirstMaxTokensNode(payload)) ?? 0;
+        payload["max_tokens"] = Math.Max(requestedMaxTokens, SocketJackModelProxyForwarder.VisualStudioAutopilotMinimumMaxTokens);
+        payload.Remove("max_completion_tokens");
+        payload.Remove("max_output_tokens");
+
+        JsonArray messages = payload["messages"] as JsonArray ?? new JsonArray();
+        payload["messages"] = messages;
+        messages.Add(new JsonObject
+        {
+            ["role"] = "user",
+            ["content"] = "[SocketJack final-answer recovery] The prior model pass ended without visible assistant text after the available Visual Studio references or tool results were gathered. Answer the user's request now using the existing context. Do not call tools, restart the task, mention this recovery instruction, or return hidden reasoning. Produce a complete visible final answer. /no_think"
+        });
         return payload;
     }
 
@@ -5891,7 +6037,8 @@ public static class SocketJackOpenAiChatAdapter
         string text = value ?? "";
         return (text.Contains("model finished without a visible reply", StringComparison.OrdinalIgnoreCase) &&
                 text.Contains("enabled chat model", StringComparison.OrdinalIgnoreCase)) ||
-            text.Contains("SocketJack bridge did not receive visible assistant text", StringComparison.OrdinalIgnoreCase);
+            text.Contains("SocketJack bridge did not receive visible assistant text", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("used the response budget without producing visible assistant text", StringComparison.OrdinalIgnoreCase);
     }
 
     public static ProxyResponse BuildChatResponse(JsonObject openAiRequest, string assistantText, string selectedModelId)

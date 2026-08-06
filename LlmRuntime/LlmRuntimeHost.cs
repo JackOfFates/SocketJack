@@ -2857,13 +2857,7 @@ public sealed class LlmRuntimeHost : IDisposable
             return false;
 
         LlmModelInfo? model = Registry.FindModel(request.Model);
-        bool supportsVision = model != null &&
-            (model.LoadedInstances.Any(instance => instance.Modalities.Any(modality =>
-                 modality.Equals("image", StringComparison.OrdinalIgnoreCase) ||
-                 modality.Equals("vision", StringComparison.OrdinalIgnoreCase))) ||
-             ((model.Publisher.Equals("remote", StringComparison.OrdinalIgnoreCase) ||
-               model.FilePath.StartsWith("remote-vllm://", StringComparison.OrdinalIgnoreCase)) &&
-              model.Tags.Any(tag => tag.Equals("vision", StringComparison.OrdinalIgnoreCase))));
+        bool supportsVision = ModelSupportsVision(model);
         if (supportsVision)
             return false;
 
@@ -2876,6 +2870,14 @@ public sealed class LlmRuntimeHost : IDisposable
         return true;
     }
 
+    private static bool ModelSupportsVision(LlmModelInfo? model) =>
+        model != null &&
+        (model.Type.Equals("vlm", StringComparison.OrdinalIgnoreCase) ||
+         model.Tags.Any(tag => tag.Equals("vision", StringComparison.OrdinalIgnoreCase)) ||
+         model.LoadedInstances.Any(instance => instance.Modalities.Any(modality =>
+             modality.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+             modality.Equals("vision", StringComparison.OrdinalIgnoreCase))));
+
     private void ApplyPromptContextBudget(LlmChatRequest request)
     {
         int contextLength = ResolveContextLength(request.Model);
@@ -2883,20 +2885,30 @@ public sealed class LlmRuntimeHost : IDisposable
         ApplyAutomaticCompletionBudget(request, contextLength);
     }
 
-    private void ApplyAutomaticCompletionBudget(LlmChatRequest request, int contextLength)
+    internal static void ApplyAutomaticCompletionBudget(LlmChatRequest request, int contextLength)
     {
-        int promptTokens = EstimatePromptTokens(request.Messages);
+        int promptTokens = EstimatePromptTokens(request.Messages) + EstimateVisionPromptTokens(request.Messages, contextLength);
         int reservedTokens = GetPromptSafetyReserve(contextLength);
         int available = contextLength - promptTokens - reservedTokens;
 
         if (request.MaxTokensSpecified)
         {
-            if (available > 0)
-                request.MaxTokens = Math.Clamp(Math.Min(request.MaxTokens, available), 1, Math.Max(1, available));
+            request.MaxTokens = Math.Clamp(Math.Min(request.MaxTokens, Math.Max(1, available)), 1, Math.Max(1, available));
             return;
         }
 
         request.MaxTokens = ResolveAutomaticCompletionBudget(contextLength, promptTokens);
+    }
+
+    internal static int EstimateVisionPromptTokens(IReadOnlyList<LlmChatMessage> messages, int contextLength)
+    {
+        if (messages == null || messages.Count == 0)
+            return 0;
+
+        int imageCount = LlamaSharpBackend.CountStructuredImages(messages);
+        return imageCount * LlamaSharpBackend.ResolveMultimodalImageMaxTokens(
+            (uint)Math.Max(1, contextLength),
+            imageCount);
     }
 
     private static int ResolveAutomaticCompletionBudget(int contextLength, int promptTokens)
@@ -3641,6 +3653,9 @@ public sealed class LlmRuntimeHost : IDisposable
 
                 completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
                 string visibleTokenText = hiddenReasoningFilter.Accept(token.Text);
+                string reasoningTokenText = hiddenReasoningFilter.TakeReasoningDelta();
+                if (!string.IsNullOrEmpty(reasoningTokenText))
+                    WriteSseData(stream, ToJson(ToOpenAiChatReasoningChunk(id, created, request.Model, reasoningTokenText)));
                 if (ShouldEmitVisibleAssistantText(visibleTokenText, wroteVisibleText))
                 {
                     wroteVisibleText = true;
@@ -3649,6 +3664,9 @@ public sealed class LlmRuntimeHost : IDisposable
             }
 
             string trailingVisibleText = hiddenReasoningFilter.Flush();
+            string trailingReasoningText = hiddenReasoningFilter.TakeReasoningDelta();
+            if (!string.IsNullOrEmpty(trailingReasoningText))
+                WriteSseData(stream, ToJson(ToOpenAiChatReasoningChunk(id, created, request.Model, trailingReasoningText)));
             if (ShouldEmitVisibleAssistantText(trailingVisibleText, wroteVisibleText))
             {
                 wroteVisibleText = true;
@@ -3672,6 +3690,9 @@ public sealed class LlmRuntimeHost : IDisposable
                         streamFinishReason = token.FinishReason;
                     completionTokens += LlmInferenceMetrics.EstimateTokens(token.Text);
                     string visibleRetryText = retryFilter.Accept(token.Text);
+                    string reasoningRetryText = retryFilter.TakeReasoningDelta();
+                    if (!string.IsNullOrEmpty(reasoningRetryText))
+                        WriteSseData(stream, ToJson(ToOpenAiChatReasoningChunk(id, created, request.Model, reasoningRetryText)));
                     if (ShouldEmitVisibleAssistantText(visibleRetryText, wroteVisibleText))
                     {
                         wroteVisibleText = true;
@@ -3679,6 +3700,9 @@ public sealed class LlmRuntimeHost : IDisposable
                     }
                 }
                 string retryTrailingText = retryFilter.Flush();
+                string retryTrailingReasoningText = retryFilter.TakeReasoningDelta();
+                if (!string.IsNullOrEmpty(retryTrailingReasoningText))
+                    WriteSseData(stream, ToJson(ToOpenAiChatReasoningChunk(id, created, request.Model, retryTrailingReasoningText)));
                 if (ShouldEmitVisibleAssistantText(retryTrailingText, wroteVisibleText))
                 {
                     wroteVisibleText = true;
@@ -5552,12 +5576,12 @@ public sealed class LlmRuntimeHost : IDisposable
 
         string cleaned = Regex.Replace(
             content,
-            "(?is)<\\s*(think|thinking|thought|analysis)\\s*>.*?(?:<\\s*/\\s*\\1\\s*>|$)",
+            "(?is)<\\s*(think|thinking|thought|analysis)\\s*>.*?(?:<\\s*/\\s*\\1\\s*>|<\\s*/\\s*end_of_thought\\s*>|<\\|\\s*end_of_(?:thought|analysis)\\s*\\|>|$)",
             "",
             RegexOptions.CultureInvariant);
         cleaned = Regex.Replace(
             cleaned,
-            "(?is)<\\s*/\\s*(think|thinking|thought|analysis)\\s*>",
+            "(?is)(?:<\\s*/\\s*(think|thinking|thought|analysis|end_of_thought)\\s*>|<\\|\\s*end_of_(?:thought|analysis)\\s*\\|>)",
             "",
             RegexOptions.CultureInvariant);
         return string.IsNullOrWhiteSpace(cleaned) ? "" : cleaned;
@@ -5667,6 +5691,26 @@ public sealed class LlmRuntimeHost : IDisposable
                 }
             },
             runtime = extra
+        };
+    }
+
+    private static object ToOpenAiChatReasoningChunk(string id, long created, string model, string reasoning)
+    {
+        return new
+        {
+            id,
+            @object = "chat.completion.chunk",
+            created,
+            model,
+            choices = new[]
+            {
+                new
+                {
+                    index = 0,
+                    delta = new { reasoning_content = reasoning },
+                    finish_reason = (string?)null
+                }
+            }
         };
     }
 
@@ -5797,7 +5841,7 @@ public sealed class LlmRuntimeHost : IDisposable
             audio_generation = string.Equals(LlmModelRegistry.GetRuntimeServiceForModel(model), "audio_generation", StringComparison.OrdinalIgnoreCase),
             video_generation = string.Equals(LlmModelRegistry.GetRuntimeServiceForModel(model), "video_generation", StringComparison.OrdinalIgnoreCase),
             chat_service = LlmModelRegistry.GetRuntimeServiceForModel(model),
-            vision = model.Type == "vlm",
+            vision = ModelSupportsVision(model),
             trained_for_tool_use = model.Tags.Contains("tool-use", StringComparer.OrdinalIgnoreCase)
         },
         description = LlmModelRegistry.GetRuntimeLoadDisabledReason(model),
@@ -5878,6 +5922,8 @@ public sealed class LlmRuntimeHost : IDisposable
 
     private static IReadOnlyList<string> GetNativeModalities(LlmModelInfo model)
     {
+        if (ModelSupportsVision(model))
+            return ["text", "image"];
         string service = LlmModelRegistry.GetRuntimeServiceForModel(model);
         if (service.Equals("image_generation", StringComparison.OrdinalIgnoreCase))
             return ["image"];

@@ -87,6 +87,9 @@ namespace LmVs
     {
         public bool Ok { get; set; } = true;
         public string GeneratedUtc { get; set; } = "";
+        public long SnapshotAgeMs { get; set; }
+        public bool Refreshing { get; set; }
+        public List<string> DegradedSections { get; } = new List<string>();
         public string StartedUtc { get; set; } = "";
         public double UptimeSeconds { get; set; }
         public double HealthScore { get; set; }
@@ -443,7 +446,40 @@ namespace LmVs
         public int SessionCount { get; set; }
         public int ActiveSessionCount { get; set; }
         public string LastSessionUtc { get; set; } = "";
+        public string ConnectionState { get; set; } = "offline";
+        public string LastSeenUtc { get; set; } = "";
+        public int AuthenticatedSessionCount { get; set; }
+        public double InboundBytesPerSecond { get; set; }
+        public double OutboundBytesPerSecond { get; set; }
+        public long InboundBytesTotal { get; set; }
+        public long OutboundBytesTotal { get; set; }
         public ChatUsageDiagnosticsSnapshot Usage { get; set; } = new ChatUsageDiagnosticsSnapshot();
+        public UserResourceQuotaDiagnosticsSnapshot ResourceQuota { get; set; } = new UserResourceQuotaDiagnosticsSnapshot();
+    }
+
+    public sealed class UserResourceQuotaDiagnosticsSnapshot
+    {
+        public string OwnerKey { get; set; } = "";
+        public long StorageLimitBytes { get; set; }
+        public long BandwidthBytesPerSecond { get; set; }
+        public long DailyBandwidthLimitBytes { get; set; }
+        public long WeeklyBandwidthLimitBytes { get; set; }
+        public long DailyTokenLimit { get; set; }
+        public long WeeklyTokenLimit { get; set; }
+        public int TokenLimitPercent { get; set; } = 100;
+        public int WarningPercent { get; set; } = 80;
+        public long DailyBandwidthUsedBytes { get; set; }
+        public long WeeklyBandwidthUsedBytes { get; set; }
+        public long DailyTokensUsed { get; set; }
+        public long WeeklyTokensUsed { get; set; }
+        public long StorageBytesUsed { get; set; }
+        public double CurrentBandwidthBytesPerSecond { get; set; }
+        public string DailyPeriodUtc { get; set; } = "";
+        public string WeeklyPeriodUtc { get; set; } = "";
+        public string UpdatedUtc { get; set; } = "";
+        public bool StorageLimited => StorageLimitBytes > 0;
+        public bool BandwidthLimited => BandwidthBytesPerSecond > 0 || DailyBandwidthLimitBytes > 0 || WeeklyBandwidthLimitBytes > 0;
+        public bool TokenLimited => DailyTokenLimit > 0 || WeeklyTokenLimit > 0 || TokenLimitPercent < 100;
     }
 
     public sealed class ChatSessionRenderDiagnosticsSnapshot

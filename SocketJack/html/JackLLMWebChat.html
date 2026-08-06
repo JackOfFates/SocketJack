@@ -4182,6 +4182,23 @@ body.agent-mode .session-list::-webkit-scrollbar-thumb {
     color: rgba(216, 243, 255, 0.92);
     font: 900 0.86rem "Segoe UI", sans-serif;
 }
+
+.session-page-control {
+    display: grid;
+    justify-items: center;
+    gap: 7px;
+    margin: 8px 5px 3px;
+    padding: 10px;
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 10px;
+    background: rgba(9, 18, 31, 0.72);
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.session-page-control button {
+    min-width: 132px;
+}
 .session-item {
     position: relative;
     width: 100%;
@@ -4829,6 +4846,34 @@ body.agent-mode .solution-explorer {
     clip-path: inset(0 calc(100% - var(--progress-fill, 0%)) 0 0 round 999px);
     transition: clip-path 180ms var(--surface-ease);
 }
+.project-versions-panel {
+    display: grid;
+    gap: 8px;
+    padding: 9px;
+    border-bottom: 1px solid rgba(125,211,252,.18);
+    background: rgba(2,6,23,.42);
+}
+.project-versions-panel[hidden] { display: none; }
+.project-versions-head,
+.project-version-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.project-versions-head { justify-content: space-between; }
+.project-versions-head strong { color: #d8f3ff; font: 900 .72rem var(--ui-font); }
+.project-version-list { display: grid; gap: 6px; max-height: 190px; overflow: auto; }
+.project-version-row {
+    padding: 7px;
+    border: 1px solid rgba(255,255,255,.11);
+    border-radius: 9px;
+    background: rgba(255,255,255,.05);
+}
+.project-version-copy { min-width: 0; flex: 1 1 auto; display: grid; gap: 2px; }
+.project-version-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .68rem; }
+.project-version-copy span { color: var(--muted); font: .58rem var(--ui-font); }
+.project-version-row button,
+.project-versions-head button { min-height: 27px; padding: 3px 7px; border-radius: 8px; font-size: .61rem; }
 .solution-controls {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(92px, 0.45fr);
@@ -4865,9 +4910,9 @@ body.agent-mode .solution-explorer {
 }
 .solution-node-row {
     width: 100%;
-    min-height: 28px;
+    min-height: 34px;
     display: grid;
-    grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+    grid-template-columns: 16px 28px minmax(0, 1fr) auto;
     align-items: center;
     gap: 5px;
     border: 1px solid transparent;
@@ -4878,6 +4923,18 @@ body.agent-mode .solution-explorer {
     font: inherit;
     text-align: left;
     transition: background 150ms var(--surface-ease), border-color 150ms var(--surface-ease), color 150ms var(--surface-ease);
+}
+.solution-node-row[draggable="true"] {
+    cursor: grab;
+}
+.solution-node-row[draggable="true"]:active,
+.solution-node-row.dragging-reference {
+    cursor: grabbing;
+}
+.solution-node-row.dragging-reference {
+    border-color: rgba(56, 189, 248, 0.56);
+    background: rgba(14, 116, 144, 0.20);
+    opacity: 0.72;
 }
 .solution-node.has-solution-actions > .solution-node-row,
 .solution-node.has-directory-actions > .solution-node-row {
@@ -6263,11 +6320,13 @@ body.agent-mode .prompt-processing-control:focus-visible {
     line-height: 1.58;
 }
 .assistant-file-changes {
-    margin: 6px 0 0;
-    padding: 4px 0;
-    font-size: 0.73rem;
+    margin: 12px 0 0;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.72);
+    overflow: hidden;
+    font-size: 0.75rem;
     display: grid;
-    gap: 4px;
 }
 .assistant-file-changes[hidden] {
     display: none;
@@ -6360,7 +6419,7 @@ body.agent-mode .prompt-processing-control:focus-visible {
 .tool-call-row.status-progress .tool-call-indicator {
     border-color: rgba(96, 165, 250, 0.74);
     border-top-color: transparent;
-    animation: throbber-spin 850ms linear 1 both;
+    animation: throbber-spin 850ms linear infinite;
 }
 .tool-call-row.status-completed .tool-call-indicator {
     border-color: rgba(34, 197, 94, 0.72);
@@ -6426,27 +6485,68 @@ body.agent-mode .prompt-processing-control:focus-visible {
 .assistant-file-changes-head {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 9px;
     min-width: 0;
+    padding: 10px 12px;
+}
+.assistant-file-changes-icon {
+    width: 22px;
+    height: 22px;
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    color: #dbeafe;
+    font-weight: 900;
+    flex: 0 0 auto;
+}
+.assistant-file-changes-heading {
+    min-width: 0;
+    display: grid;
+    gap: 1px;
 }
 .assistant-file-changes-title {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 700;
+    font-weight: 800;
     color: #dbeafe;
+}
+.assistant-file-changes-totals,
+.assistant-file-change-stats {
+    display: inline-flex;
+    gap: 3px;
+    white-space: nowrap;
+    font: 800 0.68rem var(--ui-font);
+}
+.assistant-file-additions {
+    color: #4ade80;
+}
+.assistant-file-deletions {
+    color: #fb7185;
 }
 .assistant-file-change-list {
     display: grid;
-    gap: 3px;
+    border-top: 1px solid rgba(148, 163, 184, 0.16);
 }
 .assistant-file-change-row {
     display: flex;
     align-items: center;
     gap: 7px;
     min-width: 0;
-    padding: 2px 0;
+    padding: 8px 12px;
+    border-top: 1px solid rgba(148, 163, 184, 0.10);
+    cursor: default;
+}
+.assistant-file-change-row:first-child {
+    border-top: 0;
+}
+.assistant-file-change-row.assistant-file-change-extra {
+    display: none;
+}
+.assistant-file-changes.reviewing .assistant-file-change-row.assistant-file-change-extra {
+    display: flex;
 }
 .assistant-file-change-label {
     flex: 1 1 auto;
@@ -6476,6 +6576,9 @@ body.agent-mode .prompt-processing-control:focus-visible {
     margin-left: auto;
     flex: 0 0 auto;
 }
+.assistant-file-changes-head .assistant-file-change-actions {
+    margin-left: auto;
+}
 .assistant-file-change-action,
 .assistant-file-mini-btn {
     padding: 1px 6px;
@@ -6490,11 +6593,18 @@ body.agent-mode .prompt-processing-control:focus-visible {
 .assistant-file-change-more {
     color: #9ec7ff;
     font-size: 0.68rem;
+    padding: 8px 12px;
+    border-top: 1px solid rgba(148, 163, 184, 0.10);
+    cursor: pointer;
+}
+.assistant-file-changes.reviewing .assistant-file-change-more {
+    display: none;
 }
 .assistant-file-change-status {
     color: #9ec7ff;
     font-size: 0.66rem;
     min-height: 10px;
+    padding: 0 12px 8px;
 }
 .markdown-body > :first-child,
 .answer > :first-child {
@@ -6940,17 +7050,29 @@ body.agent-mode .rich-block-head {
 .tok-com { color: #6a9955; }
 .tok-tag { color: #569cd6; }
 .tok-attr { color: #9cdcfe; }
+.answer .markdown-table-scroll {
+    max-width: 100%;
+    margin: 0 0 12px;
+    overflow-x: auto;
+    border-radius: 12px;
+    scrollbar-gutter: stable;
+}
 .answer table {
-    width: 100%;
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
     margin: 0 0 12px;
     border-collapse: collapse;
-    overflow: hidden;
-    border-radius: 12px;
+}
+.answer .markdown-table-scroll table {
+    margin: 0;
 }
 .answer th, .answer td {
     padding: 8px 10px;
     border: 1px solid rgba(148, 163, 184, 0.22);
     vertical-align: top;
+    overflow-wrap: normal;
+    word-break: normal;
 }
 .answer th {
     color: #e0f2fe;
@@ -7706,14 +7828,47 @@ body.agent-mode .voice-button.listening {
     background: linear-gradient(135deg, #f97316, #fb7185);
 }
 .preview-tray {
-    grid-area: preview;
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: calc(100% + 8px);
+    z-index: 124;
     display: none;
     gap: 8px;
     flex-wrap: wrap;
-    padding: 4px;
+    max-height: 168px;
+    overflow: auto;
+    padding: 8px;
+    border: 1px solid rgba(96, 165, 250, 0.28);
+    border-radius: 12px;
+    background: rgba(8, 13, 26, 0.96);
+    box-shadow: 0 12px 30px rgba(2, 6, 23, 0.42);
 }
 .preview-tray.has-images {
     display: flex;
+}
+.composer.dragging-files,
+.composer.project-file-drop-target {
+    outline: 2px dashed rgba(56, 189, 248, 0.82);
+    outline-offset: 4px;
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.10), 0 18px 48px rgba(2, 132, 199, 0.22);
+}
+.composer.project-file-drop-target::after {
+    content: "Drop to reference in chat";
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    z-index: 126;
+    transform: translateX(-50%);
+    padding: 7px 12px;
+    border: 1px solid rgba(125, 211, 252, 0.44);
+    border-radius: 999px;
+    color: #e0f2fe;
+    background: rgba(3, 20, 38, 0.96);
+    box-shadow: 0 12px 30px rgba(2, 6, 23, 0.46);
+    font: 800 0.68rem var(--ui-font);
+    white-space: nowrap;
+    pointer-events: none;
 }
 .preview {
     position: relative;
@@ -7731,6 +7886,65 @@ body.agent-mode .voice-button.listening {
     object-fit: cover;
     border-radius: 12px;
     border: 1px solid rgba(255, 255, 255, 0.18);
+    transition: filter 180ms ease, opacity 180ms ease;
+}
+.preview.uploading img {
+    filter: blur(7px) saturate(0.72);
+    opacity: 0.72;
+}
+.preview-upload-overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    align-content: end;
+    gap: 4px;
+    padding: 8px 6px 7px;
+    border-radius: 12px;
+    color: #f8fafc;
+    background: linear-gradient(180deg, rgba(2,6,23,0.08), rgba(2,6,23,0.78));
+    font: 800 0.58rem var(--ui-font);
+    pointer-events: none;
+}
+.preview-upload-track {
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.24);
+}
+.preview-upload-fill {
+    display: block;
+    height: 100%;
+    width: var(--upload-progress, 0%);
+    border-radius: inherit;
+    background: linear-gradient(90deg, #38bdf8, #a78bfa);
+    transition: width 100ms linear;
+}
+.preview-status {
+    position: absolute;
+    left: 5px;
+    bottom: 5px;
+    z-index: 2;
+    max-width: calc(100% - 10px);
+    padding: 3px 6px;
+    overflow: hidden;
+    border: 1px solid rgba(125, 211, 252, 0.34);
+    border-radius: 999px;
+    color: #e0f2fe;
+    background: rgba(2, 13, 29, 0.88);
+    font: 800 0.52rem/1 var(--ui-font);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+}
+.preview-status.uploaded {
+    border-color: rgba(74, 222, 128, 0.50);
+    color: #bbf7d0;
+    background: rgba(5, 46, 22, 0.90);
+}
+.preview-status.failed {
+    border-color: rgba(251, 113, 133, 0.58);
+    color: #fecdd3;
+    background: rgba(76, 5, 25, 0.92);
 }
 .preview.file {
     max-width: 220px;
@@ -12920,6 +13134,46 @@ body.browser-skill-mode.browser-panel-open .browser-skill-cursor,
     font: 900 0.84rem "Segoe UI", sans-serif;
     text-align: center;
 }
+.solution-icon.solution-image-thumbnail {
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid rgba(125, 211, 252, 0.24);
+    border-radius: 6px;
+    background: rgba(2, 6, 23, 0.52);
+}
+.solution-icon.solution-image-thumbnail img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+.solution-icon.solution-image-thumbnail img.loaded {
+    opacity: 1;
+}
+.solution-icon.solution-image-thumbnail.is-new-thumbnail::after {
+    content: "+";
+    position: absolute;
+    right: -3px;
+    top: -4px;
+    width: 13px;
+    height: 13px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(74, 222, 128, 0.72);
+    border-radius: 999px;
+    color: #dcfce7;
+    background: #166534;
+    font: 900 0.58rem/1 var(--ui-font);
+}
+.solution-icon.solution-image-thumbnail.is-new-thumbnail {
+    position: relative;
+    overflow: visible;
+}
 
 .chat-browser-empty.error {
     color: #fecdd3;
@@ -14380,6 +14634,57 @@ body:not(.portrait-layout) .compact-runtime-controls .view-menu-wrap.open .view-
     overflow: auto;
 }
 
+/* Desktop application menu and diagnostics overlays. */
+.app-menu-strip { display:flex; align-items:center; gap:4px; min-width:0; }
+.app-menu { position:relative; }
+.app-menu > button { min-height:30px; padding:5px 10px; border-color:transparent; background:transparent; }
+.app-menu.open > button { background:rgba(96,165,250,.16); border-color:rgba(96,165,250,.35); }
+.app-menu-popup { position:fixed; z-index:240; display:grid; min-width:220px; gap:2px; padding:6px; border:1px solid rgba(148,163,184,.32); border-radius:9px; background:#111827; box-shadow:0 18px 50px rgba(0,0,0,.52); }
+.app-menu-popup[hidden] { display:none; }
+.app-menu-popup button,.app-menu-popup a,.app-menu-popup label { display:flex; align-items:center; gap:8px; width:100%; min-height:34px; padding:7px 9px; border:0; border-radius:6px; color:#e5eefc; background:transparent; font:700 .72rem var(--ui-font); text-decoration:none; text-align:left; }
+.app-menu-popup button:hover,.app-menu-popup a:hover,.app-menu-popup label:hover,.app-menu-popup button:focus-visible,.app-menu-popup a:focus-visible { background:rgba(96,165,250,.16); outline:none; }
+.app-menu-popup button:disabled { color:rgba(226,232,240,.48); }
+.app-menu-separator { height:1px; margin:4px 2px; background:rgba(148,163,184,.22); }
+.app-menu-admin[hidden] { display:none; }
+.topbar-diagnostics-button { position:relative; min-width:34px; }
+.diagnostic-count { display:inline-grid; place-items:center; min-width:17px; height:17px; padding:0 4px; margin-left:4px; border-radius:999px; color:#071018; background:#fb7185; font-size:.62rem; }
+.diagnostic-count[hidden] { display:none; }
+#jackDirectorLauncher { display:none; }
+
+.session-item.pending-mutation { opacity:.72; }
+.session-item.pending-mutation::after { content:'Saving'; position:absolute; right:8px; bottom:5px; color:#93c5fd; font:700 .58rem var(--ui-font); }
+.session-action-dialog { width:min(540px,calc(100vw - 28px)); }
+.session-action-dialog h2 { margin:0; font:900 1rem var(--ui-font); }
+.session-action-dialog p { margin:8px 0; color:rgba(226,232,240,.76); }
+.session-action-list { max-height:170px; overflow:auto; margin:8px 0; padding:8px; border:1px solid rgba(148,163,184,.24); border-radius:8px; color:#cbd5e1; font:.7rem/1.45 var(--ui-font); }
+.session-action-dialog select,.session-action-dialog input { width:100%; min-height:38px; }
+.session-action-dialog .danger { background:#7f1d1d; border-color:#fb7185; color:white; }
+
+.diagnostics-backdrop { position:fixed; inset:0; z-index:260; display:none; align-items:stretch; justify-content:flex-end; background:rgba(2,6,23,.36); }
+.diagnostics-backdrop.visible { display:flex; }
+.diagnostics-panel { width:min(760px,96vw); height:100%; display:grid; grid-template-rows:auto auto minmax(0,1fr); border-left:1px solid rgba(96,165,250,.35); background:#0b1220; box-shadow:-18px 0 52px rgba(0,0,0,.48); }
+.diagnostics-head,.diagnostics-toolbar { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid rgba(148,163,184,.18); }
+.diagnostics-head strong { flex:1; }
+.diagnostics-toolbar { flex-wrap:wrap; }
+.diagnostics-content { overflow:auto; padding:12px; display:grid; align-content:start; gap:12px; }
+.diagnostic-entry { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; padding:9px; border:1px solid rgba(148,163,184,.2); border-radius:8px; background:rgba(15,23,42,.7); }
+.diagnostic-entry.error { border-color:rgba(251,113,133,.42); }
+.diagnostic-entry .meta { color:#94a3b8; font:.62rem var(--ui-font); }
+.diagnostic-entry .detail { color:#e2e8f0; font:.72rem/1.45 var(--ui-font); overflow-wrap:anywhere; }
+.diagnostic-users { display:grid; gap:10px; }
+.diagnostic-user { display:grid; gap:7px; padding:10px; border:1px solid rgba(148,163,184,.2); border-radius:9px; }
+.diagnostic-user-head { display:flex; justify-content:space-between; gap:10px; font:.72rem var(--ui-font); }
+.rgb-usage-meter { height:8px; overflow:hidden; border-radius:999px; background:rgba(148,163,184,.16); }
+.rgb-usage-meter > span { display:block; height:100%; min-width:2px; background:linear-gradient(90deg,#22d3ee,#34d399,#facc15,#fb7185,#c084fc); transition:width .25s ease; }
+.diagnostics-empty { color:#94a3b8; padding:18px; text-align:center; }
+body.diagnostics-minimized .diagnostics-backdrop { display:none; }
+
+@media (max-width:900px) {
+    .app-menu-strip { width:100%; overflow-x:auto; }
+    .app-menu-popup { min-width:200px; }
+    .diagnostics-panel { width:100vw; }
+}
+
 body:not(.portrait-layout) .compact-runtime-controls .usage-panel.usage-expanded {
     z-index: 5300 !important;
     isolation: isolate;
@@ -15374,6 +15679,23 @@ body:not(.agent-mode) .composer-attach-stack {
     background: rgba(37,99,235,.18) !important;
     color: #bfdbfe !important;
 }
+.onboarding-backdrop { position:fixed; inset:0; z-index:320; display:grid; place-items:center; padding:24px; background:rgba(3,7,18,.82); backdrop-filter:blur(8px); }
+.onboarding-backdrop[hidden] { display:none; }
+.onboarding-card { width:min(760px,calc(100vw - 32px)); max-height:calc(100dvh - 40px); overflow:auto; padding:24px; border:1px solid rgba(96,165,250,.56); border-radius:16px; background:#111827; box-shadow:0 24px 80px rgba(0,0,0,.58); }
+.onboarding-card h2 { margin:0 0 8px; font-size:1.55rem; }
+.onboarding-card > p { color:#b9c5d6; line-height:1.55; }
+.onboarding-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:18px 0; }
+.onboarding-step { padding:12px; border:1px solid rgba(148,163,184,.24); border-radius:10px; background:rgba(15,23,42,.72); }
+.onboarding-step strong { display:block; margin-bottom:5px; color:#dbeafe; }
+.onboarding-step span { color:#aebbd0; line-height:1.45; }
+.onboarding-options,.onboarding-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.onboarding-actions { justify-content:flex-end; margin-top:18px; }
+.web-hint { position:fixed; right:18px; bottom:18px; z-index:275; width:min(420px,calc(100vw - 36px)); padding:14px; border:1px solid rgba(52,211,153,.48); border-radius:12px; background:#101827; box-shadow:0 14px 42px rgba(0,0,0,.48); }
+.web-hint[hidden] { display:none; }
+.web-hint strong { display:block; margin-bottom:5px; color:#a7f3d0; }
+.web-hint p { margin:0; color:#c6d0df; line-height:1.45; }
+.web-hint-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
+@media (max-width:640px) { .onboarding-grid { grid-template-columns:1fr; } .onboarding-card { padding:18px; } }
 </style>
 </head>
 <body class="app-loading">
@@ -15583,16 +15905,62 @@ body:not(.agent-mode) .composer-attach-stack {
             </div>
         </div>
         <div class="topbar-actions">
+            <nav id="appMenuStrip" class="app-menu-strip" aria-label="Application menu">
+                <div class="app-menu" data-app-menu>
+                    <button type="button" aria-haspopup="menu" aria-expanded="false">File</button>
+                    <div class="app-menu-popup" role="menu" hidden>
+                        <button id="menuNewProject" type="button" role="menuitem">New Project</button>
+                        <button id="menuSeedSession" type="button" role="menuitem">Start New with Context</button>
+                        <button id="menuDownloadSession" type="button" role="menuitem">Download Session Zip</button>
+                        <button id="menuRefreshSessions" type="button" role="menuitem">Refresh Sessions</button>
+                    </div>
+                </div>
+                <div class="app-menu" data-app-menu>
+                    <button type="button" aria-haspopup="menu" aria-expanded="false">Edit</button>
+                    <div class="app-menu-popup" role="menu" hidden>
+                        <button id="menuCurrentProject" type="button" role="menuitem" disabled>Project: Unsorted</button>
+                        <div class="app-menu-separator" role="separator"></div>
+                        <button id="menuNewSession" type="button" role="menuitem">New Session</button>
+                        <button id="menuRenameSession" type="button" role="menuitem">Edit Session Title</button>
+                        <button id="menuMoveSession" type="button" role="menuitem">Move Session to Project</button>
+                        <button id="menuDeleteSession" type="button" role="menuitem">Delete Session(s)</button>
+                    </div>
+                </div>
+                <div class="app-menu" data-app-menu>
+                    <button type="button" aria-haspopup="menu" aria-expanded="false">Tools</button>
+                    <div class="app-menu-popup" role="menu" hidden>
+                        <a href="/JackDirector" role="menuitem">JackDirector</a>
+                        <a href="/Builder" role="menuitem">Agent Builder</a>
+                        <div class="app-menu-separator app-menu-admin" role="separator" hidden></div>
+                        <a id="menuSqlManager" class="app-menu-admin" href="/sql" role="menuitem" hidden>SQL Manager</a>
+                        <button id="menuAdministrativeTools" class="app-menu-admin" type="button" role="menuitem" hidden>Administrative Tools</button>
+                    </div>
+                </div>
+            </nav>
             <div id="viewMenuWrap" class="view-menu-wrap">
-                <button id="viewMenuToggle" class="ghost view-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">View</button>
+                <button id="viewMenuToggle" class="ghost view-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">Options</button>
                 <div id="viewMenu" class="view-menu" role="menu" hidden>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="sessionPanelToggle" type="checkbox" aria-controls="sessionSidebar">Projects</label>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="solutionPanelToggle" type="checkbox" aria-controls="solutionExplorer">Files</label>
                     <label class="view-menu-row" role="menuitemcheckbox"><input id="commentsPanelToggle" type="checkbox" aria-controls="shareComments">Comments</label>
                     <button id="memoryPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Memory</button>
                     <button id="dreamPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Dreaming</button>
+                    <button id="menuComposerOptions" class="view-menu-row view-menu-button" role="menuitem" type="button">Composer Settings</button>
                 </div>
             </div>
+            <div class="app-menu" data-app-menu>
+                <button type="button" aria-haspopup="menu" aria-expanded="false">Help</button>
+                <div class="app-menu-popup" role="menu" hidden>
+                    <button id="menuGettingStarted" type="button" role="menuitem">Getting Started Guide</button>
+                    <button id="menuShowHints" type="button" role="menuitem">Show Application Hints</button>
+                    <div class="app-menu-separator" role="separator"></div>
+                    <button id="menuDiagnostics" type="button" role="menuitem">Errors / Diagnosis</button>
+                    <button id="menuApiReference" type="button" role="menuitem">API Reference</button>
+                    <button id="menuAbout" type="button" role="menuitem">About / System Information</button>
+                </div>
+            </div>
+            <button id="diagnosticsToggle" class="ghost topbar-diagnostics-button" type="button" aria-controls="diagnosticsBackdrop" aria-expanded="false" title="Errors and diagnosis">!</button>
+            <span id="diagnosticCount" class="diagnostic-count" role="status" aria-label="Unread errors" hidden>0</span>
             <div id="serverHardwarePanel" class="server-hardware-panel hardware-glance-panel" aria-live="polite">
                 <div class="server-hardware-grid">
                     <div id="hardwareCpuChip" class="hardware-chip cpu" title="Server CPU utilization">
@@ -15705,7 +16073,8 @@ body:not(.agent-mode) .composer-attach-stack {
                     <span id="solutionLoadingThrobber" class="rgb-panel-throbber" aria-hidden="true"></span>
                     <span id="solutionExplorerStatus" class="solution-status">Loading</span>
                     <button id="importGitHubRepository" class="ghost panel-refresh" type="button" title="Import GitHub repository into this session" aria-label="Import GitHub repository">GH</button>
-                    <button id="refreshSolutionExplorer" class="ghost panel-refresh" type="button" title="Refresh session files" aria-label="Refresh session files">R</button>
+                    <button id="projectVersionsToggle" class="ghost panel-refresh" type="button" title="Project File Versions" aria-label="Project File Versions">V</button>
+                    <button id="refreshSolutionExplorer" class="ghost panel-refresh" type="button" title="Refresh Project Files" aria-label="Refresh Project Files">R</button>
                 </div>
             </div>
             <div id="projectWorkflowPanel" class="project-workflow-panel" aria-live="polite" hidden>
@@ -15719,6 +16088,10 @@ body:not(.agent-mode) .composer-attach-stack {
                     <button id="projectWorkflowLinkRoot" class="ghost" type="button" title="Link project root">L</button>
                     <button id="projectWorkflowRefresh" class="ghost" type="button" title="Refresh project workflow">R</button>
                 </div>
+            </div>
+            <div id="projectVersionsPanel" class="project-versions-panel" hidden>
+                <div class="project-versions-head"><strong>Versions</strong><button id="projectVersionCreate" class="ghost" type="button">Create Version</button></div>
+                <div id="projectVersionList" class="project-version-list"><div class="solution-empty">No versions yet.</div></div>
             </div>
             <div class="solution-storage" aria-live="polite">
                 <div class="solution-storage-line"><span>Storage</span><span id="solutionStorageText">--</span></div>
@@ -16005,9 +16378,54 @@ body:not(.agent-mode) .composer-attach-stack {
             <div id="contextMeta" class="context-expander-meta"></div>
             <div id="contextMessages" class="context-message-list"></div>
         </section>
-        <div id="previewTray" class="preview-tray"></div>
+        <div id="previewTray" class="preview-tray" aria-live="polite" aria-label="Pending chat attachments"></div>
     </form>
 </main>
+<div id="diagnosticsBackdrop" class="diagnostics-backdrop" role="dialog" aria-modal="true" aria-labelledby="diagnosticsTitle">
+    <aside class="diagnostics-panel">
+        <div class="diagnostics-head">
+            <strong id="diagnosticsTitle">Errors / Diagnosis</strong>
+            <span id="diagnosticsMeta" class="observability-meta">Client diagnostics</span>
+            <button id="diagnosticsMinimize" class="ghost" type="button" aria-label="Minimize diagnostics">_</button>
+            <button id="diagnosticsClose" class="ghost" type="button" aria-label="Close diagnostics">X</button>
+        </div>
+        <div class="diagnostics-toolbar">
+            <button id="diagnosticsErrorsTab" class="ghost active" type="button">Errors</button>
+            <button id="diagnosticsSystemTab" class="ghost" type="button">Diagnostics</button>
+            <button id="diagnosticsUsersTab" class="ghost app-menu-admin" type="button" hidden>Users</button>
+            <span style="flex:1"></span>
+            <button id="diagnosticsCopy" class="ghost" type="button">Copy</button>
+            <button id="diagnosticsClear" class="ghost" type="button">Clear Client Errors</button>
+            <button id="diagnosticsRefresh" class="ghost" type="button">Refresh</button>
+        </div>
+        <div id="diagnosticsContent" class="diagnostics-content" aria-live="polite"></div>
+    </aside>
+</div>
+<div id="sessionMoveBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="sessionMoveTitle">
+    <div class="confirm-dialog session-action-dialog">
+        <h2 id="sessionMoveTitle">Move Session to Project</h2>
+        <p id="sessionMoveSummary"></p>
+        <label for="sessionMoveProject">Project</label>
+        <select id="sessionMoveProject"></select>
+        <div class="confirm-actions">
+            <button id="sessionMoveCancel" class="ghost" type="button">Cancel</button>
+            <button id="sessionMoveConfirm" class="ghost" type="button">Move</button>
+        </div>
+    </div>
+</div>
+<div id="sessionDeleteBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="sessionDeleteTitle">
+    <div class="confirm-dialog session-action-dialog">
+        <h2 id="sessionDeleteTitle">Delete Session</h2>
+        <p id="sessionDeleteWarning">This permanently removes the selected session from this Workstation.</p>
+        <div id="sessionDeleteList" class="session-action-list"></div>
+        <label id="sessionDeletePhraseLabel" for="sessionDeletePhrase" hidden>Type DELETE ALL to delete multiple sessions.</label>
+        <input id="sessionDeletePhrase" type="text" autocomplete="off" spellcheck="false" hidden>
+        <div class="confirm-actions">
+            <button id="sessionDeleteCancel" class="ghost" type="button">Cancel</button>
+            <button id="sessionDeleteConfirm" class="danger" type="button">Delete Session</button>
+        </div>
+    </div>
+</div>
 <div id="confirmBackdrop" class="confirm-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirmText">
     <div class="confirm-dialog">
         <p id="confirmText" class="confirm-text">Do you want to remove access to this directory?</p>
@@ -16209,6 +16627,28 @@ body:not(.agent-mode) .composer-attach-stack {
     </section>
 </div>
 
+<div id="webOnboardingBackdrop" class="onboarding-backdrop" role="dialog" aria-modal="true" aria-labelledby="webOnboardingTitle" hidden>
+    <section class="onboarding-card">
+        <h2 id="webOnboardingTitle">Welcome to JackLLM Web Chat</h2>
+        <p>Your browser is connected to this Workstation. Projects group sessions, Files hold session attachments, and model/runtime choices stay on this machine.</p>
+        <div class="onboarding-grid">
+            <div class="onboarding-step"><strong>1. Sign in</strong><span>Use a Workstation account. Uploads, sessions, permissions, and usage belong to that user.</span></div>
+            <div class="onboarding-step"><strong>2. Choose a project</strong><span>Open Projects to organize chats. Start New with Context when you want a clean session that keeps selected context.</span></div>
+            <div class="onboarding-step"><strong>3. Add files or images</strong><span>Attach beside the composer. Permission requests remain visible and require approval.</span></div>
+            <div class="onboarding-step"><strong>4. Pick a model</strong><span>The model list reflects what is downloaded and enabled on the Workstation Models tab.</span></div>
+        </div>
+        <div class="onboarding-options">
+            <label><input id="webOnboardingDoNotShow" type="checkbox"> Do not show again</label>
+            <label><input id="webOnboardingDoNotShowHints" type="checkbox"> Do not show Hints</label>
+        </div>
+        <div class="onboarding-actions"><button id="webOnboardingStart" type="button">Start chatting</button></div>
+    </section>
+</div>
+<aside id="webHint" class="web-hint" aria-live="polite" hidden>
+    <strong>JackLLM hint</strong><p id="webHintText"></p>
+    <label><input id="webHintDoNotShow" type="checkbox"> Do not show Hints</label>
+    <div class="web-hint-actions"><button id="webHintNext" class="ghost" type="button">Next hint</button><button id="webHintClose" type="button">Close</button></div>
+</aside>
 <script>
 const messages = [];
 let activeCitationData = null;
@@ -16353,6 +16793,24 @@ const sessionCountPill = document.getElementById('sessionCountPill');
 const viewMenuWrap = document.getElementById('viewMenuWrap');
 const viewMenuToggle = document.getElementById('viewMenuToggle');
 const viewMenu = document.getElementById('viewMenu');
+const appMenus = Array.from(document.querySelectorAll('[data-app-menu]'));
+const menuCurrentProject = document.getElementById('menuCurrentProject');
+const menuNewProject = document.getElementById('menuNewProject');
+const menuSeedSession = document.getElementById('menuSeedSession');
+const menuDownloadSession = document.getElementById('menuDownloadSession');
+const menuRefreshSessions = document.getElementById('menuRefreshSessions');
+const menuNewSession = document.getElementById('menuNewSession');
+const menuRenameSession = document.getElementById('menuRenameSession');
+const menuMoveSession = document.getElementById('menuMoveSession');
+const menuDeleteSession = document.getElementById('menuDeleteSession');
+const menuSqlManager = document.getElementById('menuSqlManager');
+const menuAdministrativeTools = document.getElementById('menuAdministrativeTools');
+const menuComposerOptions = document.getElementById('menuComposerOptions');
+const menuDiagnostics = document.getElementById('menuDiagnostics');
+const menuGettingStarted = document.getElementById('menuGettingStarted');
+const menuShowHints = document.getElementById('menuShowHints');
+const menuApiReference = document.getElementById('menuApiReference');
+const menuAbout = document.getElementById('menuAbout');
 const memoryPanelToggle = document.getElementById('memoryPanelToggle');
 const memoryBackdrop = document.getElementById('memoryBackdrop');
 const memoryClose = document.getElementById('memoryClose');
@@ -16411,6 +16869,10 @@ const solutionExplorerResize = document.getElementById('solutionExplorerResize')
 const solutionExplorerStatus = document.getElementById('solutionExplorerStatus');
 const solutionLoadingThrobber = document.getElementById('solutionLoadingThrobber');
 const refreshSolutionExplorer = document.getElementById('refreshSolutionExplorer');
+const projectVersionsToggle = document.getElementById('projectVersionsToggle');
+const projectVersionsPanel = document.getElementById('projectVersionsPanel');
+const projectVersionCreate = document.getElementById('projectVersionCreate');
+const projectVersionList = document.getElementById('projectVersionList');
 const importGitHubRepository = document.getElementById('importGitHubRepository');
 const solutionStorageText = document.getElementById('solutionStorageText');
 const solutionStorageFill = document.getElementById('solutionStorageFill');
@@ -16587,6 +17049,19 @@ const observabilityMeta = document.getElementById('observabilityMeta');
 const observabilitySummary = document.getElementById('observabilitySummary');
 const observabilityRoutes = document.getElementById('observabilityRoutes');
 const observabilityEvents = document.getElementById('observabilityEvents');
+const diagnosticsBackdrop = document.getElementById('diagnosticsBackdrop');
+const diagnosticsToggle = document.getElementById('diagnosticsToggle');
+const diagnosticsClose = document.getElementById('diagnosticsClose');
+const diagnosticsMinimize = document.getElementById('diagnosticsMinimize');
+const diagnosticsRefresh = document.getElementById('diagnosticsRefresh');
+const diagnosticsCopy = document.getElementById('diagnosticsCopy');
+const diagnosticsClear = document.getElementById('diagnosticsClear');
+const diagnosticsErrorsTab = document.getElementById('diagnosticsErrorsTab');
+const diagnosticsSystemTab = document.getElementById('diagnosticsSystemTab');
+const diagnosticsUsersTab = document.getElementById('diagnosticsUsersTab');
+const diagnosticsContent = document.getElementById('diagnosticsContent');
+const diagnosticsMeta = document.getElementById('diagnosticsMeta');
+const diagnosticCount = document.getElementById('diagnosticCount');
 const serversToggle = document.getElementById('serversToggle');
 const serversDashboard = document.getElementById('serversDashboard');
 const serversClose = document.getElementById('serversClose');
@@ -16680,6 +17155,19 @@ const confirmBackdrop = document.getElementById('confirmBackdrop');
 const confirmText = document.getElementById('confirmText');
 const confirmYes = document.getElementById('confirmYes');
 const confirmNo = document.getElementById('confirmNo');
+const sessionMoveBackdrop = document.getElementById('sessionMoveBackdrop');
+const sessionMoveSummary = document.getElementById('sessionMoveSummary');
+const sessionMoveProject = document.getElementById('sessionMoveProject');
+const sessionMoveCancel = document.getElementById('sessionMoveCancel');
+const sessionMoveConfirm = document.getElementById('sessionMoveConfirm');
+const sessionDeleteBackdrop = document.getElementById('sessionDeleteBackdrop');
+const sessionDeleteTitle = document.getElementById('sessionDeleteTitle');
+const sessionDeleteWarning = document.getElementById('sessionDeleteWarning');
+const sessionDeleteList = document.getElementById('sessionDeleteList');
+const sessionDeletePhraseLabel = document.getElementById('sessionDeletePhraseLabel');
+const sessionDeletePhrase = document.getElementById('sessionDeletePhrase');
+const sessionDeleteCancel = document.getElementById('sessionDeleteCancel');
+const sessionDeleteConfirm = document.getElementById('sessionDeleteConfirm');
 const folderBackdrop = document.getElementById('folderBackdrop');
 const folderCurrent = document.getElementById('folderCurrent');
 const folderList = document.getElementById('folderList');
@@ -16795,8 +17283,7 @@ function mobileComposerControlElements() {
         mediaSourceAttach,
         retryControls,
         contextToggle,
-        contextExpander,
-        previewTray
+        contextExpander
     ].filter(Boolean);
 }
 
@@ -16900,6 +17387,8 @@ let chatMemoryBlacklist = [];
 let chatMemoriesLoading = false;
 let chatSessionTotalCount = 0;
 let chatSessionsHasMore = false;
+let chatSessionsPageOffset = 0;
+const chatSessionPageSize = 60;
 let sessionsLoaded = false;
 let sessionsLoading = false;
 let sessionsLoadPromise = null;
@@ -16955,7 +17444,17 @@ let browserSkillObservationCounter = 0;
 let browserSkillCursorTimer = 0;
 let browserSkillCriteriaText = '';
 let renamingSessionId = '';
+let renameSessionDraft = '';
 let selectedSessionIds = new Set();
+let pendingSessionMutationIds = new Set();
+let sessionActionDialogResolve = null;
+let diagnosticEntries = [];
+let diagnosticsServerState = null;
+let diagnosticsCursor = '';
+let diagnosticsTab = 'errors';
+let diagnosticsUnread = 0;
+let diagnosticsPollTimer = 0;
+let steeringRequestInFlight = false;
 let sessionDragSelectState = null;
 let activePortraitDrawer = '';
 let shareState = { enabled: false, key: '', url: '', canPrompt: true, tokenWarning: '', usage: null };
@@ -17035,6 +17534,9 @@ let solutionExplorerLoadKey = '';
 let currentFilePreviewKey = '';
 let currentFilePreviewEntry = null;
 let solutionExplorerSearchTimer = 0;
+let draggedSolutionFileEntry = null;
+const solutionImageThumbnailCache = new Map();
+let projectFileVersions = [];
 let projectWorkflowState = null;
 let projectWorkflowRefreshTimer = 0;
 let modelCapabilities = {};
@@ -17558,6 +18060,7 @@ const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(windo
 const localApiPrefix = detectLocalApiPrefix();
 let socketJackInheritanceAttempted = false;
 let socketJackUrlTokenPendingClear = false;
+let webChatApiTransport = null;
 
 function socketJackAuthUrl(path) {
     return socketJackAuthOrigin.replace(/\/+$/, '') + path;
@@ -17700,6 +18203,14 @@ function readSocketJackToken() {
         '';
 }
 
+function resetWebChatApiTransport() {
+    const transport = webChatApiTransport;
+    webChatApiTransport = null;
+    if (transport && typeof transport.close === 'function') {
+        try { transport.close('Workstation authentication changed.'); } catch { }
+    }
+}
+
 function saveSocketJackToken(token, remember) {
     clearSocketJackToken();
     if (!token) return;
@@ -17715,6 +18226,7 @@ function clearSocketJackToken() {
     safeStorageRemove(sessionStorage, socketJackTokenKey);
     safeStorageRemove(sessionStorage, socketJackTokenSessionKey);
     clearSocketJackAuthCookie();
+    resetWebChatApiTransport();
 }
 
 function workstationAuthError(message) {
@@ -18002,8 +18514,6 @@ function shouldUseRootApiEndpoint(path) {
     return false;
 }
 
-let webChatApiTransport = null;
-
 function webChatWebSocketUrl() {
     const url = new URL(explicitLocalRoutePath('/api/web-chat/ws'), window.location.href);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -18031,6 +18541,8 @@ function shouldUseWebChatWebSocketFetch(resource, options) {
         if (localApiPrefix && path.startsWith(localApiPrefix))
             path = path.slice(localApiPrefix.length) || '/';
         if (path === '/api/web-chat/ws')
+            return false;
+        if (path === '/api/chat-file-preview')
             return false;
         if (shouldUseRootApiEndpoint(path))
             return false;
@@ -18286,7 +18798,19 @@ function createWebChatApiTransport() {
         });
     }
 
-    return { request };
+    function close(reason) {
+        const activeSocket = socket;
+        socket = null;
+        connecting = null;
+        reconnectAfter = 0;
+        failAll(new Error(reason || 'WebSocket API transport reset.'));
+        try {
+            if (activeSocket && activeSocket.readyState !== WebSocket.CLOSED)
+                activeSocket.close();
+        } catch { }
+    }
+
+    return { request, close };
 }
 
 function webChatWebSocketFetch(resource, options) {
@@ -18748,9 +19272,178 @@ function canUseAdminTools() {
     return !!(isDatabaseAdmin || isServerOwner);
 }
 
+function redactDiagnosticText(value) {
+    return String(value || '')
+        .replace(/(authorization|password|token|cookie|secret)\s*[:=]\s*[^\s,;]+/ig, '$1=[redacted]')
+        .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/ig, 'Bearer [redacted]')
+        .slice(0, 1200);
+}
+
+function addClientDiagnostic(source, message, options) {
+    options = options || {};
+    const entry = {
+        id: 'client_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8),
+        createdUtc: new Date().toISOString(),
+        source: source || 'Web Chat',
+        severity: options.severity || 'error',
+        status: options.status || 'failed',
+        retryable: !!options.retryable,
+        detail: redactDiagnosticText(message)
+    };
+    diagnosticEntries.unshift(entry);
+    if (diagnosticEntries.length > 150) diagnosticEntries.length = 150;
+    if (!diagnosticsBackdrop || !diagnosticsBackdrop.classList.contains('visible')) diagnosticsUnread++;
+    updateDiagnosticBadge();
+    if (diagnosticsBackdrop && diagnosticsBackdrop.classList.contains('visible')) renderDiagnosticsPanel();
+    return entry;
+}
+
+function updateDiagnosticBadge() {
+    if (diagnosticCount) {
+        diagnosticCount.hidden = diagnosticsUnread <= 0;
+        diagnosticCount.textContent = String(Math.min(99, diagnosticsUnread));
+    }
+    if (diagnosticsToggle) diagnosticsToggle.classList.toggle('active', diagnosticsUnread > 0);
+}
+
+function setDiagnosticsOpen(open, tab) {
+    if (!diagnosticsBackdrop) return;
+    if (tab) diagnosticsTab = tab;
+    diagnosticsBackdrop.classList.toggle('visible', !!open);
+    if (open) document.body.classList.remove('diagnostics-minimized');
+    if (diagnosticsToggle) diagnosticsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    window.clearInterval(diagnosticsPollTimer);
+    diagnosticsPollTimer = 0;
+    if (open) {
+        diagnosticsUnread = 0;
+        updateDiagnosticBadge();
+        renderDiagnosticsPanel();
+        loadDiagnosticsPanel().catch(error => addClientDiagnostic('Diagnostics', error.message || String(error), { retryable: true }));
+        diagnosticsPollTimer = window.setInterval(() => {
+            if (diagnosticsBackdrop.classList.contains('visible')) loadDiagnosticsPanel({ quiet: true }).catch(() => {});
+        }, 5000);
+    }
+}
+
+function diagnosticValue(source, camel, fallback) {
+    if (!source) return fallback;
+    const pascal = camel.charAt(0).toUpperCase() + camel.slice(1);
+    return source[camel] !== undefined ? source[camel] : (source[pascal] !== undefined ? source[pascal] : fallback);
+}
+
+function renderDiagnosticEntries(entries) {
+    if (!diagnosticsContent) return;
+    diagnosticsContent.textContent = '';
+    const list = Array.isArray(entries) ? entries : [];
+    if (!list.length) {
+        const empty = document.createElement('div');
+        empty.className = 'diagnostics-empty';
+        empty.textContent = 'No errors have been recorded for this account.';
+        diagnosticsContent.appendChild(empty);
+        return;
+    }
+    list.forEach(entry => {
+        const row = document.createElement('article');
+        const status = diagnosticValue(entry, 'status', diagnosticValue(entry, 'severity', 'info'));
+        row.className = 'diagnostic-entry ' + (/fail|error|critical/i.test(status) ? 'error' : '');
+        const badge = document.createElement('strong');
+        badge.textContent = String(status || 'info').toUpperCase();
+        const body = document.createElement('div');
+        const meta = document.createElement('div'); meta.className = 'meta';
+        const created = diagnosticValue(entry, 'createdUtc', '');
+        meta.textContent = [diagnosticValue(entry, 'source', diagnosticValue(entry, 'name', 'Web Chat')), created ? new Date(created).toLocaleString() : '', diagnosticValue(entry, 'route', '')].filter(Boolean).join(' | ');
+        const detail = document.createElement('div'); detail.className = 'detail';
+        detail.textContent = redactDiagnosticText(diagnosticValue(entry, 'detail', diagnosticValue(entry, 'message', 'No details supplied.')));
+        body.append(meta, detail);
+        row.append(badge, body);
+        diagnosticsContent.appendChild(row);
+    });
+}
+
+function formatNetworkRate(value) {
+    return formatBytes(Math.max(0, Number(value || 0))) + '/s';
+}
+
+function renderDiagnosticUsers(users) {
+    if (!diagnosticsContent) return;
+    diagnosticsContent.textContent = '';
+    const shell = document.createElement('div'); shell.className = 'diagnostic-users';
+    (Array.isArray(users) ? users : []).forEach(user => {
+        const used = Number(diagnosticValue(user, 'tokensUsed', 0) || 0);
+        const limit = Number(diagnosticValue(user, 'tokenLimit', 0) || 0);
+        const unlimited = !!diagnosticValue(user, 'unlimited', false);
+        const inbound = Number(diagnosticValue(user, 'inboundBytesPerSecond', 0) || 0);
+        const outbound = Number(diagnosticValue(user, 'outboundBytesPerSecond', 0) || 0);
+        const card = document.createElement('article'); card.className = 'diagnostic-user';
+        const head = document.createElement('div'); head.className = 'diagnostic-user-head';
+        const name = document.createElement('strong'); name.textContent = diagnosticValue(user, 'userName', diagnosticValue(user, 'ownerKey', 'Unknown user'));
+        const state = document.createElement('span'); state.textContent = diagnosticValue(user, 'connectionState', 'offline').replaceAll('_', ' ');
+        head.append(name, state);
+        const tokenText = document.createElement('div'); tokenText.className = 'meta'; tokenText.textContent = unlimited ? used.toLocaleString() + ' tokens used | unlimited' : used.toLocaleString() + ' / ' + limit.toLocaleString() + ' tokens';
+        const tokenMeter = document.createElement('div'); tokenMeter.className = 'rgb-usage-meter'; tokenMeter.setAttribute('aria-label', tokenText.textContent);
+        const tokenFill = document.createElement('span'); tokenFill.style.width = (unlimited ? Math.min(100, Math.max(4, Math.log10(used + 1) * 18)) : Math.min(100, limit > 0 ? used / limit * 100 : 0)) + '%'; tokenMeter.appendChild(tokenFill);
+        const networkText = document.createElement('div'); networkText.className = 'meta'; networkText.textContent = 'In ' + formatNetworkRate(inbound) + ' | Out ' + formatNetworkRate(outbound) + ' | Last seen ' + (diagnosticValue(user, 'lastSeenUtc', '') ? new Date(diagnosticValue(user, 'lastSeenUtc', '')).toLocaleString() : 'never');
+        const networkMeter = document.createElement('div'); networkMeter.className = 'rgb-usage-meter';
+        const networkFill = document.createElement('span'); networkFill.style.width = Math.min(100, Math.max(2, Math.log10(inbound + outbound + 1) * 14)) + '%'; networkMeter.appendChild(networkFill);
+        card.append(head, tokenText, tokenMeter, networkText, networkMeter);
+        shell.appendChild(card);
+    });
+    if (!shell.childNodes.length) shell.innerHTML = '<div class="diagnostics-empty">No user metrics are available.</div>';
+    diagnosticsContent.appendChild(shell);
+}
+
+function renderDiagnosticsPanel() {
+    [diagnosticsErrorsTab, diagnosticsSystemTab, diagnosticsUsersTab].forEach(button => button && button.classList.remove('active'));
+    if (diagnosticsTab === 'users' && diagnosticsUsersTab) diagnosticsUsersTab.classList.add('active');
+    else if (diagnosticsTab === 'system' && diagnosticsSystemTab) diagnosticsSystemTab.classList.add('active');
+    else if (diagnosticsErrorsTab) diagnosticsErrorsTab.classList.add('active');
+    if (diagnosticsMeta) diagnosticsMeta.textContent = diagnosticsServerState && diagnosticValue(diagnosticsServerState, 'generatedUtc', '') ? 'Updated ' + new Date(diagnosticValue(diagnosticsServerState, 'generatedUtc', '')).toLocaleTimeString() : 'Client diagnostics';
+    if (diagnosticsTab === 'users') return renderDiagnosticUsers(diagnosticValue(diagnosticsServerState, 'users', []));
+    if (diagnosticsTab === 'system') return renderDiagnosticEntries(diagnosticValue(diagnosticsServerState, 'events', []));
+    const serverEvents = diagnosticValue(diagnosticsServerState, 'events', []).filter(event => /fail|error|critical/i.test(diagnosticValue(event, 'status', '')));
+    renderDiagnosticEntries(diagnosticEntries.concat(serverEvents));
+}
+
+async function loadDiagnosticsPanel(options) {
+    options = options || {};
+    const suffix = diagnosticsCursor ? '?since=' + encodeURIComponent(diagnosticsCursor) : '';
+    const response = await fetch('/api/diagnostics' + suffix, { credentials: 'same-origin' });
+    const data = await readJsonResponse(response, null, 8000);
+    if (!response.ok || !data || !data.ok) throw new Error((data && data.error) || ('Diagnostics failed: HTTP ' + response.status));
+    diagnosticsServerState = data;
+    diagnosticsCursor = data.cursor || diagnosticsCursor;
+    if (!options.quiet || (diagnosticsBackdrop && diagnosticsBackdrop.classList.contains('visible'))) renderDiagnosticsPanel();
+}
+
+function closeAllAppMenus(except) {
+    appMenus.forEach(menu => {
+        if (menu === except) return;
+        menu.classList.remove('open');
+        const popup = menu.querySelector('.app-menu-popup');
+        const toggle = menu.querySelector(':scope > button');
+        if (popup) popup.hidden = true;
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function currentSessionActionIds() {
+    const selected = Array.from(selectedSessionIds).filter(id => localSessionById(id));
+    return selected.length ? selected : (currentSessionId ? [currentSessionId] : []);
+}
+
+function updateApplicationMenuState() {
+    const project = chatProjects.find(item => item && item.id === selectedProjectId);
+    if (menuCurrentProject) menuCurrentProject.textContent = 'Project: ' + ((project && project.name) || 'Unsorted');
+    const ids = currentSessionActionIds();
+    if (menuRenameSession) menuRenameSession.disabled = ids.length !== 1;
+    if (menuMoveSession) menuMoveSession.disabled = ids.length === 0;
+    if (menuDeleteSession) menuDeleteSession.disabled = ids.length === 0;
+    if (menuDownloadSession) menuDownloadSession.disabled = !currentSessionId;
+}
+
 function applyAdminVisibility() {
     const isAdmin = canUseAdminTools();
-    const showSqlAdmin = isAdmin && isJackSqlAdminUser();
+    const showSqlAdmin = isAdmin && !!(permissionState && permissionState.sqlAdmin);
     document.body.classList.toggle('admin-mode', isAdmin);
     if (remoteAdminToggle) {
         remoteAdminToggle.hidden = !isAdmin;
@@ -18768,9 +19461,12 @@ function applyAdminVisibility() {
         trustToggle.disabled = !isAdmin;
     }
     if (observabilityToggle) {
-        observabilityToggle.hidden = !isAdmin;
-        observabilityToggle.disabled = !isAdmin;
+        observabilityToggle.hidden = false;
+        observabilityToggle.disabled = false;
     }
+    document.querySelectorAll('.app-menu-admin').forEach(element => { element.hidden = !isAdmin; });
+    if (menuSqlManager) menuSqlManager.hidden = !showSqlAdmin;
+    if (diagnosticsUsersTab) diagnosticsUsersTab.hidden = !isAdmin;
     permissionCanEdit = permissionCanEdit && isAdmin;
     if (!showSqlAdmin) {
         if (sqlAdminMenu) sqlAdminMenu.classList.remove('visible');
@@ -18822,6 +19518,8 @@ async function submitLogin(event) {
         const accessToken = data.accessToken || data.token || '';
         saveSocketJackToken(accessToken, !loginRemember || loginRemember.checked);
         loginReturnedToken = !!accessToken;
+        if (accessToken)
+            clearSocketJackUrlTokenFromUrl();
         const session = await loadAuthSession();
         if (!isSocketJackAuthenticated(session))
             throw new Error('The Workstation login succeeded, but JACK did not authorize the returned token.');
@@ -20384,9 +21082,15 @@ function renderObservabilityDashboard(data) {
     const generatedUtc = obsProp(data, 'generatedUtc', obsProp(data, 'GeneratedUtc', ''));
     const tier = obsProp(data, 'healthTier', obsProp(data, 'HealthTier', ''));
     const score = Number(obsProp(data, 'healthScore', obsProp(data, 'HealthScore', 0)) || 0);
+    const snapshotAgeMs = Number(obsProp(data, 'snapshotAgeMs', obsProp(data, 'SnapshotAgeMs', 0)) || 0);
+    const refreshing = !!obsProp(data, 'refreshing', obsProp(data, 'Refreshing', false));
+    const degraded = obsProp(data, 'degradedSections', obsProp(data, 'DegradedSections', [])) || [];
     if (observabilityMeta) {
         const when = generatedUtc ? new Date(generatedUtc).toLocaleTimeString() : 'live';
-        observabilityMeta.textContent = tier + ' | ' + score.toFixed(1) + ' | ' + when;
+        const state = refreshing ? 'refreshing' : (snapshotAgeMs > 4000 ? 'stale' : 'cached');
+        const age = snapshotAgeMs >= 1000 ? ' | ' + (snapshotAgeMs / 1000).toFixed(1) + 's old' : '';
+        const warning = Array.isArray(degraded) && degraded.length ? ' | limited: ' + degraded.join(', ') : '';
+        observabilityMeta.textContent = tier + ' | ' + score.toFixed(1) + ' | ' + state + age + ' | ' + when + warning;
     }
     renderObservabilitySummary(data);
     renderObservabilityRoutes(obsProp(data, 'routes', obsProp(data, 'Routes', [])) || []);
@@ -21662,7 +22366,8 @@ function currentSessionHasPromptActivity() {
 }
 
 function setSendButtonStreaming(isStreaming) {
-    send.disabled = !!sharedPromptDisabledReason();
+    const attachmentUploadPending = pendingImages.some(image => image && image.uploading);
+    send.disabled = !!sharedPromptDisabledReason() || attachmentUploadPending;
     const currentPromptActivity = currentSessionHasPromptActivity();
     document.body.classList.toggle('prompt-active', currentPromptActivity);
     if (currentPromptActivity)
@@ -21675,7 +22380,9 @@ function setSendButtonStreaming(isStreaming) {
     const currentQueuedCount = currentSessionQueuedPromptCount();
     send.textContent = currentPromptActivity && canQueueDraft ? 'Queue' : 'Send';
     send.classList.remove('stop');
-    send.title = currentPromptActivity
+    send.title = attachmentUploadPending
+        ? 'Wait for the attached image to finish uploading'
+        : currentPromptActivity
         ? (currentStreamActive
             ? (canQueueDraft ? 'Queue this prompt after the current response' : 'Send a prompt or use Stop on the active response')
             : currentRemoteActive
@@ -23993,6 +24700,8 @@ function generationSettings(browserSkillContext, modelOverride, mediaSource) {
     const requestedModel = modelOverride || modelForSelectedService();
     const normalizedModel = isDefaultModelPlaceholder(requestedModel) ? (firstAvailableModel(true) || requestedModel) : requestedModel;
     const settings = { model: normalizedModel };
+    const contextBudget = configuredContextLengthForModel(normalizedModel);
+    if (contextBudget > 0) settings.context_length = contextBudget;
     settings.interactionMode = interactionMode === 'plan'
         ? 'plan'
         : (interactionMode === 'agent' || interactionMode === 'companion' ? interactionMode : 'chat');
@@ -25320,6 +26029,87 @@ function solutionExplorerIcon(entry) {
     return '.';
 }
 
+const solutionExplorerDragMime = 'application/x-jackllm-project-file';
+
+function isSolutionImageEntry(entry) {
+    if (!entry || entry.type !== 'file') return false;
+    const mime = String(entry.mimeType || entry.contentType || '').toLowerCase();
+    if (mime.startsWith('image/')) return true;
+    return ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'].includes(webFileExtension(entry));
+}
+
+function solutionExplorerDragPayload(entry) {
+    return {
+        kind: entry && entry.kind ? entry.kind : 'session',
+        sessionId: entry && entry.sessionId ? entry.sessionId : (currentSessionId || ''),
+        type: 'file',
+        path: entry && entry.path ? entry.path : '',
+        name: entry && entry.name ? entry.name : '',
+        extension: entry && entry.extension ? entry.extension : '',
+        mimeType: entry && (entry.mimeType || entry.contentType) ? (entry.mimeType || entry.contentType) : '',
+        size: Number(entry && entry.size || 0),
+        modifiedUtc: entry && entry.modifiedUtc ? entry.modifiedUtc : '',
+        exists: entry && entry.exists !== false
+    };
+}
+
+function projectFileEntryFromDrag(dataTransfer) {
+    if (draggedSolutionFileEntry) return draggedSolutionFileEntry;
+    if (!dataTransfer) return null;
+    try {
+        const text = dataTransfer.getData(solutionExplorerDragMime);
+        if (!text) return null;
+        const entry = JSON.parse(text);
+        return entry && entry.type === 'file' && entry.path ? entry : null;
+    } catch {
+        return null;
+    }
+}
+
+function isProjectFileDrag(dataTransfer) {
+    if (draggedSolutionFileEntry) return true;
+    return !!(dataTransfer && Array.from(dataTransfer.types || []).includes(solutionExplorerDragMime));
+}
+
+function getSolutionImageThumbnailData(entry) {
+    const key = solutionExplorerKey(entry) + '|' + String(entry && entry.size || 0) + '|' + String(entry && entry.modifiedUtc || '');
+    if (!solutionImageThumbnailCache.has(key)) {
+        solutionImageThumbnailCache.set(key, fetchSolutionFilePreview(entry).then(data => {
+            if (!data || data.previewKind !== 'image' || !/^data:image\//i.test(String(data.dataUrl || '')))
+                throw new Error('Image thumbnail is unavailable.');
+            return data;
+        }).catch(error => {
+            solutionImageThumbnailCache.delete(key);
+            throw error;
+        }));
+    }
+    return solutionImageThumbnailCache.get(key);
+}
+
+function decorateSolutionExplorerIcon(icon, entry, isNewFile) {
+    if (!isSolutionImageEntry(entry)) {
+        icon.textContent = isNewFile ? '+' : solutionExplorerIcon(entry);
+        if (isNewFile) icon.classList.add('new-file-badge');
+        return;
+    }
+
+    icon.classList.add('solution-image-thumbnail');
+    if (isNewFile) icon.classList.add('is-new-thumbnail');
+    icon.textContent = '';
+    const image = document.createElement('img');
+    image.alt = '';
+    image.loading = 'lazy';
+    icon.appendChild(image);
+    getSolutionImageThumbnailData(entry).then(data => {
+        image.src = data.dataUrl;
+        image.classList.add('loaded');
+    }).catch(() => {
+        icon.classList.remove('solution-image-thumbnail', 'is-new-thumbnail');
+        icon.textContent = isNewFile ? '+' : 'I';
+        if (isNewFile) icon.classList.add('new-file-badge');
+    });
+}
+
 const chatBrowserWebFileExtensions = new Set([
     '.html', '.htm', '.xhtml',
     '.css', '.scss', '.sass', '.less',
@@ -25540,6 +26330,26 @@ function downloadSolutionFile(entry) {
     anchor.remove();
 }
 
+async function deleteSolutionEntry(entry) {
+    if (!entry || !entry.path) return;
+    const isDirectory = entry.type === 'directory';
+    const label = isDirectory ? 'folder' : 'file';
+    const detail = isDirectory ? ' This deletes everything inside it.' : '';
+    if (!await showYesNoConfirm('Delete ' + label + ' “' + (entry.name || ('this ' + label)) + '” from Project Files?' + detail)) return;
+    const params = new URLSearchParams();
+    params.set('sessionId', entry.sessionId || currentSessionId || ensureSessionId());
+    params.set('kind', entry.kind || 'session');
+    params.set('path', entry.path);
+    params.set('type', isDirectory ? 'directory' : 'file');
+    const response = await fetch('/api/chat-file?' + params.toString(), { method: 'DELETE' });
+    const data = await readJsonResponse(response, {});
+    if (!response.ok || !data.ok) throw new Error(data.error || ('Project ' + label + ' delete failed.'));
+    if (!isDirectory && currentFilePreviewKey === solutionExplorerKey(entry))
+        closeFilePreviewPanel();
+    await refreshSessionFiles(currentSessionId, null).catch(() => { });
+    await loadSolutionExplorer();
+}
+
 function sanitizeDownloadFileName(value, fallback) {
     const text = String(value || fallback || 'download').trim().replace(/[\\/:*?"<>|]+/g, '_');
     return text || fallback || 'download';
@@ -25564,6 +26374,60 @@ async function fetchSolutionFilePreview(entry) {
     const data = await readJsonResponse(response, null, 10000);
     if (!data || !data.ok) throw new Error((data && data.error) || 'File preview failed.');
     return data;
+}
+
+async function referenceSolutionEntryInChat(entry) {
+    if (!entry || entry.type !== 'file' || !entry.path)
+        throw new Error('Only Project Files can be referenced in chat.');
+    if (entry.exists === false)
+        throw new Error('This Project File no longer exists.');
+
+    const key = solutionExplorerKey(entry);
+    if (isSolutionImageEntry(entry)) {
+        const duplicate = pendingImages.some(image => image && image.sessionFile && solutionExplorerKey(image.sessionFile) === key);
+        if (duplicate) {
+            if (solutionExplorerStatus) solutionExplorerStatus.textContent = 'Already referenced: ' + (entry.name || 'image');
+            return;
+        }
+        const data = await getSolutionImageThumbnailData(entry);
+        const referencedEntry = Object.assign({}, entry, data && data.file ? data.file : {}, {
+            kind: entry.kind || 'session',
+            sessionId: entry.sessionId || currentSessionId || '',
+            path: entry.path
+        });
+        pendingImages.push({
+            name: referencedEntry.name || entry.name || 'image',
+            type: referencedEntry.mimeType || referencedEntry.contentType || 'image/png',
+            size: Number(referencedEntry.size || entry.size || 0),
+            url: data.dataUrl,
+            dataUrl: data.dataUrl,
+            sessionFile: referencedEntry,
+            uploading: false,
+            uploadProgress: 100,
+            referenced: true
+        });
+    } else {
+        const duplicate = pendingFiles.some(file => file && (file.sessionFile || file.savedFile) && solutionExplorerKey(file.sessionFile || file.savedFile) === key);
+        if (duplicate) {
+            if (solutionExplorerStatus) solutionExplorerStatus.textContent = 'Already referenced: ' + (entry.name || 'file');
+            return;
+        }
+        pendingFiles.push({
+            name: entry.name || 'attachment',
+            type: entry.mimeType || entry.contentType || 'application/octet-stream',
+            size: Number(entry.size || 0),
+            text: '',
+            path: entry.path,
+            sessionFile: entry,
+            savedFile: entry,
+            asFile: true,
+            referenced: true
+        });
+    }
+
+    renderPreviews();
+    if (solutionExplorerStatus) solutionExplorerStatus.textContent = 'Referenced in chat: ' + (entry.name || 'file');
+    try { prompt.focus(); } catch { }
 }
 
 async function openSolutionFileInBrowser(entry) {
@@ -25708,7 +26572,7 @@ function updateSolutionExplorerLoadingUi() {
         refreshSolutionExplorer.disabled = !!solutionExplorerLoading;
         refreshSolutionExplorer.classList.toggle('loading', !!solutionExplorerLoading);
         refreshSolutionExplorer.setAttribute('aria-busy', solutionExplorerLoading ? 'true' : 'false');
-        refreshSolutionExplorer.title = solutionExplorerLoading ? 'Session files are loading' : 'Refresh session files';
+        refreshSolutionExplorer.title = solutionExplorerLoading ? 'Project Files are loading' : 'Refresh Project Files';
     }
 }
 
@@ -25851,7 +26715,7 @@ async function loadSolutionExplorerInternal(requestContext) {
     } catch (error) {
         if (requestId !== solutionExplorerLoadRequestId || currentSessionId !== sessionId)
             return false;
-        setSolutionExplorerStatus(error && error.message ? error.message : 'Session files refresh failed.', true);
+        setSolutionExplorerStatus(error && error.message ? error.message : 'Project Files refresh failed.', true);
         if (!solutionExplorerLoaded)
             renderSolutionExplorer();
         scheduleSolutionExplorerRetry();
@@ -25981,13 +26845,91 @@ async function linkProjectWorkspaceRoot() {
     await loadFilesystemAccess();
 }
 
+async function loadProjectFileVersions() {
+    if (!currentSessionId) {
+        projectFileVersions = [];
+        renderProjectFileVersions();
+        return;
+    }
+    const response = await fetch('/api/project-file-versions?sessionId=' + encodeURIComponent(currentSessionId));
+    const data = await readJsonResponse(response, {});
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Could not load Project File Versions.');
+    projectFileVersions = Array.isArray(data.versions) ? data.versions : [];
+    renderProjectFileVersions();
+}
+
+function renderProjectFileVersions() {
+    if (!projectVersionList) return;
+    projectVersionList.textContent = '';
+    if (!projectFileVersions.length) {
+        const empty = document.createElement('div');
+        empty.className = 'solution-empty';
+        empty.textContent = 'No versions yet.';
+        projectVersionList.appendChild(empty);
+        return;
+    }
+    projectFileVersions.forEach(version => {
+        const row = document.createElement('div');
+        row.className = 'project-version-row';
+        const copy = document.createElement('div');
+        copy.className = 'project-version-copy';
+        const name = document.createElement('strong');
+        name.textContent = version.name || version.id || 'Version';
+        const meta = document.createElement('span');
+        const created = version.createdUtc ? new Date(version.createdUtc) : null;
+        meta.textContent = (created && !Number.isNaN(created.getTime()) ? created.toLocaleString() : '') +
+            (version.fileCount != null ? ' · ' + version.fileCount + ' files' : '');
+        copy.append(name, meta);
+        const restore = document.createElement('button');
+        restore.type = 'button';
+        restore.className = 'ghost';
+        restore.textContent = 'Revert';
+        restore.title = 'Revert Project Files to this Version';
+        restore.addEventListener('click', async () => {
+            if (!await showYesNoConfirm('Revert Project Files to “' + (version.name || version.id) + '”? A safety Version will be created first.')) return;
+            await mutateProjectFileVersion('restore', { versionId: version.id });
+            await loadSolutionExplorer();
+        });
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'ghost';
+        remove.textContent = 'Delete';
+        remove.addEventListener('click', async () => {
+            if (!await showYesNoConfirm('Delete Version “' + (version.name || version.id) + '”?')) return;
+            await mutateProjectFileVersion('delete', { versionId: version.id });
+        });
+        row.append(copy, restore, remove);
+        projectVersionList.appendChild(row);
+    });
+}
+
+async function mutateProjectFileVersion(action, extra) {
+    const response = await fetch('/api/project-file-versions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ action, sessionId: currentSessionId || ensureSessionId() }, extra || {}))
+    });
+    const data = await readJsonResponse(response, {});
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Project File Version update failed.');
+    projectFileVersions = Array.isArray(data.versions) ? data.versions : [];
+    renderProjectFileVersions();
+    return data;
+}
+
+async function createNamedProjectFileVersion() {
+    const defaultName = 'Version ' + new Date().toLocaleString();
+    const name = window.prompt('Version name', defaultName);
+    if (name == null) return;
+    await mutateProjectFileVersion('create', { name: name.trim() || defaultName });
+}
+
 function renderSolutionExplorer() {
     if (!solutionExplorerTree) return;
     solutionExplorerTree.textContent = '';
     if (!solutionExplorerLoaded) {
         const message = solutionExplorerLoading
-            ? 'Loading session files'
-            : 'Session files are still loading';
+            ? 'Loading Project Files'
+            : 'Project Files are still loading';
         solutionExplorerTree.appendChild(createPanelLoadingRow(message, 'solution-empty loading'));
         if (solutionExplorerStatus && !solutionExplorerRetryTimer)
             setSolutionExplorerStatus(solutionExplorerLoading ? 'Loading' : 'Loading', false);
@@ -26015,7 +26957,7 @@ function renderSolutionExplorer() {
     if (!solutionExplorerRoots.length) {
         const empty = document.createElement('div');
         empty.className = 'solution-empty';
-        empty.textContent = 'No session files or accessible directories.';
+        empty.textContent = 'No Project Files or accessible directories.';
         solutionExplorerTree.appendChild(empty);
         setSolutionExplorerStatus('0 roots', false);
         return;
@@ -26313,6 +27255,12 @@ function createSolutionNodeActions(entry) {
         menu.appendChild(createSolutionNodeMenuButton('↓', 'Download file', 'Download file', 'download-file', () => downloadSolutionFile(entry), false));
     }
 
+    const canDeleteProjectItem = String(entry.kind || '').toLowerCase() === 'session' && !sharedView;
+    if (isFile && canDeleteProjectItem)
+        menu.appendChild(createSolutionNodeMenuButton('x', 'Delete file', 'Delete from Project Files', 'delete-file', () => deleteSolutionEntry(entry), false));
+    else if (isDirectory && canDeleteProjectItem && !entry.rootId)
+        menu.appendChild(createSolutionNodeMenuButton('x', 'Delete folder', 'Delete folder and contents from Project Files', 'delete-directory', () => deleteSolutionEntry(entry), false));
+
     if (!menu.children.length)
         return null;
 
@@ -26404,9 +27352,8 @@ function createSolutionNode(entry, depth, forcePathDetail) {
     const icon = document.createElement('span');
     icon.className = 'solution-icon';
     const isNewFile = isRecentlyNewSessionFile(entry);
-    icon.textContent = isNewFile ? '+' : solutionExplorerIcon(entry);
+    decorateSolutionExplorerIcon(icon, entry, isNewFile);
     if (isNewFile) {
-        icon.classList.add('new-file-badge');
         row.classList.add('is-new-file');
     }
     const name = document.createElement('span');
@@ -26426,6 +27373,23 @@ function createSolutionNode(entry, depth, forcePathDetail) {
     row.appendChild(name);
     row.appendChild(meta);
     node.appendChild(row);
+    if (!isDirectory && entry && entry.path) {
+        row.draggable = true;
+        row.dataset.solutionDragKey = key;
+        row.addEventListener('dragstart', event => {
+            draggedSolutionFileEntry = entry;
+            row.classList.add('dragging-reference');
+            if (!event.dataTransfer) return;
+            event.dataTransfer.effectAllowed = 'copy';
+            event.dataTransfer.setData(solutionExplorerDragMime, JSON.stringify(solutionExplorerDragPayload(entry)));
+            event.dataTransfer.setData('text/plain', entry.path || entry.name || 'Project file');
+        });
+        row.addEventListener('dragend', () => {
+            draggedSolutionFileEntry = null;
+            row.classList.remove('dragging-reference');
+            if (form) form.classList.remove('project-file-drop-target', 'dragging-files');
+        });
+    }
     if (showNodeActions) {
         const actions = createSolutionNodeActions(entry);
         if (actions)
@@ -27106,8 +28070,11 @@ async function steerQueuedPrompt(queueId) {
 function setAssistantMessage(item, content, reasoning, fileChanges, toolCalls) {
     item.textContent = '';
     const parts = createAssistantParts(item);
-    if (fileChanges)
-        parts._pendingFileChanges = fileChanges;
+    if (fileChanges) {
+        parts._pendingFileChanges = Array.isArray(fileChanges)
+            ? normalizeFileChangesPayload({ files: fileChanges }, currentSessionId || '')
+            : normalizeFileChangesPayload(fileChanges, currentSessionId || '');
+    }
     if (Array.isArray(toolCalls) && toolCalls.length) {
         parts._toolCalls = normalizeToolCallEvents(toolCalls);
         updateAssistantToolActivity(parts, parts._toolCalls);
@@ -27359,7 +28326,7 @@ function normalizeToolCallEvents(events) {
 
 function isFileToolCall(call) {
     const name = coerceString(call && call.name, '').toLowerCase();
-    return ['vs_write_file', 'vs_replace_in_file', 'vs_delete_file', 'vs_rename_file', 'vs_move_file'].includes(name);
+    return ['vs_write_file', 'vs_replace_in_file', 'vs_delete_file', 'vs_rename_file', 'vs_move_file', 'vs_copy_file'].includes(name);
 }
 
 function parseToolArgumentsPreview(preview) {
@@ -27883,7 +28850,7 @@ function createToolCallActivityRow(call) {
     const row = document.createElement('details');
     const status = normalizeToolCallStatus(normalized && normalized.status);
     row.className = 'tool-call-row status-' + status;
-    row.open = status === 'failed';
+    row.open = status === 'failed' || status === 'started' || status === 'progress';
     const summary = document.createElement('summary');
     const indicator = document.createElement('span');
     indicator.className = 'tool-call-indicator';
@@ -27979,14 +28946,14 @@ function updateAssistantToolActivity(parts, toolCalls) {
     if (!parts || !parts.toolActivity) return;
     const calls = normalizeToolCallEvents(toolCalls);
     parts._toolCalls = calls;
-    const visibleCalls = calls.filter(call => !isFileToolCall(call));
+    const visibleCalls = calls;
     const container = parts.toolActivity;
     container.textContent = '';
     container.hidden = !visibleCalls.length;
     if (!visibleCalls.length) return;
     const listEl = document.createElement('div');
     listEl.className = 'tool-call-list';
-    const collapseLimit = 7;
+    const collapseLimit = 80;
     if (visibleCalls.length > collapseLimit) {
         listEl.classList.add('collapsed');
         const head = document.createElement('div');
@@ -28206,6 +29173,9 @@ function normalizeFileChangeEntry(rawEntry, sessionId) {
         name: coerceString(rawEntry.name, fileNameFromPath(path, 'changed-file')),
         extension: coerceString(rawEntry.extension, extensionFromPath(path)),
         changeKind: normalizeFileChangeKind(rawEntry.changeKind || rawEntry.action || rawEntry.operation),
+        additions: Math.max(0, Number(rawEntry.additions || rawEntry.linesAdded || 0) || 0),
+        deletions: Math.max(0, Number(rawEntry.deletions || rawEntry.linesDeleted || 0) || 0),
+        lineStatsAvailable: rawEntry.lineStatsAvailable === true || Number(rawEntry.additions || rawEntry.linesAdded || 0) > 0 || Number(rawEntry.deletions || rawEntry.linesDeleted || 0) > 0,
         undoToken: coerceString(rawEntry.undoToken, ''),
         previewKind: 'text'
     };
@@ -28402,6 +29372,30 @@ async function handleUndoAction(payload, fileActionSection, button) {
     }
 }
 
+function changedFilesHeading(files) {
+    const entries = Array.isArray(files) ? files : [];
+    const kinds = new Set(entries.map(file => normalizeFileChangeKind(file && file.changeKind)));
+    const verb = kinds.size === 1 && kinds.has('created')
+        ? 'Created'
+        : (kinds.size === 1 && kinds.has('deleted') ? 'Deleted' : 'Edited');
+    return verb + ' ' + entries.length + ' file' + (entries.length === 1 ? '' : 's');
+}
+
+function appendChangedFileStats(container, additions, deletions, available) {
+    if (!container || !available) return;
+    const stats = document.createElement('span');
+    stats.className = 'assistant-file-change-stats';
+    const added = document.createElement('span');
+    added.className = 'assistant-file-additions';
+    added.textContent = '+' + Math.max(0, Number(additions || 0));
+    const removed = document.createElement('span');
+    removed.className = 'assistant-file-deletions';
+    removed.textContent = '-' + Math.max(0, Number(deletions || 0));
+    stats.appendChild(added);
+    stats.appendChild(removed);
+    container.appendChild(stats);
+}
+
 function updateAssistantFileChanges(parts, payload) {
     if (!parts || !parts.fileChanges) return;
     const container = parts.fileChanges;
@@ -28410,83 +29404,119 @@ function updateAssistantFileChanges(parts, payload) {
         return;
     }
     container.hidden = false;
+    container.classList.remove('reviewing');
     container.textContent = '';
-    const fileEntries = payload.files.slice(0, 8);
+    const fileEntries = payload.files;
+    const defaultVisibleCount = 4;
+    const totalAdditions = fileEntries.reduce((total, file) => total + Math.max(0, Number(file && file.additions || 0)), 0);
+    const totalDeletions = fileEntries.reduce((total, file) => total + Math.max(0, Number(file && file.deletions || 0)), 0);
+    const totalsAvailable = fileEntries.some(file => file && file.lineStatsAvailable);
     const statusText = document.createElement('div');
     statusText.className = 'assistant-file-change-status';
     statusText.hidden = true;
-
-    const list = document.createElement('div');
-    list.className = 'assistant-file-change-list';
-    container.appendChild(list);
-    container.appendChild(statusText);
 
     payload._buttons = [];
     payload._statusText = statusText;
     payload.statusText = statusText;
     payload.fileRows = [];
 
-    for (const file of fileEntries) {
+    const head = document.createElement('div');
+    head.className = 'assistant-file-changes-head';
+    const icon = document.createElement('span');
+    icon.className = 'assistant-file-changes-icon';
+    icon.textContent = '+';
+    icon.setAttribute('aria-hidden', 'true');
+    const heading = document.createElement('div');
+    heading.className = 'assistant-file-changes-heading';
+    const title = document.createElement('div');
+    title.className = 'assistant-file-changes-title';
+    title.textContent = changedFilesHeading(fileEntries);
+    heading.appendChild(title);
+    if (totalsAvailable) {
+        const totals = document.createElement('div');
+        totals.className = 'assistant-file-changes-totals';
+        appendChangedFileStats(totals, totalAdditions, totalDeletions, true);
+        heading.appendChild(totals);
+    }
+    const headActions = document.createElement('div');
+    headActions.className = 'assistant-file-change-actions';
+    if (payload.undoToken && coerceString(payload.undoToken, '')) {
+        const undoButton = createFileChangeActionButton('Undo', 'Undo file edits from this prompt');
+        undoButton.addEventListener('click', () => handleUndoAction(payload, container, undoButton));
+        headActions.appendChild(undoButton);
+        payload._buttons.push(undoButton);
+    }
+    const reviewButton = createFileChangeActionButton('Review', 'Review the changed files');
+    reviewButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        container.classList.add('reviewing');
+        const firstReviewable = fileEntries.find(file => file && normalizeFileChangeKind(file.changeKind) !== 'deleted');
+        if (!firstReviewable) return;
+        const action = canOfferChatBrowserOpen(firstReviewable)
+            ? openSolutionFileInBrowser(firstReviewable)
+            : openSolutionFile(firstReviewable);
+        if (action && action.catch)
+            action.catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+    });
+    headActions.appendChild(reviewButton);
+    head.appendChild(icon);
+    head.appendChild(heading);
+    head.appendChild(headActions);
+    container.appendChild(head);
+
+    const list = document.createElement('div');
+    list.className = 'assistant-file-change-list';
+    container.appendChild(list);
+    container.appendChild(statusText);
+
+    fileEntries.forEach((file, index) => {
         const row = document.createElement('div');
         row.className = 'assistant-file-change-row';
+        if (index >= defaultVisibleCount)
+            row.classList.add('assistant-file-change-extra');
         const fileLabel = document.createElement('div');
         fileLabel.className = 'assistant-file-change-label';
-        fileLabel.title = file.path;
-        const name = document.createElement('span');
-        name.className = 'assistant-file-change-name';
-        name.textContent = file.name || fileNameFromPath(file.path, 'file');
-        name.title = file.previousPath && file.changeKind === 'renamed'
+        fileLabel.title = file.previousPath && file.changeKind === 'renamed'
             ? file.previousPath + ' -> ' + file.path
             : file.path;
+        appendPathNameDisplay(fileLabel, file.path, file.name || fileNameFromPath(file.path, 'file'), 'assistant-file-change-name');
         const meta = document.createElement('span');
         meta.className = 'assistant-file-change-meta';
-        meta.textContent = formatFileChangeVerb(file.changeKind) + '.';
-        fileLabel.appendChild(name);
+        meta.textContent = formatFileChangeVerb(file.changeKind);
         fileLabel.appendChild(meta);
 
         const actions = document.createElement('div');
         actions.className = 'assistant-file-change-actions';
-        const canOpenChangedFile = file.changeKind !== 'deleted';
-        const openButton = bindFileChangeActionButton(createFileChangeActionButton('[OPEN]', 'Open ' + file.name), file, 'open');
+        appendChangedFileStats(actions, file.additions, file.deletions, !!file.lineStatsAvailable);
+        const canOpenChangedFile = normalizeFileChangeKind(file.changeKind) !== 'deleted';
+        const openButton = bindFileChangeActionButton(createFileChangeActionButton('Review', 'Review ' + file.name), file, 'open');
         openButton.disabled = !canOpenChangedFile;
-        const downloadButton = bindFileChangeActionButton(createFileChangeActionButton('[DOWNLOAD]', 'Download ' + file.name), file, 'download');
-        downloadButton.disabled = !canOpenChangedFile;
         actions.appendChild(openButton);
-        actions.appendChild(downloadButton);
         row.appendChild(fileLabel);
         row.appendChild(actions);
         list.appendChild(row);
-        const rowButtons = [openButton, downloadButton];
-        payload._buttons.push(...rowButtons);
-        payload.fileRows.push({ row: row, buttons: rowButtons });
-    }
-    if (payload.files.length > fileEntries.length) {
+        payload._buttons.push(openButton);
+        payload.fileRows.push({ row, buttons: [openButton] });
+    });
+    if (fileEntries.length > defaultVisibleCount) {
         const more = document.createElement('div');
         more.className = 'assistant-file-change-more';
-        more.textContent = '+' + (payload.files.length - fileEntries.length) + ' more';
+        more.textContent = 'Show ' + (fileEntries.length - defaultVisibleCount) + ' more file' + (fileEntries.length - defaultVisibleCount === 1 ? '' : 's');
+        more.setAttribute('role', 'button');
+        more.tabIndex = 0;
+        const expand = () => container.classList.add('reviewing');
+        more.addEventListener('click', expand);
+        more.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                expand();
+            }
+        });
         list.appendChild(more);
     }
-    if (payload._undoing) {
+    if (payload._undoing)
         setFileChangeButtonsBusy(payload, true);
-    }
-    if (payload.undoToken && coerceString(payload.undoToken, '')) {
-        const undoRow = document.createElement('div');
-        undoRow.className = 'assistant-file-change-row';
-        const undoLabel = document.createElement('div');
-        undoLabel.className = 'assistant-file-change-label';
-        undoLabel.textContent = 'Undo available.';
-        const undoActions = document.createElement('div');
-        undoActions.className = 'assistant-file-change-actions';
-        const undoButton = createFileChangeActionButton('Undo', 'Undo file edits from this prompt');
-        undoButton.addEventListener('click', () => {
-            handleUndoAction(payload, container, undoButton);
-        });
-        undoActions.appendChild(undoButton);
-        undoRow.appendChild(undoLabel);
-        undoRow.appendChild(undoActions);
-        list.appendChild(undoRow);
-        payload._buttons.push(undoButton);
-    }
 }
 
 function updateAssistantParts(parts, content, reasoning, isFinal) {
@@ -29565,13 +30595,13 @@ function stripInternalModelMetadataForDisplay(text) {
 
 function stripTrailingPartialReasoningOpenTagForDisplay(text) {
     return normalizeDisplayText(text || '')
-        .replace(/<\s*(?:t|th|thi|thin|think|thinki|thinkin|thinking|tho|thou|thoug|though|thought|a|an|ana|anal|analy|analys|analysi|analysis)\s*$/i, '');
+        .replace(/<\s*(?:t|th|thi|thin|think|thinki|thinkin|thinking|tho|thou|thoug|though|thought|end_|end_o|end_of_|end_of_t|end_of_th|end_of_tho|end_of_thou|end_of_thought|a|an|ana|anal|analy|analys|analysi|analysis)\s*$/i, '');
 }
 
 function stripDanglingReasoningTagFragmentsForDisplay(text) {
     return normalizeDisplayText(text || '')
         .replace(/^\s*(?:ing|king|nking|hinking|thinking)\s*$/gim, '')
-        .replace(/^\s*<\/?\s*(?:think|thinking|thought|analysis)\s*>?\s*$/gim, '')
+        .replace(/^\s*(?:<\/?\s*(?:think|thinking|thought|analysis|end_of_thought)\s*>?|<\|\s*(?:end_of_)?(?:think|thought|analysis)\s*\|>)\s*$/gim, '')
         .replace(/\n{3,}/g, '\n\n');
 }
 
@@ -29652,16 +30682,16 @@ function stripReasoningMarkupForDisplay(text) {
     let value = stripTrailingPartialReasoningOpenTagForDisplay(stripInternalModelMetadataForDisplay(text || ''));
     if (!value) return '';
 
-    const tags = ['think', 'thinking', 'thought', 'analysis'];
+    const tags = ['think', 'thinking', 'thought', 'analysis', 'end_of_thought'];
     for (const tag of tags) {
         const block = new RegExp('<' + tag + '\\b[^>]*>[\\s\\S]*?<\\/' + tag + '>', 'gi');
         value = value.replace(block, '');
     }
 
-    const closeTag = /<\/(?:think|thinking|thought|analysis)\s*>?/i;
+    const closeTag = /(?:<\/(?:think|thinking|thought|analysis|end_of_thought)\s*>?|<\|\s*end_of_(?:think|thought|analysis)\s*\|>)/i;
     let guard = 0;
     while (closeTag.test(value) && guard++ < 8) {
-        value = value.replace(/([\s\S]*?)<\/(?:think|thinking|thought|analysis)\s*>?/i, (match, before) => {
+        value = value.replace(/([\s\S]*?)(?:<\/(?:think|thinking|thought|analysis|end_of_thought)\s*>?|<\|\s*end_of_(?:think|thought|analysis)\s*\|>)/i, (match, before) => {
             const suffix = value.slice(value.toLowerCase().indexOf(match.toLowerCase()) + match.length).trim();
             const prefix = String(before || '').trim();
             if (!prefix) return '';
@@ -29674,7 +30704,7 @@ function stripReasoningMarkupForDisplay(text) {
 
     value = splitPlainReasoningHeadings(value, '').content;
     return stripDanglingReasoningTagFragmentsForDisplay(value
-        .replace(/<\/?(?:think|thinking|thought|analysis)\b[^>\n]*>?/gi, '')
+        .replace(/(?:<\/?(?:think|thinking|thought|analysis|end_of_thought)\b[^>\n]*>?|<\|\s*(?:end_of_)?(?:think|thought|analysis)\s*\|>)/gi, '')
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim());
@@ -29940,6 +30970,11 @@ function parseMarkdownTable(lines, index) {
 }
 
 function createMarkdownTable(headers, bodyRows) {
+    const scroll = document.createElement('div');
+    scroll.className = 'markdown-table-scroll';
+    scroll.tabIndex = 0;
+    scroll.setAttribute('role', 'region');
+    scroll.setAttribute('aria-label', 'Scrollable table');
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headRow = document.createElement('tr');
@@ -29966,7 +31001,8 @@ function createMarkdownTable(headers, bodyRows) {
         table.appendChild(tbody);
     }
 
-    return table;
+    scroll.appendChild(table);
+    return scroll;
 }
 
 // Smaller local models occasionally collapse a two-column Markdown table into
@@ -30701,48 +31737,36 @@ function saveCurrentArtifact() {
 
 function splitThinkTags(text) {
     text = stripTrailingPartialReasoningOpenTagForDisplay(text || '');
-    let answer = '';
-    let reasoning = '';
-    let cursor = 0;
-    const lower = text.toLowerCase();
-    const tags = [
-        { open: '<think>', close: '</think>' },
-        { open: '<thinking>', close: '</thinking>' },
-        { open: '<thought>', close: '</thought>' },
-        { open: '<analysis>', close: '</analysis>' }
-    ];
-
-    const nextThoughtTag = (start) => {
-        let match = null;
-        for (const tag of tags) {
-            const index = lower.indexOf(tag.open, start);
-            if (index >= 0 && (!match || index < match.index))
-                match = { ...tag, index };
+    const marker = /<\s*(\/?)\s*(think|thinking|thought|analysis|end_of_thought)\b[^>]*>|<\|\s*((?:end_of_)?(?:think|thought|analysis))\s*\|>/gi;
+    let answerText = '';
+    let reasoningText = '';
+    let position = 0;
+    let insideReasoning = false;
+    let match;
+    while ((match = marker.exec(text)) !== null) {
+        const segment = text.slice(position, match.index);
+        const tokenName = String(match[2] || match[3] || '').toLowerCase();
+        const closing = !!match[1] || tokenName.startsWith('end_of_') || tokenName === 'end_of_thought';
+        if (insideReasoning) reasoningText += segment;
+        else answerText += segment;
+        if (closing) {
+            if (!insideReasoning && answerText.trim()) {
+                reasoningText += (reasoningText.trim() ? '\n\n' : '') + answerText.trim();
+                answerText = '';
+            }
+            insideReasoning = false;
+            if (reasoningText && !reasoningText.endsWith('\n\n')) reasoningText += '\n\n';
+        } else {
+            insideReasoning = true;
         }
-        return match;
-    };
-
-    while (cursor < text.length) {
-        const tag = nextThoughtTag(cursor);
-        if (!tag) {
-            answer += text.slice(cursor);
-            break;
-        }
-
-        answer += text.slice(cursor, tag.index);
-        const thoughtStart = tag.index + tag.open.length;
-        const close = lower.indexOf(tag.close, thoughtStart);
-        if (close < 0) {
-            reasoning += text.slice(thoughtStart);
-            break;
-        }
-
-        reasoning += text.slice(thoughtStart, close) + '\n\n';
-        cursor = close + tag.close.length;
+        position = marker.lastIndex;
     }
+    const tail = text.slice(position);
+    if (insideReasoning) reasoningText += tail;
+    else answerText += tail;
+    const plain = splitPlainReasoningHeadings(answerText, reasoningText);
+    return { content: stripDanglingReasoningTagFragmentsForDisplay(plain.content).trimStart(), reasoning: stripDanglingReasoningTagFragmentsForDisplay(plain.reasoning).trim() };
 
-    const plainSplit = splitPlainReasoningHeadings(answer, reasoning);
-    return { content: plainSplit.content.trimStart(), reasoning: plainSplit.reasoning.trim() };
 }
 
 function extractReasoningFromStreamEvent(event) {
@@ -30755,6 +31779,19 @@ function extractReasoningFromStreamEvent(event) {
     } catch {
         return '';
     }
+}
+
+function mergeReasoningWithoutOverlap(left, right) {
+    left = normalizeDisplayText(left || '').trim();
+    right = normalizeDisplayText(right || '').trim();
+    if (!left) return right;
+    if (!right || left.includes(right)) return left;
+    if (right.includes(left)) return right;
+    const limit = Math.min(left.length, right.length, 1200);
+    for (let size = limit; size >= 12; size--) {
+        if (left.slice(-size) === right.slice(0, size)) return left + right.slice(size);
+    }
+    return left + '\n\n' + right;
 }
 
 function extractReasoningFromObject(value, depth) {
@@ -30845,7 +31882,7 @@ function renderPreviews() {
     }
     pendingImages.forEach((image, index) => {
         const preview = document.createElement('div');
-        preview.className = 'preview';
+        preview.className = 'preview' + (image.uploading ? ' uploading' : '');
         const img = document.createElement('img');
         img.src = image.url;
         img.alt = image.name || 'attached image';
@@ -30858,6 +31895,31 @@ function renderPreviews() {
             renderPreviews();
         });
         preview.appendChild(img);
+        if (image.uploading) {
+            const overlay = document.createElement('div');
+            overlay.className = 'preview-upload-overlay';
+            const label = document.createElement('span');
+            const progress = Math.max(0, Math.min(100, Number(image.uploadProgress || 0)));
+            label.textContent = progress > 0 ? 'Uploading ' + Math.round(progress) + '%' : 'Preparing image';
+            const track = document.createElement('span');
+            track.className = 'preview-upload-track';
+            const fill = document.createElement('span');
+            fill.className = 'preview-upload-fill';
+            fill.style.setProperty('--upload-progress', progress + '%');
+            track.appendChild(fill);
+            overlay.append(label, track);
+            preview.appendChild(overlay);
+        } else if (image.uploadError) {
+            preview.classList.add('upload-failed');
+            preview.title = image.uploadError;
+        }
+        if (!image.uploading) {
+            const status = document.createElement('span');
+            status.className = 'preview-status ' + (image.uploadError ? 'failed' : 'uploaded');
+            status.textContent = image.uploadError ? 'Upload failed' : (image.referenced ? 'Referenced' : 'Uploaded');
+            status.title = image.uploadError || status.textContent;
+            preview.appendChild(status);
+        }
         preview.appendChild(remove);
         previewTray.appendChild(preview);
     });
@@ -30865,7 +31927,13 @@ function renderPreviews() {
         const preview = document.createElement('div');
         preview.className = 'preview file';
         preview.textContent = file.name;
-        preview.title = file.name + ' (' + formatBytes(file.size || 0) + ')';
+        preview.title = file.name + ' (' + formatBytes(file.size || 0) + ')' + (file.referenced ? ' - referenced from Project Files' : '');
+        if (file.referenced) {
+            const status = document.createElement('span');
+            status.className = 'preview-status uploaded';
+            status.textContent = 'Referenced';
+            preview.appendChild(status);
+        }
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.textContent = 'x';
@@ -30886,9 +31954,50 @@ async function addImageFiles(files) {
         throw new Error('Image uploads are disabled for this session.');
     const imageFiles = Array.from(files || []).filter(isImageFile);
     for (const file of imageFiles) {
-        pendingImages.push(await buildImageAttachment(file));
+        const temporaryUrl = URL.createObjectURL(file);
+        const image = {
+            name: file.name || 'image',
+            type: imageMimeForFile(file),
+            size: file.size || 0,
+            url: temporaryUrl,
+            uploading: true,
+            uploadProgress: 0
+        };
+        pendingImages.push(image);
+        renderPreviews();
+        try {
+            const normalized = await buildImageAttachment(file);
+            URL.revokeObjectURL(temporaryUrl);
+            Object.assign(image, normalized, {
+                dataUrl: normalized.url,
+                asFile: true,
+                onUploadProgress: progress => {
+                    image.uploadProgress = progress;
+                    renderPreviews();
+                },
+                onUploadComplete: uploadedFile => {
+                    image.sessionFile = uploadedFile || null;
+                    image.uploadProgress = 100;
+                    image.uploading = false;
+                    image.uploadError = '';
+                    renderPreviews();
+                }
+            });
+            const uploaded = await uploadSessionFiles([image], { imageAttachment: true });
+            image.sessionFile = uploaded && uploaded[0] ? uploaded[0] : null;
+            if (!image.sessionFile)
+                throw new Error('Image upload completed without a saved Project File reference.');
+            image.uploadProgress = 100;
+            image.uploading = false;
+            renderPreviews();
+        } catch (error) {
+            URL.revokeObjectURL(temporaryUrl);
+            image.uploading = false;
+            image.uploadError = error && error.message ? error.message : String(error);
+            renderPreviews();
+            throw error;
+        }
     }
-    renderPreviews();
 }
 
 async function addGeneralFiles(files) {
@@ -31182,6 +32291,50 @@ function collectBrowserSkillControls(doc, limit) {
     return controls;
 }
 
+function serializeBrowserSkillLiveDocument(doc) {
+    if (!doc || !doc.documentElement) return '';
+    const clone = doc.documentElement.cloneNode(true);
+    const sourceElements = [doc.documentElement].concat(Array.from(doc.documentElement.querySelectorAll('*')));
+    const clonedElements = [clone].concat(Array.from(clone.querySelectorAll('*')));
+    const count = Math.min(sourceElements.length, clonedElements.length);
+    for (let index = 0; index < count; index++) {
+        const source = sourceElements[index];
+        const copy = clonedElements[index];
+        const tag = String(source && source.tagName || '').toLowerCase();
+        if (!source || !copy || !tag) continue;
+        if (tag === 'input') {
+            const type = String(source.type || '').toLowerCase();
+            if (type === 'checkbox' || type === 'radio') {
+                if (source.checked) copy.setAttribute('checked', 'checked');
+                else copy.removeAttribute('checked');
+            } else if (type === 'password') {
+                if (source.value) copy.setAttribute('value', '[redacted]');
+                else copy.removeAttribute('value');
+            } else if (type !== 'file') {
+                copy.setAttribute('value', String(source.value || ''));
+            }
+        } else if (tag === 'textarea') {
+            copy.textContent = String(source.value || '');
+        } else if (tag === 'option') {
+            if (source.selected) copy.setAttribute('selected', 'selected');
+            else copy.removeAttribute('selected');
+        } else if (tag === 'details' || tag === 'dialog') {
+            if (source.open) copy.setAttribute('open', 'open');
+            else copy.removeAttribute('open');
+        }
+    }
+    const sections = [clone.outerHTML || ''];
+    Array.from(doc.querySelectorAll('iframe')).slice(0, 12).forEach((frame, index) => {
+        try {
+            const frameDoc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+            if (!frameDoc || !frameDoc.documentElement) return;
+            const frameUrl = frameDoc.location && frameDoc.location.href || frame.src || '';
+            sections.push('\n<!-- JACK_LIVE_IFRAME ' + (index + 1) + ' ' + frameUrl + ' -->\n' + serializeBrowserSkillLiveDocument(frameDoc));
+        } catch { }
+    });
+    return sections.join('');
+}
+
 function captureBrowserSkillFrameSnapshot(criteria, loopIndex) {
     const snapshot = {
         url: browserSkillCurrentDisplayUrl(),
@@ -31209,7 +32362,7 @@ function captureBrowserSkillFrameSnapshot(criteria, loopIndex) {
             snapshot.url = (proxyState && proxyState.targetUrl) || unwrapChatBrowserProxyUrl(doc.location && doc.location.href) || (doc.location && doc.location.href) || snapshot.url;
             snapshot.title = doc.title || '';
             snapshot.text = truncateBrowserSkillText(doc.body ? doc.body.innerText || doc.body.textContent || '' : '', 16000);
-            snapshot.html = truncateBrowserSkillText(doc.documentElement.outerHTML || '', 60000);
+            snapshot.html = truncateBrowserSkillText(serializeBrowserSkillLiveDocument(doc), 60000);
             snapshot.links = collectBrowserSkillLinks(doc, 80);
             snapshot.controls = collectBrowserSkillControls(doc, 60);
         }
@@ -31784,6 +32937,8 @@ async function steerCurrentAgentConversation(text, options) {
     const streamState = currentSessionStreamState();
     if (!steering || !streamState || !(streamState.streamId || activeStreamId)) return false;
 
+    const steeringId = options.steeringId || ('steer_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10));
+    const submittedPromptValue = prompt ? prompt.value : '';
     const response = await fetch('/api/chat-stream/steer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -31791,15 +32946,19 @@ async function steerCurrentAgentConversation(text, options) {
             streamId: streamState.streamId || activeStreamId,
             sessionId: streamState.sessionId || currentSessionId || '',
             shareKey: sharedView ? sharedSessionKey : '',
-            steering
+            steering,
+            steeringId
         })
     });
     const data = await readJsonResponse(response, {});
-    if (!response.ok || !data || !data.ok)
-        throw new Error((data && data.error) || ('Steering failed: HTTP ' + response.status));
+    if (!response.ok || !data || !data.ok) {
+        const error = new Error((data && data.error) || ('Steering failed: HTTP ' + response.status));
+        error.code = (data && (data.code || data.errorCode)) || (response.status === 409 ? 'stream_closed' : 'steering_failed');
+        throw error;
+    }
 
     hidePromptIntellisense();
-    if (!options.preservePrompt)
+    if (!options.preservePrompt && prompt.value === submittedPromptValue)
         prompt.value = '';
     if (!options.skipUserMessage)
         addUserMessage(steering, []);
@@ -31813,8 +32972,29 @@ async function steerCurrentAgentConversation(text, options) {
         saveCurrentSession(true).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     }
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
-    setLmStudioStatus('connecting', 'Steering will apply at the next agent break.');
+    setLmStudioStatus('connecting', data.state === 'buffered' ? 'Steering buffered until the Agent stream connects.' : 'Steering will apply at the next agent break.');
     return true;
+}
+
+async function steerComposerImmediately() {
+    if (steeringRequestInFlight) return false;
+    const steering = prompt.value.trim();
+    if (!steering) return false;
+    steeringRequestInFlight = true;
+    try {
+        return await steerCurrentAgentConversation(steering);
+    } catch (error) {
+        addClientDiagnostic('Agent steering', error.message || String(error), { retryable: true, status: error.code || 'failed' });
+        if (error.code === 'stream_closed') {
+            setLmStudioStatus('connecting', 'The Agent stream closed; your direction was queued as the next prompt.');
+            await sendMessage();
+            return false;
+        }
+        addMessage('error', 'Steering was not sent. Your text is still in the composer. ' + (error.message || String(error)));
+        return false;
+    } finally {
+        steeringRequestInFlight = false;
+    }
 }
 
 async function sendMessage() {
@@ -31843,6 +33023,15 @@ async function sendMessage() {
     const files = sharedView ? [] : pendingFiles.slice();
     const mediaSource = (!sharedView && isMediaGenerationService(service)) ? pendingMediaSource : null;
     if (!text && images.length === 0 && files.length === 0 && !mediaSource) return;
+    if (images.some(image => image && image.uploading)) {
+        addMessage('error', 'Wait for the attached image to finish uploading before sending.');
+        renderPreviews();
+        return;
+    }
+    if (images.some(image => !image || typeof image.url !== 'string' || !image.url.startsWith('data:image/'))) {
+        addMessage('error', 'The attached image is not ready for vision inference. Remove it and attach it again.');
+        return;
+    }
     if (mediaSource && !text) {
         addMessage('error', 'A prompt is required when using a source media file for generation.');
         return;
@@ -31862,11 +33051,21 @@ async function sendMessage() {
     }
     const browserSnapshotImage = browserSkillSnapshotImage(browserSnapshot);
     const userItem = addUserMessage(text, browserSnapshotImage ? images.concat([browserSnapshotImage]) : images);
-    let uploadedFiles = [];
-    if (files.length) {
-        addMessage('user', files.map(file => 'Uploading file: ' + file.name).join('\n'));
+    let uploadedFiles = files.map(file => file && (file.sessionFile || file.savedFile) ? (file.sessionFile || file.savedFile) : null);
+    const filesNeedingUpload = [];
+    const fileUploadIndexes = [];
+    files.forEach((file, index) => {
+        if (uploadedFiles[index]) return;
+        filesNeedingUpload.push(file);
+        fileUploadIndexes.push(index);
+    });
+    if (filesNeedingUpload.length) {
+        addMessage('user', filesNeedingUpload.map(file => 'Uploading file: ' + file.name).join('\n'));
         try {
-            uploadedFiles = await uploadSessionFiles(files);
+            const newlyUploadedFiles = await uploadSessionFiles(filesNeedingUpload);
+            fileUploadIndexes.forEach((originalIndex, uploadedIndex) => {
+                uploadedFiles[originalIndex] = newlyUploadedFiles[uploadedIndex] || null;
+            });
         } catch (error) {
             addMessage('error', error && error.message ? error.message : String(error));
             return;
@@ -31890,6 +33089,10 @@ async function sendMessage() {
             path: uploaded && uploaded.path ? uploaded.path : file.path
         });
     });
+    const uploadedImageFiles = images
+        .map(image => image && image.sessionFile ? image.sessionFile : null)
+        .filter(Boolean);
+    const requestUploadedFiles = mergeSessionFileLists(uploadedFiles, uploadedImageFiles);
     let userContent = makeUserContent(text, images, promptFiles, agentMode);
     let browserSkillContext = null;
     if (browserSkillMode && browserSnapshot) {
@@ -31897,7 +33100,7 @@ async function sendMessage() {
         userContent = browserTurn.userContent;
         browserSkillContext = browserTurn.browserSkillContext;
     }
-    const turn = { text, images, files: promptFiles, uploadedFiles, userContent, mediaSource: uploadedMediaSource, browserSkill: browserSkillMode, browserSkillContext, browserSkillLoop: 0, browserSkillCriteria: browserSkillCriteriaText, userItem };
+    const turn = { text, images, files: promptFiles, uploadedFiles: requestUploadedFiles, userContent, mediaSource: uploadedMediaSource, browserSkill: browserSkillMode, browserSkillContext, browserSkillLoop: 0, browserSkillCriteria: browserSkillCriteriaText, userItem };
     rememberPromptReplay(turn);
     queuePromptTurn(turn);
 }
@@ -32069,7 +33272,10 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
     let rawContent = '';
     let explicitReasoning = '';
     const noThinkRequested = messagesRequestNoThink(turnMessages);
-    const suppressReasoning = noThinkRequested || !selectedService();
+    // Chat mode uses an empty service id. That is still a real chat mode, not a
+    // request to hide reasoning. Only an explicit /no_think-style instruction
+    // should suppress the thinking stream in the browser.
+    const suppressReasoning = noThinkRequested;
     const streamId = 'stream_' + Math.random().toString(16).slice(2) + Date.now().toString(16);
     rememberLocalActiveStreamId(streamId);
     const controller = new AbortController();
@@ -32155,9 +33361,13 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             if (event.type === 'fileChanges' || event.type === 'file-change') {
                 const normalized = normalizeFileChangesPayload(event, streamSessionId);
                 if (normalized) {
-                    streamState.fileChanges = normalized;
+                    for (const file of normalized.files)
+                        streamState.fileChanges = mergeInferredFileChange(streamState.fileChanges, Object.assign({}, file, { undoToken: normalized.undoToken || file.undoToken || '' }), streamSessionId);
+                    if (streamState.fileChanges && normalized.undoToken)
+                        streamState.fileChanges.undoToken = normalized.undoToken;
                     if (streamState.parts) {
-                        streamState.parts._pendingFileChanges = normalized;
+                        streamState.parts._pendingFileChanges = streamState.fileChanges;
+                        updateAssistantFileChanges(streamState.parts, streamState.fileChanges);
                     }
                 }
                 return false;
@@ -32175,7 +33385,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             if (!suppressReasoning)
                 explicitReasoning += extractReasoningFromStreamEvent(event);
             const split = splitThinkTags(rawContent);
-            const reasoning = suppressReasoning ? '' : [explicitReasoning.trim(), split.reasoning.trim()].filter(Boolean).join('\n\n');
+            const reasoning = suppressReasoning ? '' : mergeReasoningWithoutOverlap(explicitReasoning, split.reasoning);
             updateActiveStreamDisplay(streamState, split.content, reasoning, false);
             return false;
         };
@@ -32198,7 +33408,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             handleStreamEventLine(buffer);
 
         const finalSplit = splitThinkTags(rawContent);
-        const finalReasoning = suppressReasoning ? '' : [explicitReasoning.trim(), finalSplit.reasoning.trim()].filter(Boolean).join('\n\n');
+        const finalReasoning = suppressReasoning ? '' : mergeReasoningWithoutOverlap(explicitReasoning, finalSplit.reasoning);
         const finalContent = buildAssistantFinalContent(finalSplit.content, getAssistantAnswerMarkdown(parts), finalReasoning, streamState);
         updateActiveStreamDisplay(streamState, finalContent, finalReasoning, true);
         if (streamState.parts)
@@ -32228,7 +33438,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
         if (error && error.name === 'AbortError') {
             const stoppedSplit = splitThinkTags(rawContent);
             const stoppedContent = stoppedSplit.content || getAssistantAnswerMarkdown(parts) || '(stopped)';
-            const stoppedReasoning = suppressReasoning ? '' : [explicitReasoning.trim(), stoppedSplit.reasoning.trim()].filter(Boolean).join('\n\n');
+            const stoppedReasoning = suppressReasoning ? '' : mergeReasoningWithoutOverlap(explicitReasoning, stoppedSplit.reasoning);
             if (streamState.parts)
                 streamState.parts._pendingFileChanges = null;
             updateActiveStreamDisplay(streamState, stoppedContent, stoppedReasoning, true);
@@ -34044,7 +35254,7 @@ function initializeChatBrowserPanel() {
             if (chatBrowserAddress) chatBrowserAddress.value = chatBrowserUrl;
             if (savedOpen && shouldAutoRestoreChatBrowserUrl(chatBrowserUrl) && chatBrowserFrame) {
                 setChatBrowserFrameSandbox(false, chatBrowserUrl);
-                chatBrowserFrame.src = chatBrowserUrl;
+                chatBrowserFrame.src = buildChatBrowserProxyUrl(chatBrowserUrl);
                 restoredFrame = true;
             } else if (savedOpen) {
                 blockedAutoRestore = true;
@@ -34505,14 +35715,54 @@ function promptTokenCountForSession(session) {
     );
 }
 
+function runtimeModelContextInfo(modelId) {
+    const model = findRuntimeModelInfo(modelId);
+    if (!model || typeof model !== 'object') return { known: false, configured: 0, maximum: 0 };
+    const configured = runtimeModelLoadedInstances(model)
+        .map(instance => Number(instance && instance.config && (instance.config.context_length || instance.config.contextLength) || 0))
+        .filter(value => Number.isFinite(value) && value > 0);
+    const maximum = Number(model.max_context_length || model.maxContextLength || 0);
+    return {
+        known: true,
+        // The scheduler may select any healthy loaded instance. Showing the
+        // smallest configured window avoids promising context that one cannot use.
+        configured: configured.length ? Math.min(...configured) : 0,
+        maximum: Number.isFinite(maximum) && maximum > 0 ? maximum : 0
+    };
+}
+
+function configuredContextLengthForModel(modelId) {
+    return runtimeModelContextInfo(modelId).configured;
+}
+
 function promptTokenBudgetForSession(session) {
+    const runtimeContext = runtimeModelContextInfo(session && session.model);
     const active = activeSessionFor(session);
     const activeBudget = Number(active && active.promptTokenBudget);
     const savedBudget = Number(session && session.promptTokenBudget);
-    const budget = Number.isFinite(activeBudget) && activeBudget > 0
-        ? activeBudget
-        : (Number.isFinite(savedBudget) && savedBudget > 0 ? savedBudget : 8192);
-    return Math.max(128, budget);
+    if (runtimeContext.configured > 0) return runtimeContext.configured;
+    // A known but currently unloaded runtime model has no active context
+    // window. Do not revive a stale saved fallback such as 8,192.
+    if (runtimeContext.known) return 0;
+    if (Number.isFinite(activeBudget) && activeBudget > 0) return activeBudget;
+    if (Number.isFinite(savedBudget) && savedBudget > 0) return savedBudget;
+    return 0;
+}
+
+function promptContextTooltipForSession(session, historyTokens, promptBudget) {
+    const history = Math.max(0, Math.round(Number(historyTokens) || 0));
+    const budget = Math.max(0, Math.round(Number(promptBudget) || 0));
+    const runtimeContext = runtimeModelContextInfo(session && session.model);
+    const pieces = ['Conversation history: ' + history.toLocaleString() + ' estimated tokens'];
+    if (budget > 0)
+        pieces.push('Current per-request context window: ' + budget.toLocaleString() + ' tokens');
+    else
+        pieces.push('Current context window is not reported by the runtime');
+    if (runtimeContext.maximum > 0 && runtimeContext.maximum !== budget)
+        pieces.push('Model-advertised maximum: ' + Math.round(runtimeContext.maximum).toLocaleString() + ' tokens');
+    if (budget > 0 && history > budget)
+        pieces.push('Older history is compressed before inference');
+    return pieces.join('. ') + '.';
 }
 
 function formatPromptTokens(value) {
@@ -34541,7 +35791,7 @@ function upsertLocalSessionSummary(title) {
             savedUtc: now,
             locked: false,
             promptTokenCount: estimateLocalPromptTokens(messages, getPromptDraftText()),
-            promptTokenBudget: 8192,
+            promptTokenBudget: configuredContextLengthForModel(selectedModel()),
             projectId: currentProjectId || selectedProjectId || 'unsorted',
             projectName: (projectById(currentProjectId || selectedProjectId) || {}).name || 'Unsorted',
             pinned: false
@@ -34556,6 +35806,9 @@ function upsertLocalSessionSummary(title) {
             session.title = title || session.title || 'New chat';
         session.updatedUtc = now;
         session.model = selectedModel();
+        const contextBudget = configuredContextLengthForModel(session.model);
+        if (contextBudget > 0)
+            session.promptTokenBudget = contextBudget;
         session.messageCount = Math.max(coerceSessionCount(session.messageCount), messages.length);
         session.fileCount = Math.max(coerceSessionCount(session.fileCount), sessionFiles.length);
         session.shareEnabled = !!shareState.enabled;
@@ -34750,7 +36003,6 @@ async function saveSessionSnapshot(sessionId, title, model, sessionMessages, fil
         files: normalizedFiles,
         draftPrompt: draftText,
         promptTokenCount: estimateLocalPromptTokens(normalizedMessages, draftText),
-        promptTokenBudget: 8192,
         runtime: selectedService() || 'LM Studio',
         service: selectedService(),
         reasoningLevel: sessionReasoningInherit && sessionReasoningInherit.checked ? 'inherit' : effectiveReasoningLevel()
@@ -34760,6 +36012,9 @@ async function saveSessionSnapshot(sessionId, title, model, sessionMessages, fil
         ,goal: activeGoal
         ,plan: activePlan
     };
+    const contextBudget = configuredContextLengthForModel(payload.model);
+    if (contextBudget > 0)
+        payload.promptTokenBudget = contextBudget;
     if (isSessionTitleLocked(sessionId))
         payload.titleLocked = true;
     const response = await fetch('/api/chat-session', {
@@ -34995,22 +36250,47 @@ async function runProjectAction(project, action) {
 }
 
 async function moveSessionsToProject(ids) {
-    const choices = chatProjects.filter(project => project && !project.archived);
-    const summary = choices.map((project, index) => (index + 1) + '. ' + project.name + (project.workspaceRoot ? ' — ' + project.workspaceRoot : '')).join('\n');
-    const selected = window.prompt('Move to which project? Enter a number:\n' + summary, '1');
-    const index = Number(selected) - 1;
-    if (!Number.isInteger(index) || index < 0 || index >= choices.length) return;
-    const target = choices[index];
-    for (const id of ids) {
-        const session = chatSessions.find(item => item && item.id === id);
-        if (!session) continue;
-        await runSessionAction(session, 'assign-project', { projectId: target.id });
-    }
-    selectedProjectId = target.id;
-    collapsedProjectIds.delete(target.id);
-    markProjectRead(target.id);
+    ids = Array.from(new Set((ids || []).filter(id => localSessionById(id))));
+    if (!ids.length) return;
+    const inlineTarget = await showSessionMoveDialog(ids);
+    if (!inlineTarget) return;
+    const results = await Promise.allSettled(ids.map(id => {
+        const session = localSessionById(id);
+        return session ? runSessionAction(session, 'assign-project', { projectId: inlineTarget.id }) : Promise.resolve();
+    }));
+    selectedProjectId = inlineTarget.id;
+    collapsedProjectIds.delete(inlineTarget.id);
+    markProjectRead(inlineTarget.id);
     saveChatProjectUiState();
-    await loadSessions(false);
+    renderSessionList();
+    const failed = results.filter(result => result.status === 'rejected');
+    if (failed.length) throw new Error(failed.length + ' session move' + (failed.length === 1 ? '' : 's') + ' failed and were restored.');
+}
+
+function showSessionMoveDialog(ids) {
+    return new Promise(resolve => {
+        const choices = chatProjects.filter(project => project && !project.archived);
+        if (!sessionMoveBackdrop || !sessionMoveProject || !choices.length) return resolve(null);
+        sessionMoveProject.textContent = '';
+        choices.forEach(project => {
+            const option = document.createElement('option');
+            option.value = project.id;
+            option.textContent = project.name + (project.workspaceRoot ? ' — ' + project.workspaceRoot : '');
+            sessionMoveProject.appendChild(option);
+        });
+        sessionMoveProject.value = selectedProjectId || choices[0].id;
+        if (sessionMoveSummary) sessionMoveSummary.textContent = 'Move ' + ids.length + ' session' + (ids.length === 1 ? '' : 's') + '.';
+        sessionActionDialogResolve = resolve;
+        sessionMoveBackdrop.classList.add('visible');
+        window.setTimeout(() => sessionMoveProject.focus(), 0);
+    });
+}
+
+function closeSessionMoveDialog(target) {
+    if (sessionMoveBackdrop) sessionMoveBackdrop.classList.remove('visible');
+    const resolve = sessionActionDialogResolve;
+    sessionActionDialogResolve = null;
+    if (resolve) resolve(target || null);
 }
 
 function startNewChatInProject(projectId) {
@@ -35077,7 +36357,7 @@ async function loadSessionsInternal(selectLatest) {
     let response;
     try {
         const results = await Promise.all([
-            fetchWithTimeout('/api/chat-sessions?take=all', null, 30000),
+            fetchWithTimeout('/api/chat-sessions?take=' + chatSessionPageSize + '&skip=0', null, 30000),
             loadChatProjects()
         ]);
         response = results[0];
@@ -35124,7 +36404,14 @@ async function loadSessionsInternal(selectLatest) {
     isServerOwner = isServerOwner || !!(authSession && (authSession.isOwner || authSession.isServerOwner));
     isDatabaseAdmin = isDatabaseAdmin || isServerOwner || !!(authSession && authSession.isAdministrator);
     applyRemoteAdminAvailability();
-    chatSessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const serverSessions = Array.isArray(data.sessions) ? data.sessions : [];
+    chatSessionsPageOffset = serverSessions.length;
+    const pendingLocal = new Map(chatSessions.filter(session => session &&
+        (pendingSessionMutationIds.has(session.id) || session.id === currentSessionId)).map(session => [session.id, session]));
+    chatSessions = serverSessions.map(session => pendingLocal.has(session.id) ? Object.assign({}, session, pendingLocal.get(session.id)) : session);
+    pendingLocal.forEach((session, id) => {
+        if (!chatSessions.some(item => item && item.id === id)) chatSessions.unshift(session);
+    });
     chatSessionTotalCount = Math.max(chatSessions.length, Number(data.total || data.count || chatSessions.length) || 0);
     chatSessionsHasMore = !!data.hasMore;
     sessionsLoading = false;
@@ -35140,6 +36427,50 @@ async function loadSessionsInternal(selectLatest) {
     if (!chatSessions.length && !currentSessionId && !messages.length)
         renderWelcomeEmpty();
     return true;
+}
+
+async function loadMoreSessions() {
+    if (sessionsLoading || !chatSessionsHasMore) return false;
+    sessionsLoading = true;
+    updateSessionsLoadingUi();
+    renderSessionList();
+    try {
+        const response = await fetchWithTimeout(
+            '/api/chat-sessions?take=' + chatSessionPageSize + '&skip=' + chatSessionsPageOffset,
+            null,
+            30000);
+        if (!response.ok)
+            throw new Error('Older chats failed to load: HTTP ' + response.status);
+        const data = await readJsonResponse(response, null, 30000);
+        if (!data || !data.ok)
+            throw new Error(data && data.error ? data.error : 'Older chats failed to load.');
+        const pageSessions = Array.isArray(data.sessions) ? data.sessions : [];
+        chatSessionsPageOffset += pageSessions.length;
+        const existingById = new Map(chatSessions.filter(Boolean).map(session => [session.id, session]));
+        pageSessions.forEach(session => {
+            if (!session || !session.id) return;
+            const existing = existingById.get(session.id);
+            if (existing) {
+                if (!pendingSessionMutationIds.has(session.id))
+                    Object.assign(existing, session);
+            }
+            else {
+                chatSessions.push(session);
+                existingById.set(session.id, session);
+            }
+        });
+        chatSessionTotalCount = Math.max(chatSessions.length, Number(data.total || data.count || chatSessions.length) || 0);
+        chatSessionsHasMore = !!data.hasMore && chatSessionsPageOffset < chatSessionTotalCount;
+        setSessionListRefreshStatus('', false);
+        return true;
+    } catch (error) {
+        setSessionListRefreshStatus(error && error.message ? error.message : 'Older chats failed to load.', true);
+        return false;
+    } finally {
+        sessionsLoading = false;
+        updateSessionsLoadingUi();
+        renderSessionList();
+    }
 }
 
 function normalizeOwnerKeyForCompare(ownerKey) {
@@ -35281,21 +36612,54 @@ function applySessionActionResult(session) {
     renderSessionList();
 }
 
+function optimisticSessionPatch(session, action, extra) {
+    const now = new Date().toISOString();
+    switch (action) {
+        case 'pin': return { pinned: true, pinnedUtc: now };
+        case 'unpin': return { pinned: false, pinnedUtc: '' };
+        case 'lock': return { locked: true, lockedUtc: now };
+        case 'unlock': return { locked: false, lockedUtc: '' };
+        case 'save': return { savedUtc: now };
+        case 'assign-project': return { projectId: (extra && extra.projectId) || 'unsorted', updatedUtc: now };
+        default: return { updatedUtc: now };
+    }
+}
+
+function restoreSessionSnapshot(snapshot) {
+    if (!snapshot || !snapshot.id) return;
+    const index = chatSessions.findIndex(item => item && item.id === snapshot.id);
+    if (index >= 0) chatSessions[index] = snapshot;
+    else chatSessions.unshift(snapshot);
+}
+
 async function runSessionAction(session, action, extra) {
     if (!session || !session.id) throw new Error('Session id is missing.');
-    const response = await fetch('/api/chat-session-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({ id: session.id, action }, extra || {}))
-    });
-    const data = await readJsonResponse(response, null, 8000);
-    if (!response.ok || !data || !data.ok) {
-        const detail = data && data.error ? data.error : 'HTTP ' + response.status;
-        throw new Error('Session action failed: ' + detail);
+    const snapshot = Object.assign({}, localSessionById(session.id) || session);
+    const local = localSessionById(session.id);
+    if (local) Object.assign(local, optimisticSessionPatch(local, action, extra));
+    pendingSessionMutationIds.add(session.id);
+    renderSessionList();
+    try {
+        const response = await fetch('/api/chat-session-action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(Object.assign({ id: session.id, action }, extra || {}))
+        });
+        const data = await readJsonResponse(response, null, 8000);
+        if (!response.ok || !data || !data.ok) {
+            const detail = data && data.error ? data.error : 'HTTP ' + response.status;
+            throw new Error('Session action failed: ' + detail);
+        }
+        if (data.session) applySessionActionResult(data.session);
+        return data;
+    } catch (error) {
+        restoreSessionSnapshot(snapshot);
+        addClientDiagnostic('Session ' + action, error.message || String(error), { retryable: true });
+        throw error;
+    } finally {
+        pendingSessionMutationIds.delete(session.id);
+        renderSessionList();
     }
-    if (data.session)
-        applySessionActionResult(data.session);
-    return data;
 }
 
 async function saveSessionAction(session) {
@@ -35324,10 +36688,27 @@ async function setSessionLock(session, locked) {
 }
 
 async function cloneSession(session) {
-    const data = await runSessionAction(session, 'clone');
-    if (data.session && data.session.id)
-        await loadSession(data.session.id);
-    addMessage('assistant', 'Cloned session "' + normalizeSessionTitleText((session && session.title) || 'New chat') + '".');
+    const placeholderId = 'pending_clone_' + Date.now().toString(36);
+    const placeholder = Object.assign({}, session, { id: placeholderId, title: normalizeSessionTitleText((session && session.title) || 'New chat') + ' (cloning…)', clonedFromSessionId: session.id, updatedUtc: new Date().toISOString() });
+    chatSessions.unshift(placeholder);
+    pendingSessionMutationIds.add(placeholderId);
+    renderSessionList();
+    try {
+        const data = await runSessionAction(session, 'clone');
+        chatSessions = chatSessions.filter(item => item && item.id !== placeholderId);
+        if (data.session && data.session.id) {
+            applySessionActionResult(data.session);
+            await loadSession(data.session.id);
+        }
+        addMessage('assistant', 'Cloned session "' + normalizeSessionTitleText((session && session.title) || 'New chat') + '".');
+    } catch (error) {
+        chatSessions = chatSessions.filter(item => item && item.id !== placeholderId);
+        addClientDiagnostic('Session clone', error.message || String(error), { retryable: true });
+        throw error;
+    } finally {
+        pendingSessionMutationIds.delete(placeholderId);
+        renderSessionList();
+    }
 }
 
 function getDownloadFileName(response, fallback) {
@@ -35441,35 +36822,85 @@ function forgetDeletedSessions(ids) {
 async function deleteSessionsBulk(ids) {
     ids = Array.from(new Set((ids || []).filter(Boolean)));
     if (!ids.length) return null;
-
-    const response = await fetch('/api/chat-sessions/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids })
-    });
-    const data = await readJsonResponse(response, null, 30000);
-    if (!response.ok) {
-        const detail = data && data.error ? data.error : 'HTTP ' + response.status;
-        throw new Error('Session delete failed: ' + detail);
+    const sessionSnapshots = ids.map(id => ({ session: Object.assign({}, localSessionById(id)), index: chatSessions.findIndex(item => item && item.id === id) })).filter(item => item.session.id);
+    const currentSnapshot = ids.includes(currentSessionId) ? {
+        id: currentSessionId,
+        messages: messages.slice(), queuedPrompts: queuedPrompts.slice(), images: pendingImages.slice(), files: pendingFiles.slice(), sessionFiles: sessionFiles.slice(), toolCalls: sessionToolCalls.slice(), comments: sessionComments.slice(), share: Object.assign({}, shareState)
+    } : null;
+    ids.forEach(id => pendingSessionMutationIds.add(id));
+    forgetDeletedSessions(ids);
+    try {
+        const response = await fetch('/api/chat-sessions/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids })
+        });
+        const data = await readJsonResponse(response, null, 30000);
+        if (!response.ok || !data || !data.ok) {
+            const detail = data && data.error ? data.error : 'HTTP ' + response.status;
+            throw new Error('Session delete failed: ' + detail);
+        }
+        const lockedIds = new Set(Array.isArray(data.lockedIds) ? data.lockedIds : []);
+        sessionSnapshots.filter(item => lockedIds.has(item.session.id)).sort((a, b) => a.index - b.index).forEach(item => chatSessions.splice(Math.max(0, item.index), 0, item.session));
+        if (lockedIds.size) {
+            addMessage('error', lockedIds.size + ' locked session' + (lockedIds.size === 1 ? ' was' : 's were') + ' not deleted.');
+            addClientDiagnostic('Session delete', lockedIds.size + ' locked session(s) were restored.', { status: 'partial' });
+        }
+        renderSessionList();
+        return data;
+    } catch (error) {
+        sessionSnapshots.sort((a, b) => a.index - b.index).forEach(item => {
+            if (!localSessionById(item.session.id)) chatSessions.splice(Math.max(0, item.index), 0, item.session);
+        });
+        if (currentSnapshot) {
+            currentSessionId = currentSnapshot.id;
+            messages.splice(0, messages.length, ...currentSnapshot.messages);
+            queuedPrompts = currentSnapshot.queuedPrompts;
+            pendingImages = currentSnapshot.images;
+            pendingFiles = currentSnapshot.files;
+            sessionFiles = currentSnapshot.sessionFiles;
+            sessionToolCalls = currentSnapshot.toolCalls;
+            sessionComments = currentSnapshot.comments;
+            shareState = currentSnapshot.share;
+            renderConversation(); renderPreviews(); renderComments(); updateShareUi();
+        }
+        renderSessionList();
+        addClientDiagnostic('Session delete', error.message || String(error), { retryable: true });
+        throw error;
+    } finally {
+        ids.forEach(id => pendingSessionMutationIds.delete(id));
     }
-    if (!data || !data.ok)
-        throw new Error(data && data.error ? 'Session delete failed: ' + data.error : 'Session delete failed.');
-
-    const deletedIds = Array.isArray(data.deletedIds) ? data.deletedIds : [];
-    const missingIds = Array.isArray(data.missingIds) ? data.missingIds : [];
-    const removedIds = deletedIds.concat(missingIds);
-    forgetDeletedSessions(removedIds);
-
-    const lockedIds = Array.isArray(data.lockedIds) ? data.lockedIds : [];
-    if (lockedIds.length)
-        addMessage('error', lockedIds.length + ' locked session' + (lockedIds.length === 1 ? ' was' : 's were') + ' not deleted.');
-
-    return data;
 }
 
 async function deleteSession(id) {
     if (!id) return;
-    await deleteSessionsBulk([id]);
+    const confirmedIds = await showSessionDeleteDialog([id]);
+    if (confirmedIds) await deleteSessionsBulk(confirmedIds);
+}
+
+function showSessionDeleteDialog(ids) {
+    ids = Array.from(new Set((ids || []).filter(id => localSessionById(id))));
+    return new Promise(resolve => {
+        if (!sessionDeleteBackdrop || !ids.length) return resolve(null);
+        const multiple = ids.length > 1;
+        if (sessionDeleteTitle) sessionDeleteTitle.textContent = multiple ? 'Delete Sessions' : 'Delete Session';
+        if (sessionDeleteWarning) sessionDeleteWarning.textContent = multiple ? 'This permanently removes these sessions from this Workstation.' : 'This permanently removes this session from this Workstation.';
+        if (sessionDeleteList) sessionDeleteList.textContent = ids.map(id => normalizeSessionTitleText(localSessionById(id)?.title || id)).join('\n');
+        if (sessionDeletePhraseLabel) sessionDeletePhraseLabel.hidden = !multiple;
+        if (sessionDeletePhrase) { sessionDeletePhrase.hidden = !multiple; sessionDeletePhrase.value = ''; }
+        if (sessionDeleteConfirm) { sessionDeleteConfirm.textContent = multiple ? 'Delete Sessions' : 'Delete Session'; sessionDeleteConfirm.disabled = multiple; }
+        sessionActionDialogResolve = resolve;
+        sessionDeleteBackdrop.dataset.sessionIds = JSON.stringify(ids);
+        sessionDeleteBackdrop.classList.add('visible');
+        window.setTimeout(() => (multiple ? sessionDeletePhrase : sessionDeleteCancel)?.focus(), 0);
+    });
+}
+
+function closeSessionDeleteDialog(result) {
+    if (sessionDeleteBackdrop) sessionDeleteBackdrop.classList.remove('visible');
+    const resolve = sessionActionDialogResolve;
+    sessionActionDialogResolve = null;
+    if (resolve) resolve(result || null);
 }
 
 async function loadSessionOwner() {
@@ -35903,6 +37334,7 @@ function sessionRenderFingerprint(session) {
         isActive ? 'active' : '',
         isStreaming ? 'streaming' : '',
         remoteActive && remoteActive.phase ? remoteActive.phase : '',
+        pendingSessionMutationIds.has(session && session.id) ? 'pending' : '',
         canUseAdminTools() ? 'admin' : ''
     ].join('|');
 }
@@ -35976,8 +37408,8 @@ function clearSessionSelection() {
 async function deleteSelectedSessionIds() {
     const ids = Array.from(selectedSessionIds).filter(Boolean);
     if (!ids.length) return;
-    const ok = await showYesNoConfirm('Delete ' + ids.length + ' selected session' + (ids.length === 1 ? '' : 's') + '?');
-    if (!ok) return;
+    const confirmedIds = await showSessionDeleteDialog(ids);
+    if (!confirmedIds) return;
     if (deleteSelectedSessions) {
         deleteSelectedSessions.disabled = true;
         deleteSelectedSessions.textContent = 'Deleting...';
@@ -35985,7 +37417,7 @@ async function deleteSelectedSessionIds() {
     if (selectAllSessions)
         selectAllSessions.disabled = true;
     try {
-        const result = await deleteSessionsBulk(ids);
+        const result = await deleteSessionsBulk(confirmedIds);
         const lockedIds = result && Array.isArray(result.lockedIds) ? result.lockedIds : [];
         selectedSessionIds = new Set(lockedIds);
         syncSessionSelectionUi();
@@ -36212,6 +37644,7 @@ function buildProjectGroups(visibleSessions, sessionItems, query) {
 
 function renderSessionList() {
     if (!sessionList) return;
+    updateApplicationMenuState();
     updateSessionsLoadingUi();
     updateSessionDownloadButton();
     const reusableItems = new Map();
@@ -36264,6 +37697,7 @@ function renderSessionList() {
         empty.appendChild(title);
         empty.appendChild(detail);
         sessionList.replaceChildren(empty);
+        appendSessionPageControl();
         return;
     }
     const projectQueryMatch = query && chatProjects.some(project => project && (archivedProjectsVisible || !project.archived) && [project.name, project.workspaceRoot].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()));
@@ -36275,9 +37709,12 @@ function renderSessionList() {
         title.textContent = 'No matching chats';
         const detail = document.createElement('span');
         detail.textContent = 'Try a title, model, owner, or file count.';
+        if (chatSessionsHasMore)
+            detail.textContent = 'No match in the chats loaded so far. Load older chats to continue searching.';
         empty.appendChild(title);
         empty.appendChild(detail);
         sessionList.replaceChildren(empty);
+        appendSessionPageControl();
         return;
     }
 
@@ -36285,7 +37722,8 @@ function renderSessionList() {
     visibleSessions.forEach((session, index) => {
         const fingerprint = sessionRenderFingerprint(session);
         const reusable = session && session.id ? reusableItems.get(session.id) : null;
-        if (reusable && reusable.dataset.renderFingerprint === fingerprint) {
+        if (reusable && (reusable.dataset.renderFingerprint === fingerprint || renamingSessionId === session.id)) {
+            reusable.dataset.renderFingerprint = fingerprint;
             reusable.style.setProperty('--session-index', String(index));
             nextItems.push(reusable);
             return;
@@ -36308,6 +37746,7 @@ function renderSessionList() {
             (isStreaming ? ' streaming' : '') +
             (session && session.pinned ? ' pinned' : '') +
             (session && session.locked ? ' locked' : '') +
+            (pendingSessionMutationIds.has(session && session.id) ? ' pending-mutation' : '') +
             (canUseAdminTools() ? ' admin-enabled' : '');
         item.style.setProperty('--session-index', String(index));
         const messageCount = getSessionMessageCount(session);
@@ -36359,7 +37798,7 @@ function renderSessionList() {
         appendSessionChip(meta, messageCount + ' msg', 'count', messageCount + ' saved messages');
         if (fileCount > 0)
             appendSessionChip(meta, fileCount + ' file' + (fileCount === 1 ? '' : 's'), 'count', fileCount + ' attached files');
-        appendSessionChip(meta, formatPromptTokens(promptTokens) + ' tok', 'tokens', Math.round(promptTokens) + ' total prompt tokens');
+        appendSessionChip(meta, formatPromptTokens(promptTokens) + ' history', 'tokens', Math.round(promptTokens).toLocaleString() + ' estimated conversation tokens before runtime compression');
         if (session && session.savedUtc)
             appendSessionChip(meta, 'saved', 'state', 'Explicitly saved ' + formatSessionRelativeTime(session.savedUtc));
         if (session && session.locked)
@@ -36397,7 +37836,7 @@ function renderSessionList() {
 
         const depthBar = document.createElement('span');
         depthBar.className = 'session-depth';
-        depthBar.title = Math.round(promptTokens) + ' prompt tokens loaded of ' + Math.round(promptBudget) + ' budget';
+        depthBar.title = promptContextTooltipForSession(session, promptTokens, promptBudget);
         const depthFill = document.createElement('span');
         depthBar.appendChild(depthFill);
 
@@ -36472,11 +37911,31 @@ function renderSessionList() {
         nextItems.push(item);
     });
     sessionList.replaceChildren(...buildProjectGroups(visibleSessions, nextItems, query));
+    appendSessionPageControl();
     syncSessionSelectionUi();
+}
+
+function appendSessionPageControl() {
+    if (!sessionList || !sessionsLoaded) return;
+    const total = Math.max(chatSessions.length, Number(chatSessionTotalCount) || 0);
+    if (!chatSessionsHasMore && chatSessionsPageOffset >= total) return;
+    const control = document.createElement('div');
+    control.className = 'session-page-control';
+    const status = document.createElement('span');
+    status.textContent = 'Showing ' + Math.min(chatSessionsPageOffset, total) + ' of ' + total + ' chats';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost';
+    button.textContent = sessionsLoading ? 'Loading older chats...' : 'Load older chats';
+    button.disabled = sessionsLoading || !chatSessionsHasMore;
+    button.addEventListener('click', () => loadMoreSessions());
+    control.append(status, button);
+    sessionList.appendChild(control);
 }
 
 function closeSessionRenameForm(item) {
     renamingSessionId = '';
+    renameSessionDraft = '';
     if (!item) return;
     item.classList.remove('renaming');
     const form = item.querySelector('.session-rename-form');
@@ -36488,6 +37947,7 @@ function beginRenameSession(session, item) {
     closeSessionAdminMenu();
     Array.from(sessionList ? sessionList.querySelectorAll('.session-item.renaming') : []).forEach(closeSessionRenameForm);
     renamingSessionId = session.id;
+    renameSessionDraft = normalizeSessionTitleText(session.title);
     item.classList.add('renaming');
 
     const form = document.createElement('form');
@@ -36498,7 +37958,7 @@ function beginRenameSession(session, item) {
     input.maxLength = 160;
     input.autocomplete = 'off';
     input.spellcheck = true;
-    input.value = normalizeSessionTitleText(session.title);
+    input.value = renameSessionDraft;
     input.setAttribute('aria-label', 'Session name');
     const save = document.createElement('button');
     save.type = 'submit';
@@ -36532,6 +37992,7 @@ function beginRenameSession(session, item) {
             closeSessionRenameForm(item);
         }
     });
+    input.addEventListener('input', () => { renameSessionDraft = input.value; });
     item.appendChild(form);
     window.setTimeout(() => {
         input.focus();
@@ -36543,26 +38004,39 @@ async function renameSessionTitle(id, title) {
     const nextTitle = normalizeSessionTitleText(title);
     if (!id) throw new Error('Session id is missing.');
     if (!nextTitle) throw new Error('Session name is required.');
-    const response = await fetch('/api/chat-session-rename', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, title: nextTitle })
-    });
-    const data = await readJsonResponse(response, null);
-    if (!response.ok || !data || !data.ok) {
-        const detail = data && data.error ? data.error : 'HTTP ' + response.status;
-        throw new Error('Session rename failed: ' + detail);
-    }
-
     const session = localSessionById(id);
+    const snapshot = session ? Object.assign({}, session) : null;
     if (session) {
-        session.title = data.title || nextTitle;
-        session.updatedUtc = data.updatedUtc || new Date().toISOString();
+        session.title = nextTitle;
+        session.updatedUtc = new Date().toISOString();
         session.titleLocked = true;
-        if (Number.isFinite(Number(data.commentCount)))
-            session.commentCount = Number(data.commentCount);
     }
+    pendingSessionMutationIds.add(id);
     renderSessionList();
+    try {
+        const response = await fetch('/api/chat-session-rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, title: nextTitle })
+        });
+        const data = await readJsonResponse(response, null);
+        if (!response.ok || !data || !data.ok) {
+            const detail = data && data.error ? data.error : 'HTTP ' + response.status;
+            throw new Error('Session rename failed: ' + detail);
+        }
+        if (session) {
+            session.title = data.title || nextTitle;
+            session.updatedUtc = data.updatedUtc || session.updatedUtc;
+            if (Number.isFinite(Number(data.commentCount))) session.commentCount = Number(data.commentCount);
+        }
+    } catch (error) {
+        if (snapshot) restoreSessionSnapshot(snapshot);
+        addClientDiagnostic('Session rename', error.message || String(error), { retryable: true });
+        throw error;
+    } finally {
+        pendingSessionMutationIds.delete(id);
+        renderSessionList();
+    }
 }
 
 function sessionOwnerKey(session) {
@@ -36613,15 +38087,6 @@ function openSessionAdminMenu(session, anchor) {
         ['Mute 6 hours', 360],
         ['Mute until enabled', 0]
     ].forEach(([label, minutes]) => sessionAdminMenu.appendChild(makeAdminMenuButton(label, () => runSessionAdminAction(session, 'mute', minutes))));
-    appendAdminSeparator(sessionAdminMenu);
-    [
-        ['Ban 10 minutes', 10],
-        ['Ban 30 minutes', 30],
-        ['Ban 60 minutes', 60],
-        ['Ban 2 hours', 120],
-        ['Ban 6 hours', 360],
-        ['Ban until enabled', 0]
-    ].forEach(([label, minutes]) => sessionAdminMenu.appendChild(makeAdminMenuButton(label, () => runSessionAdminAction(session, 'ban', minutes))));
     appendAdminSeparator(sessionAdminMenu);
     sessionAdminMenu.appendChild(makeAdminMenuButton('Enable', () => runSessionAdminAction(session, 'enable', 0)));
     sessionAdminMenu.appendChild(makeAdminMenuButton('Edit permissions', () => openAdminPermissionsDialog(session)));
@@ -36951,7 +38416,11 @@ function stringifyMessageContent(content) {
 }
 
 function sessionUploadHeaders(headers) {
-    return typeof authHeaders === 'function' ? authHeaders(headers) : headers;
+    const result = new Headers(headers || {});
+    const token = readSocketJackToken();
+    if (token && !result.has('Authorization'))
+        result.set('Authorization', 'Bearer ' + token);
+    return result;
 }
 
 function sessionUploadTargetPayload(file, options) {
@@ -37029,20 +38498,17 @@ async function uploadSessionFiles(files, options) {
         let data = null;
         let transportError = null;
         try {
-            response = await fetch('/api/chat-file', {
-                method: 'POST',
-                headers: sessionUploadHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify(Object.assign({
-                    sessionId,
-                    name: file.name,
-                    type: file.type,
-                    size: file.size,
-                    asFile: !!file.asFile,
-                    dataUrl: file.dataUrl,
-                    text: file.text
-                }, sessionUploadTargetPayload(file, options)))
-            });
-            data = await readJsonResponse(response, null);
+            const uploadResult = await postSessionFileWithProgress(Object.assign({
+                sessionId,
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                asFile: !!file.asFile,
+                dataUrl: file.dataUrl,
+                text: file.text
+            }, sessionUploadTargetPayload(file, options)), file.onUploadProgress);
+            response = { ok: uploadResult.ok, status: uploadResult.status };
+            data = uploadResult.data;
         } catch (error) {
             transportError = error && error.message ? error.message : String(error);
         }
@@ -37082,10 +38548,40 @@ async function uploadSessionFiles(files, options) {
             applyUsageSnapshot(data.usage, 0);
             returnedFiles.forEach(returnedFile => uploaded.push(returnedFile));
         }
+        if (typeof file.onUploadComplete === 'function')
+            file.onUploadComplete(returnedFiles[0] || null);
     }
     await saveCurrentSession(true);
     await loadSolutionExplorer();
     return uploaded;
+}
+
+function postSessionFileWithProgress(payload, onProgress) {
+    return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open('POST', '/api/chat-file', true);
+        request.withCredentials = true;
+        const headers = sessionUploadHeaders({ 'Content-Type': 'application/json' }) || {};
+        if (typeof headers.forEach === 'function')
+            headers.forEach((value, name) => request.setRequestHeader(name, value));
+        else
+            Object.keys(headers).forEach(name => request.setRequestHeader(name, headers[name]));
+        request.upload.addEventListener('progress', event => {
+            if (typeof onProgress !== 'function') return;
+            const percent = event.lengthComputable && event.total > 0 ? event.loaded / event.total * 100 : 0;
+            onProgress(Math.max(1, Math.min(99, percent)));
+        });
+        request.addEventListener('load', () => {
+            let data = null;
+            try { data = request.responseText ? JSON.parse(request.responseText) : null; } catch { }
+            if (typeof onProgress === 'function' && request.status >= 200 && request.status < 300)
+                onProgress(100);
+            resolve({ ok: request.status >= 200 && request.status < 300, status: request.status, data });
+        });
+        request.addEventListener('error', () => reject(new Error('Network error while uploading Project Files.')));
+        request.addEventListener('abort', () => reject(new Error('Project Files upload was canceled.')));
+        request.send(JSON.stringify(payload || {}));
+    });
 }
 
 function resetModelOptionMetadata() {
@@ -37867,6 +39363,7 @@ async function loadRuntimeModels(options) {
         const models = Array.isArray(data.models) ? data.models.filter(Boolean) : [];
         runtimeModelInfos = models;
         mergeRuntimeModelsIntoSelect(models);
+        renderSessionList();
         const loadedCount = models.filter(model => runtimeModelLoadedInstances(model).length > 0).length;
         const enabledCount = models.filter(model => runtimeModelCanLoad(model)).length;
         setRuntimeModelsStatus(models.length + ' models | ' + loadedCount + ' loaded | ' + enabledCount + ' enabled', false);
@@ -38960,6 +40457,20 @@ if (refreshSolutionExplorer) {
         loadSolutionExplorer().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     });
 }
+if (projectVersionsToggle) {
+    projectVersionsToggle.addEventListener('click', () => {
+        const opening = !!(projectVersionsPanel && projectVersionsPanel.hidden);
+        if (projectVersionsPanel) projectVersionsPanel.hidden = !opening;
+        projectVersionsToggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        if (opening)
+            loadProjectFileVersions().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+    });
+}
+if (projectVersionCreate) {
+    projectVersionCreate.addEventListener('click', () => {
+        createNamedProjectFileVersion().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+    });
+}
 if (importGitHubRepository) {
     importGitHubRepository.addEventListener('click', () => {
         importGitHubRepositoryIntoSession().catch(error => {
@@ -39259,9 +40770,16 @@ prompt.addEventListener('keydown', event => {
         }
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
-        sendMessage();
+        const streamState = currentSessionStreamState();
+        const canSteerNow = selectedService() === 'agent' &&
+            !!(streamState && (streamState.streamId || activeStreamId)) &&
+            pendingImages.length === 0 && pendingFiles.length === 0 && !pendingMediaSource;
+        if (canSteerNow)
+            steerComposerImmediately();
+        else
+            sendMessage();
     }
 });
 
@@ -39323,7 +40841,144 @@ if (adminPermissionsBackdrop) {
     });
 }
 
+appMenus.forEach(menu => {
+    const toggle = menu.querySelector(':scope > button');
+    const popup = menu.querySelector('.app-menu-popup');
+    if (!toggle || !popup) return;
+    toggle.addEventListener('click', event => {
+        event.stopPropagation();
+        const opening = !menu.classList.contains('open');
+        closeAllAppMenus(opening ? menu : null);
+        menu.classList.toggle('open', opening);
+        popup.hidden = !opening;
+        toggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        if (opening) {
+            updateApplicationMenuState();
+            const rect = toggle.getBoundingClientRect();
+            popup.style.left = Math.min(window.innerWidth - Math.max(220, popup.offsetWidth || 220) - 8, Math.max(8, rect.left)) + 'px';
+            popup.style.top = (rect.bottom + 4) + 'px';
+        }
+    });
+    popup.addEventListener('keydown', event => {
+        const items = Array.from(popup.querySelectorAll('button:not(:disabled),a[href]')).filter(item => !item.hidden);
+        const index = items.indexOf(document.activeElement);
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+        } else if (event.key === 'Escape') {
+            closeAllAppMenus(); toggle.focus();
+        }
+    });
+    popup.addEventListener('click', () => window.setTimeout(() => closeAllAppMenus(), 0));
+});
+
+if (menuNewProject && newProject) menuNewProject.addEventListener('click', () => newProject.click());
+if (menuSeedSession && seedSession) menuSeedSession.addEventListener('click', () => seedSession.click());
+if (menuDownloadSession) menuDownloadSession.addEventListener('click', () => downloadCurrentSessionZip().catch(error => addClientDiagnostic('Session download', error.message || String(error), { retryable: true })));
+if (menuRefreshSessions) menuRefreshSessions.addEventListener('click', () => loadSessions(false).catch(error => addClientDiagnostic('Session refresh', error.message || String(error), { retryable: true })));
+if (menuNewSession) menuNewSession.addEventListener('click', () => startNewChatInProject(selectedProjectId));
+if (menuRenameSession) menuRenameSession.addEventListener('click', () => {
+    const ids = currentSessionActionIds();
+    if (ids.length !== 1) return;
+    renderSessionList();
+    const session = localSessionById(ids[0]);
+    const item = sessionList && sessionList.querySelector('.session-item[data-session-id="' + CSS.escape(ids[0]) + '"]');
+    if (session && item) beginRenameSession(session, item);
+});
+if (menuMoveSession) menuMoveSession.addEventListener('click', () => moveSessionsToProject(currentSessionActionIds()).catch(error => addMessage('error', error.message || String(error))));
+if (menuDeleteSession) menuDeleteSession.addEventListener('click', async () => {
+    const ids = currentSessionActionIds();
+    const confirmed = await showSessionDeleteDialog(ids);
+    if (confirmed) deleteSessionsBulk(confirmed).catch(error => addMessage('error', error.message || String(error)));
+});
+if (menuAdministrativeTools) menuAdministrativeTools.addEventListener('click', () => setAccessPanelVisible(true));
+if (menuComposerOptions && generationSettingsToggle) menuComposerOptions.addEventListener('click', () => generationSettingsToggle.click());
+const webOnboardingStorageKey = 'jackllm.onboarding.web.v1';
+const webHints = [
+    'Projects group related sessions; moving a session does not duplicate its files.',
+    'Use Shift+Enter for a new line. Enter sends when the composer is ready.',
+    'Files and terminal actions stay permission-gated per Workstation user.',
+    'If a model is missing here, download and enable it in the Workstation Models tab.',
+    'Errors / Diagnosis records runtime and permission problems without adding them to the chat.'
+];
+let webHintIndex = 0;
+function readWebOnboardingState() {
+    try { return Object.assign({ hideGuide:false, hideHints:false }, JSON.parse(localStorage.getItem(webOnboardingStorageKey) || '{}')); }
+    catch { return { hideGuide:false, hideHints:false }; }
+}
+function writeWebOnboardingState(state) { try { localStorage.setItem(webOnboardingStorageKey, JSON.stringify(state)); } catch { } }
+function setWebGuideOpen(open) {
+    const backdrop = document.getElementById('webOnboardingBackdrop');
+    if (!backdrop) return;
+    const state = readWebOnboardingState();
+    document.getElementById('webOnboardingDoNotShow').checked = !!state.hideGuide;
+    document.getElementById('webOnboardingDoNotShowHints').checked = !!state.hideHints;
+    backdrop.hidden = !open;
+}
+function showWebHint(reset) {
+    const state = readWebOnboardingState(), panel = document.getElementById('webHint');
+    if (!panel || state.hideHints) return;
+    if (reset) webHintIndex = 0;
+    document.getElementById('webHintText').textContent = webHints[webHintIndex % webHints.length];
+    document.getElementById('webHintDoNotShow').checked = false;
+    panel.hidden = false;
+}
+function maybeShowWebOnboarding() {
+    const state = readWebOnboardingState();
+    if (!state.hideGuide) setWebGuideOpen(true); else if (!state.hideHints) showWebHint(true);
+}
+menuGettingStarted?.addEventListener('click', () => setWebGuideOpen(true));
+menuShowHints?.addEventListener('click', () => { const state = readWebOnboardingState(); state.hideHints = false; writeWebOnboardingState(state); showWebHint(true); });
+document.getElementById('webOnboardingStart')?.addEventListener('click', () => {
+    const state = readWebOnboardingState();
+    state.hideGuide = !!document.getElementById('webOnboardingDoNotShow').checked;
+    state.hideHints = !!document.getElementById('webOnboardingDoNotShowHints').checked;
+    writeWebOnboardingState(state); setWebGuideOpen(false); if (!state.hideHints) showWebHint(true);
+});
+document.getElementById('webHintNext')?.addEventListener('click', () => { webHintIndex = (webHintIndex + 1) % webHints.length; showWebHint(false); });
+document.getElementById('webHintClose')?.addEventListener('click', () => {
+    const state = readWebOnboardingState();
+    if (document.getElementById('webHintDoNotShow').checked) { state.hideHints = true; writeWebOnboardingState(state); }
+    document.getElementById('webHint').hidden = true;
+});
+if (menuDiagnostics) menuDiagnostics.addEventListener('click', () => setDiagnosticsOpen(true, 'errors'));
+if (menuApiReference) menuApiReference.addEventListener('click', () => {
+    setDiagnosticsOpen(true, 'system');
+    addClientDiagnostic('API Reference', 'JackLLM API routes are available from the Diagnostics route list. Existing protected APIs remain unchanged.', { severity: 'info', status: 'info' });
+});
+if (menuAbout) menuAbout.addEventListener('click', () => {
+    setDiagnosticsOpen(true, 'system');
+    addClientDiagnostic('System Information', (serverIdentityState.serverName || 'JackLLM Workstation') + ' | ' + navigator.userAgent, { severity: 'info', status: 'info' });
+});
+
+if (diagnosticsToggle) diagnosticsToggle.addEventListener('click', () => setDiagnosticsOpen(!(diagnosticsBackdrop && diagnosticsBackdrop.classList.contains('visible')), diagnosticsTab));
+if (diagnosticsClose) diagnosticsClose.addEventListener('click', () => setDiagnosticsOpen(false));
+if (diagnosticsMinimize) diagnosticsMinimize.addEventListener('click', () => { document.body.classList.add('diagnostics-minimized'); setDiagnosticsOpen(false); });
+if (diagnosticsRefresh) diagnosticsRefresh.addEventListener('click', () => loadDiagnosticsPanel().catch(error => addClientDiagnostic('Diagnostics', error.message || String(error), { retryable: true })));
+if (diagnosticsErrorsTab) diagnosticsErrorsTab.addEventListener('click', () => { diagnosticsTab = 'errors'; renderDiagnosticsPanel(); });
+if (diagnosticsSystemTab) diagnosticsSystemTab.addEventListener('click', () => { diagnosticsTab = 'system'; renderDiagnosticsPanel(); });
+if (diagnosticsUsersTab) diagnosticsUsersTab.addEventListener('click', () => { diagnosticsTab = 'users'; renderDiagnosticsPanel(); });
+if (diagnosticsClear) diagnosticsClear.addEventListener('click', () => { diagnosticEntries = []; diagnosticsUnread = 0; updateDiagnosticBadge(); renderDiagnosticsPanel(); });
+if (diagnosticsCopy) diagnosticsCopy.addEventListener('click', () => navigator.clipboard?.writeText(JSON.stringify({ client: diagnosticEntries, server: diagnosticsServerState }, null, 2)).catch(() => {}));
+if (diagnosticsBackdrop) diagnosticsBackdrop.addEventListener('click', event => { if (event.target === diagnosticsBackdrop) setDiagnosticsOpen(false); });
+
+if (sessionMoveCancel) sessionMoveCancel.addEventListener('click', () => closeSessionMoveDialog(null));
+if (sessionMoveConfirm) sessionMoveConfirm.addEventListener('click', () => closeSessionMoveDialog(chatProjects.find(project => project && project.id === sessionMoveProject.value)));
+if (sessionMoveBackdrop) sessionMoveBackdrop.addEventListener('click', event => { if (event.target === sessionMoveBackdrop) closeSessionMoveDialog(null); });
+if (sessionDeletePhrase) sessionDeletePhrase.addEventListener('input', () => { if (sessionDeleteConfirm) sessionDeleteConfirm.disabled = sessionDeletePhrase.value !== 'DELETE ALL'; });
+if (sessionDeleteCancel) sessionDeleteCancel.addEventListener('click', () => closeSessionDeleteDialog(null));
+if (sessionDeleteConfirm) sessionDeleteConfirm.addEventListener('click', () => {
+    let ids = [];
+    try { ids = JSON.parse(sessionDeleteBackdrop.dataset.sessionIds || '[]'); } catch { }
+    closeSessionDeleteDialog(ids);
+});
+if (sessionDeleteBackdrop) sessionDeleteBackdrop.addEventListener('click', event => { if (event.target === sessionDeleteBackdrop) closeSessionDeleteDialog(null); });
+
+window.addEventListener('error', event => addClientDiagnostic('JavaScript', event.message || 'Unhandled script error.', { status: 'error' }));
+window.addEventListener('unhandledrejection', event => addClientDiagnostic('Promise', event.reason && event.reason.message ? event.reason.message : String(event.reason || 'Unhandled promise rejection.'), { status: 'error' }));
+
 window.addEventListener('click', event => {
+    if (!event.target.closest || !event.target.closest('[data-app-menu]')) closeAllAppMenus();
     if (!sessionAdminMenu || sessionAdminMenu.classList.contains('hidden')) return;
     if (sessionAdminMenu.contains(event.target)) return;
     closeSessionAdminMenu();
@@ -39348,7 +41003,7 @@ window.addEventListener('keydown', event => {
 window.addEventListener('paste', event => {
     const files = event.clipboardData && event.clipboardData.files;
     if (files && files.length) {
-        addGeneralFiles(files).catch(error => {
+        addDroppedChatFiles(files).catch(error => {
             addMessage('error', error && error.message ? error.message : String(error));
         });
     }
@@ -39356,14 +41011,40 @@ window.addEventListener('paste', event => {
 
 form.addEventListener('dragover', event => {
     event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    const projectFileDrag = isProjectFileDrag(event.dataTransfer);
+    form.classList.toggle('project-file-drop-target', projectFileDrag);
+    form.classList.toggle('dragging-files', !projectFileDrag);
 });
 
 form.addEventListener('drop', event => {
     event.preventDefault();
-    addGeneralFiles(event.dataTransfer && event.dataTransfer.files).catch(error => {
+    const projectFileEntry = projectFileEntryFromDrag(event.dataTransfer);
+    form.classList.remove('dragging-files', 'project-file-drop-target');
+    if (projectFileEntry) {
+        draggedSolutionFileEntry = null;
+        referenceSolutionEntryInChat(projectFileEntry).catch(error => {
+            addMessage('error', error && error.message ? error.message : String(error));
+        });
+        return;
+    }
+    addDroppedChatFiles(event.dataTransfer && event.dataTransfer.files).catch(error => {
         addMessage('error', error && error.message ? error.message : String(error));
     });
 });
+
+form.addEventListener('dragleave', event => {
+    if (!form.contains(event.relatedTarget))
+        form.classList.remove('dragging-files', 'project-file-drop-target');
+});
+
+async function addDroppedChatFiles(files) {
+    const allFiles = Array.from(files || []);
+    const images = allFiles.filter(isImageFile);
+    const otherFiles = allFiles.filter(file => !isImageFile(file));
+    if (images.length) await addImageFiles(images);
+    if (otherFiles.length) await addGeneralFiles(otherFiles);
+}
 
 let chatAppBootstrapped = false;
 
@@ -39428,6 +41109,7 @@ async function bootstrapChatApp() {
         addMessage('error', error && error.message ? error.message : String(error));
     } finally {
         releaseStartupUi();
+        maybeShowWebOnboarding();
         showJackDirectorFeatureToast();
         maybePromptDreamHardwareRecommendation().catch(() => { });
     }

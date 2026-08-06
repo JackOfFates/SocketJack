@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <None Include="..\tools\linux\install-jackllm-cuda-pytorch.sh" Link="install\linux\install-jackllm-cuda-pytorch.sh" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="Docs\Getting-Started.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -71,10 +72,10 @@
     <AssemblyTitle>JackLLM Workstation</AssemblyTitle>
     <Product>JackLLM Workstation</Product>
     <ApplicationIcon>Assets\JackLLM.ico</ApplicationIcon>
-    <Version>2026.0</Version>
-    <AssemblyVersion>2026.0.0.0</AssemblyVersion>
-    <FileVersion>2026.0.0.0</FileVersion>
-    <InformationalVersion>2026</InformationalVersion>
+    <Version>26.8.4</Version>
+    <AssemblyVersion>26.8.4.0</AssemblyVersion>
+    <FileVersion>26.8.4.0</FileVersion>
+    <InformationalVersion>2026.8.4</InformationalVersion>
     <StartupObject>JackLLM.App</StartupObject>
     <NoWarn>$(NoWarn);CS8600;CS8601;CS8602;CS8603;CS8618;CS8622;CS8625</NoWarn>
     <JackOnnxBundleCudaDependencies>true</JackOnnxBundleCudaDependencies>
@@ -99,7 +100,7 @@
     <Copy SourceFiles="@(JackLLMUpdaterFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="'@(JackLLMUpdaterFiles)' != ''" />
   </Target>
 
-  <Target Name="BundleOfficialSecurityBroker" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true'">
+  <Target Name="BundleOfficialSecurityBroker" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' and '$(DesignTimeBuild)' != 'true' and '$(BundleOfficialSecurityBroker)' != 'false'">
     <GetFileHash Files="$(OutDir)$(AssemblyName).exe" Algorithm="SHA256">
       <Output TaskParameter="Items" ItemName="_SecureReleaseWorkstationHash" />
     </GetFileHash>

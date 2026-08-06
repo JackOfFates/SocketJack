@@ -86,7 +86,8 @@ public static class ModelHeuristics
                     return "audio";
                 if (LooksLikeImageGenerationModel(al))
                     return "image";
-                if (al.Contains("clip", StringComparison.Ordinal) || al.Contains("vit", StringComparison.Ordinal) ||
+                if (LooksLikeQwen35Model(al) ||
+                    al.Contains("clip", StringComparison.Ordinal) || al.Contains("vit", StringComparison.Ordinal) ||
                     al.Contains("mmproj", StringComparison.Ordinal) || al.Contains("llava", StringComparison.Ordinal) ||
                     al.Contains("minicpm", StringComparison.Ordinal) || al.Contains("moondream", StringComparison.Ordinal))
                     return "vlm";
@@ -109,7 +110,8 @@ public static class ModelHeuristics
         if (LooksLikeImageGenerationModel(full))
             return "image";
 
-        if (lower.Contains("llava", StringComparison.Ordinal) || lower.Contains("mmproj", StringComparison.Ordinal) ||
+        if (LooksLikeQwen35Model(full) ||
+            lower.Contains("llava", StringComparison.Ordinal) || lower.Contains("mmproj", StringComparison.Ordinal) ||
             lower.Contains("clip", StringComparison.Ordinal) || lower.Contains("vision", StringComparison.Ordinal))
             return "vlm";
 
@@ -139,6 +141,8 @@ public static class ModelHeuristics
         AddTagIfAny(tags, "code", lower, "code", "coder", "codestral", "deepseek-coder", "starcoder", "qwen2.5-coder", "qwen3-coder", "devstral", "sqlcoder");
         AddTagIfAny(tags, "embedding", lower, "embed", "embedding", "bge-", "gte-", "e5-", "nomic-embed", "minilm");
         AddTagIfAny(tags, "vision", lower, "vision", "visual", "vlm", "llava", "minicpm-v", "moondream", "pixtral", "qwen-vl", "mmproj");
+        if (LooksLikeQwen35Model(full))
+            tags.Add("vision");
         AddTagIfAny(tags, "image", lower, "text-to-image", "image-to-image", "img2img", "i2i", "controlnet", "inpaint", "t2i", "stable-diffusion", "sdxl", "flux", "qwen-image", "imagegen", "diffusion", "unet");
         AddTagIfAny(tags, "audio", lower, "audio", "audio-to-audio", "voice-conversion", "voice-clone", "speech", "whisper", "wav2vec", "bark", "musicgen");
         AddTagIfAny(tags, "video", lower, "text-to-video", "image-to-video", "video-to-video", "img2vid", "vid2vid", "t2v", "i2v", "v2v", "wan2", "wan-", "hunyuanvideo", "ltx-video", "ltxv", "mochi", "motifv", "highnoise", "lownoise");
@@ -199,6 +203,14 @@ public static class ModelHeuristics
                text.Contains("motifv", StringComparison.Ordinal) ||
                text.Contains("highnoise", StringComparison.Ordinal) ||
                text.Contains("lownoise", StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeQwen35Model(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        string normalized = text.Replace("-", "").Replace("_", "").Replace(".", "");
+        return normalized.Contains("qwen35", StringComparison.Ordinal);
     }
 
     private static bool LooksLikeImageGenerationModel(string text)

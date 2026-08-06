@@ -140,14 +140,24 @@ public sealed class WorkstationAuthPage : ContentPage
         if (!result.Authenticated || string.IsNullOrWhiteSpace(result.AccessToken))
             throw new InvalidOperationException("The Workstation did not return an authenticated account token.");
 
-        var server = new ServerInfo
+        string normalizedEndpoint = JackLlmClient.NormalizeBaseUrl(endpoint);
+        Uri endpointUri = new(normalizedEndpoint);
+        ServerInfo? existing = _store.Load().FirstOrDefault(item =>
         {
-            Name = new Uri(endpoint).Host,
-            OwnerUserName = result.Username,
-            Endpoint = endpoint,
-            IsSaved = true
-        };
-        await _credentials.SetServerTokenAsync(server.LaunchKey, result.AccessToken);
+            try
+            {
+                Uri saved = new(JackLlmClient.NormalizeBaseUrl(item.Endpoint));
+                return saved.Host.Equals(endpointUri.Host, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        });
+        var server = existing ?? new ServerInfo();
+        server.Name = string.IsNullOrWhiteSpace(server.Name) ? endpointUri.Host : server.Name;
+        server.OwnerUserName = result.Username;
+        server.Endpoint = normalizedEndpoint;
+        server.IsSaved = true;
+        foreach (string credentialKey in JackLlmClient.CredentialKeys(server))
+            await _credentials.SetServerTokenAsync(credentialKey, result.AccessToken);
         _store.Save(server);
 
         using var verification = new JackLlmClient(_credentials);

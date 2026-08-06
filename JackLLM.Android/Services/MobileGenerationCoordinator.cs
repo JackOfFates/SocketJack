@@ -51,7 +51,7 @@ public sealed class MobileGenerationCoordinator
     private string _streamId = "";
     private MobileGenerationSnapshot _snapshot = MobileGenerationSnapshot.Empty;
     private readonly MobileResponseMilestonePolicy _milestonePolicy = new();
-    private bool _capturingEmbeddedReasoning;
+    private readonly MobileStreamTextAccumulator _streamText = new();
     private DateTimeOffset _lastPublished = DateTimeOffset.MinValue;
     private bool _publishScheduled;
     private MobileGenerationRequest? _pendingRequest;
@@ -82,7 +82,7 @@ public sealed class MobileGenerationCoordinator
             _awaitingAuthentication = false;
             _streamId = "mobile_" + Guid.NewGuid().ToString("N");
             _milestonePolicy.Reset();
-            _capturingEmbeddedReasoning = false;
+            _streamText.Reset();
             _snapshot = new MobileGenerationSnapshot(
                 _streamId, request.Server.LaunchKey, request.SessionId, request.UserContent,
                 request.PriorServerMessageCount, "", "", StartingStatus(request.Service), "", "", Array.Empty<ToolActivity>(),
@@ -377,47 +377,10 @@ public sealed class MobileGenerationCoordinator
     private void Append(string text, bool reasoning)
     {
         if (string.IsNullOrEmpty(text)) return;
+        _streamText.Append(text, reasoning);
         SetState(snapshot =>
         {
-            string content = snapshot.Content;
-            string thought = snapshot.Reasoning;
-            if (reasoning)
-            {
-                thought = MobileOutputReliability.MergeStreamDelta(thought, text);
-            }
-            else if (_capturingEmbeddedReasoning)
-            {
-                int end = text.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
-                if (end >= 0)
-                {
-                    thought = MobileOutputReliability.MergeStreamDelta(thought, text[..end]);
-                    content = MobileOutputReliability.MergeStreamDelta(content, text[(end + 8)..]);
-                    _capturingEmbeddedReasoning = false;
-                }
-                else thought = MobileOutputReliability.MergeStreamDelta(thought, text);
-            }
-            else
-            {
-                int start = text.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
-                if (start >= 0)
-                {
-                    content = MobileOutputReliability.MergeStreamDelta(content, text[..start]);
-                    string remainder = text[(start + 7)..];
-                    int end = remainder.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
-                    if (end >= 0)
-                    {
-                        thought = MobileOutputReliability.MergeStreamDelta(thought, remainder[..end]);
-                        content = MobileOutputReliability.MergeStreamDelta(content, remainder[(end + 8)..]);
-                    }
-                    else
-                    {
-                        thought = MobileOutputReliability.MergeStreamDelta(thought, remainder);
-                        _capturingEmbeddedReasoning = true;
-                    }
-                }
-                else content = MobileOutputReliability.MergeStreamDelta(content, text);
-            }
-            return snapshot with { Content = content, Reasoning = thought };
+            return snapshot with { Content = _streamText.Content, Reasoning = _streamText.Reasoning };
         });
     }
 

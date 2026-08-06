@@ -1185,6 +1185,11 @@ public sealed class LlmModelRegistry : IDisposable
     {
         var modalities = new List<string>();
         string type = (modelType ?? "").Trim().ToLowerInvariant();
+        if (type == "vlm" || HasTag(tags, "vision"))
+        {
+            modalities.Add("text");
+            modalities.Add("image");
+        }
         if (type == "video" || HasTag(tags, "video"))
             modalities.Add("video");
         if (type == "audio" || HasTag(tags, "audio"))

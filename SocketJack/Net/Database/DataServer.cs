@@ -856,6 +856,29 @@ namespace SocketJack.Net.Database {
         }
 
         /// <summary>
+        /// Writes a path-bound, re-encrypted copy of the currently loaded database.
+        /// Use this instead of copying encrypted persistence files to a new location.
+        /// </summary>
+        public async Task SaveReencryptedCopyAsync(string destinationPath, CancellationToken cancellationToken = default) {
+            if (string.IsNullOrWhiteSpace(destinationPath))
+                throw new ArgumentException("A destination path is required.", nameof(destinationPath));
+
+            bool lockTaken = false;
+            string originalPath = DataPath;
+            try {
+                await _persistenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                lockTaken = true;
+                DataPath = Path.GetFullPath(destinationPath);
+                var snapshot = BuildSnapshot();
+                await WritePersistedJsonAsync(DataPath, snapshot, cancellationToken).ConfigureAwait(false);
+            } finally {
+                DataPath = originalPath;
+                if (lockTaken)
+                    _persistenceLock.Release();
+            }
+        }
+
+        /// <summary>
         /// Saves the current server state only when a mutation has marked it dirty.
         /// </summary>
         public void SaveIfDirty() {

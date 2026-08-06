@@ -8,6 +8,7 @@ public sealed class SocketJackVisualStudioExtension : Extension
 {
     public override ExtensionConfiguration ExtensionConfiguration => new()
     {
+        LoadedWhen = ActivationConstraint.SolutionState(SolutionState.Exists),
         Metadata = new(
             id: "SocketJack.LlmRuntime.VisualStudio2026",
             version: this.ExtensionAssemblyVersion,
@@ -40,5 +41,13 @@ public sealed class SocketJackVisualStudioExtension : Extension
         base.InitializeServices(serviceCollection);
         serviceCollection.AddSingleton<HttpClient>();
         SocketJackLocalProxySupervisor.StartBestEffortFromStoredSelection();
+    }
+
+    protected override Task OnInitializedAsync(
+        VisualStudioExtensibility extensibility,
+        CancellationToken cancellationToken)
+    {
+        SocketJackLocalProxySupervisor.StartBestEffortFromStoredSelection();
+        return base.OnInitializedAsync(extensibility, cancellationToken);
     }
 }

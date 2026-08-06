@@ -43,6 +43,28 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
+    public void ChatRequestFromJson_PreservesImageOnlyMessage()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "model": "vision-model",
+          "messages": [{
+            "role": "user",
+            "content": [
+              { "type": "image_url", "image_url": { "url": "data:image/png;base64,iVBORw0KGgo=" } }
+            ]
+          }]
+        }
+        """);
+
+        LlmChatRequest request = LlmChatRequest.FromJson(document.RootElement);
+
+        Assert.AreEqual(1, request.Messages.Count);
+        Assert.IsTrue(request.Messages[0].HasImageContent);
+        Assert.IsNotNull(request.Messages[0].StructuredContent);
+    }
+
+    [TestMethod]
     public void ContextCompression_PreservesLatestUserVisionContent()
     {
         using var document = JsonDocument.Parse("""
@@ -66,6 +88,34 @@ public sealed class LlmRuntimeHostEndpointTests
         Assert.IsTrue(user.HasImageContent);
         Assert.IsNotNull(user.StructuredContent);
         StringAssert.Contains(user.StructuredContent.Value.GetRawText(), "image_url");
+    }
+
+    [TestMethod]
+    public void AutomaticCompletionBudget_ReservesContextForEachAttachedImage()
+    {
+        using var document = JsonDocument.Parse("""
+        {
+          "model": "vision-model",
+          "max_tokens": 8192,
+          "messages": [{
+            "role": "user",
+            "content": [
+              { "type": "text", "text": "Describe both screenshots completely." },
+              { "type": "image_url", "image_url": { "url": "data:image/png;base64,iVBORw0KGgo=" } },
+              { "type": "image_url", "image_url": { "url": "data:image/png;base64,iVBORw0KGgo=" } }
+            ]
+          }]
+        }
+        """);
+        LlmChatRequest request = LlmChatRequest.FromJson(document.RootElement);
+
+        Assert.AreEqual(1024, LlmRuntimeHost.EstimateVisionPromptTokens(request.Messages, contextLength: 2048));
+
+        LlmRuntimeHost.ApplyAutomaticCompletionBudget(request, contextLength: 2048);
+
+        Assert.IsTrue(request.MaxTokens > 0);
+        Assert.IsTrue(request.MaxTokens > 512);
+        Assert.IsTrue(request.MaxTokens < 1024);
     }
 
     [TestMethod]
@@ -740,7 +790,9 @@ public sealed class LlmRuntimeHostEndpointTests
             string body = await response.Content.ReadAsStringAsync();
 
             StringAssert.Contains(body, "without producing visible assistant text");
-            Assert.IsFalse(body.Contains("hidden reasoning", StringComparison.OrdinalIgnoreCase));
+            StringAssert.Contains(body, "reasoning_content");
+            StringAssert.Contains(body, "hidden ");
+            StringAssert.Contains(body, "reasoning ");
             StringAssert.Contains(body, "data: [DONE]");
         }
         finally
@@ -775,7 +827,10 @@ public sealed class LlmRuntimeHostEndpointTests
             StringAssert.Contains(body, "after ");
             StringAssert.Contains(body, "retry. ");
             Assert.IsFalse(body.Contains("without producing visible assistant text", StringComparison.OrdinalIgnoreCase));
-            Assert.IsFalse(body.Contains("hidden reasoning only", StringComparison.OrdinalIgnoreCase));
+            StringAssert.Contains(body, "reasoning_content");
+            StringAssert.Contains(body, "hidden ");
+            StringAssert.Contains(body, "reasoning ");
+            StringAssert.Contains(body, "only");
             StringAssert.Contains(body, "data: [DONE]");
         }
         finally

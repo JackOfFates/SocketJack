@@ -218,7 +218,7 @@ internal static class Program
 internal sealed class LlamaRunnerEngine : IDisposable
 {
     private static readonly string[] HiddenReasoningOpenTags = ["<think>", "<thinking>", "<thought>", "<analysis>"];
-    private static readonly string[] HiddenReasoningCloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>"];
+    private static readonly string[] HiddenReasoningCloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>", "</end_of_thought>", "<|end_of_thought|>", "<|end_of_analysis|>"];
 
     private readonly RunnerEnvelope _envelope;
     private readonly RunnerBackend _backend;

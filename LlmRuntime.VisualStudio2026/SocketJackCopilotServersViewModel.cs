@@ -275,6 +275,15 @@ internal sealed class SocketJackCopilotServersViewModel : JackLlmLocalViewModel
         this.configurator.SetWorkstationAuth(this.AuthToken, this.AuthUserName);
     }
 
+    protected override async Task OnSignedInAsync(CancellationToken cancellationToken)
+    {
+        this.configurator.SetWorkstationAuth(this.AuthToken, this.AuthUserName);
+        bool restored = await SocketJackLocalProxySupervisor.EnsureActiveProxyFromStoredSelectionAsync(cancellationToken).ConfigureAwait(false);
+        this.Status = restored
+            ? "Signed in and restored the authenticated Visual Studio Copilot bridge."
+            : "Signed in to JackLLM Workstation. Select a model and choose Configure to activate Copilot.";
+    }
+
     private void UpdateServerSummary()
     {
         int total = this.Servers.Count;

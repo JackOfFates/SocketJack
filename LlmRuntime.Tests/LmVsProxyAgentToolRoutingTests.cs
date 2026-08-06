@@ -35,7 +35,7 @@ public sealed class LmVsProxyAgentToolRoutingTests
         MethodInfo method = typeof(LmVsProxy).GetMethod("ShouldContinueJackhammerAfterDirectCompletion", BindingFlags.Instance | BindingFlags.NonPublic)!;
         object?[] arguments =
         [
-            """{"messages":[{"role":"system","content":"[Jackhammer work mode]\nJackhammer turn budget: 10"},{"role":"user","content":"Do the work."}]}""",
+            """{"messages":[{"role":"system","content":"[Jackhammer work mode]\nJackhammer turn budget: 10"},{"role":"user","content":"Do the work."}],"tools":[{"type":"function","function":{"name":"goal_checkpoint","parameters":{"type":"object"}}}]}""",
             null
         ];
 
@@ -190,6 +190,26 @@ public sealed class LmVsProxyAgentToolRoutingTests
     }
 
     [TestMethod]
+    public void ChatUiSteeringIdIsDeduplicatedAndClosedStreamIsRejected()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        const string ownerKey = "owner-for-steering-id-test";
+        const string streamId = "stream_steering_id_test";
+        const string sessionId = "session-steering-id-test";
+        object active = RegisterActiveChatStreamCancellation(proxy, ownerKey, streamId, sessionId);
+
+        Assert.IsTrue(AcceptActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "apply once", "steer_same", out string firstState));
+        Assert.IsTrue(AcceptActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "apply once", "steer_same", out string duplicateState));
+        Assert.AreEqual("accepted", firstState);
+        Assert.AreEqual("accepted", duplicateState);
+        Assert.AreEqual("apply once", ConsumeActiveChatStreamSteering(proxy, active));
+
+        UnregisterActiveChatStreamCancellation(proxy, active);
+        Assert.IsFalse(AcceptActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "too late", "steer_late", out string closedState));
+        Assert.AreEqual("stream_closed", closedState);
+    }
+
+    [TestMethod]
     public void ChatUiSteeringInstructionRequiresEveryUpdate()
     {
         const string requestBody = """
@@ -305,6 +325,23 @@ public sealed class LmVsProxyAgentToolRoutingTests
 
         Assert.IsNotNull(method, "RegisterActiveChatStreamCancellation should remain available for steering tests.");
         return method!.Invoke(proxy, new object[] { ownerKey, streamId, sessionId })!;
+    }
+
+    private static bool AcceptActiveChatStreamSteering(LmVsProxy proxy, string ownerKey, string streamId, string sessionId, string steering, string steeringId, out string state)
+    {
+        var method = typeof(LmVsProxy).GetMethod("AcceptActiveChatStreamSteering", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.IsNotNull(method);
+        object[] args = { ownerKey, streamId, sessionId, steering, steeringId, string.Empty };
+        bool accepted = (bool)method!.Invoke(proxy, args)!;
+        state = (string)args[5];
+        return accepted;
+    }
+
+    private static void UnregisterActiveChatStreamCancellation(LmVsProxy proxy, object activeStreamCancellation)
+    {
+        var method = typeof(LmVsProxy).GetMethod("UnregisterActiveChatStreamCancellation", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.IsNotNull(method);
+        method!.Invoke(proxy, new[] { activeStreamCancellation });
     }
 
     private static string ConsumeActiveChatStreamSteering(LmVsProxy proxy, object activeStreamCancellation)

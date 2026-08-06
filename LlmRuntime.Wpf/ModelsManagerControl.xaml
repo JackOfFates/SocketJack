@@ -659,10 +659,25 @@
                     <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,10,0,0">
                      <Grid.RowDefinitions>
                          <RowDefinition Height="Auto" />
+                         <RowDefinition Height="Auto" />
                          <RowDefinition Height="*" />
                      </Grid.RowDefinitions>
 
-                    <UniformGrid Grid.Row="0" Columns="4" Margin="0,0,0,10">
+                    <Border Grid.Row="0"
+                            Background="#10243A"
+                            BorderBrush="#315270"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="10,8"
+                            Margin="0,0,0,10">
+                        <TextBlock x:Name="ModelStorageText"
+                                   Text="Model storage: calculating..."
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
+                    </Border>
+
+                    <UniformGrid Grid.Row="1" Columns="4" Margin="0,0,0,10">
                         <Border Background="{StaticResource ManagerPanelBrush}" BorderBrush="{StaticResource ManagerBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,8,0">
                             <StackPanel>
                                 <TextBlock Text="Running" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
@@ -689,7 +704,7 @@
                         </Border>
                     </UniformGrid>
 
-                    <Grid Grid.Row="1">
+                    <Grid Grid.Row="2">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="2*" MinWidth="420" />
                             <ColumnDefinition Width="10" />

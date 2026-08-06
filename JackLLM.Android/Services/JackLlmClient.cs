@@ -32,9 +32,37 @@ public sealed class JackLlmClient : IDisposable
                 certificate is not null && NormalizeFingerprint(certificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256)).Equals(expected, StringComparison.OrdinalIgnoreCase);
         }
         _http = new HttpClient(handler) { BaseAddress = new Uri(NormalizeBaseUrl(server.Endpoint)), Timeout = TimeSpan.FromMinutes(30) };
-        string credentialKey = string.IsNullOrWhiteSpace(server.CredentialKey) ? server.LaunchKey : server.CredentialKey;
-        string? token = await _credentials.GetServerTokenAsync(credentialKey);
-        if (!string.IsNullOrWhiteSpace(token)) _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var tokens = new List<string>();
+        foreach (string credentialKey in CredentialKeys(server))
+        {
+            string? candidate = await _credentials.GetServerTokenAsync(credentialKey);
+            if (!string.IsNullOrWhiteSpace(candidate) && !tokens.Contains(candidate, StringComparer.Ordinal))
+                tokens.Add(candidate);
+        }
+        foreach (string candidate in tokens)
+        {
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", candidate);
+            try
+            {
+                using HttpResponseMessage candidateResponse = await _http.GetAsync("/api/web-auth/session", cancellationToken);
+                string candidateBody = await candidateResponse.Content.ReadAsStringAsync(cancellationToken);
+                if (!candidateResponse.IsSuccessStatusCode) continue;
+                using JsonDocument candidateStatus = JsonDocument.Parse(string.IsNullOrWhiteSpace(candidateBody) ? "{}" : candidateBody);
+                if (!ReadBool(candidateStatus.RootElement, "authenticated")) continue;
+                using HttpResponseMessage candidateHealth = await _http.GetAsync("/api/health", cancellationToken);
+                candidateHealth.EnsureSuccessStatusCode();
+                ApplyAuthenticatedIdentity(candidateStatus.RootElement);
+                return;
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            {
+                // Try the next securely stored credential alias for this Workstation.
+            }
+        }
+        if (tokens.Count > 0)
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens[0]);
+        else
+            _http.DefaultRequestHeaders.Authorization = null;
         using HttpResponseMessage response = await _http.GetAsync("/api/health", cancellationToken);
         response.EnsureSuccessStatusCode();
         using HttpResponseMessage authResponse = await _http.GetAsync("/api/web-auth/session", cancellationToken);
@@ -322,7 +350,9 @@ public sealed class JackLlmClient : IDisposable
         EnsureConnected();
         var uploaded = new List<object>();
         foreach (AttachmentInfo attachment in attachments)
-            uploaded.Add(await UploadFileAsync(sessionId, attachment, cancellationToken));
+            uploaded.Add(attachment.IsUploaded
+                ? new { name = attachment.Name, path = attachment.UploadedPath, type = attachment.MediaType, asFile = true }
+                : await UploadProjectFileAsync(sessionId, attachment, "\\", false, null, cancellationToken));
         string streamId = ActiveStreamId = string.IsNullOrWhiteSpace(requestedStreamId) ? "mobile_" + Guid.NewGuid().ToString("N") : requestedStreamId;
         string prompt = messages.LastOrDefault(message => message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Content ?? "";
         var payload = new Dictionary<string, object?>
@@ -400,6 +430,27 @@ public sealed class JackLlmClient : IDisposable
                 IoBytes = ReadLong(item, "ioBytes")
             });
         return result;
+    }
+
+    public async Task<MobileMenuPermissionSnapshot> GetMobileMenuPermissionsAsync(CancellationToken cancellationToken = default)
+    {
+        string ownerKey = string.IsNullOrWhiteSpace(AuthenticatedOwnerKey) ? "global" : AuthenticatedOwnerKey;
+        using JsonDocument json = await GetJsonAsync("/api/chat-permissions?ownerKey=" + Uri.EscapeDataString(ownerKey), cancellationToken);
+        JsonElement root = json.RootElement;
+        JsonElement permissions = TryProperty(root, "permissions", out JsonElement value) ? value : default;
+        return new MobileMenuPermissionSnapshot
+        {
+            SqlAdmin = permissions.ValueKind == JsonValueKind.Object && ReadBool(permissions, "sqlAdmin"),
+            PcAccess = permissions.ValueKind == JsonValueKind.Object && ReadBool(permissions, "pcAccess")
+        };
+    }
+
+    public async Task<MobileDiagnosticsSnapshot> GetDiagnosticsAsync(string cursor = "", CancellationToken cancellationToken = default)
+    {
+        string path = "/api/diagnostics";
+        if (!string.IsNullOrWhiteSpace(cursor)) path += "?since=" + Uri.EscapeDataString(cursor);
+        using JsonDocument json = await GetJsonAsync(path, cancellationToken);
+        return JsonSerializer.Deserialize<MobileDiagnosticsSnapshot>(json.RootElement.GetRawText(), WireJson) ?? new MobileDiagnosticsSnapshot();
     }
 
     public async Task<HardwareSnapshot> GetHardwareAsync(CancellationToken cancellationToken = default)
@@ -487,6 +538,19 @@ public sealed class JackLlmClient : IDisposable
     public Task ShareSessionAsync(string id, CancellationToken cancellationToken = default) => PostAsync("/api/chat-session-share-link", new { id, sessionId = id }, cancellationToken);
     public Task PinSessionAsync(string id, bool pinned, CancellationToken cancellationToken = default) => PostAsync("/api/chat-session-action", new { id, action = pinned ? "pin" : "unpin" }, cancellationToken);
     public Task MoveSessionAsync(string id, string projectId, CancellationToken cancellationToken = default) => PostAsync("/api/chat-session-action", new { id, action = "assign-project", projectId }, cancellationToken);
+    public async Task EnsureSessionAsync(string id, string projectId, string model = "", CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await PostJsonAsync("/api/chat-session", new
+        {
+            id,
+            projectId = string.IsNullOrWhiteSpace(projectId) ? "unsorted" : projectId,
+            title = "New chat",
+            model,
+            messages = Array.Empty<object>(),
+            files = Array.Empty<object>()
+        }, cancellationToken);
+        if (!ReadBool(json.RootElement, "ok")) throw new InvalidOperationException(ReadString(json.RootElement, "error"));
+    }
 
     public async Task<IReadOnlyList<ChatProjectInfo>> GetProjectsAsync(bool includeArchived = true, CancellationToken cancellationToken = default)
     {
@@ -506,6 +570,50 @@ public sealed class JackLlmClient : IDisposable
     public Task RenameProjectAsync(string id, string name, CancellationToken cancellationToken = default) => PostAsync("/api/chat-project", new { action = "rename", projectId = id, name }, cancellationToken);
     public Task PinProjectAsync(string id, bool pinned, CancellationToken cancellationToken = default) => PostAsync("/api/chat-project", new { action = pinned ? "pin" : "unpin", projectId = id }, cancellationToken);
     public Task ArchiveProjectAsync(string id, bool archived, CancellationToken cancellationToken = default) => PostAsync("/api/chat-project", new { action = archived ? "archive" : "restore", projectId = id }, cancellationToken);
+
+    public async Task<ProjectFilesSnapshot> GetProjectFilesAsync(string sessionId, string path = "\\", string search = "", string sort = "name", CancellationToken cancellationToken = default)
+    {
+        string query = "?sessionId=" + Uri.EscapeDataString(sessionId) + "&kind=session&sort=" + Uri.EscapeDataString(sort ?? "name");
+        if (!string.IsNullOrWhiteSpace(search)) query += "&search=" + Uri.EscapeDataString(search);
+        else query += "&path=" + Uri.EscapeDataString(string.IsNullOrWhiteSpace(path) ? "\\" : path);
+        using JsonDocument json = await GetJsonAsync("/api/chat-solution-explorer" + query, cancellationToken);
+        if (!ReadBool(json.RootElement, "ok")) throw new InvalidOperationException(ReadString(json.RootElement, "error"));
+        return JsonSerializer.Deserialize<ProjectFilesSnapshot>(json.RootElement.GetRawText(), WireJson) ?? new ProjectFilesSnapshot();
+    }
+
+    public async Task<ProjectFileVersionsSnapshot> GetProjectFileVersionsAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/project-file-versions?sessionId=" + Uri.EscapeDataString(sessionId), cancellationToken);
+        return JsonSerializer.Deserialize<ProjectFileVersionsSnapshot>(json.RootElement.GetRawText(), WireJson) ?? new ProjectFileVersionsSnapshot();
+    }
+
+    public async Task<ProjectFileVersionsSnapshot> MutateProjectFileVersionAsync(string sessionId, string action, string name = "", string versionId = "", CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await PostJsonAsync("/api/project-file-versions", new { sessionId, action, name, versionId }, cancellationToken);
+        return JsonSerializer.Deserialize<ProjectFileVersionsSnapshot>(json.RootElement.GetRawText(), WireJson) ?? new ProjectFileVersionsSnapshot();
+    }
+
+    public async Task DeleteProjectFileAsync(string sessionId, ProjectFileEntry entry, CancellationToken cancellationToken = default)
+    {
+        if (entry.IsDirectory && (string.IsNullOrWhiteSpace(entry.Path) || entry.Path == "\\"))
+            throw new InvalidOperationException("The Project Files root cannot be deleted.");
+        string path = "/api/chat-file?sessionId=" + Uri.EscapeDataString(sessionId) + "&kind=session&type=" +
+            (entry.IsDirectory ? "directory" : "file") + "&path=" + Uri.EscapeDataString(entry.Path);
+        using JsonDocument _ = await SendJsonAsync(HttpMethod.Delete, path, null, cancellationToken);
+    }
+
+    public async Task<byte[]> DownloadProjectFileAsync(string sessionId, ProjectFileEntry entry, CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        string path = "/api/chat-file-download?sessionId=" + Uri.EscapeDataString(sessionId) + "&kind=session&path=" + Uri.EscapeDataString(entry.Path);
+        if (entry.IsDirectory) path += "&zip=true&name=" + Uri.EscapeDataString(entry.Name);
+        using HttpResponseMessage response = await _http!.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        await EnsureSuccessWithServerMessageAsync(response, cancellationToken);
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
+    public Task<JsonDocument> PreviewProjectFileAsync(string sessionId, ProjectFileEntry entry, CancellationToken cancellationToken = default) =>
+        GetJsonAsync("/api/chat-file-preview?sessionId=" + Uri.EscapeDataString(sessionId) + "&kind=session&path=" + Uri.EscapeDataString(entry.Path), cancellationToken);
 
     public async Task<string> CompletePairingAsync(string endpoint, string code, string deviceName, CancellationToken cancellationToken = default)
     {
@@ -631,8 +739,8 @@ public sealed class JackLlmClient : IDisposable
             return new ChatStreamEvent
             {
                 Type = string.IsNullOrWhiteSpace(type) ? "delta" : type,
-                Content = ReadString(root, "content", "text", "delta", "answer", "answerContent", "message", "response", "error"),
-                Reasoning = ReadString(root, "reasoning", "reasoningContent", "thought", "thinking"),
+                Content = ReadString(root, "content", "contentDelta", "content_delta", "text", "delta", "answer", "answerContent", "answerDelta", "answer_delta", "message", "response", "error"),
+                Reasoning = ReadString(root, "reasoning", "reasoningContent", "reasoning_content", "reasoningDelta", "reasoning_delta", "thought", "thoughts", "thoughtContent", "thought_content", "thinking", "thinkingContent", "thinking_content", "thinkingDelta", "thinking_delta", "analysis", "analysisContent", "analysis_content"),
                 Status = ReadString(root, "status", "state", "message", "statusText"),
                 Progress = ReadDouble(root, "progress"),
                 ToolName = ReadString(root, "toolName", "name", "tool"),
@@ -684,20 +792,81 @@ public sealed class JackLlmClient : IDisposable
         return uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
     }
 
+    internal static IReadOnlyList<string> CredentialKeys(ServerInfo server)
+    {
+        var keys = new List<string>();
+        static void Add(List<string> target, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && !target.Contains(value, StringComparer.OrdinalIgnoreCase))
+                target.Add(value);
+        }
+
+        Add(keys, server.CredentialKey);
+        Add(keys, server.LaunchKey);
+        try
+        {
+            Uri endpoint = new(NormalizeBaseUrl(server.Endpoint));
+            Add(keys, endpoint.Host);
+            Add(keys, endpoint.GetLeftPart(UriPartial.Authority));
+        }
+        catch
+        {
+            // ConnectAsync reports an invalid endpoint through its normal validation path.
+        }
+        return keys;
+    }
+
     private static string NormalizeInteractionMode(string value)
     {
         value = (value ?? "").Trim().ToLowerInvariant();
         return value is "plan" or "agent" or "companion" ? value : "chat";
     }
 
-    private async Task<object> UploadFileAsync(string sessionId, AttachmentInfo file, CancellationToken cancellationToken)
+    public async Task<object> UploadProjectFileAsync(string sessionId, AttachmentInfo file, string targetPath = "\\", bool extractZip = false, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        using HttpResponseMessage response = await _http!.PostAsync("/api/chat-file", Json(new { sessionId, name = file.Name, type = file.MediaType, dataUrl = file.DataUrl, asFile = !file.IsImage }), cancellationToken);
+        file.UploadState = "uploading";
+        file.UploadError = "";
+        file.UploadProgress = 0;
+        byte[] payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            sessionId,
+            name = file.Name,
+            type = file.MediaType,
+            dataUrl = file.DataUrl,
+            asFile = true,
+            targetPath = string.IsNullOrWhiteSpace(targetPath) ? "\\" : targetPath,
+            directoryPath = string.IsNullOrWhiteSpace(targetPath) ? "\\" : targetPath,
+            extractZip
+        });
+        using var content = new ProgressJsonContent(payload, value =>
+        {
+            file.UploadProgress = value;
+            progress?.Report(value);
+        });
+        using HttpResponseMessage response = await _http!.PostAsync("/api/chat-file", content, cancellationToken);
         string body = await response.Content.ReadAsStringAsync(cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            file.UploadState = "failed";
+            file.UploadError = ExtractServerError(body, response.ReasonPhrase);
+            throw new InvalidOperationException(file.UploadError);
+        }
         using JsonDocument json = JsonDocument.Parse(body);
-        return TryProperty(json.RootElement, "file", out var uploaded) ? JsonSerializer.Deserialize<object>(uploaded.GetRawText())! : new { name = file.Name };
+        if (!ReadBool(json.RootElement, "ok") && TryProperty(json.RootElement, "error", out _))
+        {
+            file.UploadState = "failed";
+            file.UploadError = ReadString(json.RootElement, "error");
+            throw new InvalidOperationException(file.UploadError);
+        }
+        file.UploadProgress = 1;
+        file.UploadState = "complete";
+        if (TryProperty(json.RootElement, "file", out var uploaded))
+        {
+            file.UploadedPath = ReadString(uploaded, "path", "relativePath");
+            return JsonSerializer.Deserialize<object>(uploaded.GetRawText())!;
+        }
+        return new { name = file.Name, path = file.UploadedPath, type = file.MediaType, asFile = true };
     }
 
     private static object[] BuildWireMessages(IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments)
@@ -779,6 +948,58 @@ public sealed class JackLlmClient : IDisposable
         var result = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(value), WireJson) ?? new Dictionary<string, object?>();
         result["ownerKey"] = string.IsNullOrWhiteSpace(ownerKey) ? null : ownerKey;
         return result;
+    }
+
+    private static async Task EnsureSuccessWithServerMessageAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode) return;
+        string body = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new InvalidOperationException(ExtractServerError(body, response.ReasonPhrase));
+    }
+
+    private static string ExtractServerError(string body, string? fallback)
+    {
+        try
+        {
+            using JsonDocument json = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+            string error = ReadString(json.RootElement, "error", "message", "detail");
+            if (!string.IsNullOrWhiteSpace(error)) return error;
+        }
+        catch { }
+        return string.IsNullOrWhiteSpace(body) ? fallback ?? "The Workstation rejected the request." : body;
+    }
+
+    private sealed class ProgressJsonContent : HttpContent
+    {
+        private readonly byte[] _payload;
+        private readonly Action<double> _progress;
+
+        public ProgressJsonContent(byte[] payload, Action<double> progress)
+        {
+            _payload = payload;
+            _progress = progress;
+            Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            Headers.ContentLength = payload.LongLength;
+        }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
+        {
+            const int chunkSize = 64 * 1024;
+            long sent = 0;
+            while (sent < _payload.LongLength)
+            {
+                int count = (int)Math.Min(chunkSize, _payload.LongLength - sent);
+                await stream.WriteAsync(_payload.AsMemory((int)sent, count));
+                sent += count;
+                _progress(_payload.Length == 0 ? 1 : (double)sent / _payload.Length);
+            }
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = _payload.LongLength;
+            return true;
+        }
     }
 
     private static StringContent Json(object value) => new(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");

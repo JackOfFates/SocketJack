@@ -21,6 +21,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -283,6 +284,7 @@ public partial class MainWindow : Window {
     private string _servicePanelSignature = "";
     private string _selectedServiceDetailsSignature = "";
     private string _selectedServiceLogSignature = "";
+    private DispatcherTimer? _serviceEventRenderTimer;
     private int? _lastAppliedChatThroughputTokensPerSecond;
     private ServiceMetricItem? _selectedServiceMetric;
     private bool _updatingServiceSelection;
@@ -677,9 +679,14 @@ public partial class MainWindow : Window {
         await YieldStartupAsync(cancellationToken);
 
         ReportStartup(startupProgress, 14, "Loading SocketJack services", "Creating JACK and web chat services.");
+        await Task.Run(() => JackLlmUserData.MigrateLegacyDataAsync(cancellationToken), cancellationToken);
         _proxy = await Task.Run(() => {
             cancellationToken.ThrowIfCancellationRequested();
-            var proxy = new SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort) {
+            var proxy = new SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort, new LmVsProxyStorageOptions {
+                ChatDataRoot = JackLlmUserData.ChatDataRoot,
+                SessionFilesRoot = JackLlmUserData.SessionFilesRoot,
+                RemoteSessionsRoot = JackLlmUserData.RemoteSessionsRoot
+            }) {
                 MobileAccessEnabled = string.Equals(Environment.GetEnvironmentVariable("JACKLLM_MOBILE_ACCESS"), "true", StringComparison.OrdinalIgnoreCase),
                 PromptTimeout = TimeSpan.FromMinutes(30),
                 StoreLocalWebAuthAccounts = true,
@@ -705,6 +712,10 @@ public partial class MainWindow : Window {
 
         ReportStartup(startupProgress, 24, "Loading local settings database", "Reading JackLLM workstation settings before model services start.");
         _settings = await LoadSettingsAsync(cancellationToken);
+        if (JackLlmUserData.MigrateModelsFrom(_settings.ModelsLocation)) {
+            _settings.ModelsLocation = JackLlmUserData.ModelsRoot;
+            PersistSettingsToDisk(_settings, applyToServices: false);
+        }
         InitializeIntegratedCompanion();
         ApplyModelsLocationEnvironment(_settings);
         WriteModelsLocationEnvironmentHint(_settings);
@@ -813,6 +824,7 @@ public partial class MainWindow : Window {
         ApplyServerBrowserProfileToProxy(_settings);
         ReportStartup(startupProgress, 76, "Detecting host hardware", "Checking GPU billing metadata and local runtime capacity.");
         await ApplyDetectedGpuTdpToProxyAsync(cancellationToken);
+        GpuCapabilityWarningText.Text = await Task.Run(BuildGpuCapabilityDiagnostic, cancellationToken);
         _portForwardingEnabled = false;
         _uiReady = true;
         LmVsProxyWpfRemoteControl.RegisterAdminPanel(this);
@@ -1355,6 +1367,8 @@ public partial class MainWindow : Window {
     }
 
     private void UpdateResponsiveLayout() {
+        if (TopResourceMetricsPanel != null)
+            TopResourceMetricsPanel.Visibility = ActualWidth >= 1040 ? Visibility.Visible : Visibility.Collapsed;
         if (SettingsGroupsPanel == null || MainWorkspaceGrid == null)
             return;
 
@@ -1445,6 +1459,40 @@ public partial class MainWindow : Window {
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) {
         HideToTray();
+    }
+
+    private void WorkstationMenuSelectTab_Click(object sender, RoutedEventArgs e) {
+        string target = (sender as FrameworkElement)?.Tag?.ToString() ?? "";
+        MainTabs.SelectedItem = target switch {
+            "web" => WebUiTabItem,
+            "models" => ModelsTabItem,
+            "gpu" => GpuRootTabItem,
+            "companion" => CompanionTab,
+            "server" => ServerManagementTab,
+            _ => MainTabs.Items.Count > 0 ? MainTabs.Items[0] : null
+        };
+    }
+
+    private void WorkstationMenuOpenRoute_Click(object sender, RoutedEventArgs e) {
+        string route = (sender as FrameworkElement)?.Tag?.ToString() ?? "/";
+        try {
+            Process.Start(new ProcessStartInfo("http://127.0.0.1:" + ChatServerPort.ToString(CultureInfo.InvariantCulture) + route) { UseShellExecute = true });
+        } catch (Exception ex) {
+            AppendLog("Could not open " + route + ": " + TrimForDisplay(ex.Message, 160));
+        }
+    }
+
+    private void WorkstationMenuAbout_Click(object sender, RoutedEventArgs e) {
+        MessageBox.Show(this,
+            "JackLLM Workstation" + Environment.NewLine +
+            "Runtime: .NET " + Environment.Version + Environment.NewLine +
+            "System: " + Environment.OSVersion + Environment.NewLine +
+            "Machine: " + Environment.MachineName,
+            "About / System Information", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void WorkstationMenuExit_Click(object sender, RoutedEventArgs e) {
+        Application.Current.Shutdown();
     }
 
     private void UpdateWindowChromeState() {
@@ -1739,10 +1787,43 @@ public partial class MainWindow : Window {
     }
 
     private static string GetGuiUserDataRoot() {
-        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrWhiteSpace(localAppData))
-            localAppData = Path.GetTempPath();
-        return Path.Combine(localAppData, "SocketJack", "JackLLM");
+        return JackLlmUserData.Root;
+    }
+
+    private static string BuildGpuCapabilityDiagnostic() {
+        string query = RunDiagnosticCommand("nvidia-smi.exe", "--query-gpu=name,memory.total,compute_cap --format=csv,noheader,nounits");
+        string vulkan = RunDiagnosticCommand("vulkaninfo.exe", "--summary");
+        bool hasVulkan = !string.IsNullOrWhiteSpace(vulkan);
+        if (string.IsNullOrWhiteSpace(query))
+            return "GPU warning: CUDA was not detected. Vulkan " + (hasVulkan ? "is available" : "was not detected") + "; CPU inference remains available.";
+
+        var reports = new List<string>();
+        foreach (string line in query.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) {
+            string[] parts = line.Split(',').Select(value => value.Trim()).ToArray();
+            if (parts.Length < 3) continue;
+            double cc = double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) ? parsed : 0;
+            int passMark = parts[0].Contains("GTX TITAN X", StringComparison.OrdinalIgnoreCase) ? 13660 : 0;
+            string estimate = passMark >= 30000 ? "45-100" : passMark >= 20000 ? "25-60" : passMark >= 10000 ? "12-35" : passMark >= 5000 ? "6-15" : "2-7";
+            var unavailable = new List<string>();
+            if (cc < 8.0) unavailable.Add("BF16 acceleration");
+            if (cc < 8.9) unavailable.Add("FP8 acceleration");
+            if (cc < 10.0) unavailable.Add("FP4 acceleration");
+            reports.Add(parts[0] + ": " + parts[1] + " MiB VRAM, CUDA " + parts[2] + ", Vulkan " + (hasVulkan ? "available" : "not detected") +
+                        ", estimated 7B Q4 speed " + estimate + " tok/s" + (passMark > 0 ? " (PassMark G3D " + passMark.ToString("N0") + ")" : "") +
+                        ". Warning: " + string.Join(", ", unavailable) + " unavailable. GGUF Q4 is usable but is not native FP4 tensor hardware.");
+        }
+        return string.Join(Environment.NewLine, reports);
+    }
+
+    private static string RunDiagnosticCommand(string fileName, string arguments) {
+        try {
+            using Process? process = Process.Start(new ProcessStartInfo(fileName, arguments) {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
+            });
+            if (process == null) return "";
+            string output = process.StandardOutput.ReadToEnd();
+            return process.WaitForExit(5000) && process.ExitCode == 0 ? output : "";
+        } catch { return ""; }
     }
 
     private static string ResolveUpdaterExecutablePath() {
@@ -1970,26 +2051,7 @@ public partial class MainWindow : Window {
     }
 
     private string BuildAuthenticatedChatServerEndpoint(string path) {
-        return AddSocketJackAuthTokenToUrl(BuildChatServerEndpoint(path));
-    }
-
-    private string AddSocketJackAuthTokenToUrl(string url) {
-        string token = GetSocketJackAuthToken();
-        if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(token))
-            return url;
-
-        try {
-            var uri = new Uri(url, UriKind.Absolute);
-            var builder = new UriBuilder(uri);
-            string query = builder.Query;
-            query = string.IsNullOrWhiteSpace(query) ? "" : query.TrimStart('?');
-            string authParameter = "AuthTOKEN=" + Uri.EscapeDataString(token.Trim());
-            builder.Query = string.IsNullOrWhiteSpace(query) ? authParameter : query + "&" + authParameter;
-            return builder.Uri.ToString();
-        } catch {
-            string separator = url.Contains("?") ? "&" : "?";
-            return url + separator + "AuthTOKEN=" + Uri.EscapeDataString(token.Trim());
-        }
+        return BuildChatServerEndpoint(path);
     }
 
     private async Task EnsureWebUiBrowserReadyAsync() {
@@ -2089,7 +2151,7 @@ public partial class MainWindow : Window {
 
         try {
             if (IsLocalChatServerUrl(uri)) {
-                _pendingWebUiUrl = AddSocketJackAuthTokenToUrl(uri);
+                _pendingWebUiUrl = uri;
                 NavigateWebUiBrowserCore(_pendingWebUiUrl);
                 return;
             }
@@ -4955,7 +5017,7 @@ public partial class MainWindow : Window {
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var title = new TextBlock {
-            Text = "Visual composer · guided file types · raw regex · live path test",
+            Text = "Visual composer Â· guided file types Â· raw regex Â· live path test",
             Foreground = Brushes.White,
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
@@ -5048,7 +5110,7 @@ public partial class MainWindow : Window {
         };
         test.Click += (_, _) => {
             bool matched = _proxy.TestChatWorkspaceIgnoreRegex(pattern.Text, target.SelectedItem?.ToString() ?? "path", caseSensitive.IsChecked == true, testPath.Text, out string error);
-            status.Text = string.IsNullOrWhiteSpace(error) ? (matched ? "MATCH — this path will be blocked." : "No match.") : "Invalid regex: " + error;
+            status.Text = string.IsNullOrWhiteSpace(error) ? (matched ? "MATCH â€” this path will be blocked." : "No match.") : "Invalid regex: " + error;
             status.Foreground = string.IsNullOrWhiteSpace(error) ? Brushes.LightGreen : Brushes.Orange;
         };
         save.Click += (_, _) => {
@@ -5869,7 +5931,7 @@ public partial class MainWindow : Window {
                 Environment.GetEnvironmentVariable(ModelRootEnvironmentVariable),
                 Environment.GetEnvironmentVariable(CompleteModelRootEnvironmentVariable)));
         configured = NormalizeModelsLocationForSettings(configured);
-        return !string.IsNullOrWhiteSpace(configured) ? configured : GetJackLlmContentRoot();
+        return !string.IsNullOrWhiteSpace(configured) ? configured : JackLlmUserData.ModelsRoot;
     }
 
     private static string InferModelsLocationFromModelRoots(string? modelRoot, string? completeModelRoot) {
@@ -7583,8 +7645,10 @@ public partial class MainWindow : Window {
         if (_startHiddenRequested || WelcomeSplashOverlay == null)
             return;
 
-        if (_settings.WelcomeSplashShowCount < 3) {
+        if (!_settings.DoNotShowGuideAgain && _settings.WelcomeSplashShowCount < 3) {
             _settings.WelcomeSplashShowCount++;
+            WelcomeDoNotShowAgainCheckBox.IsChecked = _settings.DoNotShowGuideAgain;
+            WelcomeDoNotShowHintsCheckBox.IsChecked = _settings.DoNotShowHints;
             WelcomeSplashOverlay.Visibility = Visibility.Visible;
             SaveSettingsIfReady();
             return;
@@ -7594,14 +7658,19 @@ public partial class MainWindow : Window {
     }
 
     private void WelcomeSplashCloseButton_Click(object sender, RoutedEventArgs e) {
+        _settings.DoNotShowGuideAgain = WelcomeDoNotShowAgainCheckBox?.IsChecked == true;
+        _settings.DoNotShowHints = WelcomeDoNotShowHintsCheckBox?.IsChecked == true;
         if (WelcomeSplashOverlay != null)
             WelcomeSplashOverlay.Visibility = Visibility.Collapsed;
+        SaveSettingsIfReady();
         StartCoachmarkSequenceIfNeeded();
     }
 
     private void WelcomeSplashSkipButton_Click(object sender, RoutedEventArgs e) {
         _settings.WelcomeSplashShowCount = Math.Max(_settings.WelcomeSplashShowCount, 3);
         _settings.CoachmarkShowCount = Math.Max(_settings.CoachmarkShowCount, 3);
+        _settings.DoNotShowGuideAgain = true;
+        _settings.DoNotShowHints = true;
         if (WelcomeSplashOverlay != null)
             WelcomeSplashOverlay.Visibility = Visibility.Collapsed;
         HideCoachmark();
@@ -7609,7 +7678,7 @@ public partial class MainWindow : Window {
     }
 
     private void StartCoachmarkSequenceIfNeeded() {
-        if (_settings.CoachmarkShowCount >= 3 || CoachmarkCanvas == null)
+        if (_settings.DoNotShowHints || _settings.CoachmarkShowCount >= 3 || CoachmarkCanvas == null)
             return;
 
         _settings.CoachmarkShowCount++;
@@ -8003,6 +8072,19 @@ public partial class MainWindow : Window {
         }
 
         ApplySelectedServerToShellFields();
+    }
+
+    private void WorkstationMenuGettingStarted_Click(object sender, RoutedEventArgs e) {
+        WelcomeDoNotShowAgainCheckBox.IsChecked = _settings.DoNotShowGuideAgain;
+        WelcomeDoNotShowHintsCheckBox.IsChecked = _settings.DoNotShowHints;
+        WelcomeSplashOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void WorkstationMenuShowHints_Click(object sender, RoutedEventArgs e) {
+        _settings.DoNotShowHints = false;
+        _settings.CoachmarkShowCount = 0;
+        SaveSettingsIfReady();
+        StartCoachmarkSequenceIfNeeded();
     }
 
     private void MyListingsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
@@ -9695,6 +9777,8 @@ public partial class MainWindow : Window {
             AutoPublishCoachmarkShown = _settings.AutoPublishCoachmarkShown,
             WelcomeSplashShowCount = _settings.WelcomeSplashShowCount,
             CoachmarkShowCount = _settings.CoachmarkShowCount,
+            DoNotShowGuideAgain = _settings.DoNotShowGuideAgain,
+            DoNotShowHints = _settings.DoNotShowHints,
             MyListingPublished = IsMyListingPublished(),
             PortForwardingEnabled = false,
             WindowsStartupEnabled = WindowsStartupCheckBox.IsChecked.GetValueOrDefault(true),
@@ -13288,6 +13372,7 @@ public partial class MainWindow : Window {
 
         UpdateSelectedWebAuthUserText();
         LoadSelectedWebAuthUserPermissions();
+        LoadSelectedWebAuthUserResourceLimits(loadInputs: true);
         RefreshServerManagementSessions(Array.Empty<ChatSessionListItem>(), 0, true);
     }
 
@@ -13364,6 +13449,7 @@ public partial class MainWindow : Window {
             UpdateSelectedWebAuthUserText();
             if (refreshPermissions)
                 LoadSelectedWebAuthUserPermissions();
+            LoadSelectedWebAuthUserResourceLimits(loadInputs: refreshPermissions);
         } catch (Exception ex) {
             if (force && ServerManagementStatusText != null)
                 ServerManagementStatusText.Text = "Server user refresh failed: " + TrimForDisplay(ex.Message, 160);
@@ -13467,6 +13553,9 @@ public partial class MainWindow : Window {
             StorageBytesUsed = Math.Max(primary.StorageBytesUsed, secondary.StorageBytesUsed),
             StorageLimitBytes = Math.Max(primary.StorageLimitBytes, secondary.StorageLimitBytes),
             StorageUnlimited = primary.StorageUnlimited || secondary.StorageUnlimited,
+            ConnectionState = FirstNonEmpty(primary.ConnectionState, secondary.ConnectionState),
+            InboundBytesPerSecond = Math.Max(primary.InboundBytesPerSecond, secondary.InboundBytesPerSecond),
+            OutboundBytesPerSecond = Math.Max(primary.OutboundBytesPerSecond, secondary.OutboundBytesPerSecond),
             IsCurrentSocketJackUser = primary.IsCurrentSocketJackUser || secondary.IsCurrentSocketJackUser
         };
     }
@@ -14158,6 +14247,141 @@ public partial class MainWindow : Window {
             if (UserPermissionsStatusText != null)
                 UserPermissionsStatusText.Text = "Permission save failed: " + TrimForDisplay(ex.Message, 160);
         }
+    }
+
+    private void LoadSelectedWebAuthUserResourceLimits(bool loadInputs) {
+        WebAuthUserItem? user = GetSelectedWebAuthUser();
+        if (user == null || string.IsNullOrWhiteSpace(user.OwnerKey)) {
+            if (UserResourceLimitsStatusText != null)
+                UserResourceLimitsStatusText.Text = "Select an authenticated Workstation user to manage resource limits.";
+            return;
+        }
+
+        try {
+            UserResourceQuotaDiagnosticsSnapshot snapshot = _proxy.GetUserResourceQuotaDiagnostics(user.OwnerKey);
+            ApplyUserResourceQuotaSnapshot(snapshot, loadInputs);
+            if (UserResourceLimitsStatusText != null)
+                UserResourceLimitsStatusText.Text = "Limits loaded for " + user.UserName + ". 0 means inherited or unlimited.";
+        } catch (Exception ex) {
+            if (UserResourceLimitsStatusText != null)
+                UserResourceLimitsStatusText.Text = "Resource limit load failed: " + TrimForDisplay(ex.Message, 160);
+        }
+    }
+
+    private void ApplyUserResourceQuotaSnapshot(UserResourceQuotaDiagnosticsSnapshot snapshot, bool loadInputs) {
+        snapshot ??= new UserResourceQuotaDiagnosticsSnapshot();
+        if (loadInputs) {
+            UserQuotaStorageMbTextBox.Text = FormatQuotaInput(snapshot.StorageLimitBytes, 1024d * 1024d);
+            UserQuotaBandwidthKbpsTextBox.Text = FormatQuotaInput(snapshot.BandwidthBytesPerSecond, 1024d);
+            UserQuotaDailyBandwidthMbTextBox.Text = FormatQuotaInput(snapshot.DailyBandwidthLimitBytes, 1024d * 1024d);
+            UserQuotaWeeklyBandwidthMbTextBox.Text = FormatQuotaInput(snapshot.WeeklyBandwidthLimitBytes, 1024d * 1024d);
+            UserQuotaDailyTokensTextBox.Text = snapshot.DailyTokenLimit.ToString(CultureInfo.InvariantCulture);
+            UserQuotaWeeklyTokensTextBox.Text = snapshot.WeeklyTokenLimit.ToString(CultureInfo.InvariantCulture);
+            UserQuotaTokenPercentTextBox.Text = snapshot.TokenLimitPercent.ToString(CultureInfo.InvariantCulture);
+            UserQuotaWarningPercentTextBox.Text = snapshot.WarningPercent.ToString(CultureInfo.InvariantCulture);
+        }
+
+        int warning = Math.Max(1, Math.Min(100, snapshot.WarningPercent));
+        double storagePercent = PercentOf(snapshot.StorageBytesUsed, snapshot.StorageLimitBytes);
+        double bandwidthPercent = snapshot.BandwidthBytesPerSecond <= 0 ? 0 : snapshot.CurrentBandwidthBytesPerSecond * 100d / snapshot.BandwidthBytesPerSecond;
+        double dailyTokenPercent = PercentOf(snapshot.DailyTokensUsed, snapshot.DailyTokenLimit);
+        double weeklyTokenPercent = PercentOf(snapshot.WeeklyTokensUsed, snapshot.WeeklyTokenLimit);
+        SetRgbQuotaMeter(UserQuotaStorageProgressBar, storagePercent, warning, snapshot.StorageLimitBytes > 0);
+        SetRgbQuotaMeter(UserQuotaBandwidthProgressBar, bandwidthPercent, warning, snapshot.BandwidthBytesPerSecond > 0);
+        SetRgbQuotaMeter(UserQuotaDailyTokenProgressBar, dailyTokenPercent, warning, snapshot.DailyTokenLimit > 0);
+        SetRgbQuotaMeter(UserQuotaWeeklyTokenProgressBar, weeklyTokenPercent, warning, snapshot.WeeklyTokenLimit > 0);
+
+        UserQuotaStorageMeterText.Text = snapshot.StorageLimitBytes > 0
+            ? "Storage: " + FormatBytes(snapshot.StorageBytesUsed) + " / " + FormatBytes(snapshot.StorageLimitBytes) + " (" + Math.Min(999, storagePercent).ToString("0.#", CultureInfo.CurrentCulture) + "%)"
+            : "Storage: " + FormatBytes(snapshot.StorageBytesUsed) + " used / inherited or unlimited";
+        UserQuotaBandwidthMeterText.Text = "Throughput: " + FormatNetworkRate(snapshot.CurrentBandwidthBytesPerSecond) +
+            (snapshot.BandwidthBytesPerSecond > 0 ? " / " + FormatNetworkRate(snapshot.BandwidthBytesPerSecond) : " / unlimited") +
+            " | today " + FormatBytes(snapshot.DailyBandwidthUsedBytes) + ByteLimitSuffix(snapshot.DailyBandwidthLimitBytes) +
+            " | week " + FormatBytes(snapshot.WeeklyBandwidthUsedBytes) + ByteLimitSuffix(snapshot.WeeklyBandwidthLimitBytes);
+        UserQuotaDailyTokenMeterText.Text = "Daily tokens: " + snapshot.DailyTokensUsed.ToString("N0", CultureInfo.CurrentCulture) + LimitSuffix(snapshot.DailyTokenLimit);
+        UserQuotaWeeklyTokenMeterText.Text = "Weekly tokens: " + snapshot.WeeklyTokensUsed.ToString("N0", CultureInfo.CurrentCulture) + LimitSuffix(snapshot.WeeklyTokenLimit);
+    }
+
+    private void SaveUserResourceLimitsButton_Click(object sender, RoutedEventArgs e) {
+        WebAuthUserItem? user = GetSelectedWebAuthUser();
+        if (user == null) {
+            UserResourceLimitsStatusText.Text = "Select a user first.";
+            return;
+        }
+        try {
+            var snapshot = new UserResourceQuotaDiagnosticsSnapshot {
+                OwnerKey = user.OwnerKey,
+                StorageLimitBytes = ParseQuotaInput(UserQuotaStorageMbTextBox, "Session data limit", 1024d * 1024d),
+                BandwidthBytesPerSecond = ParseQuotaInput(UserQuotaBandwidthKbpsTextBox, "Bandwidth rate", 1024d),
+                DailyBandwidthLimitBytes = ParseQuotaInput(UserQuotaDailyBandwidthMbTextBox, "Daily transfer cap", 1024d * 1024d),
+                WeeklyBandwidthLimitBytes = ParseQuotaInput(UserQuotaWeeklyBandwidthMbTextBox, "Weekly transfer cap", 1024d * 1024d),
+                DailyTokenLimit = ParseQuotaInput(UserQuotaDailyTokensTextBox, "Daily token cap", 1d),
+                WeeklyTokenLimit = ParseQuotaInput(UserQuotaWeeklyTokensTextBox, "Weekly token cap", 1d),
+                TokenLimitPercent = ParseQuotaPercent(UserQuotaTokenPercentTextBox, "Token allocation percentage", 100),
+                WarningPercent = ParseQuotaPercent(UserQuotaWarningPercentTextBox, "Warning threshold", 80)
+            };
+            UserResourceQuotaDiagnosticsSnapshot updated = _proxy.SaveUserResourceQuotaDiagnostics(snapshot);
+            ApplyUserResourceQuotaSnapshot(updated, loadInputs: true);
+            UserResourceLimitsStatusText.Text = "Saved enforceable SocketJack resource limits for " + user.UserName + ".";
+            ServerManagementStatusText.Text = "Saved resource limits for " + user.UserName + ".";
+            AppendLog("Saved SocketJack storage, bandwidth, and token limits for " + user.UserName + ".");
+        } catch (Exception ex) {
+            UserResourceLimitsStatusText.Text = "Resource limit save failed: " + TrimForDisplay(ex.Message, 180);
+        }
+    }
+
+    private void ResetUserResourceLimitsButton_Click(object sender, RoutedEventArgs e) {
+        WebAuthUserItem? user = GetSelectedWebAuthUser();
+        if (user == null) {
+            UserResourceLimitsStatusText.Text = "Select a user first.";
+            return;
+        }
+        MessageBoxResult result = MessageBox.Show(this,
+            "Reset storage, bandwidth, and daily/weekly token limits for " + user.UserName + "? Existing usage counters are preserved.",
+            "Reset User Resource Limits", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (result != MessageBoxResult.Yes) return;
+        UserQuotaStorageMbTextBox.Text = "0";
+        UserQuotaBandwidthKbpsTextBox.Text = "0";
+        UserQuotaDailyBandwidthMbTextBox.Text = "0";
+        UserQuotaWeeklyBandwidthMbTextBox.Text = "0";
+        UserQuotaDailyTokensTextBox.Text = "0";
+        UserQuotaWeeklyTokensTextBox.Text = "0";
+        UserQuotaTokenPercentTextBox.Text = "100";
+        UserQuotaWarningPercentTextBox.Text = "80";
+        SaveUserResourceLimitsButton_Click(sender, e);
+    }
+
+    private static long ParseQuotaInput(TextBox box, string label, double multiplier) {
+        string text = (box?.Text ?? "").Trim();
+        if (!double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.CurrentCulture, out double value) &&
+            !double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out value))
+            throw new InvalidOperationException(label + " must be a non-negative number.");
+        if (double.IsNaN(value) || double.IsInfinity(value) || value < 0d || value > long.MaxValue / multiplier)
+            throw new InvalidOperationException(label + " is outside the supported range.");
+        return (long)Math.Round(value * multiplier, MidpointRounding.AwayFromZero);
+    }
+
+    private static int ParseQuotaPercent(TextBox box, string label, int fallback) {
+        if (!int.TryParse((box?.Text ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)) value = fallback;
+        if (value < 1 || value > 100) throw new InvalidOperationException(label + " must be between 1 and 100.");
+        return value;
+    }
+
+    private static string FormatQuotaInput(long bytes, double divisor) => bytes <= 0 ? "0" : (bytes / divisor).ToString("0.##", CultureInfo.InvariantCulture);
+    private static double PercentOf(long used, long limit) => limit <= 0 ? 0d : Math.Max(0d, used) * 100d / limit;
+    private static string LimitSuffix(long limit) => limit > 0 ? " / " + limit.ToString("N0", CultureInfo.CurrentCulture) : " / unlimited";
+    private static string ByteLimitSuffix(long limit) => limit > 0 ? " / " + FormatBytes(limit) : " / unlimited";
+    private static string FormatNetworkRate(double bytesPerSecond) => FormatBytes((long)Math.Max(0d, bytesPerSecond)) + "/s";
+
+    private static void SetRgbQuotaMeter(ProgressBar bar, double percent, int warningPercent, bool limited) {
+        if (bar == null) return;
+        bar.Value = limited ? Math.Max(0d, Math.Min(100d, percent)) : 0d;
+        Color color = !limited ? Color.FromRgb(0x62, 0xD6, 0xFF)
+            : percent >= 100d ? Color.FromRgb(0xFF, 0x5C, 0x7A)
+            : percent >= warningPercent ? Color.FromRgb(0xFF, 0xB8, 0x6B)
+            : Color.FromRgb(0x4A, 0xDF, 0x91);
+        bar.Foreground = new SolidColorBrush(color);
+        AutomationProperties.SetHelpText(bar, limited ? Math.Min(999d, percent).ToString("0.#", CultureInfo.CurrentCulture) + " percent used" : "Unlimited; numeric activity is shown above");
     }
 
     private int GetSelectedUserRestrictionMinutes() {
@@ -17047,7 +17271,7 @@ public partial class MainWindow : Window {
             RenderServiceOptions(service);
         }
 
-        RenderSelectedServiceEventLog();
+        ScheduleSelectedServiceEventLogRender();
     }
 
     private IReadOnlyList<ServiceMetricItem> GetSelectedServiceItems() {
@@ -18367,7 +18591,7 @@ public partial class MainWindow : Window {
     }
 
     private void RenderSelectedServiceEventLog() {
-        if (ServiceEventLogTextBox == null)
+        if (ServiceEventLogTextBox == null || !ServiceEventLogTextBox.IsVisible)
             return;
 
         var serviceNames = GetSelectedServiceNames().ToList();
@@ -18409,6 +18633,24 @@ public partial class MainWindow : Window {
         ServiceEventLogTextBox.ScrollToEnd();
     }
 
+    private void ScheduleSelectedServiceEventLogRender() {
+        if (ServiceEventLogTextBox == null || !ServiceEventLogTextBox.IsVisible)
+            return;
+
+        _serviceEventRenderTimer ??= new DispatcherTimer {
+            Interval = TimeSpan.FromMilliseconds(250)
+        };
+        _serviceEventRenderTimer.Tick -= ServiceEventRenderTimer_Tick;
+        _serviceEventRenderTimer.Tick += ServiceEventRenderTimer_Tick;
+        if (!_serviceEventRenderTimer.IsEnabled)
+            _serviceEventRenderTimer.Start();
+    }
+
+    private void ServiceEventRenderTimer_Tick(object? sender, EventArgs e) {
+        _serviceEventRenderTimer?.Stop();
+        RenderSelectedServiceEventLog();
+    }
+
     private Queue<string> GetServiceEventLog(string serviceName) {
         string normalizedName = NormalizeServiceName(serviceName);
         if (string.IsNullOrWhiteSpace(normalizedName))
@@ -18440,7 +18682,7 @@ public partial class MainWindow : Window {
 
         if (_selectedServiceLogNames.Contains(normalizedName) ||
             (_selectedServiceMetric != null && ServiceNameEquals(_selectedServiceMetric.Name, normalizedName)))
-            RenderSelectedServiceEventLog();
+            ScheduleSelectedServiceEventLogRender();
     }
 
     private void ClearServiceEventLog(string serviceName) {
@@ -18685,6 +18927,29 @@ public partial class MainWindow : Window {
         UpdateNetworkHealthMetrics();
         UpdateIoHealthMetric();
         UpdateTokenPerformanceMetrics();
+        UpdateTopResourceMetrics();
+    }
+
+    private void UpdateTopResourceMetrics() {
+        if (TopGpuResourceText == null) return;
+        TopGpuResourceText.Text = IsUnavailableMetric(_gpuUtilizationHealthText) ? "--" : FormatPercent(_gpuUtilizationPercent);
+        TopCpuResourceText.Text = IsUnavailableMetric(CpuUsageHealthText?.Text) ? "--" : FormatPercent(_cpuUsagePercent);
+        TopRamResourceText.Text = IsUnavailableMetric(RamUsageHealthText?.Text) ? "--" : FormatPercent(_ramUsagePercent);
+        TopNetworkResourceText.Text = FormatCompactKbps(_networkDownSnapshot.LiveKbps);
+        TopGpuResourceChip.ToolTip = "GPU " + (_gpuUtilizationHealthText ?? "unavailable") + Environment.NewLine + "VRAM " + (_vramUsageHealthText ?? "unavailable");
+        TopCpuResourceChip.ToolTip = "CPU " + (CpuUsageHealthText?.Text ?? "unavailable");
+        TopRamResourceChip.ToolTip = "RAM " + (RamUsageHealthText?.Text ?? "unavailable");
+        TopNetworkResourceChip.ToolTip = "Network download " + FormatKbps(_networkDownSnapshot.LiveKbps) + Environment.NewLine + "Network upload " + FormatKbps(_networkUpSnapshot.LiveKbps);
+    }
+
+    private static bool IsUnavailableMetric(string? value) => string.IsNullOrWhiteSpace(value) ||
+        value.Contains("unavailable", StringComparison.OrdinalIgnoreCase) || value.Contains("measuring", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatCompactKbps(double kbps) {
+        kbps = Math.Max(0d, kbps);
+        return kbps >= 1000d
+            ? (kbps / 1000d).ToString("0.#", CultureInfo.CurrentCulture) + "M"
+            : kbps.ToString(kbps >= 100d ? "0" : "0.#", CultureInfo.CurrentCulture) + "k";
     }
 
     private void UpdateGpuHealthMetrics() {
@@ -20851,6 +21116,9 @@ public partial class MainWindow : Window {
         public long StorageBytesUsed { get; init; }
         public long StorageLimitBytes { get; init; }
         public bool StorageUnlimited { get; init; }
+        public string ConnectionState { get; init; } = "offline";
+        public double InboundBytesPerSecond { get; init; }
+        public double OutboundBytesPerSecond { get; init; }
         public bool IsCurrentSocketJackUser { get; init; }
 
         public string NameLine {
@@ -20876,7 +21144,10 @@ public partial class MainWindow : Window {
 
         public string TokenLine {
             get {
-                return "Tokens " + TokensUsed.ToString("N0", CultureInfo.CurrentCulture) +
+                string tokenLimit = Unlimited || TokenLimit <= 0 ? "unlimited" : TokenLimit.ToString("N0", CultureInfo.CurrentCulture);
+                return "Tokens " + TokensUsed.ToString("N0", CultureInfo.CurrentCulture) + " / " + tokenLimit +
+                       " | " + NormalizeConnectionState(ConnectionState) +
+                       " | network â†“" + FormatNetworkRate(InboundBytesPerSecond) + " â†‘" + FormatNetworkRate(OutboundBytesPerSecond) +
                        " | GPU " + FormatUsageKwh(GpuKwh) + " @ " + FormatUsageKw(GpuKw) +
                        " | CPU " + FormatUsageKwh(CpuKwh) + " @ " + FormatUsageKw(CpuKw);
             }
@@ -20965,9 +21236,14 @@ public partial class MainWindow : Window {
                 TotalCostUsd = Math.Max(0, usage.TotalCostUsd),
                 StorageBytesUsed = Math.Max(0, usage.StorageBytesUsed),
                 StorageLimitBytes = Math.Max(0, usage.StorageLimitBytes),
-                StorageUnlimited = usage.StorageUnlimited
+                StorageUnlimited = usage.StorageUnlimited,
+                ConnectionState = snapshot.ConnectionState ?? "offline",
+                InboundBytesPerSecond = Math.Max(0d, snapshot.InboundBytesPerSecond),
+                OutboundBytesPerSecond = Math.Max(0d, snapshot.OutboundBytesPerSecond)
             };
         }
+
+        private static string NormalizeConnectionState(string value) => (value ?? "offline").Replace('_', ' ');
 
         private string FormatStorageLine() {
             string used = FormatBytes(StorageBytesUsed);
@@ -23756,6 +24032,8 @@ public partial class MainWindow : Window {
         public bool AutoPublishCoachmarkShown { get; set; } = false;
         public int WelcomeSplashShowCount { get; set; } = 0;
         public int CoachmarkShowCount { get; set; } = 0;
+        public bool DoNotShowGuideAgain { get; set; } = false;
+        public bool DoNotShowHints { get; set; } = false;
         public bool MyListingPublished { get; set; } = false;
         public bool PortForwardingEnabled { get; set; } = false;
         public bool LocalServerEntryDeleted { get; set; } = false;
@@ -23823,6 +24101,3 @@ internal sealed class LmVsProxyUpdaterStatus {
     public string CompanionCurrentFile { get; set; } = "";
     public string CompanionMessage { get; set; } = "";
 }
-
-
- 

@@ -148,7 +148,19 @@ public sealed class SessionsPage : ContentPage
     private async Task ShowProjectActionsAsync(ChatProjectInfo project)
     {
         string archiveLabel = project.Archived ? "Restore" : "Archive";
-        string? action = await DisplayActionSheetAsync(project.Name, "Cancel", null, "Rename", archiveLabel);
+        string? action = await DisplayActionSheetAsync(project.Name, "Cancel", null, "Project Files", "Rename", archiveLabel);
+        if (action == "Project Files")
+        {
+            ChatSessionInfo? authorizationSession = _sessions
+                .Where(item => string.Equals(string.IsNullOrWhiteSpace(item.ProjectId) ? "unsorted" : item.ProjectId, project.Id, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(item => item.UpdatedAt)
+                .FirstOrDefault();
+            if (authorizationSession is null)
+                await DisplayAlertAsync("Project Files", "Start the first chat in this project before adding files.", "OK");
+            else
+                await Navigation.PushAsync(new ProjectFilesPage(_client, authorizationSession.Id));
+            return;
+        }
         if (action == "Rename")
         {
             string? name = await DisplayPromptAsync("Rename project", "Project name", "Save", "Cancel", project.Name, 120);

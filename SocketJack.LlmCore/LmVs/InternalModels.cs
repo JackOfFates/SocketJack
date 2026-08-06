@@ -272,6 +272,8 @@ namespace LmVs
         public string MediaToolCallId { get; set; }
         public string MediaJobId { get; set; }
         public List<string> SteeringMessages { get; } = new List<string>();
+        public HashSet<string> SteeringIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+        public bool AcceptingSteering { get; set; } = true;
     }
 
     internal sealed class PendingChatStreamSteering
@@ -281,6 +283,23 @@ namespace LmVs
         public string SessionId { get; set; }
         public DateTimeOffset UpdatedUtc { get; set; }
         public List<string> Messages { get; } = new List<string>();
+        public HashSet<string> SteeringIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+    }
+
+    internal sealed class UserNetworkTrafficSample
+    {
+        public DateTimeOffset CreatedUtc { get; set; }
+        public long InboundBytes { get; set; }
+        public long OutboundBytes { get; set; }
+    }
+
+    internal sealed class UserNetworkTrafficState
+    {
+        public string OwnerKey { get; set; } = "";
+        public DateTimeOffset LastSeenUtc { get; set; }
+        public long InboundBytesTotal { get; set; }
+        public long OutboundBytesTotal { get; set; }
+        public Queue<UserNetworkTrafficSample> Samples { get; } = new Queue<UserNetworkTrafficSample>();
     }
 
     internal sealed class ChatSessionFile
@@ -448,6 +467,16 @@ namespace LmVs
         public string lastClientIp { get; set; } = "";
         public long tokenLimit { get; set; } = 0;
         public long tokensUsed { get; set; } = 0;
+    }
+
+    internal sealed class WebAuthSessionRecord
+    {
+        public string tokenHash { get; set; } = "";
+        public string userName { get; set; } = "";
+        public string createdUtc { get; set; } = "";
+        public string expiresUtc { get; set; } = "";
+        public string lastSeenUtc { get; set; } = "";
+        public string clientIp { get; set; } = "";
     }
 
     internal sealed class WebAuthRegistrationRequestRecord

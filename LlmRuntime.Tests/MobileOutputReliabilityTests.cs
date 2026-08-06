@@ -38,4 +38,50 @@ public sealed class MobileOutputReliabilityTests
         Assert.AreEqual("ha ha ha", MobileOutputReliability.MergeStreamDelta("ha ha ", "ha"));
         Assert.AreEqual("yesyes", MobileOutputReliability.MergeStreamDelta("yes", "yes"));
     }
+
+    [TestMethod]
+    public void StreamAccumulator_ShowsThoughtsBeforeIncrementalAnswer()
+    {
+        var stream = new MobileStreamTextAccumulator();
+
+        stream.Append("First thought. ", reasoning: true);
+        Assert.AreEqual("First thought. ", stream.Reasoning);
+        Assert.AreEqual("", stream.Content);
+
+        stream.Append("Answer ", reasoning: false);
+        stream.Append("arrives live.", reasoning: false);
+        Assert.AreEqual("Answer arrives live.", stream.Content);
+        Assert.AreEqual("First thought. ", stream.Reasoning);
+    }
+
+    [TestMethod]
+    public void StreamAccumulator_HandlesReasoningTagsSplitAcrossFrames()
+    {
+        var stream = new MobileStreamTextAccumulator();
+
+        stream.Append("<thi", reasoning: false);
+        Assert.AreEqual("", stream.Content);
+        stream.Append("nk>Checking facts", reasoning: false);
+        Assert.AreEqual("Checking facts", stream.Reasoning);
+        Assert.AreEqual("", stream.Content);
+        stream.Append("</thi", reasoning: false);
+        stream.Append("nk>Final ", reasoning: false);
+        stream.Append("answer", reasoning: false);
+
+        Assert.AreEqual("Checking facts", stream.Reasoning);
+        Assert.AreEqual("Final answer", stream.Content);
+    }
+
+    [TestMethod]
+    public void StreamAccumulator_ReplacesCumulativeAnswerFrames()
+    {
+        var stream = new MobileStreamTextAccumulator();
+        const string first = "This is a sufficiently long streamed answer prefix.";
+        const string cumulative = first + " It now includes the next sentence.";
+
+        stream.Append(first, reasoning: false);
+        stream.Append(cumulative, reasoning: false);
+
+        Assert.AreEqual(cumulative, stream.Content);
+    }
 }

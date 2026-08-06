@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Runtime.CompilerServices;
 using LLama;
@@ -39,9 +40,12 @@ public sealed class LlmBackendFactory : ILlmBackendFactory
 public sealed class LlamaSharpBackend : ILlmBackend
 {
     private static readonly string[] HiddenReasoningOpenTags = ["<think>", "<thinking>", "<thought>", "<analysis>"];
-    private static readonly string[] HiddenReasoningCloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>"];
+    private static readonly string[] HiddenReasoningCloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>", "</end_of_thought>", "<|end_of_thought|>", "<|end_of_analysis|>"];
 
     private LLamaWeights? _weights;
+    private MtmdWeights? _mtmdWeights;
+    private MtmdContextParams? _mtmdContextParams;
+    private string? _multimodalProjectorPath;
     private ModelParams? _parameters;
     private readonly SemaphoreSlim _inferenceLock = new(1, 1);
     private readonly LlmBackendLifetimeGate _lifetime = new(nameof(LlamaSharpBackend));
@@ -101,6 +105,7 @@ public sealed class LlamaSharpBackend : ILlmBackend
             ApplyTensorParallelSettings(parameters, LoadConfig);
 
             _weights = LLamaWeights.LoadFromFile(parameters);
+            _multimodalProjectorPath = ResolveMultimodalProjectorPath(ModelPath);
             _parameters = parameters;
             LlamaSharpBackendSelector.ValidateLoadedBackend(LoadConfig.Backend);
             _promptPipelineReady = true;
@@ -163,13 +168,40 @@ public sealed class LlamaSharpBackend : ILlmBackend
     {
         using var operation = _lifetime.Enter();
         await _inferenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var mediaEmbeds = new List<SafeMtmdEmbed>();
         try
         {
             ThrowIfNotLoaded();
+            int imageCount = CountStructuredImages(request.Messages);
+            bool hasImageContent = imageCount > 0;
+            MtmdWeights? mtmdWeights = hasImageContent
+                ? await EnsureMultimodalWeightsLoadedAsync(imageCount, cancellationToken).ConfigureAwait(false)
+                : null;
+            IReadOnlyList<LlmChatMessage> inferenceMessages = BuildInferenceMessages(request.Messages);
+            string mediaMarker = "";
+            if (mtmdWeights != null)
+            {
+                if (!mtmdWeights.SupportsVision)
+                    throw new InvalidOperationException($"The multimodal projector '{_multimodalProjectorPath}' does not support vision inputs.");
+
+                mtmdWeights.ClearMedia();
+                mediaMarker = _mtmdContextParams?.MediaMarker ?? NativeApi.MtmdDefaultMarker() ?? "<media>";
+                inferenceMessages = BuildMultimodalInferenceMessages(inferenceMessages, mtmdWeights, mediaMarker, mediaEmbeds);
+                if (mediaEmbeds.Count != imageCount)
+                {
+                    throw new InvalidOperationException(
+                        $"Local vision inference expected {imageCount} image embedding(s), but loaded {mediaEmbeds.Count}. The request was not sent to the model.");
+                }
+            }
+
             using var context = _weights!.CreateContext(_parameters!);
-            var executor = new InteractiveExecutor(context);
+            var executor = mtmdWeights == null
+                ? new InteractiveExecutor(context)
+                : new InteractiveExecutor(context, mtmdWeights);
+            foreach (SafeMtmdEmbed embed in mediaEmbeds)
+                executor.Embeds.Add(embed);
             var parameters = CreateInferenceParams(request);
-            string prompt = BuildPrompt(_weights!, BuildInferenceMessages(request.Messages));
+            string prompt = BuildPrompt(_weights!, inferenceMessages);
             var repetitionGuard = new LlmRuntimeRepetitionGuard();
             var output = new StringBuilder();
             int generatedTokens = 0;
@@ -225,9 +257,236 @@ public sealed class LlamaSharpBackend : ILlmBackend
         }
         finally
         {
+            foreach (SafeMtmdEmbed embed in mediaEmbeds)
+                embed.Dispose();
+            _mtmdWeights?.ClearMedia();
             _inferenceLock.Release();
         }
     }
+
+    private async Task<MtmdWeights> EnsureMultimodalWeightsLoadedAsync(int imageCount, CancellationToken cancellationToken)
+    {
+        int imageMaxTokens = ResolveMultimodalImageMaxTokens(LoadConfig.ContextLength, imageCount);
+        if (_mtmdWeights != null && _mtmdContextParams?.ImageMaxTokens == imageMaxTokens)
+            return _mtmdWeights;
+
+        if (_mtmdWeights != null)
+        {
+            _mtmdWeights.Dispose();
+            _mtmdWeights = null;
+            _mtmdContextParams = null;
+        }
+
+        if (_weights == null)
+            throw new InvalidOperationException("The text model must be loaded before its multimodal projector.");
+        if (string.IsNullOrWhiteSpace(_multimodalProjectorPath) || !File.Exists(_multimodalProjectorPath))
+            throw new InvalidOperationException($"Model '{InstanceId}' is marked as vision-capable, but no sibling mmproj/projector GGUF file was found.");
+
+        _promptPipelineStatus = "loading_vision";
+        _promptPipelineDetail = "Loading multimodal projector.";
+        var mtmdParameters = MtmdContextParams.Default();
+        mtmdParameters.UseGpu = ShouldUseGpuForMultimodal(LoadConfig);
+        mtmdParameters.PrintTimings = false;
+        mtmdParameters.ImageMaxTokens = imageMaxTokens;
+        if (mtmdParameters.ImageMinTokens > mtmdParameters.ImageMaxTokens)
+            mtmdParameters.ImageMinTokens = Math.Min(256, mtmdParameters.ImageMaxTokens);
+        MtmdWeights loaded = await MtmdWeights.LoadFromFileAsync(
+            _multimodalProjectorPath,
+            _weights,
+            mtmdParameters,
+            cancellationToken).ConfigureAwait(false);
+        if (!loaded.SupportsVision)
+        {
+            loaded.Dispose();
+            throw new InvalidOperationException($"The multimodal projector '{_multimodalProjectorPath}' does not advertise vision support.");
+        }
+
+        _mtmdContextParams = mtmdParameters;
+        _mtmdWeights = loaded;
+        _promptPipelineStatus = "ready";
+        _promptPipelineDetail = "Model weights and multimodal projector are loaded.";
+        return loaded;
+    }
+
+    internal static string? ResolveMultimodalProjectorPath(string modelPath)
+    {
+        string? directory = Path.GetDirectoryName(modelPath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            return null;
+
+        string fullModelPath = Path.GetFullPath(modelPath);
+        return Directory.EnumerateFiles(directory, "*.gguf", SearchOption.TopDirectoryOnly)
+            .Where(path =>
+            {
+                string name = Path.GetFileName(path);
+                return !Path.GetFullPath(path).Equals(fullModelPath, StringComparison.OrdinalIgnoreCase) &&
+                       (name.Contains("mmproj", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("projector", StringComparison.OrdinalIgnoreCase));
+            })
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
+    private static IReadOnlyList<LlmChatMessage> BuildMultimodalInferenceMessages(
+        IReadOnlyList<LlmChatMessage> messages,
+        MtmdWeights mtmdWeights,
+        string mediaMarker,
+        List<SafeMtmdEmbed> mediaEmbeds)
+    {
+        var result = new List<LlmChatMessage>(messages.Count);
+        foreach (LlmChatMessage message in messages)
+        {
+            if (!message.HasImageContent || !message.StructuredContent.HasValue)
+            {
+                result.Add(message);
+                continue;
+            }
+
+            JsonElement content = message.StructuredContent.Value;
+            if (content.ValueKind != JsonValueKind.Array)
+            {
+                result.Add(message);
+                continue;
+            }
+
+            var text = new StringBuilder();
+            foreach (JsonElement part in content.EnumerateArray())
+            {
+                if (TryReadStructuredTextPart(part, out string partText))
+                {
+                    AppendMultimodalPromptPart(text, partText);
+                    continue;
+                }
+
+                if (!TryReadStructuredImageUrl(part, out string imageUrl))
+                    continue;
+                if (!TryDecodeImageDataUrl(imageUrl, out byte[] imageBytes))
+                    throw new InvalidOperationException("Local vision inference requires an image data URL with valid base64 bytes.");
+
+                SafeMtmdEmbed embed = mtmdWeights.LoadMedia(imageBytes);
+                mediaEmbeds.Add(embed);
+                AppendMultimodalPromptPart(text, mediaMarker);
+            }
+
+            string contentText = text.Length > 0 ? text.ToString() : message.Content;
+            result.Add(new LlmChatMessage(message.Role, contentText, message.StructuredContent, message.HasImageContent));
+        }
+        return result;
+    }
+
+    internal static int CountStructuredImages(IReadOnlyList<LlmChatMessage> messages)
+    {
+        int imageCount = 0;
+        foreach (LlmChatMessage message in messages ?? Array.Empty<LlmChatMessage>())
+        {
+            if (!message.HasImageContent || !message.StructuredContent.HasValue)
+                continue;
+
+            JsonElement content = message.StructuredContent.Value;
+            if (content.ValueKind == JsonValueKind.Array)
+                imageCount += content.EnumerateArray().Count(part => TryReadStructuredImageUrl(part, out _));
+            else if (TryReadStructuredImageUrl(content, out _))
+                imageCount++;
+        }
+        return imageCount;
+    }
+
+    private static bool TryReadStructuredTextPart(JsonElement part, out string text)
+    {
+        text = "";
+        if (part.ValueKind == JsonValueKind.String)
+        {
+            text = part.GetString() ?? "";
+            return !string.IsNullOrWhiteSpace(text);
+        }
+        if (part.ValueKind != JsonValueKind.Object)
+            return false;
+
+        string type = ReadJsonString(part, "type");
+        if (!type.Equals("text", StringComparison.OrdinalIgnoreCase) &&
+            !type.Equals("input_text", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        text = FirstNonEmpty(ReadJsonString(part, "text"), ReadJsonString(part, "content"));
+        return !string.IsNullOrWhiteSpace(text);
+    }
+
+    private static bool TryReadStructuredImageUrl(JsonElement part, out string imageUrl)
+    {
+        imageUrl = "";
+        if (part.ValueKind != JsonValueKind.Object)
+            return false;
+
+        string type = ReadJsonString(part, "type");
+        bool imagePart = type.Equals("image_url", StringComparison.OrdinalIgnoreCase) ||
+                         type.Equals("input_image", StringComparison.OrdinalIgnoreCase) ||
+                         part.TryGetProperty("image_url", out _);
+        if (!imagePart)
+            return false;
+
+        if (part.TryGetProperty("image_url", out JsonElement imageUrlElement))
+        {
+            imageUrl = imageUrlElement.ValueKind == JsonValueKind.String
+                ? imageUrlElement.GetString() ?? ""
+                : ReadJsonString(imageUrlElement, "url");
+        }
+        imageUrl = FirstNonEmpty(
+            imageUrl,
+            ReadJsonString(part, "url"),
+            ReadJsonString(part, "data_url"),
+            ReadJsonString(part, "image_url"));
+        return !string.IsNullOrWhiteSpace(imageUrl);
+    }
+
+    internal static bool TryDecodeImageDataUrl(string value, out byte[] bytes)
+    {
+        bytes = [];
+        if (string.IsNullOrWhiteSpace(value) ||
+            !value.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        int separator = value.IndexOf(',');
+        if (separator <= 0 || !value[..separator].Contains(";base64", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        try
+        {
+            bytes = Convert.FromBase64String(value[(separator + 1)..]);
+            return bytes.Length is > 0 and <= 32 * 1024 * 1024;
+        }
+        catch (FormatException)
+        {
+            bytes = [];
+            return false;
+        }
+    }
+
+    private static void AppendMultimodalPromptPart(StringBuilder builder, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+        if (builder.Length > 0 && builder[^1] != '\n')
+            builder.AppendLine();
+        builder.Append(value.Trim());
+    }
+
+    private static string ReadJsonString(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty(propertyName, out JsonElement property) ||
+            property.ValueKind != JsonValueKind.String)
+        {
+            return "";
+        }
+        return property.GetString() ?? "";
+    }
+
+    private static string FirstNonEmpty(params string[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "";
 
     private void ThrowIfNotLoaded()
     {
@@ -264,12 +523,17 @@ public sealed class LlamaSharpBackend : ILlmBackend
 
     internal static string DetermineFinishReason(bool stoppedByGuard, int generatedTokens, int maxTokens, int completionTokenEstimate, bool stoppedInsideHiddenReasoning)
     {
+        // A repetition guard can fire while a reasoning model is still inside a
+        // hidden <think> block. That is still a clipped answer from the caller's
+        // perspective and must remain eligible for Web Chat auto-continuation.
+        if (stoppedInsideHiddenReasoning)
+            return "length";
+
         if (stoppedByGuard)
             return "stop";
 
         return generatedTokens >= maxTokens ||
-               completionTokenEstimate >= maxTokens ||
-               stoppedInsideHiddenReasoning
+               completionTokenEstimate >= maxTokens
             ? "length"
             : "stop";
     }
@@ -386,26 +650,14 @@ public sealed class LlamaSharpBackend : ILlmBackend
     private IReadOnlyList<LlmChatMessage> BuildInferenceMessages(IReadOnlyList<LlmChatMessage> messages)
     {
         messages ??= [];
-        if (!ShouldSuppressReasoningByDefault())
-            return messages;
-
-        if (messages.Any(message => ContainsNoThinkControl(message.Content)))
-            return messages;
-
-        return
-        [
-            new LlmChatMessage("system", "Do not write a thought process, analysis, reasoning, or <think> block. Start with the final answer immediately. Answer once, and do not repeat the same sentence or line. /no_think"),
-            .. messages
-        ];
+        return messages;
     }
 
     internal bool ShouldSuppressReasoningByDefault()
     {
-        string identity = (InstanceId + " " + ModelPath).ToLowerInvariant();
-        return identity.Contains("qwen", StringComparison.Ordinal) &&
-               (identity.Contains("reasoning", StringComparison.Ordinal) ||
-                identity.Contains("reasoner", StringComparison.Ordinal) ||
-                identity.Contains("think", StringComparison.Ordinal));
+        // Reasoning visibility is controlled per request with /no_think. Model
+        // naming must not silently disable the Workstation thinking stream.
+        return false;
     }
 
     internal static bool ContainsNoThinkControl(string? text)
@@ -418,6 +670,19 @@ public sealed class LlamaSharpBackend : ILlmBackend
 
     private static int GetEffectiveGpuLayerCount(LlmLoadConfig loadConfig) =>
         LlmBackendAutoSelector.Resolve(loadConfig.Backend) == LlmBackendKind.Cpu ? 0 : loadConfig.GpuLayerCount;
+
+    internal static bool ShouldUseGpuForMultimodal(LlmLoadConfig loadConfig) =>
+        GetEffectiveGpuLayerCount(loadConfig) != 0;
+
+    internal static int ResolveMultimodalImageMaxTokens(uint contextLength, int imageCount = 1)
+    {
+        int boundedContext = (int)Math.Min(int.MaxValue, Math.Max(512u, contextLength));
+        // Keep the visual input to at most half of the context. A single image
+        // gets enough visual tokens for UI text and layout; multiple images
+        // divide the same budget instead of overflowing the prompt window.
+        int safeImageCount = Math.Max(1, imageCount);
+        return Math.Clamp(boundedContext / 2 / safeImageCount, 256, 2048);
+    }
 
     internal static LlamaSharpTensorParallelSettings ResolveTensorParallelSettings(LlmLoadConfig loadConfig)
     {
@@ -519,6 +784,10 @@ public sealed class LlamaSharpBackend : ILlmBackend
 
         try
         {
+            _mtmdWeights?.Dispose();
+            _mtmdWeights = null;
+            _mtmdContextParams = null;
+            _multimodalProjectorPath = null;
             _weights?.Dispose();
             _weights = null;
             _parameters = null;

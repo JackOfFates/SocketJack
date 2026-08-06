@@ -143,10 +143,7 @@ public partial class App : System.Windows.Application {
         if (!string.IsNullOrWhiteSpace(configured))
             return configured.Trim();
 
-        string basePath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrWhiteSpace(basePath))
-            basePath = Path.GetTempPath();
-        return Path.Combine(basePath, "JackLLM", "Logs", "wpf-crash.log");
+        return Path.Combine(JackLlmUserData.LogsRoot, "wpf-crash.log");
     }
 
     private static bool IsRepairableStartupFailure(Exception ex) {

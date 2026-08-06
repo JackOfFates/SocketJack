@@ -137,3 +137,110 @@ public static class MobileOutputReliability
         return false;
     }
 }
+
+/// <summary>
+/// Accumulates mobile chat deltas while keeping model reasoning separate from
+/// visible answer text. Tag parsing is performed over the accumulated stream so
+/// split tags such as "&lt;thi" + "nk&gt;" cannot leak into the answer or swallow it.
+/// </summary>
+public sealed class MobileStreamTextAccumulator
+{
+    private static readonly string[] OpenReasoningTags = ["<think>", "<thinking>", "<thought>", "<analysis>"];
+    private static readonly string[] CloseReasoningTags = ["</think>", "</thinking>", "</thought>", "</analysis>"];
+    private string _contentFrames = "";
+    private string _explicitReasoning = "";
+
+    public string Content { get; private set; } = "";
+
+    public string Reasoning { get; private set; } = "";
+
+    public void Reset()
+    {
+        _contentFrames = "";
+        _explicitReasoning = "";
+        Content = "";
+        Reasoning = "";
+    }
+
+    public void Append(string text, bool reasoning)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        if (reasoning)
+            _explicitReasoning = MobileOutputReliability.MergeStreamDelta(_explicitReasoning, text);
+        else
+            _contentFrames = MobileOutputReliability.MergeStreamDelta(_contentFrames, text);
+
+        SplitEmbeddedReasoning(_contentFrames, out string visible, out string embeddedReasoning);
+        Content = visible;
+        Reasoning = string.IsNullOrEmpty(embeddedReasoning)
+            ? _explicitReasoning
+            : string.IsNullOrEmpty(_explicitReasoning)
+                ? embeddedReasoning
+                : MobileOutputReliability.MergeStreamDelta(_explicitReasoning, embeddedReasoning);
+    }
+
+    internal static void SplitEmbeddedReasoning(string value, out string content, out string reasoning)
+    {
+        value ??= "";
+        var visible = new System.Text.StringBuilder();
+        var thought = new System.Text.StringBuilder();
+        bool insideReasoning = false;
+        int offset = 0;
+        while (offset < value.Length)
+        {
+            string[] tags = insideReasoning ? CloseReasoningTags : OpenReasoningTags;
+            int tagIndex = FindEarliestTag(value, offset, tags, out int tagLength);
+            if (tagIndex < 0)
+            {
+                int partialLength = FindPartialTagSuffixLength(value, offset, tags);
+                int safeLength = value.Length - offset - partialLength;
+                if (safeLength > 0)
+                    (insideReasoning ? thought : visible).Append(value, offset, safeLength);
+                break;
+            }
+
+            if (tagIndex > offset)
+                (insideReasoning ? thought : visible).Append(value, offset, tagIndex - offset);
+            offset = tagIndex + tagLength;
+            insideReasoning = !insideReasoning;
+        }
+
+        content = visible.ToString();
+        reasoning = thought.ToString();
+    }
+
+    private static int FindEarliestTag(string value, int offset, IEnumerable<string> tags, out int tagLength)
+    {
+        int result = -1;
+        tagLength = 0;
+        foreach (string tag in tags)
+        {
+            int candidate = value.IndexOf(tag, offset, StringComparison.OrdinalIgnoreCase);
+            if (candidate >= 0 && (result < 0 || candidate < result))
+            {
+                result = candidate;
+                tagLength = tag.Length;
+            }
+        }
+        return result;
+    }
+
+    private static int FindPartialTagSuffixLength(string value, int offset, IEnumerable<string> tags)
+    {
+        int available = value.Length - offset;
+        int maximum = 0;
+        foreach (string tag in tags)
+        {
+            int limit = Math.Min(tag.Length - 1, available);
+            for (int length = limit; length > maximum; length--)
+            {
+                if (value.AsSpan(value.Length - length, length).Equals(tag.AsSpan(0, length), StringComparison.OrdinalIgnoreCase))
+                {
+                    maximum = length;
+                    break;
+                }
+            }
+        }
+        return maximum;
+    }
+}

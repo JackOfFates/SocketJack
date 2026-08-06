@@ -227,11 +227,24 @@ public sealed class ModelInfo
     public override string ToString() => string.IsNullOrWhiteSpace(Name) ? Id : Name;
 }
 
-public sealed class AttachmentInfo
+public sealed class AttachmentInfo : System.ComponentModel.INotifyPropertyChanged
 {
+    private double _uploadProgress;
+    private string _uploadState = "pending";
+    private string _uploadError = "";
+    private string _uploadedPath = "";
+
     public string Name { get; init; } = "attachment";
     public string ContentType { get; init; } = "application/octet-stream";
     public byte[] Data { get; init; } = Array.Empty<byte>();
+    public double UploadProgress { get => _uploadProgress; set { if (Math.Abs(_uploadProgress - value) < .001) return; _uploadProgress = value; PropertyChanged?.Invoke(this, new(nameof(UploadProgress))); PropertyChanged?.Invoke(this, new(nameof(UploadPercent))); } }
+    public string UploadState { get => _uploadState; set { if (_uploadState == value) return; _uploadState = value; PropertyChanged?.Invoke(this, new(nameof(UploadState))); PropertyChanged?.Invoke(this, new(nameof(IsUploaded))); PropertyChanged?.Invoke(this, new(nameof(IsUploading))); PropertyChanged?.Invoke(this, new(nameof(NeedsAttention))); } }
+    public string UploadError { get => _uploadError; set { if (_uploadError == value) return; _uploadError = value; PropertyChanged?.Invoke(this, new(nameof(UploadError))); } }
+    public string UploadedPath { get => _uploadedPath; set { if (_uploadedPath == value) return; _uploadedPath = value; PropertyChanged?.Invoke(this, new(nameof(UploadedPath))); } }
+    public bool IsUploaded => UploadState == "complete";
+    public bool IsUploading => UploadState == "uploading";
+    public bool NeedsAttention => UploadState == "failed";
+    public string UploadPercent => $"{Math.Clamp(UploadProgress, 0, 1):P0}";
     public string MediaType
     {
         get
@@ -256,4 +269,61 @@ public sealed class AttachmentInfo
     }
     public bool IsImage => MediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
     public string DataUrl => $"data:{MediaType};base64,{Convert.ToBase64String(Data)}";
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+}
+
+public sealed class ProjectFileEntry
+{
+    public string Name { get; set; } = "";
+    public string Path { get; set; } = "";
+    public string Kind { get; set; } = "session";
+    public string SessionId { get; set; } = "";
+    public string Type { get; set; } = "file";
+    public bool Exists { get; set; }
+    public bool HasChildren { get; set; }
+    public string Extension { get; set; } = "";
+    public long Size { get; set; }
+    public DateTimeOffset ModifiedUtc { get; set; }
+    public bool IsDirectory => Type.Equals("directory", StringComparison.OrdinalIgnoreCase);
+    public string Icon => IsDirectory ? "📁" : "📄";
+    public string Detail => IsDirectory ? "Folder" : $"{FormatBytes(Size)} · {ModifiedUtc.LocalDateTime:g}";
+    private static string FormatBytes(long value) => value >= 1073741824 ? $"{value / 1073741824d:0.#} GB" : value >= 1048576 ? $"{value / 1048576d:0.#} MB" : value >= 1024 ? $"{value / 1024d:0.#} KB" : $"{value} B";
+}
+
+public sealed class ProjectStorageSnapshot
+{
+    public long UsedBytes { get; set; }
+    public long TotalUsedBytes { get; set; }
+    public long CurrentSessionUsedBytes { get; set; }
+    public long LimitBytes { get; set; }
+    public long RemainingBytes { get; set; }
+    public bool Unlimited { get; set; }
+    public double UsageRatio => Unlimited || LimitBytes <= 0 ? 0 : Math.Clamp((double)TotalUsedBytes / LimitBytes, 0, 1);
+}
+
+public sealed class ProjectFilesSnapshot
+{
+    public string SessionId { get; set; } = "";
+    public ProjectStorageSnapshot Storage { get; set; } = new();
+    public ProjectFileEntry? Current { get; set; }
+    public List<ProjectFileEntry> Roots { get; set; } = new();
+    public List<ProjectFileEntry> Children { get; set; } = new();
+    public List<ProjectFileEntry> Results { get; set; } = new();
+}
+
+public sealed class ProjectFileVersion
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public DateTimeOffset CreatedUtc { get; set; }
+    public int FileCount { get; set; }
+    public string Detail => $"{FileCount} file{(FileCount == 1 ? "" : "s")} · {CreatedUtc.LocalDateTime:g}";
+}
+
+public sealed class ProjectFileVersionsSnapshot
+{
+    public string SessionId { get; set; } = "";
+    public string ProjectId { get; set; } = "";
+    public bool Shared { get; set; }
+    public List<ProjectFileVersion> Versions { get; set; } = new();
 }

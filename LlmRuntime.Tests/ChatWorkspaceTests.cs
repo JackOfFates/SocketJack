@@ -23,6 +23,13 @@ public sealed class ChatWorkspaceTests
         StringAssert.Contains(html, "id=\"workspaceRegexTestPath\"");
         StringAssert.Contains(html, "/api/chat-workspaces");
         StringAssert.Contains(html, "function generateWorkspaceRegex()");
+        StringAssert.Contains(html, "id=\"projectVersionsPanel\"");
+        StringAssert.Contains(html, "/api/project-file-versions");
+        StringAssert.Contains(html, "preview-upload-overlay");
+        StringAssert.Contains(html, "postSessionFileWithProgress");
+        StringAssert.Contains(html, "deleteSolutionEntry");
+        StringAssert.Contains(html, "Delete folder and contents from Project Files");
+        Assert.IsFalse(html.Contains("showConfirm(", StringComparison.Ordinal));
     }
 
     [TestMethod]

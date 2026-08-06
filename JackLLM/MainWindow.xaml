@@ -52,7 +52,9 @@
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
@@ -62,14 +64,76 @@
                             Background="{StaticResource AccentBrush}"
                             VerticalAlignment="Center"
                             Margin="0,0,10,0"/>
-                    <TextBlock Grid.Column="1"
+                    <Menu Grid.Column="1"
+                          Background="Transparent"
+                          Foreground="{StaticResource TextBrush}"
+                          VerticalAlignment="Center"
+                          Margin="0"
+                          Padding="0"
+                          shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <MenuItem Header="File" Padding="8,4">
+                            <MenuItem Header="Open Web Chat" Click="WorkstationMenuSelectTab_Click" Tag="web"/>
+                            <Separator/>
+                            <MenuItem Header="Exit" Click="WorkstationMenuExit_Click"/>
+                        </MenuItem>
+                        <MenuItem Header="Edit" Padding="8,4">
+                            <MenuItem Header="Projects and Sessions" Click="WorkstationMenuSelectTab_Click" Tag="web"/>
+                            <MenuItem Header="Server Management" Click="WorkstationMenuSelectTab_Click" Tag="server"/>
+                        </MenuItem>
+                        <MenuItem Header="View" Padding="8,4">
+                            <MenuItem Header="Diagnostics" Click="WorkstationMenuSelectTab_Click" Tag="diagnostics"/>
+                            <MenuItem Header="Web UI" Click="WorkstationMenuSelectTab_Click" Tag="web"/>
+                            <MenuItem Header="Models" Click="WorkstationMenuSelectTab_Click" Tag="models"/>
+                            <MenuItem Header="GPU" Click="WorkstationMenuSelectTab_Click" Tag="gpu"/>
+                            <MenuItem Header="Companion" Click="WorkstationMenuSelectTab_Click" Tag="companion"/>
+                        </MenuItem>
+                        <MenuItem Header="Tools" Padding="8,4">
+                            <MenuItem Header="JackDirector" Click="WorkstationMenuOpenRoute_Click" Tag="/JackDirector"/>
+                            <MenuItem Header="Agent Builder" Click="WorkstationMenuOpenRoute_Click" Tag="/Builder"/>
+                            <MenuItem Header="SQL Manager" Click="WorkstationMenuOpenRoute_Click" Tag="/sql"/>
+                            <MenuItem Header="Server Management" Click="WorkstationMenuSelectTab_Click" Tag="server"/>
+                        </MenuItem>
+                        <MenuItem Header="Help" Padding="8,4">
+                            <MenuItem Header="Getting Started Guide" Click="WorkstationMenuGettingStarted_Click"/>
+                            <MenuItem Header="Show Application Hints" Click="WorkstationMenuShowHints_Click"/>
+                            <Separator/>
+                            <MenuItem Header="API Reference" Click="WorkstationMenuOpenRoute_Click" Tag="/api/reference"/>
+                            <MenuItem Header="About / System Information" Click="WorkstationMenuAbout_Click"/>
+                        </MenuItem>
+                    </Menu>
+                    <TextBlock Grid.Column="2"
                                Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
-                               FontSize="13"
-                               FontWeight="SemiBold"
+                               FontSize="11"
                                Foreground="{StaticResource TextBrush}"
-                               VerticalAlignment="Center"/>
-                    <StackPanel Grid.Column="2"
+                               Opacity="0.55"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
+                    <StackPanel x:Name="TopResourceMetricsPanel"
+                                Grid.Column="3"
                                 Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="8,0,8,0"
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Border x:Name="TopGpuResourceChip" Background="#42121A24" CornerRadius="4" Padding="4,2" Margin="0,0,3,0"
+                                ToolTip="{Binding Text, ElementName=GpuUtilizationHealthText, StringFormat=GPU utilization: {0}}">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="◈" Foreground="#7CFF9D" Margin="0,0,3,0"/><TextBlock x:Name="TopGpuResourceText" Text="--" FontFamily="Consolas" FontSize="10"/></StackPanel>
+                        </Border>
+                        <Border x:Name="TopCpuResourceChip" Background="#42121A24" CornerRadius="4" Padding="4,2" Margin="0,0,3,0"
+                                ToolTip="{Binding Text, ElementName=CpuUsageHealthText, StringFormat=CPU utilization: {0}}">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="▦" Foreground="#C4B5FD" Margin="0,0,3,0"/><TextBlock x:Name="TopCpuResourceText" Text="--" FontFamily="Consolas" FontSize="10"/></StackPanel>
+                        </Border>
+                        <Border x:Name="TopRamResourceChip" Background="#42121A24" CornerRadius="4" Padding="4,2" Margin="0,0,3,0"
+                                ToolTip="{Binding Text, ElementName=RamUsageHealthText, StringFormat=RAM usage: {0}}">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="▥" Foreground="#62D6FF" Margin="0,0,3,0"/><TextBlock x:Name="TopRamResourceText" Text="--" FontFamily="Consolas" FontSize="10"/></StackPanel>
+                        </Border>
+                        <Border x:Name="TopNetworkResourceChip" Background="#42121A24" CornerRadius="4" Padding="4,2"
+                                ToolTip="{Binding Text, ElementName=NetworkDownHealthText, StringFormat=Network download: {0}}">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="⇅" Foreground="#F4A261" Margin="0,0,3,0"/><TextBlock x:Name="TopNetworkResourceText" Text="--" FontFamily="Consolas" FontSize="10"/></StackPanel>
+                        </Border>
+                    </StackPanel>
+                    <StackPanel Grid.Column="4"
+                                 Orientation="Horizontal"
                                 VerticalAlignment="Center"
                                 shell:WindowChrome.IsHitTestVisibleInChrome="True">
                         <Button x:Name="MinimizeButton"
@@ -1622,7 +1686,24 @@
                                    Text="0 Warnings"/>
                     </TabItem.Header>
                     <Grid Margin="14,12,14,14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0"
+                                Background="#4A3A2608"
+                                BorderBrush="#B98224"
+                                BorderThickness="1"
+                                CornerRadius="7"
+                                Padding="10"
+                                Margin="0,0,0,10">
+                            <TextBlock x:Name="GpuCapabilityWarningText"
+                                       Text="GPU inference capabilities are being checked..."
+                                       Foreground="#FCD34D"
+                                       TextWrapping="Wrap"/>
+                        </Border>
                         <ListBox x:Name="ModelReconfigurationListBox"
+                                 Grid.Row="1"
                                  Background="#33070A10"
                                  BorderBrush="{StaticResource PanelBorderBrush}"
                                  BorderThickness="1"
@@ -3837,6 +3918,75 @@
                                                                    TextWrapping="Wrap"/>
                                                     </StackPanel>
                                                 </Border>
+                                                <Border BorderBrush="#334E5E74"
+                                                        BorderThickness="0,1,0,0"
+                                                        Padding="0,10,0,0"
+                                                        Margin="0,10,0,0">
+                                                    <StackPanel>
+                                                        <TextBlock Text="SocketJack Resource Limits"
+                                                                   FontWeight="SemiBold"/>
+                                                        <TextBlock Text="0 means inherit or unlimited. Daily limits reset at 00:00 UTC; weekly limits reset Monday UTC."
+                                                                   Foreground="{StaticResource SubtleTextBrush}"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,3,0,8"/>
+                                                        <UniformGrid Columns="2">
+                                                            <StackPanel Margin="0,0,8,8">
+                                                                <TextBlock Text="Session data limit (MB)" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaStorageMbTextBox" Height="30" Text="0" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                            <StackPanel Margin="0,0,0,8">
+                                                                <TextBlock Text="Bandwidth rate (KB/s)" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaBandwidthKbpsTextBox" Height="30" Text="0" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                            <StackPanel Margin="0,0,8,8">
+                                                                <TextBlock Text="Daily transfer cap (MB)" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaDailyBandwidthMbTextBox" Height="30" Text="0" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                            <StackPanel Margin="0,0,0,8">
+                                                                <TextBlock Text="Weekly transfer cap (MB)" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaWeeklyBandwidthMbTextBox" Height="30" Text="0" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                            <StackPanel Margin="0,0,8,8">
+                                                                <TextBlock Text="Daily token cap" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaDailyTokensTextBox" Height="30" Text="0" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                            <StackPanel Margin="0,0,0,8">
+                                                                <TextBlock Text="Weekly token cap" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaWeeklyTokensTextBox" Height="30" Text="0" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                            <StackPanel Margin="0,0,8,8">
+                                                                <TextBlock Text="Account token allocation (%)" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaTokenPercentTextBox" Height="30" Text="100" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                            <StackPanel Margin="0,0,0,8">
+                                                                <TextBlock Text="Meter warning threshold (%)" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                                <TextBox x:Name="UserQuotaWarningPercentTextBox" Height="30" Text="80" VerticalContentAlignment="Center"/>
+                                                            </StackPanel>
+                                                        </UniformGrid>
+                                                        <TextBlock x:Name="UserQuotaStorageMeterText" Text="Storage: --" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                        <ProgressBar x:Name="UserQuotaStorageProgressBar" Height="8" Minimum="0" Maximum="100" Margin="0,3,0,7"/>
+                                                        <TextBlock x:Name="UserQuotaBandwidthMeterText" Text="Throughput: --" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                        <ProgressBar x:Name="UserQuotaBandwidthProgressBar" Height="8" Minimum="0" Maximum="100" Margin="0,3,0,7"/>
+                                                        <TextBlock x:Name="UserQuotaDailyTokenMeterText" Text="Daily tokens: --" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                        <ProgressBar x:Name="UserQuotaDailyTokenProgressBar" Height="8" Minimum="0" Maximum="100" Margin="0,3,0,7"/>
+                                                        <TextBlock x:Name="UserQuotaWeeklyTokenMeterText" Text="Weekly tokens: --" Foreground="{StaticResource SubtleTextBrush}"/>
+                                                        <ProgressBar x:Name="UserQuotaWeeklyTokenProgressBar" Height="8" Minimum="0" Maximum="100" Margin="0,3,0,7"/>
+                                                        <WrapPanel>
+                                                            <Button Content="Save Resource Limits"
+                                                                    Click="SaveUserResourceLimitsButton_Click"
+                                                                    Padding="9,4"
+                                                                    Margin="0,0,8,8"/>
+                                                            <Button Content="Reset to Inherited / Unlimited"
+                                                                    Click="ResetUserResourceLimitsButton_Click"
+                                                                    Padding="9,4"
+                                                                    Margin="0,0,8,8"/>
+                                                        </WrapPanel>
+                                                        <TextBlock x:Name="UserResourceLimitsStatusText"
+                                                                   Text="Select a user to load limits."
+                                                                   Foreground="{StaticResource SubtleTextBrush}"
+                                                                   TextWrapping="Wrap"/>
+                                                    </StackPanel>
+                                                </Border>
                                             </StackPanel>
                                         </Border>
 
@@ -4447,6 +4597,14 @@
                         <WrapPanel Grid.Row="2"
                                    HorizontalAlignment="Right"
                                    Margin="0,24,0,0">
+                            <CheckBox x:Name="WelcomeDoNotShowAgainCheckBox"
+                                      Content="Do not show again"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,16,0"/>
+                            <CheckBox x:Name="WelcomeDoNotShowHintsCheckBox"
+                                      Content="Do not show Hints"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,16,0"/>
                             <Button x:Name="WelcomeSplashCloseButton"
                                     Content="Start"
                                     Click="WelcomeSplashCloseButton_Click"
@@ -4455,7 +4613,7 @@
                                     Background="#1F7A68"
                                     Margin="0,0,8,0"/>
                             <Button x:Name="WelcomeSplashSkipButton"
-                                    Content="Hide tips"
+                                    Content="Hide guide and hints"
                                     Click="WelcomeSplashSkipButton_Click"
                                     Padding="18,7"
                                     MinWidth="92"/>

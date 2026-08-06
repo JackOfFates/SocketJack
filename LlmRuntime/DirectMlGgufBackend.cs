@@ -462,8 +462,8 @@ public sealed class DirectMlGgufBackend : ILlmBackend
     private sealed class HiddenReasoningTagFilter
     {
         private static readonly string[] OpenTags = ["<think>", "<thinking>", "<thought>", "<analysis>"];
-        private static readonly string[] CloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>"];
-        private const int MaxTagLength = 12;
+        private static readonly string[] CloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>", "</end_of_thought>", "<|end_of_thought|>", "<|end_of_analysis|>"];
+        private const int MaxTagLength = 24;
         private readonly StringBuilder _buffer = new();
         private bool _insideReasoning;
 

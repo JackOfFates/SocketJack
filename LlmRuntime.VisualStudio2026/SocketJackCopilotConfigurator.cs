@@ -6,6 +6,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using LlmRuntime.VisualStudio;
@@ -268,7 +270,8 @@ internal sealed class SocketJackCopilotConfigurator
             }
         }
 
-        int port = FindMatchingHealthyProxyPort(server, model, 11574) ?? FindAvailablePort(11574);
+        string authFingerprint = ComputeAuthFingerprint(authToken);
+        int port = FindMatchingHealthyProxyPort(server, model, 11574, authFingerprint) ?? FindAvailablePort(11574);
         BridgeLaunchInfo launch;
         string? bridgeExecutablePath = ResolveBridgeExecutablePath();
         if (!string.IsNullOrWhiteSpace(bridgeExecutablePath))
@@ -310,20 +313,28 @@ internal sealed class SocketJackCopilotConfigurator
         return port;
     }
 
-    private static int? FindMatchingHealthyProxyPort(SocketJackServerCandidate server, SocketJackModelCandidate model, int preferredPort)
+    private static int? FindMatchingHealthyProxyPort(
+        SocketJackServerCandidate server,
+        SocketJackModelCandidate model,
+        int preferredPort,
+        string expectedAuthFingerprint)
     {
         int start = preferredPort > 0 && preferredPort <= 65535 ? preferredPort : 11574;
         int end = Math.Min(65535, start + 49);
         for (int port = start; port <= end; port++)
         {
-            if (IsMatchingHealthyProxyPort(server, model, port))
+            if (IsMatchingHealthyProxyPort(server, model, port, expectedAuthFingerprint))
                 return port;
         }
 
         return null;
     }
 
-    private static bool IsMatchingHealthyProxyPort(SocketJackServerCandidate server, SocketJackModelCandidate model, int port)
+    private static bool IsMatchingHealthyProxyPort(
+        SocketJackServerCandidate server,
+        SocketJackModelCandidate model,
+        int port,
+        string expectedAuthFingerprint)
     {
         try
         {
@@ -344,6 +355,8 @@ internal sealed class SocketJackCopilotConfigurator
             string selectedModel = root["selectedModel"]?.ToString() ?? "";
             string endpoint = (root["endpoint"]?.ToString() ?? "").TrimEnd('/');
             string expectedEndpoint = (server.EffectiveEndpoint ?? "").TrimEnd('/');
+            bool authConfigured = root["authConfigured"]?.GetValue<bool?>() == true;
+            string authFingerprint = root["authFingerprint"]?.ToString() ?? "";
 
             bool serverMatches =
                 string.Equals(selectedServer, server.Id, StringComparison.OrdinalIgnoreCase) ||
@@ -351,11 +364,32 @@ internal sealed class SocketJackCopilotConfigurator
             bool modelMatches = string.IsNullOrWhiteSpace(model.Id) ||
                 string.Equals(selectedModel, model.Id, StringComparison.OrdinalIgnoreCase);
 
-            return serverMatches && modelMatches;
+            bool authMatches = string.IsNullOrWhiteSpace(expectedAuthFingerprint) ||
+                (authConfigured && string.Equals(authFingerprint, expectedAuthFingerprint, StringComparison.Ordinal));
+            return serverMatches && modelMatches && authMatches;
         }
         catch (Exception)
         {
             return false;
+        }
+    }
+
+    internal static string ComputeAuthFingerprint(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return "";
+        }
+
+        byte[] tokenBytes = Encoding.UTF8.GetBytes(token.Trim());
+        try
+        {
+            byte[] hash = SHA256.HashData(tokenBytes);
+            return Convert.ToHexString(hash.AsSpan(0, 12));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(tokenBytes);
         }
     }
 
@@ -609,35 +643,35 @@ internal sealed class SocketJackStoredCopilotSelection
 internal static class SocketJackLocalProxySupervisor
 {
     private static readonly object Sync = new();
-    private static bool startQueued;
+    private static bool monitorStarted;
+    private static readonly TimeSpan MonitorInterval = TimeSpan.FromSeconds(15);
 
     public static void StartBestEffortFromStoredSelection()
     {
         lock (Sync)
         {
-            if (startQueued)
+            if (monitorStarted)
             {
                 return;
             }
 
-            startQueued = true;
+            monitorStarted = true;
         }
 
         _ = Task.Run(async () =>
         {
-            try
+            while (true)
             {
-                await EnsureActiveProxyFromStoredSelectionAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-            }
-            finally
-            {
-                lock (Sync)
+                try
                 {
-                    startQueued = false;
+                    await EnsureActiveProxyFromStoredSelectionAsync(CancellationToken.None).ConfigureAwait(false);
                 }
+                catch (Exception ex)
+                {
+                    WriteSupervisorStatus("error_" + ex.GetType().Name);
+                }
+
+                await Task.Delay(MonitorInterval).ConfigureAwait(false);
             }
         });
     }
@@ -649,6 +683,7 @@ internal static class SocketJackLocalProxySupervisor
             string.IsNullOrWhiteSpace(selection.ServerEndpoint) ||
             string.IsNullOrWhiteSpace(selection.ModelId))
         {
+            WriteSupervisorStatus("selection_incomplete");
             return false;
         }
 
@@ -657,33 +692,67 @@ internal static class SocketJackLocalProxySupervisor
              !storedEndpoint.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) ||
             storedEndpoint.Port != 11436)
         {
+            WriteSupervisorStatus("server_endpoint_rejected");
             return false;
         }
 
         int port = selection.LocalProxyPort;
         if (port <= 0)
         {
+            WriteSupervisorStatus("proxy_port_invalid");
             return false;
         }
 
-        if (await IsMatchingProxyHealthyAsync(port, selection.ModelId, cancellationToken).ConfigureAwait(false))
+        var authService = new JackLlmWorkstationAuthService();
+        JackLlmWorkstationAuthState authState = authService.Load();
+        if (string.IsNullOrWhiteSpace(authState.AccessToken))
         {
+            WriteSupervisorStatus("workstation_auth_missing");
+            return false;
+        }
+
+        try
+        {
+            authState = await authService.ValidateAsync(authState, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JackLlmWorkstationAuthenticationException)
+        {
+            authService.Clear();
+            await TryStopPackagedProxyAsync(port, cancellationToken).ConfigureAwait(false);
+            WriteSupervisorStatus("workstation_auth_expired");
+            return false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            WriteSupervisorStatus("workstation_unavailable");
+            return false;
+        }
+
+        string expectedAuthFingerprint = SocketJackCopilotConfigurator.ComputeAuthFingerprint(authState.AccessToken);
+        if (await IsMatchingProxyHealthyAsync(port, selection.ModelId, expectedAuthFingerprint, cancellationToken).ConfigureAwait(false))
+        {
+            WriteSupervisorStatus("healthy");
             return true;
         }
 
         if (IsTcpPortListening(port))
         {
-            return false;
+            await TryStopPackagedProxyAsync(port, cancellationToken).ConfigureAwait(false);
+            if (IsTcpPortListening(port))
+            {
+                WriteSupervisorStatus("proxy_port_in_use_unhealthy");
+                return false;
+            }
         }
 
         string? bridgeExecutablePath = ResolveBridgeExecutablePath();
         string? bridgeDllPath = ResolveBridgeDllPath();
         if (string.IsNullOrWhiteSpace(bridgeExecutablePath) && string.IsNullOrWhiteSpace(bridgeDllPath))
         {
+            WriteSupervisorStatus("bridge_payload_missing");
             return false;
         }
 
-        JackLlmWorkstationAuthState authState = new JackLlmWorkstationAuthService().Load();
         var server = new SocketJackServerCandidate
         {
             Id = string.IsNullOrWhiteSpace(selection.ServerId) ? selection.ServerName : selection.ServerId,
@@ -724,23 +793,57 @@ internal static class SocketJackLocalProxySupervisor
             info.ArgumentList.Add(argument);
         }
 
+        WriteSupervisorStatus("launching");
         using Process? _ = Process.Start(info);
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (DateTimeOffset.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (await IsMatchingProxyHealthyAsync(port, selection.ModelId, cancellationToken).ConfigureAwait(false))
+            if (await IsMatchingProxyHealthyAsync(port, selection.ModelId, expectedAuthFingerprint, cancellationToken).ConfigureAwait(false))
             {
+                WriteSupervisorStatus("started");
                 return true;
             }
 
             await Task.Delay(250, cancellationToken).ConfigureAwait(false);
         }
 
+        WriteSupervisorStatus("launch_timeout");
         return false;
     }
 
-    private static async Task<bool> IsMatchingProxyHealthyAsync(int port, string modelId, CancellationToken cancellationToken)
+    private static void WriteSupervisorStatus(string status)
+    {
+        try
+        {
+            string directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "JackLLM",
+                "VisualStudio");
+            Directory.CreateDirectory(directory);
+            JsonObject root = new()
+            {
+                ["status"] = status,
+                ["updatedUtc"] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+                ["processId"] = Environment.ProcessId,
+                ["processName"] = Path.GetFileName(Environment.ProcessPath ?? ""),
+                ["userName"] = Environment.UserName,
+            };
+            File.WriteAllText(
+                Path.Combine(directory, "proxy-supervisor-status.json"),
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                new System.Text.UTF8Encoding(false));
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private static async Task<bool> IsMatchingProxyHealthyAsync(
+        int port,
+        string modelId,
+        string expectedAuthFingerprint,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -759,10 +862,69 @@ internal static class SocketJackLocalProxySupervisor
             string json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             JsonObject root = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
             string selectedModel = root["selectedModel"]?.ToString() ?? "";
-            return string.IsNullOrWhiteSpace(modelId) ||
+            bool modelMatches = string.IsNullOrWhiteSpace(modelId) ||
                 string.Equals(selectedModel, modelId, StringComparison.OrdinalIgnoreCase);
+            bool authConfigured = root["authConfigured"]?.GetValue<bool?>() == true;
+            string authFingerprint = root["authFingerprint"]?.ToString() ?? "";
+            bool authMatches = string.IsNullOrWhiteSpace(expectedAuthFingerprint) ||
+                (authConfigured && string.Equals(authFingerprint, expectedAuthFingerprint, StringComparison.Ordinal));
+            return modelMatches && authMatches;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static async Task<bool> TryStopPackagedProxyAsync(int port, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            using HttpResponseMessage response = await client.GetAsync(
+                "http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture) + "/socketjack-proxy-health",
+                cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            string json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            JsonObject root = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+            if (!string.Equals(root["server"]?.ToString(), "SocketJack.CopilotMcpBridge", StringComparison.Ordinal) ||
+                !int.TryParse(root["processId"]?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int processId) ||
+                processId <= 0)
+            {
+                return false;
+            }
+
+            string? expectedExecutable = ResolveBridgeExecutablePath();
+            if (string.IsNullOrWhiteSpace(expectedExecutable))
+            {
+                return false;
+            }
+
+            using Process process = Process.GetProcessById(processId);
+            string actualExecutable = process.MainModule?.FileName ?? "";
+            if (!string.Equals(
+                Path.GetFullPath(actualExecutable),
+                Path.GetFullPath(expectedExecutable),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            process.Kill(entireProcessTree: true);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return false;
         }

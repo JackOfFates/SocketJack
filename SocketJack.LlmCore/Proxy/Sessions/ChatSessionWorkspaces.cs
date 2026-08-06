@@ -285,7 +285,7 @@ namespace SocketJack.Net
                     OwnerKey = ownerKey,
                     SessionId = sessionId,
                     Role = WorkspaceRolePrimary,
-                    DisplayName = "Current Session Files",
+                    DisplayName = "Project Files",
                     Path = sandboxPath ?? "",
                     AccessMode = WorkspaceAccessReadWrite,
                     Exists = true,

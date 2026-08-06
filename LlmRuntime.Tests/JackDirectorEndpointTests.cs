@@ -1,10 +1,12 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.Net;
 using NetHttpClient = System.Net.Http.HttpClient;
+using NetHttpClientHandler = System.Net.Http.HttpClientHandler;
 
 namespace LlmRuntime.Tests;
 
@@ -21,6 +23,7 @@ public sealed class JackDirectorEndpointTests
             var executor = new FakeExecutor(root);
             proxy.JackDirectorMediaExecutor = executor;
             using var client = CreateClient(proxy);
+            await Authenticate(proxy, client);
             await Post(client, "/api/jackdirector/projects/save", new
             {
                 id = "project_chunks", revision = 0, title = "Chunk Film", width = 640, height = 360, fps = 24,
@@ -55,10 +58,11 @@ public sealed class JackDirectorEndpointTests
         {
             using var proxy = CreateProxy(root);
             using var client = CreateClient(proxy);
-            string html = await client.GetStringAsync("/JackDirector");
+            await Authenticate(proxy, client);
+            string html = await GetText(client, "/JackDirector");
             StringAssert.Contains(html, "<title>JackDirector</title>");
             StringAssert.Contains(html, "Render farm");
-            string webChat = await client.GetStringAsync("/");
+            string webChat = await GetText(client, "/");
             StringAssert.Contains(webChat, "id=\"jackDirectorLauncher\"");
             StringAssert.Contains(webChat, "jackdirector-new-badge");
             StringAssert.Contains(webChat, "id=\"jackDirectorFeatureToast\"");
@@ -89,6 +93,7 @@ public sealed class JackDirectorEndpointTests
         {
             using var proxy = CreateProxy(root);
             using var client = CreateClient(proxy);
+            await Authenticate(proxy, client);
             await Post(client, "/api/jackdirector/projects/save", new { id = "project_conflict", revision = 0, title = "One", shots = Array.Empty<object>() });
             using HttpResponseMessage conflict = await client.PostAsync("/api/jackdirector/projects/save", Json(new { id = "project_conflict", revision = 0, title = "Stale", shots = Array.Empty<object>() }));
             Assert.AreEqual(HttpStatusCode.Conflict, conflict.StatusCode);
@@ -100,9 +105,31 @@ public sealed class JackDirectorEndpointTests
     }
 
     private static LmVsProxy CreateProxy(string root) { var proxy = new LmVsProxy("127.0.0.1", NextPort(), NextPort(), NextPort(), root) { PublicAccessEnabled = false }; Assert.IsTrue(proxy.ChatServer.Listen()); return proxy; }
-    private static NetHttpClient CreateClient(LmVsProxy proxy) => new() { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) };
+    private static NetHttpClient CreateClient(LmVsProxy proxy) => new(new NetHttpClientHandler { UseProxy = false })
+    {
+        BaseAddress = new Uri($"http://127.0.0.1:{proxy.ChatServerPort}/"),
+        Timeout = TimeSpan.FromSeconds(15)
+    };
+    private static async Task<string> GetText(NetHttpClient client, string path) { using HttpResponseMessage response = await client.GetAsync(path); string body = await response.Content.ReadAsStringAsync(); if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"GET {path} failed with HTTP {(int)response.StatusCode}: {body}"); return body; }
     private static async Task<JsonDocument> Get(NetHttpClient client, string path) => JsonDocument.Parse(await client.GetStringAsync(path));
-    private static async Task<JsonDocument> Post(NetHttpClient client, string path, object payload) { using HttpResponseMessage response = await client.PostAsync(path, Json(payload)); string body = await response.Content.ReadAsStringAsync(); response.EnsureSuccessStatusCode(); return JsonDocument.Parse(body); }
+    private static async Task<JsonDocument> Post(NetHttpClient client, string path, object payload) { using HttpResponseMessage response = await client.PostAsync(path, Json(payload)); string body = await response.Content.ReadAsStringAsync(); if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"POST {path} failed with HTTP {(int)response.StatusCode}: {body}"); return JsonDocument.Parse(body); }
+    private static async Task Authenticate(LmVsProxy proxy, NetHttpClient client)
+    {
+        const string username = "jackdirector-admin";
+        const string password = "correct horse battery staple";
+        MethodInfo requestRegistration = typeof(LmVsProxy).GetMethod(
+            "HandleWebAuthRegistrationRequest", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var request = new HttpRequest
+        {
+            Method = "POST",
+            Path = "/api/web-auth/registration-request",
+            Body = JsonSerializer.Serialize(new { username, password })
+        };
+        requestRegistration.Invoke(proxy, new object?[] { null, request });
+        proxy.ApproveWebAuthRegistrationRequest(proxy.GetPendingWebAuthRegistrationRequests().Single().Id);
+        using JsonDocument login = await Post(client, "/api/web-auth/login", new { username, password, remember = true });
+        Assert.IsTrue(login.RootElement.GetProperty("ok").GetBoolean());
+    }
     private static StringContent Json(object value) => new(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
     private static int NextPort() { using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); return ((IPEndPoint)listener.LocalEndpoint).Port; }
     private static string TempRoot() { string root = Path.Combine(Path.GetTempPath(), "JackDirectorTests", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root); return root; }

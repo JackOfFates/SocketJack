@@ -10,6 +10,10 @@
     <AssemblyTitle>JackLLM Installer</AssemblyTitle>
     <Product>JackLLM</Product>
     <Description>Installer for the JackLLM desktop application.</Description>
+    <Version>26.8.4</Version>
+    <AssemblyVersion>26.8.4.0</AssemblyVersion>
+    <FileVersion>26.8.4.0</FileVersion>
+    <InformationalVersion>2026.8.4</InformationalVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
@@ -28,4 +32,10 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+  <ItemGroup Condition="'$(JackLlmMsiPath)' != '' and Exists('$(JackLlmMsiPath)')">
+    <EmbeddedResource Include="$(JackLlmMsiPath)" LogicalName="JackLLM-Setup.msi" />
+  </ItemGroup>
+  <Target Name="ValidateEmbeddedJackLlmMsi" BeforeTargets="PrepareForBuild" Condition="'$(JackLlmMsiPath)' != '' and !Exists('$(JackLlmMsiPath)')">
+    <Error Text="The JackLLM MSI selected for embedding was not found: $(JackLlmMsiPath)" />
+  </Target>
 </Project>

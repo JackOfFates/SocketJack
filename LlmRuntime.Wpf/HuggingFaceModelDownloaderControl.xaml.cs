@@ -1615,7 +1615,7 @@ exit 1
     }
 
     private static string BrowserStatePath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "huggingface-browser-url.txt");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "huggingface-browser-url.txt");
 
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
     {

@@ -323,6 +323,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             ApplyBenchmarksToModels();
             _modelView.Refresh();
             UpdateCounts();
+            UpdateModelStorageSummary();
             RestoreSelection(selectionKey);
             UpdateEmptyState();
             RefreshGpuConfigurationItems(hardware);
@@ -399,6 +400,37 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         }
 
         return result;
+    }
+
+    private void UpdateModelStorageSummary()
+    {
+        try
+        {
+            var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            long usedBytes = 0;
+            foreach (string root in new[] { ModelsDirectory, CompleteModelsDirectory })
+            {
+                if (!Directory.Exists(root))
+                    continue;
+                foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    if (!files.Add(Path.GetFullPath(file)))
+                        continue;
+                    try { usedBytes += new FileInfo(file).Length; } catch { }
+                }
+            }
+
+            string driveRoot = Path.GetPathRoot(Path.GetFullPath(ModelsDirectory)) ?? "";
+            DriveInfo drive = new(driveRoot);
+            ModelStorageText.Text = "Model storage: " + FormatBytes(usedBytes) + " used across " +
+                                    files.Count.ToString("N0") + " file(s)  •  " +
+                                    FormatBytes(drive.AvailableFreeSpace) + " available on " + drive.Name +
+                                    "  •  " + ModelsDirectory;
+        }
+        catch (Exception ex)
+        {
+            ModelStorageText.Text = "Model storage unavailable: " + ex.Message;
+        }
     }
 
     private async Task<RuntimeHardwareSnapshot> TryFetchRuntimeHardwareSnapshotAsync()
@@ -2145,7 +2177,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     }
 
     private static string SettingsPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "model-manager-settings.json");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "model-manager-settings.json");
 
     private void LoadSavedGpuSettings()
     {
@@ -2214,7 +2246,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     }
 
     private static string GpuSettingsPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "model-manager-gpu-settings.json");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "model-manager-gpu-settings.json");
 
     private void SetStatus(string text)
     {

@@ -140,6 +140,8 @@ public sealed class LlmModelRegistryTests
 
         CollectionAssert.Contains(ModelHeuristics.DetectModelTags("nomic-embed-text-Q8_0.gguf").ToList(), "embedding");
         CollectionAssert.Contains(ModelHeuristics.DetectModelTags("llava-vision-Q4_0.gguf").ToList(), "vision");
+        Assert.AreEqual("vlm", ModelHeuristics.DetectModelType(null, "Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF-Q6_K.gguf"));
+        CollectionAssert.Contains(ModelHeuristics.DetectModelTags("Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF-Q6_K.gguf").ToList(), "vision");
     }
 
     [TestMethod]

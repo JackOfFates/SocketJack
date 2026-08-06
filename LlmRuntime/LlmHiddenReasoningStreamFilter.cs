@@ -5,9 +5,10 @@ namespace LlmRuntime;
 internal sealed class LlmHiddenReasoningStreamFilter
 {
     private static readonly string[] OpenTags = ["<think>", "<thinking>", "<thought>", "<analysis>"];
-    private static readonly string[] CloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>"];
+    private static readonly string[] CloseTags = ["</think>", "</thinking>", "</thought>", "</analysis>", "</end_of_thought>", "<|end_of_thought|>", "<|end_of_analysis|>"];
 
     private readonly StringBuilder _pending = new();
+    private readonly StringBuilder _reasoningDelta = new();
     private bool _insideHiddenReasoning;
 
     public bool SuppressedAny { get; private set; }
@@ -23,6 +24,13 @@ internal sealed class LlmHiddenReasoningStreamFilter
 
     public string Flush() => Drain(final: true);
 
+    public string TakeReasoningDelta()
+    {
+        string value = _reasoningDelta.ToString();
+        _reasoningDelta.Clear();
+        return value;
+    }
+
     private string Drain(bool final)
     {
         var visible = new StringBuilder();
@@ -34,6 +42,8 @@ internal sealed class LlmHiddenReasoningStreamFilter
                 if (closeIndex >= 0)
                 {
                     SuppressedAny = true;
+                    if (closeIndex > 0)
+                        _reasoningDelta.Append(_pending.ToString(0, closeIndex));
                     _pending.Remove(0, closeIndex + closeLength);
                     _insideHiddenReasoning = false;
                     continue;
@@ -42,17 +52,31 @@ internal sealed class LlmHiddenReasoningStreamFilter
                 if (final)
                 {
                     SuppressedAny = true;
+                    _reasoningDelta.Append(_pending);
                     _pending.Clear();
                     break;
                 }
 
                 int keep = LongestTagPrefixSuffixLength(_pending, CloseTags);
                 if (_pending.Length > keep)
-                    _pending.Remove(0, _pending.Length - keep);
+                {
+                    int reasoningLength = _pending.Length - keep;
+                    _reasoningDelta.Append(_pending.ToString(0, reasoningLength));
+                    _pending.Remove(0, reasoningLength);
+                }
                 break;
             }
 
             int openIndex = FindEarliestTag(_pending, OpenTags, out int openLength);
+            int orphanCloseIndex = FindEarliestTag(_pending, CloseTags, out int orphanCloseLength);
+            if (orphanCloseIndex >= 0 && (openIndex < 0 || orphanCloseIndex < openIndex))
+            {
+                if (orphanCloseIndex > 0)
+                    _reasoningDelta.Append(_pending.ToString(0, orphanCloseIndex));
+                _pending.Remove(0, orphanCloseIndex + orphanCloseLength);
+                SuppressedAny = true;
+                continue;
+            }
             if (openIndex >= 0)
             {
                 if (openIndex > 0)
@@ -67,6 +91,9 @@ internal sealed class LlmHiddenReasoningStreamFilter
                 continue;
             }
 
+            int orphanCloseHold = final ? 0 : LongestTagPrefixSuffixLength(_pending, CloseTags);
+            if (orphanCloseHold > 0)
+                break;
             int hold = final ? 0 : LongestTagPrefixSuffixLength(_pending, OpenTags);
             int emitLength = _pending.Length - hold;
             if (emitLength > 0)
