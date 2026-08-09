@@ -283,6 +283,20 @@ public sealed class JackLlmClient : IDisposable
         return result;
     }
 
+    public async Task<IReadOnlyList<ContextApprovalRequest>> GetContextApprovalsAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await GetJsonAsync("/api/context-approvals?sessionId=" + Uri.EscapeDataString(sessionId ?? ""), cancellationToken);
+        ContextApprovalEnvelope envelope = JsonSerializer.Deserialize<ContextApprovalEnvelope>(json.RootElement.GetRawText(), WireJson) ?? new();
+        return envelope.Approvals;
+    }
+
+    public async Task DecideContextApprovalAsync(string requestId, string sessionId, string action, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument json = await PostJsonAsync("/api/context-approvals", new { requestId, sessionId, action }, cancellationToken);
+        if (!ReadBool(json.RootElement, "ok"))
+            throw new InvalidOperationException(ReadString(json.RootElement, "error", "message"));
+    }
+
     public async Task<MobileDreamSettingsEnvelope> GetDreamSettingsAsync(string ownerKey = "", CancellationToken cancellationToken = default)
     {
         using JsonDocument json = await GetJsonAsync("/api/dream-settings" + OwnerQuery(ownerKey), cancellationToken);
@@ -345,7 +359,7 @@ public sealed class JackLlmClient : IDisposable
     public async Task ClearResolvedDreamJournalAsync(string ownerKey, CancellationToken cancellationToken = default) =>
         _ = await PostJsonAsync("/api/dream-journal/clear", new { ownerKey }, cancellationToken);
 
-    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string interactionMode, string sessionId, string projectId, string reasoningLevel, string sessionReasoningLevel, bool jackhammerEnabled, int jackhammerTurnBudget, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<ChatStreamEvent> StreamChatAsync(string model, string service, string interactionMode, string sessionId, string projectId, string reasoningLevel, string sessionReasoningLevel, bool modelSupportsTools, bool jackhammerEnabled, int jackhammerTurnBudget, IReadOnlyList<ChatMessage> messages, IReadOnlyList<AttachmentInfo> attachments, string? requestedStreamId = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         EnsureConnected();
         var uploaded = new List<object>();
@@ -365,6 +379,7 @@ public sealed class JackLlmClient : IDisposable
             ["streamId"] = streamId,
             ["reasoningLevel"] = string.IsNullOrWhiteSpace(reasoningLevel) ? "auto" : reasoningLevel,
             ["sessionReasoningLevel"] = string.IsNullOrWhiteSpace(sessionReasoningLevel) ? "inherit" : sessionReasoningLevel,
+            ["contextConsentUi"] = modelSupportsTools,
             ["jackhammer"] = new
             {
                 enabled = jackhammerEnabled,
@@ -397,7 +412,21 @@ public sealed class JackLlmClient : IDisposable
     }
 
     public async Task StopAsync(string streamId, CancellationToken cancellationToken = default) => await PostAsync("/api/chat-stream/stop", new { streamId }, cancellationToken);
-    public async Task SteerAsync(string streamId, string text, CancellationToken cancellationToken = default) => await PostAsync("/api/chat-stream/steer", new { streamId, text }, cancellationToken);
+    public async Task SteerAsync(string streamId, string sessionId, string text, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument response = await PostJsonAsync("/api/chat-stream/steer", new
+        {
+            streamId,
+            sessionId,
+            steering = text,
+            steeringId = "steer_mobile_" + Guid.NewGuid().ToString("N")
+        }, cancellationToken);
+        if (!ReadBool(response.RootElement, "ok") || !ReadBool(response.RootElement, "accepted"))
+        {
+            string error = ReadString(response.RootElement, "error");
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "The Workstation did not accept this JackHammer steering update." : error);
+        }
+    }
 
     public async Task<IReadOnlyList<ChatSessionInfo>> GetSessionsAsync(CancellationToken cancellationToken = default)
     {
@@ -736,6 +765,7 @@ public sealed class JackLlmClient : IDisposable
             MobileAlignmentSnapshot? alignment = TryProperty(root, "alignment", out JsonElement alignmentElement)
                 ? JsonSerializer.Deserialize<MobileAlignmentSnapshot>(alignmentElement.GetRawText(), WireJson)
                 : null;
+            string argumentsPreview = ReadString(root, "argumentsPreview", "arguments", "args");
             return new ChatStreamEvent
             {
                 Type = string.IsNullOrWhiteSpace(type) ? "delta" : type,
@@ -757,11 +787,39 @@ public sealed class JackLlmClient : IDisposable
                 ReasoningLevel = ReadString(routing, "effectiveReasoning", "effective_reasoning", "reasoningLevel"),
                 RouteReason = ReadString(routing, "reasonCode", "reason_code"),
                 PromptFingerprint = ReadString(routing, "promptFingerprint", "prompt_fingerprint"),
+                JackhammerSteps = ParseJackhammerSteps(ReadString(root, "name", "tool").Equals("goal_checkpoint", StringComparison.OrdinalIgnoreCase)
+                    ? (string.IsNullOrWhiteSpace(argumentsPreview) ? ReadString(root, "resultPreview", "result") : argumentsPreview)
+                    : ""),
                 Alignment = alignment,
                 RawJson = line
             };
         }
         catch { return new ChatStreamEvent { Type = "unknown", RawJson = line }; }
+    }
+
+    private static IReadOnlyList<JackhammerPlanStep> ParseJackhammerSteps(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<JackhammerPlanStep>();
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (!TryProperty(document.RootElement, "steps", out JsonElement steps) || steps.ValueKind != JsonValueKind.Array)
+                return Array.Empty<JackhammerPlanStep>();
+            var result = new List<JackhammerPlanStep>();
+            foreach (JsonElement element in steps.EnumerateArray().Take(8))
+            {
+                string value = element.ValueKind == JsonValueKind.String ? element.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                string[] parts = value.Split('|', 2, StringSplitOptions.TrimEntries);
+                string status = parts.Length == 2 ? parts[0].Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_') : "pending";
+                string action = parts.Length == 2 ? parts[1].Trim() : value.Trim();
+                if (status == "complete") status = "completed";
+                if (status is not ("pending" or "in_progress" or "completed" or "blocked")) status = "pending";
+                if (action.Length > 0) result.Add(new JackhammerPlanStep { Status = status, Action = action });
+            }
+            return result;
+        }
+        catch { return Array.Empty<JackhammerPlanStep>(); }
     }
 
     private static string BuildJackhammerWorkSummary(IEnumerable<ToolActivity> tools, bool isGenerating)

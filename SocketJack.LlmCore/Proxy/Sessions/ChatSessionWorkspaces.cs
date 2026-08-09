@@ -860,6 +860,7 @@ namespace SocketJack.Net
         private object BuildChatWorkspacePayload(string ownerKey, string sessionId, bool canEdit)
         {
             IReadOnlyList<ChatWorkspaceRootSnapshot> roots = GetChatWorkspaceRootsDiagnostics(ownerKey, sessionId);
+            List<object> rootPayloads = roots.Select(BuildChatWorkspaceRootPayload).ToList();
             return new
             {
                 ok = true,
@@ -867,11 +868,55 @@ namespace SocketJack.Net
                 ownerKey,
                 sessionId,
                 fallbackSandbox = roots.Any(root => root.IsSandbox),
-                primary = roots.FirstOrDefault(root => root.Role == WorkspaceRolePrimary),
-                sessionDirectories = roots.Where(root => !root.IsInherited).ToList(),
-                globalDirectories = roots.Where(root => root.IsInherited).ToList(),
-                effectiveRoots = roots,
-                ignoreRules = GetChatWorkspaceIgnoreRulesDiagnostics(ownerKey, sessionId)
+                primary = roots.Where(root => root.Role == WorkspaceRolePrimary).Select(BuildChatWorkspaceRootPayload).FirstOrDefault(),
+                sessionDirectories = roots.Where(root => !root.IsInherited).Select(BuildChatWorkspaceRootPayload).ToList(),
+                globalDirectories = roots.Where(root => root.IsInherited).Select(BuildChatWorkspaceRootPayload).ToList(),
+                effectiveRoots = rootPayloads,
+                ignoreRules = GetChatWorkspaceIgnoreRulesDiagnostics(ownerKey, sessionId).Select(BuildChatWorkspaceIgnoreRulePayload).ToList()
+            };
+        }
+
+        private static object BuildChatWorkspaceRootPayload(ChatWorkspaceRootSnapshot root)
+        {
+            if (root == null)
+                return null;
+            return new
+            {
+                id = root.Id,
+                ownerKey = root.OwnerKey,
+                sessionId = root.SessionId,
+                role = root.Role,
+                displayName = root.DisplayName,
+                path = root.IsSandbox ? "\\" : root.Path,
+                accessMode = root.AccessMode,
+                exists = root.Exists || root.IsSandbox,
+                isSandbox = root.IsSandbox,
+                isInherited = root.IsInherited,
+                parentId = root.ParentId,
+                createdUtc = root.CreatedUtc,
+                updatedUtc = root.UpdatedUtc
+            };
+        }
+
+        private static object BuildChatWorkspaceIgnoreRulePayload(ChatWorkspaceIgnoreRuleSnapshot rule)
+        {
+            if (rule == null)
+                return null;
+            return new
+            {
+                id = rule.Id,
+                ownerKey = rule.OwnerKey,
+                sessionId = rule.SessionId,
+                rootId = rule.RootId,
+                name = rule.Name,
+                pattern = rule.Pattern,
+                target = rule.Target,
+                caseSensitive = rule.CaseSensitive,
+                enabled = rule.Enabled,
+                builderMode = rule.BuilderMode,
+                builderStateJson = rule.BuilderStateJson,
+                createdUtc = rule.CreatedUtc,
+                updatedUtc = rule.UpdatedUtc
             };
         }
 

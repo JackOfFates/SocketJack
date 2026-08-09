@@ -25,6 +25,121 @@
             <Setter Property="BorderThickness" Value="1" />
         </Style>
 
+        <Style x:Key="BrowserNavButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="7" />
+            <Setter Property="Margin" Value="0,0,5,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="NavChrome"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="NavChrome" Property="Opacity" Value="0.68" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.36" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#25313F" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="BrowserBackButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource BrowserNavButtonStyle}">
+            <Setter Property="Foreground" Value="#60A5FA" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#A7D2FF" />
+                    <Setter Property="Background" Value="#18304A" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="BrowserForwardButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource BrowserNavButtonStyle}">
+            <Setter Property="Foreground" Value="#35D0BA" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#8AF2E3" />
+                    <Setter Property="Background" Value="#153A36" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="BrowserHomeButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource BrowserNavButtonStyle}">
+            <Setter Property="Foreground" Value="#B695F8" />
+            <Setter Property="Margin" Value="5,0,0,0" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#D6C4FF" />
+                    <Setter Property="Background" Value="#2D2346" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="BrowserAddressBoxStyle" TargetType="TextBox">
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Background" Value="#111720" />
+            <Setter Property="Foreground" Value="{StaticResource BrowserTextBrush}" />
+            <Setter Property="CaretBrush" Value="#60A5FA" />
+            <Setter Property="BorderBrush" Value="#344151" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="11,0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="SelectionBrush" Value="#5060A5FA" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="AddressChrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="AddressChrome" Property="Background" Value="#151D28" />
+                                <Setter TargetName="AddressChrome" Property="BorderBrush" Value="#496078" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="AddressChrome" Property="Background" Value="#0E151E" />
+                                <Setter TargetName="AddressChrome" Property="BorderBrush" Value="#60A5FA" />
+                                <Setter TargetName="AddressChrome" Property="BorderThickness" Value="1.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="#0E141B" />
             <Setter Property="Foreground" Value="{StaticResource BrowserTextBrush}" />
@@ -122,21 +237,73 @@
             <RowDefinition Height="34" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" LastChildFill="True" Margin="8,6">
-            <Button x:Name="BackButton" Width="34" Margin="0,0,6,0" Click="BackButton_Click" Content="Back" AutomationProperties.Name="Back" AutomationProperties.HelpText="Navigate back in the Hugging Face browser." />
-            <Button x:Name="ForwardButton" Width="54" Margin="0,0,6,0" Click="ForwardButton_Click" Content="Forward" AutomationProperties.Name="Forward" AutomationProperties.HelpText="Navigate forward in the Hugging Face browser." />
-            <Button x:Name="RefreshButton" Width="54" Margin="0,0,8,0" Click="RefreshButton_Click" Content="Refresh" AutomationProperties.Name="Refresh" AutomationProperties.HelpText="Reload the current Hugging Face page." />
-            <Button x:Name="HomeButton" Width="52" DockPanel.Dock="Right" Margin="8,0,0,0" Click="HomeButton_Click" Content="Home" AutomationProperties.Name="Home" AutomationProperties.HelpText="Open GGUF model search on Hugging Face." />
-            <TextBox x:Name="AddressBox"
-                     AutomationProperties.Name="Hugging Face address"
-                     AutomationProperties.HelpText="Type a Hugging Face URL and press Enter."
-                     VerticalContentAlignment="Center"
-                     KeyDown="AddressBox_KeyDown"
-                     Background="#181C22"
-                     Foreground="#F2F4F8"
-                     BorderBrush="#2D3440"
-                     Padding="10,0" />
-        </DockPanel>
+        <Border Grid.Row="0"
+                Margin="8,5"
+                Padding="5,1"
+                Background="#C51A202A"
+                BorderBrush="#303B49"
+                BorderThickness="1"
+                CornerRadius="9">
+            <DockPanel LastChildFill="True">
+                <Button x:Name="BackButton"
+                        Click="BackButton_Click"
+                        Style="{StaticResource BrowserBackButtonStyle}"
+                        ToolTip="Back"
+                        AutomationProperties.Name="Back"
+                        AutomationProperties.HelpText="Navigate back in the Hugging Face browser.">
+                    <Viewbox Width="15" Height="15">
+                        <Path Data="M 15,2 L 5,10 L 15,18"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="2.2"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"
+                              StrokeLineJoin="Round" />
+                    </Viewbox>
+                </Button>
+                <Button x:Name="ForwardButton"
+                        Click="ForwardButton_Click"
+                        Style="{StaticResource BrowserForwardButtonStyle}"
+                        ToolTip="Forward"
+                        AutomationProperties.Name="Forward"
+                        AutomationProperties.HelpText="Navigate forward in the Hugging Face browser.">
+                    <Viewbox Width="15" Height="15">
+                        <Path Data="M 5,2 L 15,10 L 5,18"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="2.2"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"
+                              StrokeLineJoin="Round" />
+                    </Viewbox>
+                </Button>
+                <Button x:Name="RefreshButton"
+                        Click="RefreshButton_Click"
+                        Content="Refresh"
+                        Visibility="Collapsed"
+                        AutomationProperties.Name="Refresh"
+                        AutomationProperties.HelpText="Reload the current Hugging Face page." />
+                <Button x:Name="HomeButton"
+                        DockPanel.Dock="Right"
+                        Click="HomeButton_Click"
+                        Style="{StaticResource BrowserHomeButtonStyle}"
+                        ToolTip="Hugging Face model search"
+                        AutomationProperties.Name="Home"
+                        AutomationProperties.HelpText="Open GGUF model search on Hugging Face.">
+                    <Viewbox Width="16" Height="16">
+                        <Path Data="M 3,9.5 L 10,3 L 17,9.5 M 5.5,8.5 L 5.5,17 L 14.5,17 L 14.5,8.5 M 8.5,17 L 8.5,12 L 11.5,12 L 11.5,17"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="1.8"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round"
+                              StrokeLineJoin="Round" />
+                    </Viewbox>
+                </Button>
+                <TextBox x:Name="AddressBox"
+                         Style="{StaticResource BrowserAddressBoxStyle}"
+                         AutomationProperties.Name="Hugging Face address"
+                         AutomationProperties.HelpText="Type a Hugging Face URL and press Enter."
+                         KeyDown="AddressBox_KeyDown" />
+            </DockPanel>
+        </Border>
 
         <Grid Grid.Row="1" Margin="8,0,8,0">
             <Grid.ColumnDefinitions>

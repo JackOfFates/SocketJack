@@ -15,11 +15,8 @@ Share any `FrameworkElement` as a live image stream, view it from another peer, 
 
 | Package / surface | Version | Target |
 |---|---:|---|
-| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.4` | `net8.0-windows7.0`, `net10.0-windows7.0` |
-| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.8` | `.NET Standard 2.1` |
-| `JackLLM Workstation` | `2026.0` | WPF app metadata |
-| `JackLLM Mobile` | `1.0` | Android app |
-| `JackLLM Workstation Linux` | `1:26.0.1` | Debian-compatible package version for the 2026 line |
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.5` | `net8.0-windows7.0`, `net10.0-windows7.0` |
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.9` | `.NET Standard 2.1` |
 
 <details open>
 <summary><strong>#Install</strong> - add WPF remote control to a SocketJack app</summary>
@@ -47,7 +44,7 @@ Use this package when the network should see, share, or control a WPF UI. Use th
 | Viewer integration | Decode incoming frames into WPF image controls with a small extension-method surface. |
 | Remote input | Forward pointer movement, clicks, wheel events, text, and keyboard commands to WPF. |
 | Peer transport | Ride on SocketJack connections, peer identity, and metadata flows. |
-| Browser admin | Power JackLLM Workstation Remote Admin through the web console. |
+| Browser control | Power browser-backed viewing and remote administration for WPF applications. |
 | Shared core stack | Benefit from SocketJack 2026 TCP, UDP, HTTP, WebSocket, `MutableTcpServer`, RTMP, SQL/TDS, TLS, compression, and P2P support. |
 
 </details>
@@ -59,7 +56,7 @@ Use this package when the network should see, share, or control a WPF UI. Use th
 2. SocketJack.WPF captures the element as JPEG frames at the configured frame rate.
 3. A viewer renders frames into an `Image`.
 4. Viewer input is translated into WPF actions and sent back to the original element.
-5. JackLLM Remote Admin uses the same path to let the browser operate the WPF JackLLM Workstation UI.
+5. Browser clients can use the same path to operate an authorized WPF interface.
 
 ```csharp
 using SocketJack.WPF;
@@ -71,34 +68,11 @@ IDisposable viewerHandle = client.ViewShare(SharedImage, sharerPeer);
 </details>
 
 <details>
-<summary><strong>#JackLLM Remote Admin</strong> - browser control for the workstation UI</summary>
-
-JackLLM Workstation can register a WPF host with SocketJack.WPF so the browser console can view and operate the desktop GUI. This is useful for remote workstations where the model server, proxy, billing, permissions, diagnostics, and node metadata are managed from a browser.
-
-![JackLLM Remote Admin](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/3.jpg)
-
-</details>
-
-<details>
-<summary><strong>#JackLLM Mobile</strong> - Android companion for workstation sessions</summary>
-
-JackLLM Mobile extends the JackLLM Workstation flow to Android. It can send prompts, view assistant responses, monitor model and compute status, and reopen workstation sessions from a phone or tablet.
-
-![JackLLM Mobile chat](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-chat.png)
-
-![JackLLM Mobile sessions](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-sessions.png)
-
-Project README: [JackLLM.Android/README.md](https://github.com/JackOfFates/SocketJack/blob/master/JackLLM.Android/README.md)
-
-</details>
-
-<details>
 <summary><strong>#Documentation</strong> - examples and related packages</summary>
 
 - [Examples](https://github.com/JackOfFates/SocketJack/blob/master/examples.md)
 - [SocketJack.WPF package](https://www.nuget.org/packages/SocketJack.WPF)
 - [SocketJack package](https://www.nuget.org/packages/SocketJack)
-- [JackLLM Mobile README](https://github.com/JackOfFates/SocketJack/blob/master/JackLLM.Android/README.md)
 - [GitHub repository](https://github.com/JackOfFates/SocketJack)
 
 </details>

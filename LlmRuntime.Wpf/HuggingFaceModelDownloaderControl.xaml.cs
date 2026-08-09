@@ -26,6 +26,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
     private readonly HuggingFaceIdealModelScanner _idealModelScanner = new(ApiClient);
     private readonly Dictionary<string, IdealModelCategoryCacheEntry> _idealModelCache = new(StringComparer.OrdinalIgnoreCase);
+    private HuggingFaceIdealModelThresholds _idealModelThresholds;
     private ModelDownloadService? _downloadService;
     private ModelDownloadService? _completeModelDownloadService;
     private ModelConversionService? _conversionService;
@@ -43,10 +44,12 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
     private string _activeProgressDetail = "";
     private string _lastNavigatedUrl = HuggingFaceModelsUrl;
     private bool _disposed;
+    private int _browserGeneration;
 
     public HuggingFaceModelDownloaderControl()
     {
         InitializeComponent();
+        _idealModelThresholds = ReadIdealModelThresholds();
         ModelsDirectory = Path.Combine(Environment.CurrentDirectory, "Models");
         CompleteModelsDirectory = Path.Combine(Environment.CurrentDirectory, "CompleteModels");
         DownloadQueueListBox.ItemsSource = _downloadQueueItems;
@@ -133,6 +136,8 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
     public event Action<string>? StatusChanged;
 
+    public event Action<int>? IdealModelCountChanged;
+
     public void QueueModelCandidate(
         ModelFileCandidate candidate,
         string? bearerToken = null,
@@ -192,21 +197,13 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
     public async Task InitializeBrowserAsync()
     {
-        if (_browserReady)
+        if (_disposed || _browserReady)
             return;
 
         Directory.CreateDirectory(ModelsDirectory);
         Directory.CreateDirectory(CompleteModelsDirectory);
-        _downloadService = new ModelDownloadService(ModelsDirectory);
-        _downloadService.ProgressChanged += OnDownloadProgress;
-        _downloadService.DownloadCompleted += OnDownloadCompleted;
-        _downloadService.DownloadFailed += OnDownloadFailed;
-        _completeModelDownloadService = new ModelDownloadService(CompleteModelsDirectory);
-        _completeModelDownloadService.ProgressChanged += OnDownloadProgress;
-        _completeModelDownloadService.DownloadCompleted += OnDownloadCompleted;
-        _completeModelDownloadService.DownloadFailed += OnDownloadFailed;
-        _conversionService = new ModelConversionService(CompleteModelsDirectory);
-        _conversionService.JobChanged += OnConversionJobChanged;
+        EnsureDownloadServices();
+        EnsureBrowserElement();
 
         if (ShouldUseExternalBrowserMode())
         {
@@ -225,6 +222,11 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         }
 
         _browserReady = true;
+        _externalBrowserMode = false;
+        _browserGeneration++;
+        BrowserHost.Visibility = Visibility.Visible;
+        Browser.Visibility = Visibility.Visible;
+        ExternalBrowserFallbackPanel.Visibility = Visibility.Collapsed;
         Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Browser.CoreWebView2.Settings.AreDevToolsEnabled = false;
         Browser.CoreWebView2.NavigationStarting += OnNavigationStarting;
@@ -233,6 +235,41 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         Browser.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         Browser.CoreWebView2.DownloadStarting += OnDownloadStarting;
         Navigate(ReadSavedBrowserUrl());
+    }
+
+    private void EnsureDownloadServices()
+    {
+        if (_downloadService == null)
+        {
+            _downloadService = new ModelDownloadService(ModelsDirectory);
+            _downloadService.ProgressChanged += OnDownloadProgress;
+            _downloadService.DownloadCompleted += OnDownloadCompleted;
+            _downloadService.DownloadFailed += OnDownloadFailed;
+        }
+
+        if (_completeModelDownloadService == null)
+        {
+            _completeModelDownloadService = new ModelDownloadService(CompleteModelsDirectory);
+            _completeModelDownloadService.ProgressChanged += OnDownloadProgress;
+            _completeModelDownloadService.DownloadCompleted += OnDownloadCompleted;
+            _completeModelDownloadService.DownloadFailed += OnDownloadFailed;
+        }
+
+        if (_conversionService == null)
+        {
+            _conversionService = new ModelConversionService(CompleteModelsDirectory);
+            _conversionService.JobChanged += OnConversionJobChanged;
+        }
+    }
+
+    private void EnsureBrowserElement()
+    {
+        if (Browser != null && ReferenceEquals(BrowserHost.Child, Browser))
+            return;
+
+        Browser = new Microsoft.Web.WebView2.Wpf.WebView2();
+        System.Windows.Automation.AutomationProperties.SetName(Browser, "Hugging Face model browser");
+        BrowserHost.Child = Browser;
     }
 
     private static bool ShouldUseExternalBrowserMode()
@@ -328,33 +365,43 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         if (!_browserReady || Browser.CoreWebView2 == null)
             return;
 
+        int browserGeneration = _browserGeneration;
         string url = Browser.CoreWebView2.Source;
         IReadOnlyList<string> categoryIds = GetIdealModelCategoryIdsForUrl(url);
         if (categoryIds.Count == 0)
             return;
 
         string title = BuildIdealModelsTitle(categoryIds);
+        HuggingFaceIdealModelHardwareProfile hardware = BuildIdealModelHardwareProfile();
         string loadingPayload = JsonSerializer.Serialize(new
         {
             title,
             loading = true,
+            thresholds = _idealModelThresholds,
+            hardware,
             categories = categoryIds.Select(id => BuildIdealModelCategoryPlaceholder(id)).ToArray()
         }, BrowserJsonOptions);
         await Browser.CoreWebView2.ExecuteScriptAsync(BuildIdealModelsInjectionScript(loadingPayload)).ConfigureAwait(true);
 
         try
         {
-            IReadOnlyList<HuggingFaceIdealModelCategoryResult> categories = await GetIdealModelCategoryResultsAsync(categoryIds).ConfigureAwait(true);
+            IReadOnlyList<HuggingFaceIdealModelCategoryResult> categories = await GetIdealModelCategoryResultsAsync(categoryIds, hardware).ConfigureAwait(true);
+            if (!_browserReady || browserGeneration != _browserGeneration || Browser?.CoreWebView2 == null)
+                return;
+
             string payload = JsonSerializer.Serialize(new
             {
                 title,
                 loading = false,
+                thresholds = _idealModelThresholds,
+                hardware,
                 categories
             }, BrowserJsonOptions);
             await Browser.CoreWebView2.ExecuteScriptAsync(BuildIdealModelsInjectionScript(payload)).ConfigureAwait(true);
 
             int count = categories.Sum(category => category.Models.Count);
-            SetStatus("Showing " + count.ToString(CultureInfo.InvariantCulture) + " ideal model suggestion(s) for this Hugging Face search.");
+            IdealModelCountChanged?.Invoke(count);
+            SetStatus("Ready");
         }
         catch (Exception ex)
         {
@@ -363,6 +410,8 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
                 title,
                 loading = false,
                 error = ex.Message,
+                thresholds = _idealModelThresholds,
+                hardware,
                 categories = Array.Empty<HuggingFaceIdealModelCategoryResult>()
             }, BrowserJsonOptions);
             await Browser.CoreWebView2.ExecuteScriptAsync(BuildIdealModelsInjectionScript(payload)).ConfigureAwait(true);
@@ -370,7 +419,9 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         }
     }
 
-    private async Task<IReadOnlyList<HuggingFaceIdealModelCategoryResult>> GetIdealModelCategoryResultsAsync(IReadOnlyList<string> categoryIds)
+    private async Task<IReadOnlyList<HuggingFaceIdealModelCategoryResult>> GetIdealModelCategoryResultsAsync(
+        IReadOnlyList<string> categoryIds,
+        HuggingFaceIdealModelHardwareProfile hardware)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         string[] missing = categoryIds
@@ -383,7 +434,16 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         {
             HuggingFaceAuthContext auth = await GetHuggingFaceAuthAsync().ConfigureAwait(true);
             IReadOnlyList<HuggingFaceIdealModelCategoryResult> fresh =
-                await _idealModelScanner.ScanAsync(missing, 5, auth.Cookies, auth.BearerToken).ConfigureAwait(true);
+                await _idealModelScanner.ScanAsync(
+                    missing,
+                    new HuggingFaceIdealModelScanOptions
+                    {
+                        ModelsPerCategory = _idealModelThresholds.ModelLimit,
+                        Thresholds = _idealModelThresholds,
+                        Hardware = hardware
+                    },
+                    auth.Cookies,
+                    auth.BearerToken).ConfigureAwait(true);
             DateTimeOffset loadedAt = DateTimeOffset.UtcNow;
             foreach (HuggingFaceIdealModelCategoryResult result in fresh)
                 _idealModelCache[result.Id] = new IdealModelCategoryCacheEntry(result, loadedAt);
@@ -481,64 +541,180 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         return """
 (() => {
   const payload = JSON.parse(__PAYLOAD__);
+  const stateKey = '__jackllmIdealModelsState';
+  const previousState = window[stateKey];
+  if (previousState && typeof previousState.cleanup === 'function') previousState.cleanup();
   const old = document.getElementById('llm-runtime-ideal-models-panel');
   if (old) old.remove();
 
   const categories = Array.isArray(payload.categories) ? payload.categories : [];
+  const thresholds = payload.thresholds || {};
+  const hardware = payload.hardware || {};
   const esc = (value) => String(value ?? '').replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-  const fmt = (value) => {
+  const fmtCount = (value) => {
     const number = Number(value || 0);
     if (number >= 1000000000) return (number / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B';
     if (number >= 1000000) return (number / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
     if (number >= 1000) return (number / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
     return String(Math.max(0, number));
   };
+  const fmtBytes = (value) => {
+    const number = Number(value || 0);
+    if (!number) return 'Unknown VRAM';
+    const gib = number / 1073741824;
+    return (gib >= 10 ? gib.toFixed(0) : gib.toFixed(1)) + ' GB VRAM';
+  };
+  const numberValue = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
   const hasModels = categories.some(category => Array.isArray(category.models) && category.models.length);
   if (!payload.loading && !payload.error && !hasModels && !categories.length) return;
 
+  let style = document.getElementById('llm-runtime-ideal-models-style');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'llm-runtime-ideal-models-style';
+    document.head.appendChild(style);
+  }
+  style.textContent = `
+    #llm-runtime-ideal-models-panel{--im-bg:#fff;--im-subtle:#f7f7f8;--im-card:#fff;--im-text:#111827;--im-muted:#6b7280;--im-border:#d8dee8;--im-accent:#f5a524;--im-accent-soft:#fff7e6;--im-good:#067647;--im-good-soft:#ecfdf3;margin:12px auto 18px;max-width:1120px;color:var(--im-text);font:inherit}
+    #llm-runtime-ideal-models-panel.im-dark{--im-bg:#111827;--im-subtle:#171e2b;--im-card:#0f1623;--im-text:#f3f4f6;--im-muted:#9ca3af;--im-border:#303a4b;--im-accent:#f5a524;--im-accent-soft:#2b2112;--im-good:#5ee9a8;--im-good-soft:#11271f}
+    #llm-runtime-ideal-models-panel *{box-sizing:border-box}
+    #llm-runtime-ideal-models-panel details>summary{list-style:none}
+    #llm-runtime-ideal-models-panel details>summary::-webkit-details-marker{display:none}
+    .im-shell{border:1px solid var(--im-border);border-radius:14px;background:var(--im-bg);box-shadow:0 7px 24px rgba(15,23,42,.08);overflow:hidden}
+    .im-tab{display:flex;align-items:center;gap:10px;min-height:48px;padding:10px 14px;cursor:pointer;user-select:none;position:relative;background:var(--im-subtle);border-radius:14px;color:var(--im-text)}
+    .im-tab:focus-visible,.im-button:focus-visible,.im-category>summary:focus-visible,.im-model>summary:focus-visible{outline:2px solid #3b82f6;outline-offset:2px}
+    .im-feature-orb{width:10px;height:10px;border-radius:999px;background:linear-gradient(135deg,#ff4d8d,#8b5cf6,#22d3ee,#34d399,#fbbf24);background-size:300% 300%;animation:im-rgb 4s linear infinite;box-shadow:0 0 11px rgba(139,92,246,.8);flex:none}
+    .im-tab::after{content:'';position:absolute;inset:-1px;border-radius:14px;padding:1px;background:linear-gradient(90deg,#ff4d8d,#8b5cf6,#22d3ee,#34d399,#fbbf24,#ff4d8d);background-size:300% 100%;animation:im-rgb 5s linear infinite;pointer-events:none;opacity:.82;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude}
+    .im-shell[open]>.im-tab::after{opacity:.28}.im-tab-title{font-weight:700}.im-tab-copy{font-size:12px;color:var(--im-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}.im-chevron{font-size:13px;color:var(--im-muted);transition:transform .18s}.im-shell[open]>.im-tab .im-chevron{transform:rotate(180deg)}
+    .im-count,.im-badge{display:inline-flex;align-items:center;border:1px solid var(--im-border);border-radius:999px;padding:2px 7px;font-size:11px;line-height:18px;color:var(--im-muted);background:var(--im-bg);white-space:nowrap}.im-badge.good{color:var(--im-good);background:var(--im-good-soft);border-color:color-mix(in srgb,var(--im-good) 40%,var(--im-border))}.im-badge.accent{color:var(--im-accent);background:var(--im-accent-soft)}
+    .im-body{padding:15px;background:var(--im-bg);border-top:1px solid var(--im-border)}.im-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}.im-heading{font-size:16px;font-weight:750}.im-subheading{font-size:12px;line-height:1.5;color:var(--im-muted);margin-top:3px}.im-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+    .im-button{appearance:none;border:1px solid var(--im-border);border-radius:8px;background:var(--im-subtle);color:var(--im-text);padding:7px 10px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;text-decoration:none}.im-button:hover{border-color:var(--im-accent);background:var(--im-accent-soft)}.im-button.primary{background:var(--im-accent);border-color:var(--im-accent);color:#17120a}
+    .im-thresholds{display:none;margin:0 0 12px;padding:12px;border:1px solid var(--im-border);border-radius:10px;background:var(--im-subtle)}.im-thresholds.open{display:block}.im-threshold-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.im-field{display:grid;gap:5px;font-size:11px;color:var(--im-muted)}.im-field input{width:100%;height:34px;border:1px solid var(--im-border);border-radius:7px;background:var(--im-bg);color:var(--im-text);padding:5px 8px;font:inherit}.im-threshold-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}.im-note{font-size:11px;line-height:1.4;color:var(--im-muted)}
+    .im-hardware{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:9px 11px;margin-bottom:10px;border:1px solid var(--im-border);border-radius:9px;background:var(--im-subtle);font-size:12px}.im-hardware strong{font-weight:650}.im-hardware .im-note{margin-left:auto}
+    .im-category{border-top:1px solid var(--im-border)}.im-category:first-of-type{border-top:0}.im-category>summary{display:flex;align-items:center;gap:9px;padding:11px 2px;cursor:pointer}.im-category-title{font-weight:650}.im-category-copy{font-size:12px;color:var(--im-muted);flex:1}.im-category-body{padding:0 0 12px}.im-category-chevron{color:var(--im-muted);font-size:12px;transition:transform .18s}.im-category[open] .im-category-chevron{transform:rotate(90deg)}
+    .im-model-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:9px}.im-model{border:1px solid var(--im-border);border-radius:10px;background:var(--im-card);overflow:hidden}.im-model>summary{padding:11px;cursor:pointer}.im-model:hover{border-color:color-mix(in srgb,var(--im-accent) 55%,var(--im-border))}.im-model-name{font-weight:650;overflow-wrap:anywhere;margin-bottom:7px}.im-badges{display:flex;gap:5px;flex-wrap:wrap}.im-model-detail{border-top:1px solid var(--im-border);padding:10px 11px;background:var(--im-subtle)}.im-model-detail p{font-size:12px;line-height:1.45;margin:0 0 8px;color:var(--im-muted)}.im-model-detail .im-estimate{color:var(--im-text)}.im-model-footer{display:flex;justify-content:space-between;align-items:center;gap:8px}.im-tags{display:flex;gap:4px;flex-wrap:wrap;min-width:0}.im-tag{font-size:10px;color:var(--im-muted)}
+    .im-error{color:#dc2626;font-size:12px}.im-empty{padding:9px 0;font-size:12px;color:var(--im-muted)}
+    [data-im-tooltip]{position:relative}[data-im-tooltip]:hover::before{content:attr(data-im-tooltip);position:absolute;z-index:2147483647;left:12px;top:calc(100% + 8px);width:min(310px,80vw);padding:8px 10px;border-radius:8px;background:#111827;color:#fff;font-size:11px;font-weight:500;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.3);pointer-events:none}
+    @keyframes im-rgb{0%{background-position:0% 50%}100%{background-position:300% 50%}}
+    @media (prefers-reduced-motion:reduce){.im-feature-orb,.im-tab::after{animation:none}}
+    @media (max-width:680px){.im-tab-copy{display:none}.im-head{display:block}.im-actions{justify-content:flex-start;margin-top:10px}.im-category-copy{display:none}.im-hardware .im-note{width:100%;margin-left:0}}
+  `;
+
+  const suppressInferencePromotion = () => {
+    const marker = Array.from(document.querySelectorAll('body *')).find(element => {
+      if (element.children.length > 3) return false;
+      const text = String(element.textContent || '').replace(/\s+/g, ' ').trim();
+      return /Run 15,000\+? Models Instantly/i.test(text);
+    });
+    if (marker) {
+      let popup = marker;
+      for (let cursor = marker; cursor && cursor !== document.body; cursor = cursor.parentElement) {
+        const text = String(cursor.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!/Run 15,000\+? Models Instantly/i.test(text) || !/Browse available models/i.test(text) || !/Dismiss/i.test(text)) continue;
+        const rect = cursor.getBoundingClientRect();
+        const position = getComputedStyle(cursor).position;
+        if (rect.width > 180 && rect.height > 120 && rect.width < window.innerWidth * .82 && rect.height < window.innerHeight * .88)
+          popup = cursor;
+        if (position === 'fixed' || position === 'absolute') break;
+      }
+      popup.setAttribute('data-jackllm-hidden-inference-promo', 'true');
+      popup.remove();
+      document.documentElement.style.removeProperty('overflow');
+      document.body.style.removeProperty('overflow');
+    }
+  };
+  suppressInferencePromotion();
+  const inferenceObserver = new MutationObserver(suppressInferencePromotion);
+  inferenceObserver.observe(document.documentElement, { childList:true, subtree:true });
+
   const card = (model) => {
     const tags = Array.isArray(model.tags) ? model.tags.slice(0, 4).filter(Boolean) : [];
-    const tagHtml = tags.map(tag => `<span style="border:1px solid #30363d;border-radius:999px;padding:2px 7px;color:#8b949e;font-size:11px">${esc(tag)}</span>`).join('');
-    const meta = [model.pipelineTag || '', model.libraryName || '', fmt(model.downloads) + ' downloads', model.likes ? fmt(model.likes) + ' likes' : ''].filter(Boolean).join(' | ');
-    return `<a href="${esc(model.url)}" target="_self" data-llm-runtime-ideal-model="true" style="display:block;min-width:220px;max-width:320px;flex:1 1 240px;text-decoration:none;border:1px solid #30363d;border-radius:10px;background:#0d1117;color:#c9d1d9;padding:12px;box-shadow:0 8px 20px rgba(0,0,0,.16)">
-      <div style="font-weight:700;color:#f0f6fc;margin-bottom:5px;overflow-wrap:anywhere">${esc(model.modelId)}</div>
-      <div style="font-size:12px;color:#8b949e;margin-bottom:8px">${esc(meta)}</div>
-      <div style="font-size:12px;color:#c9d1d9;margin-bottom:10px;line-height:1.35">${esc(model.reason || 'Open the model card and scan downloadable files.')}</div>
-      <div style="display:flex;flex-wrap:wrap;gap:5px">${tagHtml}</div>
-    </a>`;
+    const tagHtml = tags.map(tag => `<span class="im-tag">#${esc(tag)}</span>`).join('');
+    const speed = numberValue(model.estimatedTokensPerSecond);
+    const vram = numberValue(model.estimatedVramBytes);
+    const parameterCount = numberValue(model.parameterCountBillion);
+    const metrics = [
+      speed > 0 ? `<span class="im-badge good">~${speed.toFixed(speed >= 10 ? 0 : 1)} tok/s</span>` : '',
+      vram > 0 ? `<span class="im-badge accent">${esc(fmtBytes(vram))}</span>` : '',
+      parameterCount > 0 ? `<span class="im-badge">${parameterCount.toFixed(parameterCount >= 10 ? 0 : 1)}B · ${numberValue(model.quantizationBits).toFixed(1).replace(/\.0$/, '')}-bit</span>` : '',
+      model.fitLabel ? `<span class="im-badge">${esc(model.fitLabel)}</span>` : ''
+    ].filter(Boolean).join('');
+    const popularity = [fmtCount(model.downloads) + ' downloads', model.likes ? fmtCount(model.likes) + ' likes' : ''].filter(Boolean).join(' · ');
+    return `<details class="im-model">
+      <summary><div class="im-model-name">${esc(model.modelId)}</div><div class="im-badges">${metrics || `<span class="im-badge">Estimate unavailable</span>`}</div></summary>
+      <div class="im-model-detail">
+        <p class="im-estimate">${esc(model.hardwareEstimate || 'Open the model card to inspect exact files and compatibility.')}</p>
+        <p>${esc(model.reason || 'Open the model card and scan downloadable files.')}</p>
+        <div class="im-model-footer"><div><div class="im-note">${esc(popularity)}</div><div class="im-tags">${tagHtml}</div></div><a class="im-button" href="${esc(model.url)}" target="_self" data-llm-runtime-ideal-model="true">Open model</a></div>
+      </div>
+    </details>`;
   };
   const categoryBlocks = categories.map(category => {
     const models = Array.isArray(category.models) ? category.models : [];
     const body = payload.loading
-      ? '<div style="color:#8b949e;font-size:13px">Scanning Hugging Face...</div>'
+      ? '<div class="im-empty">Scanning and estimating local performance…</div>'
       : models.length
-        ? `<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:2px">${models.map(card).join('')}</div>`
-        : `<div style="color:#d29922;font-size:13px">${esc(category.error || 'No ideal models found for this category.')}</div>`;
-    return `<section style="margin-top:12px">
-      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px">
-        <div style="font-weight:700;color:#f0f6fc">${esc(category.label || 'Models')}</div>
-        <div style="font-size:12px;color:#8b949e">${esc(category.description || '')}</div>
-      </div>
-      ${body}
-    </section>`;
+        ? `<div class="im-model-grid">${models.map(card).join('')}</div>`
+        : `<div class="im-empty">${esc(category.error || 'No models matched these hardware thresholds.')}</div>`;
+    return `<details class="im-category">
+      <summary><span class="im-category-chevron">›</span><span class="im-category-title">${esc(category.label || 'Models')}</span><span class="im-count">${models.length}</span><span class="im-category-copy">${esc(category.description || '')}</span></summary>
+      <div class="im-category-body">${body}</div>
+    </details>`;
   }).join('');
 
-  const panel = document.createElement('section');
+  const panel = document.createElement('details');
   panel.id = 'llm-runtime-ideal-models-panel';
-  panel.style.cssText = 'margin:16px auto 18px;max-width:1120px;border:1px solid #30363d;border-radius:12px;background:#161b22;color:#c9d1d9;font-family:Inter,Arial,sans-serif;padding:14px 16px;box-shadow:0 12px 28px rgba(0,0,0,.18);';
-  panel.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
-      <div>
-        <div style="font-size:16px;font-weight:800;color:#f0f6fc">${esc(payload.title || 'Ideal Models')}</div>
-        <div style="font-size:12px;color:#8b949e;margin-top:3px">SocketJack suggestions for the current Hugging Face model search. Open a card to scan and download from that repository.</div>
+  panel.className = 'im-shell';
+  const bodyColor = getComputedStyle(document.body).backgroundColor || '';
+  const rgb = bodyColor.match(/\d+/g);
+  const darkPage = document.documentElement.classList.contains('dark') || (rgb && rgb.length >= 3 && (Number(rgb[0]) + Number(rgb[1]) + Number(rgb[2])) / 3 < 128);
+  if (darkPage) panel.classList.add('im-dark');
+  const totalModels = categories.reduce((sum, category) => sum + (Array.isArray(category.models) ? category.models.length : 0), 0);
+  const hardwareName = hardware.displayName || 'this PC';
+  panel.innerHTML = `<summary class="im-tab" data-im-tooltip="Hardware-aware model suggestions. Expand to tune VRAM, speed, size, and scrape limits.">
+      <span class="im-feature-orb" aria-hidden="true"></span><span class="im-tab-title">${esc(payload.title || 'Ideal Models')}</span><span class="im-count">${payload.loading ? 'scanning' : totalModels}</span><span class="im-tab-copy">Ranked for ${esc(hardwareName)}</span><span class="im-chevron">⌄</span>
+    </summary>
+    <div class="im-body">
+      <div class="im-head"><div><div class="im-heading">Models matched to your workstation</div><div class="im-subheading">Estimates use detected GPU memory, model size, quantization, and expected memory bandwidth. Actual speed varies by backend and context length.</div></div><div class="im-actions"><button type="button" class="im-button" id="im-threshold-toggle">Thresholds</button><button type="button" class="im-button" id="im-refresh">Refresh</button></div></div>
+      <div class="im-thresholds" id="im-thresholds">
+        <div class="im-threshold-grid">
+          <label class="im-field">Scrape limit / category<input id="im-limit" type="number" min="1" max="20" step="1" value="${numberValue(thresholds.modelLimit, 6)}"></label>
+          <label class="im-field">Minimum tok/s<input id="im-tokens" type="number" min="0" max="1000" step="1" value="${numberValue(thresholds.minimumTokensPerSecond)}"></label>
+          <label class="im-field">Maximum VRAM use %<input id="im-vram" type="number" min="25" max="100" step="1" value="${numberValue(thresholds.maxVramUsagePercent, 90)}"></label>
+          <label class="im-field">Minimum size (B)<input id="im-min-params" type="number" min="0" max="1000" step="0.5" value="${numberValue(thresholds.minimumParametersBillion)}"></label>
+          <label class="im-field">Maximum size (B, 0 = any)<input id="im-max-params" type="number" min="0" max="1000" step="0.5" value="${numberValue(thresholds.maximumParametersBillion)}"></label>
+        </div>
+        <div class="im-threshold-foot"><span class="im-note">Limits are saved for future Hugging Face searches.</span><button type="button" class="im-button primary" id="im-apply">Apply thresholds</button></div>
       </div>
-      ${payload.error ? `<div style="color:#f85149;font-size:12px;text-align:right">${esc(payload.error)}</div>` : ''}
-    </div>
-    ${categoryBlocks}`;
+      <div class="im-hardware"><strong>${esc(hardwareName)}</strong><span class="im-badge accent">${esc(fmtBytes(hardware.videoMemoryBytes))}</span>${hardware.estimatedMemoryBandwidthGbps ? `<span class="im-badge">~${numberValue(hardware.estimatedMemoryBandwidthGbps).toFixed(0)} GB/s</span>` : ''}<span class="im-note">tok/s is an estimate, not a benchmark</span></div>
+      ${payload.error ? `<div class="im-error">${esc(payload.error)}</div>` : ''}
+      ${categoryBlocks}
+    </div>`;
 
   panel.querySelectorAll('a[data-llm-runtime-ideal-model]').forEach(link => {
     link.addEventListener('click', event => {
       event.preventDefault();
       window.location.href = link.href;
+    });
+  });
+  const post = (message) => {
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(JSON.stringify(message));
+  };
+  panel.querySelector('#im-threshold-toggle')?.addEventListener('click', event => {
+    event.preventDefault();
+    const form = panel.querySelector('#im-thresholds');
+    form?.classList.toggle('open');
+  });
+  panel.querySelector('#im-refresh')?.addEventListener('click', event => { event.preventDefault(); post({ action:'refresh-ideal-models' }); });
+  panel.querySelector('#im-apply')?.addEventListener('click', event => {
+    event.preventDefault();
+    post({
+      action:'ideal-model-thresholds',
+      modelLimit:numberValue(panel.querySelector('#im-limit')?.value, 6),
+      minimumTokensPerSecond:numberValue(panel.querySelector('#im-tokens')?.value),
+      maxVramUsagePercent:numberValue(panel.querySelector('#im-vram')?.value, 90),
+      minimumParametersBillion:numberValue(panel.querySelector('#im-min-params')?.value),
+      maximumParametersBillion:numberValue(panel.querySelector('#im-max-params')?.value)
     });
   });
 
@@ -558,6 +734,37 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
     resultList.parentElement.insertBefore(panel, resultList);
   else
     main.prepend(panel);
+
+  const isModelFilterInput = (input) => {
+    if (!(input instanceof HTMLInputElement)) return false;
+    const hint = [input.type, input.name, input.id, input.placeholder, input.getAttribute('aria-label')]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (/filter/.test(hint) && /model|search|text|query/.test(hint)) return true;
+    if (/search/.test(hint) && /model/.test(hint)) return true;
+    return input.type === 'search' && !!input.closest('main') && !input.closest('header,nav');
+  };
+  const syncPanelWithModelFilter = () => {
+    const hasFilterText = Array.from(document.querySelectorAll('input'))
+      .filter(isModelFilterInput)
+      .some(input => String(input.value || '').trim().length > 0);
+    panel.hidden = hasFilterText;
+    panel.setAttribute('aria-hidden', hasFilterText ? 'true' : 'false');
+  };
+  const filterObserver = new MutationObserver(syncPanelWithModelFilter);
+  filterObserver.observe(main, { childList: true, subtree: true });
+  document.addEventListener('input', syncPanelWithModelFilter, true);
+  document.addEventListener('change', syncPanelWithModelFilter, true);
+  window[stateKey] = {
+    cleanup: () => {
+      document.removeEventListener('input', syncPanelWithModelFilter, true);
+      document.removeEventListener('change', syncPanelWithModelFilter, true);
+      filterObserver.disconnect();
+      inferenceObserver.disconnect();
+    }
+  };
+  syncPanelWithModelFilter();
 })();
 """.Replace("__PAYLOAD__", escapedPayload);
     }
@@ -864,7 +1071,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 """.Replace("__PAYLOAD__", escapedPayload);
     }
 
-    private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         try
         {
@@ -875,6 +1082,29 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
                 return;
 
             string action = actionElement.GetString() ?? "";
+            if (string.Equals(action, "ideal-model-thresholds", StringComparison.OrdinalIgnoreCase))
+            {
+                _idealModelThresholds = NormalizeIdealModelThresholds(new HuggingFaceIdealModelThresholds
+                {
+                    ModelLimit = ReadJsonInt(root, "modelLimit", _idealModelThresholds.ModelLimit),
+                    MinimumTokensPerSecond = ReadJsonDouble(root, "minimumTokensPerSecond", _idealModelThresholds.MinimumTokensPerSecond),
+                    MaxVramUsagePercent = ReadJsonDouble(root, "maxVramUsagePercent", _idealModelThresholds.MaxVramUsagePercent),
+                    MinimumParametersBillion = ReadJsonDouble(root, "minimumParametersBillion", _idealModelThresholds.MinimumParametersBillion),
+                    MaximumParametersBillion = ReadJsonDouble(root, "maximumParametersBillion", _idealModelThresholds.MaximumParametersBillion)
+                });
+                WriteIdealModelThresholds(_idealModelThresholds);
+                _idealModelCache.Clear();
+                await InjectIdealModelsForCurrentPageAsync().ConfigureAwait(true);
+                return;
+            }
+
+            if (string.Equals(action, "refresh-ideal-models", StringComparison.OrdinalIgnoreCase))
+            {
+                _idealModelCache.Clear();
+                await InjectIdealModelsForCurrentPageAsync().ConfigureAwait(true);
+                return;
+            }
+
             string repo = root.GetProperty("repo").GetString() ?? "";
             string path = root.GetProperty("path").GetString() ?? "";
             string revision = root.TryGetProperty("revision", out var revisionElement) ? revisionElement.GetString() ?? "main" : "main";
@@ -1483,6 +1713,59 @@ exit 1
     private void OpenExternalBrowserButton_Click(object sender, RoutedEventArgs e) =>
         OpenExternalBrowser(string.IsNullOrWhiteSpace(AddressBox.Text) ? HuggingFaceModelsUrl : AddressBox.Text);
 
+    public void RefreshBrowser()
+    {
+        if (_disposed)
+            return;
+
+        if (_browserReady && Browser?.CoreWebView2 != null)
+        {
+            Browser.CoreWebView2.Reload();
+            return;
+        }
+
+        _ = InitializeBrowserAsync();
+    }
+
+    public void OpenCurrentPageExternally()
+    {
+        if (_disposed)
+            return;
+
+        OpenExternalBrowser(string.IsNullOrWhiteSpace(AddressBox.Text) ? _lastNavigatedUrl : AddressBox.Text);
+    }
+
+    public void ReleaseBrowserResources()
+    {
+        if (_disposed)
+            return;
+
+        SaveCurrentPage();
+        _browserReady = false;
+        _externalBrowserMode = false;
+        _lastInjectedUrl = null;
+        _browserGeneration++;
+
+        Microsoft.Web.WebView2.Wpf.WebView2? browser = Browser;
+        if (browser?.CoreWebView2 != null)
+        {
+            browser.CoreWebView2.NavigationStarting -= OnNavigationStarting;
+            browser.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
+            browser.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
+            browser.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+            browser.CoreWebView2.DownloadStarting -= OnDownloadStarting;
+        }
+
+        if (BrowserHost != null)
+        {
+            BrowserHost.Child = null;
+            BrowserHost.Visibility = Visibility.Collapsed;
+        }
+
+        try { browser?.Dispose(); } catch { }
+        Browser = null!;
+    }
+
     private async void QueueBestFromAddressButton_Click(object sender, RoutedEventArgs e)
     {
         await QueueBestDownloadFromAddressAsync().ConfigureAwait(true);
@@ -1617,6 +1900,56 @@ exit 1
     private static string BrowserStatePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "huggingface-browser-url.txt");
 
+    private static string IdealModelThresholdsPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "ideal-model-thresholds.json");
+
+    private static HuggingFaceIdealModelThresholds ReadIdealModelThresholds()
+    {
+        try
+        {
+            if (File.Exists(IdealModelThresholdsPath))
+            {
+                HuggingFaceIdealModelThresholds? value = JsonSerializer.Deserialize<HuggingFaceIdealModelThresholds>(File.ReadAllText(IdealModelThresholdsPath), BrowserJsonOptions);
+                if (value != null)
+                    return NormalizeIdealModelThresholds(value);
+            }
+        }
+        catch { }
+        return new HuggingFaceIdealModelThresholds();
+    }
+
+    private static void WriteIdealModelThresholds(HuggingFaceIdealModelThresholds value)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(IdealModelThresholdsPath) ?? Environment.CurrentDirectory);
+            File.WriteAllText(IdealModelThresholdsPath, JsonSerializer.Serialize(value, BrowserJsonOptions));
+        }
+        catch { }
+    }
+
+    private static HuggingFaceIdealModelThresholds NormalizeIdealModelThresholds(HuggingFaceIdealModelThresholds value)
+    {
+        double minimumParameters = Math.Clamp(value.MinimumParametersBillion, 0d, 1000d);
+        double maximumParameters = Math.Clamp(value.MaximumParametersBillion, 0d, 1000d);
+        if (maximumParameters > 0 && minimumParameters > maximumParameters)
+            (minimumParameters, maximumParameters) = (maximumParameters, minimumParameters);
+        return new HuggingFaceIdealModelThresholds
+        {
+            ModelLimit = Math.Clamp(value.ModelLimit, 1, 20),
+            MinimumTokensPerSecond = Math.Clamp(value.MinimumTokensPerSecond, 0d, 1000d),
+            MaxVramUsagePercent = Math.Clamp(value.MaxVramUsagePercent, 25d, 100d),
+            MinimumParametersBillion = minimumParameters,
+            MaximumParametersBillion = maximumParameters
+        };
+    }
+
+    private static int ReadJsonInt(JsonElement root, string name, int fallback) =>
+        root.TryGetProperty(name, out JsonElement value) && value.TryGetInt32(out int parsed) ? parsed : fallback;
+
+    private static double ReadJsonDouble(JsonElement root, string name, double fallback) =>
+        root.TryGetProperty(name, out JsonElement value) && value.TryGetDouble(out double parsed) ? parsed : fallback;
+
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
@@ -1718,7 +2051,8 @@ exit 1
     public void Dispose()
     {
         _disposed = true;
-        try { Browser.Dispose(); } catch { }
+        _browserGeneration++;
+        try { Browser?.Dispose(); } catch { }
         try { _conversionService?.Dispose(); } catch { }
     }
 
@@ -2125,22 +2459,36 @@ exit 1
         };
     }
 
+    private static HuggingFaceIdealModelHardwareProfile BuildIdealModelHardwareProfile()
+    {
+        VideoMemoryCapacity video = VideoMemory.Value;
+        return new HuggingFaceIdealModelHardwareProfile
+        {
+            DisplayName = string.IsNullOrWhiteSpace(video.Name) ? (video.IsDedicated ? "detected GPU" : "this PC") : video.Name,
+            VideoMemoryBytes = video.Bytes,
+            VideoMemoryIsDedicated = video.IsDedicated,
+            EstimatedMemoryBandwidthGbps = video.EstimatedMemoryBandwidthGbps
+        };
+    }
+
     private static VideoMemoryCapacity DetectVideoMemoryCapacity()
     {
-        long dedicatedBytes = DetectNvidiaDedicatedVideoMemoryBytes();
-        if (dedicatedBytes > 0)
-            return new VideoMemoryCapacity(dedicatedBytes, IsDedicated: true);
+        VideoMemoryCapacity dedicated = DetectNvidiaDedicatedVideoMemory();
+        if (dedicated.Bytes > 0)
+            return dedicated;
 
         var memoryStatus = new MemoryStatusEx();
         if (GlobalMemoryStatusEx(memoryStatus) && memoryStatus.ullTotalPhys > 0)
             return new VideoMemoryCapacity(
                 (long)Math.Min(memoryStatus.ullTotalPhys / 2, long.MaxValue),
-                IsDedicated: false);
+                IsDedicated: false,
+                Name: "shared system memory",
+                EstimatedMemoryBandwidthGbps: 55d);
 
-        return new VideoMemoryCapacity(0, IsDedicated: false);
+        return new VideoMemoryCapacity(0, IsDedicated: false, Name: "this PC", EstimatedMemoryBandwidthGbps: 0);
     }
 
-    private static long DetectNvidiaDedicatedVideoMemoryBytes()
+    private static VideoMemoryCapacity DetectNvidiaDedicatedVideoMemory()
     {
         try
         {
@@ -2152,7 +2500,7 @@ exit 1
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = nvidiaSmi,
-                    Arguments = "--query-gpu=memory.total --format=csv,noheader,nounits",
+                    Arguments = "--query-gpu=name,memory.total --format=csv,noheader,nounits",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -2161,35 +2509,55 @@ exit 1
             };
 
             if (!process.Start())
-                return 0;
+                return default;
 
             if (!process.WaitForExit(1500))
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
-                return 0;
+                return default;
             }
 
             if (process.ExitCode != 0)
-                return 0;
+                return default;
 
             long largestMiB = 0;
+            string bestName = "NVIDIA GPU";
             foreach (string line in process.StandardOutput.ReadToEnd().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
             {
-                if (long.TryParse(line.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long mib) && mib > largestMiB)
+                string[] parts = line.Split(',', 2, StringSplitOptions.TrimEntries);
+                if (parts.Length == 2 && long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out long mib) && mib > largestMiB)
+                {
                     largestMiB = mib;
+                    bestName = parts[0];
+                }
             }
 
-            return largestMiB > 0 && largestMiB <= long.MaxValue / (1024L * 1024L)
-                ? largestMiB * 1024L * 1024L
-                : 0;
+            if (largestMiB <= 0 || largestMiB > long.MaxValue / (1024L * 1024L))
+                return default;
+            long bytes = largestMiB * 1024L * 1024L;
+            return new VideoMemoryCapacity(bytes, true, bestName, EstimateGpuMemoryBandwidth(bestName, bytes));
         }
         catch
         {
-            return 0;
+            return default;
         }
     }
 
-    private readonly record struct VideoMemoryCapacity(long Bytes, bool IsDedicated);
+    private static double EstimateGpuMemoryBandwidth(string name, long videoMemoryBytes)
+    {
+        (string Token, double Bandwidth)[] known =
+        [
+            ("H100", 3000), ("A100", 1555), ("V100", 900), ("RTX 5090", 1792), ("RTX 5080", 960),
+            ("RTX 4090", 1008), ("RTX 4080", 717), ("RTX 3090", 936), ("RTX 3080", 760),
+            ("RTX 3070", 448), ("RTX 3060", 360), ("RTX A2000", 288), ("TITAN XP", 547), ("TITAN X", 480)
+        ];
+        foreach ((string token, double bandwidth) in known)
+            if (name.Contains(token, StringComparison.OrdinalIgnoreCase))
+                return bandwidth;
+        return Math.Max(140d, videoMemoryBytes / (1024d * 1024d * 1024d) * 28d);
+    }
+
+    private readonly record struct VideoMemoryCapacity(long Bytes, bool IsDedicated, string Name, double EstimatedMemoryBandwidthGbps);
 
     private static class DownloadFormat
     {

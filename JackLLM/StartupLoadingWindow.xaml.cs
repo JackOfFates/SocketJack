@@ -26,6 +26,7 @@ public partial class StartupLoadingWindow : Window {
     private string? _importedRecoveryKey;
     private string? _rememberedUnlockFailure;
     private readonly bool _recoveryRequested;
+    private bool _securityBrokerPreparedForStartup;
     private bool _allowClose;
     private bool _cancelRequested;
     private bool _isIndeterminate;
@@ -37,6 +38,9 @@ public partial class StartupLoadingWindow : Window {
     private DateTimeOffset _lastProgressUtc = DateTimeOffset.UtcNow;
     private TimeSpan _lastFrameTime;
     private readonly DispatcherTimer _enrollmentGrantTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _cooldownTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private DateTimeOffset? _cooldownUntilUtc;
+    private bool _cooldownRefreshInProgress;
     private static readonly double[] RgbBaseOffsets = { 0, 0.10, 0.22, 0.36, 0.52, 0.67, 0.82, 0.92, 1 };
 
     public StartupLoadingWindow(bool recoveryRequested = false) {
@@ -44,6 +48,7 @@ public partial class StartupLoadingWindow : Window {
         InitializeComponent();
         RecoverySavePathTextBox.Text = GetDefaultRecoveryFilePath();
         _enrollmentGrantTimer.Tick += EnrollmentGrantTimer_Tick;
+        _cooldownTimer.Tick += CooldownTimer_Tick;
     }
 
     public event EventHandler? CancelRequested;
@@ -99,14 +104,19 @@ public partial class StartupLoadingWindow : Window {
         ChangePasswordButton.Visibility = response.State == SecurityStateKind.Locked ? Visibility.Visible : Visibility.Collapsed;
         switch (response.State) {
             case SecurityStateKind.Unenrolled:
-                ConfigureAuthenticationMode(AuthenticationMode.Enroll, "Set workstation password", response.Message, "SET PASSWORD");
+                ConfigureAuthenticationMode(AuthenticationMode.Enroll, "Set up Windows Hello sign-in",
+                    "Choose a recovery-file password, then enroll Windows Hello. The password is not used to sign in.",
+                    "SET UP WINDOWS HELLO");
                 break;
             case SecurityStateKind.Locked:
-                ConfigureAuthenticationMode(AuthenticationMode.Unlock, "Unlock JackLLM Workstation", response.Message, "VERIFY & UNLOCK");
+                ConfigureAuthenticationMode(AuthenticationMode.Unlock, "Unlock JackLLM Workstation",
+                    "Use Windows Hello to sign in. No workstation password is required.",
+                    "VERIFY WINDOWS HELLO");
                 break;
             case SecurityStateKind.Cooldown:
-                ConfigureAuthenticationMode(AuthenticationMode.Cooldown, "Workstation temporarily locked", BuildCooldownMessage(response), "LOCKED");
-                ScheduleCooldownRefresh(response.CooldownUntilUtc);
+                ConfigureAuthenticationMode(AuthenticationMode.Unlock, "Repair password sign-in with Windows Hello",
+                    "The password state is locked, but Windows Hello can securely clear it now without waiting.",
+                    "VERIFY WINDOWS HELLO");
                 break;
             case SecurityStateKind.UnsupportedHardware:
                 ConfigureAuthenticationMode(AuthenticationMode.Blocked, "TPM-backed Windows Hello required", response.Message, "UNAVAILABLE");
@@ -158,15 +168,35 @@ public partial class StartupLoadingWindow : Window {
     }
 
     private async Task<SecurityResponse> GetSecurityStatusWithStartupAsync() {
+        if (!_securityBrokerPreparedForStartup) {
+            _securityBrokerPreparedForStartup = true;
+            try {
+                await RestartOfficialBrokerForStartupAsync(CancellationToken.None);
+            } catch (Exception ex) {
+                SetBrokerStartupStatus("Security Broker: startup failed.", BrokerStartupStatus.Failed);
+                App.WriteCrashLog("Security broker startup refresh failed", ex);
+                return new SecurityResponse {
+                    State = SecurityStateKind.Error,
+                    Message = "JackLLM could not refresh the Security Broker: " + ex.GetBaseException().Message,
+                    DevelopmentMode = false
+                };
+            }
+        }
+
         SecurityResponse response = await _securityBroker.SendAsync(
             new SecurityRequest { Operation = SecurityOperation.Status },
             timeoutValue: TimeSpan.FromMilliseconds(500));
         if (response.State != SecurityStateKind.Error)
             return response;
         try {
+            await ShowBrokerStartingAsync("Security Broker: starting...", CancellationToken.None);
             await EnsureOfficialBrokerRunningAsync(CancellationToken.None);
-            return await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.Status });
+            SecurityResponse restarted = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.Status });
+            if (restarted.State != SecurityStateKind.Error)
+                SetBrokerStartupStatus($"Security Broker: initialized (PID {restarted.BrokerProcessId}).", BrokerStartupStatus.Initialized);
+            return restarted;
         } catch (Exception ex) {
+            SetBrokerStartupStatus("Security Broker: startup failed.", BrokerStartupStatus.Failed);
             App.WriteCrashLog("Security broker automatic startup failed", ex);
             return new SecurityResponse {
                 State = SecurityStateKind.Error,
@@ -174,6 +204,85 @@ public partial class StartupLoadingWindow : Window {
                 DevelopmentMode = false
             };
         }
+    }
+
+    private async Task RestartOfficialBrokerForStartupAsync(CancellationToken cancellationToken) {
+        SetBrokerStartupStatus("Security Broker: checking current process...", BrokerStartupStatus.Checking);
+        SecurityResponse current = await _securityBroker.SendAsync(
+            new SecurityRequest { Operation = SecurityOperation.Status },
+            cancellationToken,
+            TimeSpan.FromMilliseconds(750));
+        if (current.BrokerCompatibility != 0 &&
+            current.BrokerCompatibility != SecurityProtocol.BrokerCompatibility)
+            throw new InvalidOperationException(
+                $"The running Security Broker is incompatible (broker {current.BrokerCompatibility}, Workstation {SecurityProtocol.BrokerCompatibility}). Reinstall or rebuild JackLLM Workstation.");
+        if (current.State == SecurityStateKind.Error) {
+            await ShowBrokerStartingAsync("Security Broker: no existing process; starting...", cancellationToken);
+            await EnsureOfficialBrokerRunningAsync(cancellationToken);
+            await ShowBrokerInitializedAsync(cancellationToken);
+            return;
+        }
+        if (current.DevelopmentMode)
+            throw new InvalidOperationException("A development Security Broker cannot unlock the Release Workstation.");
+
+        int previousProcessId = current.BrokerProcessId;
+        SetBrokerStartupStatus($"Security Broker: stopping PID {previousProcessId}...", BrokerStartupStatus.Stopping);
+        SecurityResponse restart = await _securityBroker.SendAsync(
+            new SecurityRequest { Operation = SecurityOperation.RestartBroker },
+            cancellationToken);
+        if (!restart.Success)
+            throw new InvalidOperationException(restart.Message);
+
+        for (int attempt = 0; attempt < 100; attempt++) {
+            if (!IsBrokerProcessRunning(previousProcessId))
+                break;
+            await Task.Delay(100, cancellationToken);
+            if (attempt == 99)
+                throw new System.TimeoutException("The Security Broker accepted the restart request but did not stop.");
+        }
+
+        await ShowBrokerStartingAsync("Security Broker: previous process stopped; starting...", cancellationToken);
+        await EnsureOfficialBrokerRunningAsync(cancellationToken);
+        await ShowBrokerInitializedAsync(cancellationToken);
+    }
+
+    private async Task ShowBrokerStartingAsync(string message, CancellationToken cancellationToken) {
+        SetBrokerStartupStatus(message, BrokerStartupStatus.Starting);
+        await Dispatcher.Yield(DispatcherPriority.Render);
+        await Task.Delay(300, cancellationToken);
+    }
+
+    private async Task ShowBrokerInitializedAsync(CancellationToken cancellationToken) {
+        SecurityResponse initialized = await _securityBroker.SendAsync(
+            new SecurityRequest { Operation = SecurityOperation.Status },
+            cancellationToken);
+        if (initialized.State == SecurityStateKind.Error || initialized.DevelopmentMode ||
+            initialized.BrokerCompatibility != SecurityProtocol.BrokerCompatibility)
+            throw new InvalidOperationException("The Security Broker restarted but did not initialize correctly: " + initialized.Message);
+        SetBrokerStartupStatus($"Security Broker: initialized (PID {initialized.BrokerProcessId}).", BrokerStartupStatus.Initialized);
+    }
+
+    private void SetBrokerStartupStatus(string text, BrokerStartupStatus status) {
+        BrokerStartupStatusText.Text = text;
+        (Color foreground, Color border, Color background) = status switch {
+            BrokerStartupStatus.Initialized => (Color.FromRgb(126, 233, 255), Color.FromRgb(63, 164, 184), Color.FromRgb(25, 80, 92)),
+            BrokerStartupStatus.Failed => (Color.FromRgb(255, 143, 165), Color.FromRgb(170, 65, 91), Color.FromRgb(85, 28, 43)),
+            BrokerStartupStatus.Stopping => (Color.FromRgb(255, 210, 122), Color.FromRgb(160, 121, 52), Color.FromRgb(75, 56, 25)),
+            _ => (Color.FromRgb(175, 193, 214), Color.FromRgb(78, 106, 139), Color.FromRgb(38, 52, 72))
+        };
+        BrokerStartupStatusText.Foreground = new SolidColorBrush(foreground);
+        BrokerStartupStatusBorder.BorderBrush = new SolidColorBrush(border);
+        BrokerStartupStatusBorder.Background = new SolidColorBrush(background) { Opacity = 0.55 };
+    }
+
+    private static bool IsBrokerProcessRunning(int processId) {
+        foreach (Process process in Process.GetProcessesByName("JackLLM.SecurityBroker")) {
+            using (process) {
+                if (process.Id == processId)
+                    return true;
+            }
+        }
+        return false;
     }
 
     private async Task EnsureOfficialBrokerRunningAsync(CancellationToken cancellationToken) {
@@ -194,7 +303,7 @@ public partial class StartupLoadingWindow : Window {
                 service.Start();
                 await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10)), cancellationToken);
                 return;
-            } catch (InvalidOperationException) {
+            } catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) {
                 // A source-tree Release build may not have gone through the MSI yet.
                 // Start the bundled official broker elevated; it still uses the official
                 // pipe and machine-protected credential store.
@@ -207,7 +316,9 @@ public partial class StartupLoadingWindow : Window {
                     brokerPath);
             }
 
-            string brokerArguments = "--local-release --parent-pid " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+            bool hashStampedLocalRelease = IsHashStampedLocalRelease();
+            string brokerArguments = (hashStampedLocalRelease ? "--local-release " : "") +
+                "--parent-pid " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
             using Process brokerProcess = Process.Start(new ProcessStartInfo(brokerPath, brokerArguments) {
                 UseShellExecute = true,
                 Verb = "runas",
@@ -256,21 +367,39 @@ public partial class StartupLoadingWindow : Window {
         return Path.Combine(AppContext.BaseDirectory, "SecurityBroker", "JackLLM.SecurityBroker.exe");
     }
 
+    private static bool IsHashStampedLocalRelease() {
+        string fullPath = Path.GetFullPath(AppContext.BaseDirectory);
+        bool releasePath = fullPath.Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries)
+            .Contains("Release", StringComparer.OrdinalIgnoreCase);
+        return releasePath && File.Exists(Path.Combine(AppContext.BaseDirectory, "secure-release.sha256"));
+    }
+
     private void ConfigureAuthenticationMode(AuthenticationMode mode, string title, string detail, string action) {
+        if (mode != AuthenticationMode.Cooldown)
+            StopCooldownTimer();
         _authenticationMode = mode;
         AuthenticationTitleText.Text = title;
         AuthenticationDetailText.Text = detail;
         AuthenticationActionButton.Content = action;
         ConfirmPasswordPanel.Visibility = mode is AuthenticationMode.Enroll or AuthenticationMode.Recover or AuthenticationMode.ChangePassword ? Visibility.Visible : Visibility.Collapsed;
         CurrentPasswordPanel.Visibility = mode == AuthenticationMode.ChangePassword ? Visibility.Visible : Visibility.Collapsed;
-        PasswordLabelText.Text = mode == AuthenticationMode.ChangePassword ? "New workstation password" : "Workstation password";
+        AuthenticationPasswordPanel.Visibility = mode == AuthenticationMode.Unlock ? Visibility.Collapsed : Visibility.Visible;
+        PasswordLabelText.Text = mode switch {
+            AuthenticationMode.Enroll => "Recovery-file password (not used for sign-in)",
+            AuthenticationMode.ChangePassword => "New workstation password",
+            _ => "Workstation password"
+        };
         RecoveryInputPanel.Visibility = mode == AuthenticationMode.Recover ? Visibility.Visible : Visibility.Collapsed;
         RememberDeviceCheckBox.Visibility = mode is AuthenticationMode.Enroll or AuthenticationMode.Unlock ? Visibility.Visible : Visibility.Collapsed;
         AuthenticationPasswordBox.IsEnabled = mode is AuthenticationMode.Enroll or AuthenticationMode.Unlock or AuthenticationMode.Recover or AuthenticationMode.ChangePassword;
         AuthenticationActionButton.IsEnabled = mode is AuthenticationMode.Enroll or AuthenticationMode.Unlock or AuthenticationMode.Recover or AuthenticationMode.ChangePassword;
         RecoveryKeyPanel.Visibility = Visibility.Collapsed;
-        if (mode is AuthenticationMode.Enroll or AuthenticationMode.Unlock)
+        if (mode == AuthenticationMode.Enroll)
             AuthenticationPasswordBox.Focus();
+        else if (mode == AuthenticationMode.Unlock)
+            AuthenticationActionButton.Focus();
     }
 
     private async void AuthenticationActionButton_Click(object sender, RoutedEventArgs e) {
@@ -343,11 +472,13 @@ public partial class StartupLoadingWindow : Window {
     private async Task EnrollAsync(string password) {
         SecurityResponse challenge = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.BeginEnroll });
         if (!challenge.Success || string.IsNullOrWhiteSpace(challenge.Challenge)) { ApplyFailure(challenge); return; }
-        WindowsHelloProof proof = await WindowsHelloAuthenticator.CreateAndSignAsync(Convert.FromBase64String(challenge.Challenge));
+        WindowsHelloProof proof = await RunWindowsHelloAsync(() =>
+            WindowsHelloAuthenticator.CreateAndSignAsync(Convert.FromBase64String(challenge.Challenge)));
         SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
             Operation = SecurityOperation.Enroll, ChallengeId = challenge.ChallengeId, Password = password,
             PublicKey = proof.PublicKey, Signature = proof.Signature, Attestation = proof.Attestation,
-            RememberDevice = RememberDeviceCheckBox.IsChecked == true
+            RememberDevice = RememberDeviceCheckBox.IsChecked == true,
+            UseWindowsHelloOnly = true
         });
         if (!response.Success || string.IsNullOrWhiteSpace(response.RecoveryKey)) { ApplyFailure(response); return; }
         if (string.IsNullOrWhiteSpace(response.RecoveryBackup)) {
@@ -368,7 +499,7 @@ public partial class StartupLoadingWindow : Window {
         StartEnrollmentGrantTimer();
         AuthenticationActionButton.Content = "I SAVED IT — OPEN JACKLLM";
         AuthenticationDetailText.Text =
-            "Enrollment succeeded. Save the generated password-protected recovery file now. It uses your workstation password.";
+            "Windows Hello enrollment succeeded. Save the generated file now; its password is only for recovery.";
         AuthenticationPasswordBox.IsEnabled = false;
         ConfirmPasswordPanel.Visibility = Visibility.Collapsed;
     }
@@ -376,11 +507,13 @@ public partial class StartupLoadingWindow : Window {
     private async Task UnlockAsync(string password) {
         SecurityResponse challenge = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.BeginUnlock });
         if (!challenge.Success || string.IsNullOrWhiteSpace(challenge.Challenge)) { ApplyFailure(challenge); return; }
-        WindowsHelloProof proof = await WindowsHelloAuthenticator.OpenAndSignAsync(Convert.FromBase64String(challenge.Challenge));
+        WindowsHelloProof proof = await RunWindowsHelloAsync(() =>
+            WindowsHelloAuthenticator.OpenAndSignAsync(Convert.FromBase64String(challenge.Challenge)));
         SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
             Operation = SecurityOperation.CompleteUnlock, ChallengeId = challenge.ChallengeId,
-            Password = password, Signature = proof.Signature,
-            RememberDevice = RememberDeviceCheckBox.IsChecked == true
+            Signature = proof.Signature,
+            RememberDevice = RememberDeviceCheckBox.IsChecked == true,
+            UseWindowsHelloOnly = true
         });
         if (!response.Success || string.IsNullOrWhiteSpace(response.UnlockGrant)) { ApplyFailure(response); return; }
         SaveRememberedToken(response);
@@ -445,7 +578,8 @@ public partial class StartupLoadingWindow : Window {
         LoadRecoveryFile();
         SecurityResponse challenge = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.BeginUnlock });
         if (!challenge.Success || string.IsNullOrWhiteSpace(challenge.Challenge)) { ApplyFailure(challenge); return; }
-        WindowsHelloProof proof = await WindowsHelloAuthenticator.CreateAndSignAsync(Convert.FromBase64String(challenge.Challenge));
+        WindowsHelloProof proof = await RunWindowsHelloAsync(() =>
+            WindowsHelloAuthenticator.CreateAndSignAsync(Convert.FromBase64String(challenge.Challenge)));
         SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
             Operation = SecurityOperation.Recover, ChallengeId = challenge.ChallengeId, NewPassword = newPassword,
             RecoveryKey = _importedRecoveryKey, RecoveryBackup = _importedRecoveryBackup,
@@ -462,7 +596,8 @@ public partial class StartupLoadingWindow : Window {
     private async Task ChangePasswordAsync(string newPassword) {
         SecurityResponse challenge = await _securityBroker.SendAsync(new SecurityRequest { Operation = SecurityOperation.BeginUnlock });
         if (!challenge.Success || string.IsNullOrWhiteSpace(challenge.Challenge)) { ApplyFailure(challenge); return; }
-        WindowsHelloProof proof = await WindowsHelloAuthenticator.OpenAndSignAsync(Convert.FromBase64String(challenge.Challenge));
+        WindowsHelloProof proof = await RunWindowsHelloAsync(() =>
+            WindowsHelloAuthenticator.OpenAndSignAsync(Convert.FromBase64String(challenge.Challenge)));
         SecurityResponse response = await _securityBroker.SendAsync(new SecurityRequest {
             Operation = SecurityOperation.ChangePassword, ChallengeId = challenge.ChallengeId,
             Password = CurrentPasswordBox.Password, NewPassword = newPassword, Signature = proof.Signature
@@ -595,25 +730,88 @@ public partial class StartupLoadingWindow : Window {
     }
 
     private void ApplyFailure(SecurityResponse response) {
-        AuthenticationErrorText.Text = response.Message;
         HardwareIdText.Text = FormatHardwareId(response.HardwareId);
         if (response.State == SecurityStateKind.Cooldown) {
             ConfigureAuthenticationMode(AuthenticationMode.Cooldown, "Workstation temporarily locked", BuildCooldownMessage(response), "LOCKED");
             ScheduleCooldownRefresh(response.CooldownUntilUtc);
+            return;
         }
+        AuthenticationErrorText.Text = response.Message;
     }
 
     private void ScheduleCooldownRefresh(DateTimeOffset? untilUtc) {
-        if (untilUtc == null) return;
-        TimeSpan delay = untilUtc.Value - DateTimeOffset.UtcNow;
-        if (delay <= TimeSpan.Zero) delay = TimeSpan.FromMilliseconds(250);
-        _ = Task.Delay(delay).ContinueWith(_ => Dispatcher.BeginInvoke(new Action(async () => await RefreshAuthenticationStatusAsync())), TaskScheduler.Default);
+        _cooldownUntilUtc = untilUtc ?? DateTimeOffset.UtcNow.AddSeconds(1);
+        UpdateCooldownDisplay();
+        if (untilUtc == null) {
+            const string message = "Lockout timing was unavailable. Rechecking the Security Broker...";
+            AuthenticationDetailText.Text = message;
+            AuthenticationErrorText.Text = message;
+        }
+        if (!_cooldownTimer.IsEnabled)
+            _cooldownTimer.Start();
+    }
+
+    private async void CooldownTimer_Tick(object? sender, EventArgs e) {
+        if (_cooldownUntilUtc is not DateTimeOffset untilUtc) {
+            _cooldownTimer.Stop();
+            return;
+        }
+        if (untilUtc > DateTimeOffset.UtcNow) {
+            UpdateCooldownDisplay();
+            return;
+        }
+        _cooldownTimer.Stop();
+        AuthenticationDetailText.Text = "Cooldown expired. Rechecking the Security Broker...";
+        AuthenticationErrorText.Text = "";
+        if (_cooldownRefreshInProgress)
+            return;
+        _cooldownRefreshInProgress = true;
+        try {
+            await RefreshAuthenticationStatusAsync();
+        } finally {
+            _cooldownRefreshInProgress = false;
+        }
+    }
+
+    private void UpdateCooldownDisplay() {
+        if (_cooldownUntilUtc is DateTimeOffset untilUtc) {
+            string message = BuildCooldownMessage(untilUtc - DateTimeOffset.UtcNow);
+            AuthenticationDetailText.Text = message;
+            AuthenticationErrorText.Text = message;
+        }
+    }
+
+    private void StopCooldownTimer() {
+        _cooldownTimer.Stop();
+        _cooldownUntilUtc = null;
     }
 
     private static string BuildCooldownMessage(SecurityResponse response) {
         if (response.CooldownUntilUtc == null) return response.Message;
-        TimeSpan remaining = response.CooldownUntilUtc.Value - DateTimeOffset.UtcNow;
+        return BuildCooldownMessage(response.CooldownUntilUtc.Value - DateTimeOffset.UtcNow);
+    }
+
+    private static string BuildCooldownMessage(TimeSpan remaining) {
         return $"Too many failed attempts. Try again in {Math.Max(1, Math.Ceiling(remaining.TotalSeconds)):0} seconds.";
+    }
+
+    private async Task<WindowsHelloProof> RunWindowsHelloAsync(Func<Task<WindowsHelloProof>> request) {
+        string previousDetail = AuthenticationDetailText.Text;
+        AuthenticationDetailText.Text = "Opening Windows Hello. JackLLM will return when verification finishes.";
+        WindowState = WindowState.Minimized;
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        await Task.Delay(150);
+        try {
+            return await request();
+        } finally {
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished) {
+                AuthenticationDetailText.Text = previousDetail;
+                Show();
+                WindowState = WindowState.Normal;
+                Activate();
+                Focus();
+            }
+        }
     }
 
     private static string FormatHardwareId(string? value) {
@@ -634,7 +832,7 @@ public partial class StartupLoadingWindow : Window {
         if (busy) AuthenticationActionButton.Content = "WORKING...";
         else if (_pendingEnrollmentGrant != null) AuthenticationActionButton.Content = "I SAVED IT — OPEN JACKLLM";
         else AuthenticationActionButton.Content = _authenticationMode switch {
-            AuthenticationMode.Enroll => "SET PASSWORD", AuthenticationMode.Unlock => "VERIFY & UNLOCK",
+            AuthenticationMode.Enroll => "SET UP WINDOWS HELLO", AuthenticationMode.Unlock => "VERIFY WINDOWS HELLO",
             AuthenticationMode.Recover => "RECOVER & REBIND", AuthenticationMode.ChangePassword => "CHANGE PASSWORD",
             AuthenticationMode.Blocked => "RETRY", _ => "LOCKED"
         };
@@ -711,6 +909,7 @@ public partial class StartupLoadingWindow : Window {
     private void Window_Closed(object? sender, EventArgs e) {
         CompositionTarget.Rendering -= OnRendering;
         _enrollmentGrantTimer.Stop();
+        _cooldownTimer.Stop();
         _authenticationCompletion.TrySetResult(null);
     }
 
@@ -854,4 +1053,6 @@ public partial class StartupLoadingWindow : Window {
     }
 
     private enum AuthenticationMode { Blocked, Enroll, Unlock, Recover, ChangePassword, Cooldown }
+
+    private enum BrokerStartupStatus { Checking, Stopping, Starting, Initialized, Failed }
 }

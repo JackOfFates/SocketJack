@@ -68,6 +68,122 @@
             </Setter>
         </Style>
 
+        <Style x:Key="ManagerTabItemStyle" TargetType="TabItem">
+            <Setter Property="Foreground" Value="{StaticResource ManagerSubtleTextBrush}" />
+            <Setter Property="Background" Value="#121820" />
+            <Setter Property="BorderBrush" Value="{StaticResource ManagerBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabChrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="7,7,0,0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabChrome" Property="Background" Value="#1A2430" />
+                                <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabChrome" Property="Background" Value="#202936" />
+                                <Setter TargetName="TabChrome" Property="BorderBrush" Value="{StaticResource ManagerAccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="BrowserTabActionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="24" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#A3ABB7" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ActionChrome"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ActionChrome" Property="Opacity" Value="0.72" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#26313D" />
+                    <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="BrowserTabRefreshButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource BrowserTabActionButtonStyle}">
+            <Setter Property="Foreground" Value="#55D992" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#8AF0B8" />
+                    <Setter Property="Background" Value="#17362A" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="BrowserTabExternalButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource BrowserTabActionButtonStyle}">
+            <Setter Property="Foreground" Value="#60A5FA" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#9CCBFF" />
+                    <Setter Property="Background" Value="#18304A" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="BrowserTabCloseButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource BrowserTabActionButtonStyle}">
+            <Setter Property="Foreground" Value="#8B929C" />
+            <Setter Property="FontSize" Value="14" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#FF4D67" />
+                    <Setter Property="Background" Value="#3B1820" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="#0E141B" />
             <Setter Property="Foreground" Value="{StaticResource ManagerTextBrush}" />
@@ -613,49 +729,20 @@
 
     <Grid Background="{StaticResource ManagerBackgroundBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="14,12,14,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                <TextBlock Text="Models" FontSize="24" FontWeight="SemiBold" Visibility="Collapsed" />
-                <TextBlock x:Name="ManagerStatusText"
-                           Text="Runtime model manager ready."
-                           Foreground="{StaticResource ManagerSubtleTextBrush}"
-                           FontSize="12"
-                           Margin="0,3,0,0"
-                           TextTrimming="CharacterEllipsis" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button x:Name="RefreshModelsButton"
-                        Content="Refresh"
-                        Click="RefreshModelsButton_Click"
-                        Margin="0,0,8,0"
-                        AutomationProperties.Name="Refresh model list" />
-                <Button x:Name="OpenBrowserButton"
-                        Content="Open Browser"
-                        Click="OpenBrowserButton_Click"
-                        AutomationProperties.Name="Open Hugging Face model browser" />
-            </StackPanel>
-        </Grid>
-
         <TabControl x:Name="ManagerTabs"
-                    Grid.Row="1"
-                    Margin="14,0,14,0"
+                    Grid.Row="0"
+                    Margin="14,8,14,0"
                     Background="{StaticResource ManagerBackgroundBrush}"
-                    BorderBrush="{StaticResource ManagerBorderBrush}">
+                    BorderBrush="{StaticResource ManagerBorderBrush}"
+                    SelectionChanged="ManagerTabs_SelectionChanged">
             <TabControl.ItemContainerStyle>
-                <Style TargetType="TabItem">
-                    <Setter Property="Visibility" Value="Collapsed" />
-                </Style>
+                <Style TargetType="TabItem" BasedOn="{StaticResource ManagerTabItemStyle}" />
             </TabControl.ItemContainerStyle>
-            <TabItem x:Name="ModelsTabItem" Header="Models">
+            <TabItem x:Name="ModelsTabItem" Header="Manage">
                     <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,10,0,0">
                      <Grid.RowDefinitions>
                          <RowDefinition Height="Auto" />
@@ -728,6 +815,7 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="160" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="ModelSearchBox"
                                              AutomationProperties.Name="Search models"
@@ -753,6 +841,16 @@
                                             Padding="10,4"
                                             Background="#1F7A68"
                                             ToolTip="Benchmark every available model." />
+                                    <Button x:Name="RefreshModelsButton"
+                                            Grid.Column="3"
+                                            Content="&#x21BB;"
+                                            Click="RefreshModelsButton_Click"
+                                            Margin="8,0,0,0"
+                                            Width="34"
+                                            Padding="0"
+                                            FontSize="17"
+                                            ToolTip="Refresh model list"
+                                            AutomationProperties.Name="Refresh model list" />
                                 </Grid>
 
                                 <Grid Grid.Row="1">
@@ -1135,7 +1233,7 @@
                 </Grid>
             </TabItem>
 
-            <TabItem x:Name="GpuTabItem" Header="GPU">
+            <TabItem x:Name="GpuTabItem" Header="GPU" Visibility="Collapsed">
                 <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,10,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -1727,47 +1825,45 @@
                 </Grid>
             </TabItem>
 
-            <TabItem x:Name="BrowserTabItem" Header="Model Browser" Visibility="Collapsed">
-                <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,10,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <Border Grid.Row="0"
-                            Background="{StaticResource ManagerPanelBrush}"
-                            BorderBrush="{StaticResource ManagerBorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="12"
-                            Margin="0,0,0,8">
-                        <DockPanel LastChildFill="True">
-                            <Button DockPanel.Dock="Right"
-                                    Content="Close"
-                                    Click="CloseBrowserButton_Click"
-                                    AutomationProperties.Name="Close model browser" />
-                            <StackPanel>
-                                <TextBlock Text="Hugging Face Model Browser"
-                                           FontSize="18"
-                                           FontWeight="SemiBold" />
-                                <TextBlock Text="Download queue is on the right. Base-model downloads from the Models tab appear here too."
-                                           VerticalAlignment="Center"
-                                           Foreground="{StaticResource ManagerSubtleTextBrush}"
-                                           FontSize="11"
-                                           Margin="0,3,0,0" />
-                            </StackPanel>
-                        </DockPanel>
-                    </Border>
-                    <local:HuggingFaceModelDownloaderControl x:Name="ModelBrowserControl" Grid.Row="1" />
+            <TabItem x:Name="BrowserTabItem">
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="0,0,10,0">
+                        <TextBlock Text="Browser" VerticalAlignment="Center" />
+                        <TextBlock x:Name="BrowserTabModelCountText"
+                                   Text=" (0 Models)"
+                                   Foreground="{StaticResource ManagerSubtleTextBrush}"
+                                   VerticalAlignment="Center" />
+                        <Button Content="&#x21BB;"
+                                Click="RefreshBrowserTabButton_Click"
+                                Style="{StaticResource BrowserTabRefreshButtonStyle}"
+                                ToolTip="Refresh Hugging Face browser"
+                                AutomationProperties.Name="Refresh Hugging Face browser" />
+                        <Button Content="&#x2197;"
+                                Click="OpenBrowserExternalButton_Click"
+                                Style="{StaticResource BrowserTabExternalButtonStyle}"
+                                ToolTip="Open this page in the default browser"
+                                AutomationProperties.Name="Open Hugging Face page in the default browser" />
+                        <Button Content="X"
+                                Click="CloseBrowserButton_Click"
+                                Style="{StaticResource BrowserTabCloseButtonStyle}"
+                                ToolTip="Close browser and release its resources"
+                                AutomationProperties.Name="Close model browser" />
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Background="{StaticResource ManagerBackgroundBrush}" Margin="0,8,0,0">
+                    <local:HuggingFaceModelDownloaderControl x:Name="ModelBrowserControl" />
                 </Grid>
             </TabItem>
         </TabControl>
 
-        <TextBlock Grid.Row="2"
-                   x:Name="ManagerFooterText"
-                   Text="Running models are listed first. LM Studio downloads are included when LlmRuntime can discover the LM Studio model folder."
+        <TextBlock Grid.Row="1"
+                   x:Name="ManagerStatusText"
+                   Text="Runtime model manager ready."
                    Foreground="{StaticResource ManagerSubtleTextBrush}"
                    FontSize="11"
-                   TextWrapping="Wrap"
-                   Margin="14,8,14,12" />
+                   TextTrimming="CharacterEllipsis"
+                   Margin="14,5,14,8" />
     </Grid>
 </UserControl>

@@ -14,6 +14,7 @@ public sealed record MobileGenerationRequest(
     string InteractionMode,
     string ReasoningLevel,
     string SessionReasoningLevel,
+    bool ModelSupportsTools,
     bool JackhammerEnabled,
     int JackhammerTurnBudget,
     IReadOnlyList<ChatMessage> Messages,
@@ -33,13 +34,15 @@ public sealed record MobileGenerationSnapshot(
     string Telemetry,
     string RouteSummary,
     IReadOnlyList<ToolActivity> Tools,
+    IReadOnlyList<JackhammerPlanStep> JackhammerSteps,
     double Progress,
+    bool JackhammerEnabled,
     bool IsGenerating,
     bool IsRecovering,
     bool IsStopped,
     bool HasError)
 {
-    public static MobileGenerationSnapshot Empty { get; } = new("", "", "", "", 0, "", "", "", "", "", Array.Empty<ToolActivity>(), 0, false, false, false, false);
+    public static MobileGenerationSnapshot Empty { get; } = new("", "", "", "", 0, "", "", "", "", "", Array.Empty<ToolActivity>(), Array.Empty<JackhammerPlanStep>(), 0, false, false, false, false, false);
 }
 
 public sealed class MobileGenerationCoordinator
@@ -56,6 +59,7 @@ public sealed class MobileGenerationCoordinator
     private bool _publishScheduled;
     private MobileGenerationRequest? _pendingRequest;
     private bool _awaitingAuthentication;
+    private bool _streamConnected;
 
     public MobileGenerationCoordinator(IMobileNotificationService notifications) => _notifications = notifications;
 
@@ -70,6 +74,15 @@ public sealed class MobileGenerationCoordinator
 
     public bool IsGenerating => Current.IsGenerating;
 
+    public bool CanSteer
+    {
+        get
+        {
+            lock (_gate)
+                return _streamConnected && _snapshot.IsGenerating && _snapshot.JackhammerEnabled && _client is not null && !string.IsNullOrWhiteSpace(_streamId);
+        }
+    }
+
     public async Task<bool> StartAsync(MobileGenerationRequest request)
     {
         lock (_gate)
@@ -80,13 +93,14 @@ public sealed class MobileGenerationCoordinator
             _client = request.Client;
             _pendingRequest = request;
             _awaitingAuthentication = false;
+            _streamConnected = false;
             _streamId = "mobile_" + Guid.NewGuid().ToString("N");
             _milestonePolicy.Reset();
             _streamText.Reset();
             _snapshot = new MobileGenerationSnapshot(
                 _streamId, request.Server.LaunchKey, request.SessionId, request.UserContent,
                 request.PriorServerMessageCount, "", "", StartingStatus(request.Service), "", "", Array.Empty<ToolActivity>(),
-                0, true, false, false, false);
+                Array.Empty<JackhammerPlanStep>(), 0, request.JackhammerEnabled, true, false, false, false);
         }
 
         Publish(immediate: true);
@@ -124,6 +138,25 @@ public sealed class MobileGenerationCoordinator
             try { await client.StopAsync(streamId); }
             catch { }
         }
+    }
+
+    public async Task SteerAsync(string text, CancellationToken cancellationToken = default)
+    {
+        JackLlmClient client;
+        string streamId;
+        string sessionId;
+        lock (_gate)
+        {
+            if (!_streamConnected || !_snapshot.IsGenerating || !_snapshot.JackhammerEnabled || _client is null || string.IsNullOrWhiteSpace(_streamId))
+                throw new InvalidOperationException("Steering is available only after an active JackHammer stream connects.");
+            client = _client;
+            streamId = _streamId;
+            sessionId = _snapshot.SessionId;
+        }
+        text = (text ?? "").Trim();
+        if (text.Length == 0) throw new ArgumentException("Enter steering direction first.", nameof(text));
+        await client.SteerAsync(streamId, sessionId, text, cancellationToken);
+        SetState(snapshot => snapshot with { Status = "Steering accepted — applying at the next JackHammer break" });
     }
 
     private async Task RunAsync(MobileGenerationRequest request, string streamId, CancellationToken cancellationToken)
@@ -213,6 +246,7 @@ public sealed class MobileGenerationCoordinator
             {
                 if (_streamId == streamId)
                 {
+                    _streamConnected = false;
                     _cancellation?.Dispose();
                     _cancellation = null;
                     _client = null;
@@ -228,9 +262,10 @@ public sealed class MobileGenerationCoordinator
     {
         await foreach (ChatStreamEvent item in request.Client.StreamChatAsync(
             request.Model, request.Service, request.InteractionMode, request.SessionId, request.ProjectId, request.ReasoningLevel,
-            request.SessionReasoningLevel, request.JackhammerEnabled, request.JackhammerTurnBudget,
+            request.SessionReasoningLevel, request.ModelSupportsTools, request.JackhammerEnabled, request.JackhammerTurnBudget,
             request.Messages, request.Attachments, streamId, cancellationToken))
         {
+            lock (_gate) _streamConnected = true;
             ApplyStreamEvent(item, request.Server.LaunchKey);
         }
     }
@@ -344,6 +379,7 @@ public sealed class MobileGenerationCoordinator
             case "toolcall": case "serviceaccess": case "filechanges": case "filechange":
                 SetState(snapshot => snapshot with
                 {
+                    JackhammerSteps = item.JackhammerSteps.Count > 0 ? item.JackhammerSteps : snapshot.JackhammerSteps,
                     Tools = snapshot.Tools.Concat(new[]
                     {
                         new ToolActivity

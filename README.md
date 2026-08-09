@@ -18,23 +18,16 @@ It is built for projects that need real network behavior without rebuilding wire
 | See the 2026 package line | [#Versions](#versions) |
 | Explore networking features | [#Networking](#networking) |
 | Share or control WPF windows | [#SocketJack.WPF](#socketjackwpf) |
-| Learn about JackLLM Workstation | [#JackLLM Workstation](#jackllm-workstation) |
-| Try JackLLM Mobile for Android or iOS | [#JackLLM Mobile](#jackllm-mobile-android-and-ios) |
 
 <a id="versions"></a>
 ## #Versions
 
-SocketJack 2026 is the current platform line. The core packages use year-based versions, while some companion tooling keeps its own package-compatible numbering.
+SocketJack 2026 is the current platform line. The core packages use year-based versions, while compatibility packages retain their existing package numbering.
 
 | Surface | Version | Target / format | Notes |
 |---|---:|---|---|
-| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.8` | `.NET Standard 2.1` | Core networking, protocol hosting, P2P, SQL/data, streaming, HTTP, and WebSockets. |
-| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.4` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF capture, remote input, and GUI remoting. |
-| `JackLLM Workstation` | `2026.0` | Windows app metadata | WPF workstation app in `JackLLM/`. |
-| `JackLLM Workstation Linux` | `1:26.0.1` | Debian package version | Linux-compatible Debian version for the 2026 line. The epoch keeps upgrades ordered after earlier `2026.0.x` packages. |
-| `SocketJack LlmRuntime VS Extension` | `0.1.4` | Visual Studio 2022 VSIX | Legacy VSSDK extension in `LlmRuntime.VisualStudio/`. |
-| `SocketJack LlmRuntime VS 2026 Extension` | `0.2.30` | Visual Studio 2026 VSIX | Modern VisualStudio.Extensibility extension in `LlmRuntime.VisualStudio2026/`. |
-| `JackLLM Mobile` | `1.0` | Android + iOS app | Shared MAUI client in `JackLLM.Android/` for workstation chat, PC Access, and session management. |
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.9` | `.NET Standard 2.1` | Core networking, protocol hosting, P2P, SQL/data, streaming, HTTP, and WebSockets. |
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.5` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF capture, remote input, and GUI remoting. |
 | `SocketJack.Unity` | `1.1.0.1` | `.NET Standard 2.1` | Legacy Unity-facing package surface. |
 | `SocketJack.WebSocketServer` | `1.1.0.1` | `.NET Standard 2.1` | Legacy WebSocket server package surface. |
 
@@ -218,7 +211,7 @@ SocketJack peers can share metadata with the network. It works like network cook
 | Remote viewing | View remote WPF content from another WPF client or a browser-backed admin surface. |
 | Remote input | Send mouse, wheel, text, and keyboard input back to the shared control. |
 | P2P discovery | Use peer identity and metadata so remote windows can be found, shared, controlled, and manipulated through peer flows. |
-| JackLLM admin | Powers browser-based remote administration for JackLLM Workstation. |
+| Browser administration | Supports browser-backed viewing and remote administration for WPF applications. |
 
 ```csharp
 using SocketJack.WPF;
@@ -226,59 +219,6 @@ using SocketJack.WPF;
 IDisposable shareHandle = GameCanvas.Share(client, remotePeer, fps: 10);
 IDisposable viewerHandle = client.ViewShare(SharedImage, sharerPeer);
 ```
-
-</details>
-
-<a id="jackllm-workstation"></a>
-<details>
-<summary><strong>#JackLLM Workstation</strong> - AI workstation, generation node, and Visual Studio agent bridge</summary>
-
-JackLLM Workstation is the AI workstation built on SocketJack. It is found at [SocketJack.com](https://socketjack.com/) and is designed around network nodes run by real people, not just datacenter-hosted model providers.
-
-With JackLLM Workstation you can:
-
-- Use your PC as an LLM node, generation node, or custom agent host.
-- Publish model, hardware, tool, pricing, uptime, and availability metadata to the SocketJack network.
-- Use Visual Studio with a code agent through OpenAI-compatible and Copilot-compatible endpoints.
-- Run local or remote models, including large workstation-hosted models such as a Claude Opus 4.7 Distilled 35B-parameter compatible model when a node exposes one.
-- Use SocketJack.com to generate images and videos, ask AI questions, research the web, or work on a Visual Studio project through a Copilot MCP server tunnel to SocketJack.com agents.
-- Manage sessions, permissions, files, tools, SQL admin, payments, diagnostics, and remote WPF control from the workstation/web console.
-
-### Dream Mode
-
-Dream Mode is JackLLM's resource-aware background reflection system. It processes changed owner conversations only when CPU, RAM, GPU, VRAM, disk, and foreground model activity are below the configured thresholds, then writes grounded memory proposals to an owner-specific Dream journal.
-
-- It is disabled by default and can be managed from **Web Chat > View > Dreaming**, **Workstation > Server Management > Dreaming**, or the moon button in JackLLM Mobile.
-- Conservative, Balanced, and Aggressive presets configure start/pause hysteresis; custom settings control recurrence, duration, output/source token budgets, and sessions per pass.
-- **Dream Now** requests one pass even when automation is disabled. Pause affects scheduled work; Cancel Run stops only the active pass.
-- Every tool requires its normal permission plus a separate Dream permission. Terminal also requires permanent Terminal Trust.
-- Only grounded, explicit, non-sensitive, non-conflicting facts at 90% or higher confidence auto-save. Other facts and all conflicts remain reviewable.
-- Global settings are inherited until an owner override is saved. Journals, processing watermarks, and memories remain owner-specific.
-- Paired devices manage their linked owner unless a local Workstation administrator explicitly grants that device **Dream Admin**.
-
-Pending journal reviews are never automatically pruned. **Clear Resolved** removes resolved history while preserving pending candidates and conflicts.
-
-| Project | Version | Purpose |
-|---|---:|---|
-| `JackLLM/` | `2026.0` | Windows WPF JackLLM Workstation app. |
-| `JackLLM.Workstation/` | `2026.0` | Cross-platform native/service-style host. |
-| Linux `.deb` | `1:26.0.1` | Debian-compatible Linux package version for the 2026 release line. |
-| `SocketJack.LlmCore/` | repo library | Shared AI proxy, tools, sessions, payments, and workstation logic. |
-| `SocketJack.WorkstationMcp/` | repo bridge | MCP bridge surface for workstation and development tooling. |
-
-</details>
-
-<a id="jackllm-mobile-android"></a>
-<details>
-<summary><strong>#JackLLM Mobile</strong> - Android and iOS client for workstation chat and sessions</summary>
-
-JackLLM Mobile is the shared Android and iOS companion app for JackLLM Workstation. It connects to a workstation endpoint, sends prompts from a phone or tablet, shows assistant responses with model and compute telemetry, and lets you reopen workstation conversations from a mobile session list. Both platforms compile the same shared Mobile pages, models, and services.
-
-![JackLLM Mobile chat](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-chat.png)
-
-![JackLLM Mobile sessions](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/JackLLM.Android/docs/images/jackllm-mobile-sessions.png)
-
-Project README: [JackLLM.Android/README.md](JackLLM.Android/README.md)
 
 </details>
 
@@ -291,15 +231,10 @@ Project README: [JackLLM.Android/README.md](JackLLM.Android/README.md)
 | `SocketJack/` | Core `SocketJack` package, transports, HTTP/WebSocket stack, mutable protocol server, SQL/data, streaming, FTP/SFTP, and resources. |
 | `SocketJack.Windows/` | `SocketJack.WPF` package and WPF capture/input integration. |
 | `SocketJack.Tests/` | Core networking and protocol tests. |
+| `SocketJack.WpfBasicGame/` | Minimal WPF sample built against `SocketJack.WPF`. |
 | `SocketJack.WebSocketServer/` | WebSocket server package/project surface. |
 | `SocketJack.Unity/` | Unity-compatible package surface. |
 | `SocketJack-MagicMasterList/` | Public server-list and SocketJack.com-facing host project. |
-| `JackLLM/` | Windows WPF JackLLM Workstation app. |
-| `JackLLM.Workstation/` | Linux/service-style JackLLM Workstation host. |
-| `JackLLM.Android/` | Shared Android and iOS JackLLM Mobile app. |
-| `LlmRuntime.VisualStudio/` | Visual Studio 2022 extension. |
-| `LlmRuntime.VisualStudio2026/` | Visual Studio 2026 extension. |
-| `LlmRuntime/` | LLM runtime project and documentation. |
 | `examples.md` | Longer runnable examples across SocketJack transports and utilities. |
 
 </details>
@@ -311,9 +246,6 @@ Project README: [JackLLM.Android/README.md](JackLLM.Android/README.md)
 - [Examples](examples.md)
 - [SocketJack package](https://www.nuget.org/packages/SocketJack)
 - [SocketJack.WPF package](https://www.nuget.org/packages/SocketJack.WPF)
-- [JackLLM Workstation README](JackLLM/README.md)
-- [JackLLM Mobile README](JackLLM.Android/README.md)
-- [LlmRuntime README](LlmRuntime/README.md)
 - [GitHub repository](https://github.com/JackOfFates/SocketJack)
 
 </details>
@@ -321,37 +253,3 @@ Project README: [JackLLM.Android/README.md](JackLLM.Android/README.md)
 ## License
 
 SocketJack is open source and licensed under the [MIT License](LICENSE).
-
-<!-- LINECOUNTER-OUTPUT:START -->
-<details>
-<summary><strong>LineCounter - Output</strong> <code>11,961,735 lines / 916 files</code></summary>
-
-<br>
-
-<strong>Scope:</strong> <code>.</code><br>
-<strong>Source:</strong> <code>GetLineCount.bat</code> rules, non-empty/non-whitespace lines only; build/vendor folders skipped.
-
-| Language | Files | Lines |
-|---|---:|---:|
-| Text | 282 | 11,578,223 |
-| C# | 379 | 239,378 |
-| HTML | 15 | 76,629 |
-| XML | 11 | 26,824 |
-| XAML | 32 | 13,313 |
-| Markdown | 77 | 7,766 |
-| Visual Basic | 18 | 5,364 |
-| MSBuild/XML | 33 | 3,336 |
-| PowerShell | 16 | 3,277 |
-| JSON | 33 | 2,271 |
-| C++ | 2 | 1,380 |
-| Shell | 3 | 1,104 |
-| Batch | 2 | 740 |
-| EditorConfig | 5 | 577 |
-| Solution | 1 | 547 |
-| JavaScript | 2 | 441 |
-| TypeScript | 2 | 430 |
-| YAML | 3 | 135 |
-| **Total** | **916** | **11,961,735** |
-
-</details>
-<!-- LINECOUNTER-OUTPUT:END -->

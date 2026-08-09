@@ -44,6 +44,25 @@ public sealed class LmVsProxyAgentToolRoutingTests
     }
 
     [TestMethod]
+    public void JackhammerGoalCheckpointPreservesOrderedPlanSteps()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo? method = typeof(LmVsProxy).GetMethod("BuildProxyCoordinationToolResult", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        object result = method!.Invoke(proxy, new object[]
+        {
+            "goal_checkpoint",
+            "{\"goal\":\"Ship it\",\"status\":\"in_progress\",\"steps\":[\"completed|Inspect\",\"in_progress|Implement\",\"pending|Verify\"],\"progressPercent\":40}",
+            "{\"messages\":[{\"role\":\"user\",\"content\":\"Ship it\"}]}"
+        })!;
+        string json = (string)(result.GetType().GetProperty("Result")?.GetValue(result) ?? "");
+        using JsonDocument document = JsonDocument.Parse(json);
+        string[] steps = document.RootElement.GetProperty("steps").EnumerateArray().Select(item => item.GetString() ?? "").ToArray();
+
+        CollectionAssert.AreEqual(new[] { "completed|Inspect", "in_progress|Implement", "pending|Verify" }, steps);
+    }
+
+    [TestMethod]
     public void ExactFinalAnswerInstructionDoesNotSuppressRequiredFileTools()
     {
         Assert.IsTrue(PromptLikelyNeedsProxyTools(
@@ -154,7 +173,7 @@ public sealed class LmVsProxyAgentToolRoutingTests
     }
 
     [TestMethod]
-    public void ChatUiSteeringBeforeStreamRegistrationIsBuffered()
+    public void ChatUiSteeringBeforeStreamRegistrationIsRejected()
     {
         using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
         const string ownerKey = "owner-for-steering-test";
@@ -162,10 +181,23 @@ public sealed class LmVsProxyAgentToolRoutingTests
         const string sessionId = "session-pending-steering-test";
         const string steering = "Use the already opened browser context.";
 
-        Assert.IsTrue(AddActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, steering));
+        Assert.IsFalse(AddActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, steering));
 
         object active = RegisterActiveChatStreamCancellation(proxy, ownerKey, streamId, sessionId);
-        Assert.AreEqual(steering, ConsumeActiveChatStreamSteering(proxy, active));
+        Assert.AreEqual("", ConsumeActiveChatStreamSteering(proxy, active));
+    }
+
+    [TestMethod]
+    public void ChatUiSteeringRejectsNonJackhammerStreams()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        const string ownerKey = "owner-for-non-jackhammer-steering-test";
+        const string streamId = "stream_non_jackhammer_steering_test";
+        const string sessionId = "session-non-jackhammer-steering-test";
+        _ = RegisterActiveChatStreamCancellation(proxy, ownerKey, streamId, sessionId, jackhammerEnabled: false);
+
+        Assert.IsFalse(AcceptActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "not allowed", "steer_rejected", out string state));
+        Assert.AreEqual("jackhammer_required", state);
     }
 
     [TestMethod]
@@ -317,14 +349,17 @@ public sealed class LmVsProxyAgentToolRoutingTests
         return (bool)method!.Invoke(proxy, new object[] { ownerKey, streamId, sessionId, steering })!;
     }
 
-    private static object RegisterActiveChatStreamCancellation(LmVsProxy proxy, string ownerKey, string streamId, string sessionId)
+    private static object RegisterActiveChatStreamCancellation(LmVsProxy proxy, string ownerKey, string streamId, string sessionId, bool jackhammerEnabled = true)
     {
         var method = typeof(LmVsProxy).GetMethod(
             "RegisterActiveChatStreamCancellation",
             BindingFlags.NonPublic | BindingFlags.Instance);
 
         Assert.IsNotNull(method, "RegisterActiveChatStreamCancellation should remain available for steering tests.");
-        return method!.Invoke(proxy, new object[] { ownerKey, streamId, sessionId })!;
+        string requestBody = jackhammerEnabled
+            ? "{\"jackhammer\":{\"enabled\":true,\"runId\":\"test_run\"}}"
+            : "{\"jackhammer\":{\"enabled\":false}}";
+        return method!.Invoke(proxy, new object[] { ownerKey, streamId, sessionId, requestBody })!;
     }
 
     private static bool AcceptActiveChatStreamSteering(LmVsProxy proxy, string ownerKey, string streamId, string sessionId, string steering, string steeringId, out string state)

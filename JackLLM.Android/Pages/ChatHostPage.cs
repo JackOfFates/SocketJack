@@ -39,7 +39,14 @@ public sealed class ChatHostPage : ContentPage
     private readonly Label _status;
     private readonly NetworkHealthView _networkHealth;
     private readonly Button _send;
+    private readonly Button _steer;
     private readonly Border _liveActivityCard;
+    private readonly Border _contextApprovalCard;
+    private readonly Label _contextApprovalTitle;
+    private readonly Label _contextApprovalSummary;
+    private readonly Button _contextAllowOnce;
+    private readonly Button _contextAllowAlways;
+    private readonly Button _contextDeny;
     private readonly Label _liveActivityText;
     private readonly ProgressBar _liveProgress;
     private readonly ActivityIndicator _liveIndicator;
@@ -67,6 +74,8 @@ public sealed class ChatHostPage : ContentPage
     private IReadOnlyList<ModelInfo> _allModels = Array.Empty<ModelInfo>();
     private MobileChatMode _mode = MobileChatMode.General;
     private CancellationTokenSource? _networkHealthCancellation;
+    private CancellationTokenSource? _contextApprovalCancellation;
+    private ContextApprovalRequest? _pendingContextApproval;
     private DateTimeOffset _lastAutoScroll = DateTimeOffset.MinValue;
     private bool _sessionInitialized;
     private volatile bool _pageActive;
@@ -147,6 +156,9 @@ public sealed class ChatHostPage : ContentPage
         _prompt = new Editor { Placeholder = "Message JackLLM…", AutoSize = EditorAutoSizeOption.TextChanges, MaximumHeightRequest = 130, TextColor = Colors.White, PlaceholderColor = Color.FromArgb("#64748B"), BackgroundColor = Colors.Transparent };
         _send = new Button { Text = "↑", FontSize = 24, FontAttributes = FontAttributes.Bold, CornerRadius = 15, BackgroundColor = Color.FromArgb("#2563EB"), TextColor = Colors.White, WidthRequest = 54 };
         _send.Clicked += async (_, _) => { if (!_generation.IsGenerating) await SendAsync(); else await StopAsync(); };
+        _steer = new Button { Text = "Steer", FontSize = 11, FontAttributes = FontAttributes.Bold, CornerRadius = 13, BackgroundColor = Color.FromArgb("#7C3AED"), TextColor = Colors.White, WidthRequest = 66, IsVisible = false, IsEnabled = false };
+        _steer.Clicked += async (_, _) => await SteerAsync();
+        _prompt.TextChanged += (_, _) => _steer.IsEnabled = _generation.CanSteer && !string.IsNullOrWhiteSpace(_prompt.Text) && _attachments.Count == 0;
         _attach = new Button { Text = "＋", FontSize = 22, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 46 };
         _attach.Clicked += async (_, _) => await AddAttachmentAsync();
         _voice = new Button { Text = "🎙", FontSize = 18, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 48 };
@@ -255,7 +267,30 @@ public sealed class ChatHostPage : ContentPage
         var liveGrid = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnSpacing = 8 };
         liveGrid.Add(_liveIndicator, 0, 0); Grid.SetRowSpan(_liveIndicator, 2); liveGrid.Add(_liveActivityText, 1, 0); liveGrid.Add(_liveProgress, 1, 1);
         _liveActivityCard = new Border { IsVisible = false, Margin = new Thickness(10, 4), Padding = new Thickness(10, 7), BackgroundColor = Color.FromArgb("#101D36"), Stroke = Color.FromArgb("#1D4ED8"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 12 }, Content = liveGrid };
-        var composer = new Border { Margin = new Thickness(10, 6, 10, 10), Padding = new Thickness(8), BackgroundColor = Color.FromArgb("#151C2F"), Stroke = Color.FromArgb("#26334D"), StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Children = { _attach, _voice.Column(1), _prompt.Column(2), _send.Column(3) } } };
+        _contextApprovalTitle = new Label { Text = "JACK requests more context", TextColor = Colors.White, FontSize = 13, FontAttributes = FontAttributes.Bold };
+        _contextApprovalSummary = new Label { TextColor = Color.FromArgb("#CBD5E1"), FontSize = 11, LineBreakMode = LineBreakMode.WordWrap };
+        _contextAllowOnce = new Button { Text = "Allow once", CornerRadius = 10, BackgroundColor = Color.FromArgb("#2563EB"), TextColor = Colors.White, FontSize = 11, Padding = new Thickness(10, 6) };
+        _contextAllowAlways = new Button { Text = "Always allow", CornerRadius = 10, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, FontSize = 11, Padding = new Thickness(10, 6) };
+        _contextDeny = new Button { Text = "Deny", CornerRadius = 10, BackgroundColor = Color.FromArgb("#3F1D2A"), TextColor = Color.FromArgb("#FCA5A5"), FontSize = 11, Padding = new Thickness(10, 6) };
+        _contextAllowOnce.Clicked += async (_, _) => await DecideContextApprovalAsync("allow_once");
+        _contextAllowAlways.Clicked += async (_, _) => await DecideContextApprovalAsync("allow_always");
+        _contextDeny.Clicked += async (_, _) => await DecideContextApprovalAsync("deny");
+        _contextApprovalCard = new Border
+        {
+            IsVisible = false, Margin = new Thickness(10, 4), Padding = new Thickness(12, 10),
+            BackgroundColor = Color.FromArgb("#172033"), Stroke = Color.FromArgb("#F59E0B"), StrokeThickness = 1,
+            StrokeShape = new RoundRectangle { CornerRadius = 14 },
+            Content = new VerticalStackLayout
+            {
+                Spacing = 7,
+                Children =
+                {
+                    _contextApprovalTitle, _contextApprovalSummary,
+                    new HorizontalStackLayout { Spacing = 7, Children = { _contextAllowOnce, _contextAllowAlways, _contextDeny } }
+                }
+            }
+        };
+        var composer = new Border { Margin = new Thickness(10, 6, 10, 10), Padding = new Thickness(8), BackgroundColor = Color.FromArgb("#151C2F"), Stroke = Color.FromArgb("#26334D"), StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto) }, Children = { _attach, _voice.Column(1), _prompt.Column(2), _steer.Column(3), _send.Column(4) } } };
         _alignmentTop = new BoxView { HeightRequest = 3, VerticalOptions = LayoutOptions.Start, BackgroundColor = Color.FromArgb("#64748B") };
         _alignmentBottom = new BoxView { HeightRequest = 3, IsVisible = false };
         _alignmentDrawerScore = new Label { Text = "Neutral · 0", TextColor = Colors.White, FontSize = 15, FontAttributes = FontAttributes.Bold };
@@ -263,7 +298,7 @@ public sealed class ChatHostPage : ContentPage
         _alignmentDrawerFeatures = new Label { Text = "All granted Guild privileges remain available.", TextColor = Color.FromArgb("#94A3B8"), FontSize = 11 };
         _alignmentDrawerTraits = new Label { TextColor = Color.FromArgb("#CBD5E1"), FontSize = 11, LineHeight = 1.25 };
         _alignmentDrawerRecovery = new Label { Text = "You can only help others after you help yourself.", TextColor = Color.FromArgb("#64748B"), FontSize = 10 };
-        _alignmentDrawerModel = new Label { Text = "Awaiting the selected model’s reading", TextColor = Color.FromArgb("#64748B"), FontSize = 9 };
+        _alignmentDrawerModel = new Label { Text = "Waiting for a completed Dream before Checks and Balances can run", TextColor = Color.FromArgb("#64748B"), FontSize = 9 };
         _alignmentDrawer = new Border
         {
             IsVisible = false, HeightRequest = 0, Padding = new Thickness(16, 12, 16, 9),
@@ -297,9 +332,9 @@ public sealed class ChatHostPage : ContentPage
             {
                 new RowDefinition(16), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto),
                 new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star),
-                new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(3)
+                new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto), new RowDefinition(3)
             },
-            Children = { alignmentEdgeZone.Row(0), _alignmentDrawer.Row(1), compactTopBar.Row(2), _status.Row(3), _liveActivityCard.Row(4), _messageList.Row(5), _attachmentScroll.Row(6), composer.Row(7), _alignmentBottom.Row(8) }
+            Children = { alignmentEdgeZone.Row(0), _alignmentDrawer.Row(1), compactTopBar.Row(2), _status.Row(3), _liveActivityCard.Row(4), _messageList.Row(5), _attachmentScroll.Row(6), _contextApprovalCard.Row(7), composer.Row(8), _alignmentBottom.Row(9) }
         };
         _alignmentLockScreen = new Border
         {
@@ -358,6 +393,7 @@ public sealed class ChatHostPage : ContentPage
             _server.IsSaved = true; _store.Save(_server);
             StartNetworkHealthMonitor();
             await InitializeSessionAsync();
+            StartContextApprovalMonitor();
             ApplyGenerationSnapshot(_generation.Current);
         }
         catch (Exception ex) when (RequiresAuthentication(ex))
@@ -519,6 +555,11 @@ public sealed class ChatHostPage : ContentPage
         _networkHealthCancellation?.Cancel();
         _networkHealthCancellation?.Dispose();
         _networkHealthCancellation = null;
+        _contextApprovalCancellation?.Cancel();
+        _contextApprovalCancellation?.Dispose();
+        _contextApprovalCancellation = null;
+        _pendingContextApproval = null;
+        _contextApprovalCard.IsVisible = false;
     }
 
     private void StartNetworkHealthMonitor()
@@ -527,6 +568,78 @@ public sealed class ChatHostPage : ContentPage
         _networkHealthCancellation?.Dispose();
         _networkHealthCancellation = new CancellationTokenSource();
         _ = MonitorNetworkHealthAsync(_networkHealthCancellation.Token);
+    }
+
+    private void StartContextApprovalMonitor()
+    {
+        _contextApprovalCancellation?.Cancel();
+        _contextApprovalCancellation?.Dispose();
+        _contextApprovalCancellation = new CancellationTokenSource();
+        _ = MonitorContextApprovalsAsync(_contextApprovalCancellation.Token);
+    }
+
+    private async Task MonitorContextApprovalsAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (_generation.IsGenerating)
+                {
+                    IReadOnlyList<ContextApprovalRequest> approvals = await _client.GetContextApprovalsAsync(_sessionId, cancellationToken);
+                    ContextApprovalRequest? next = approvals.FirstOrDefault();
+                    await MainThread.InvokeOnMainThreadAsync(() => ShowContextApproval(next));
+                }
+                else if (_pendingContextApproval is not null)
+                {
+                    await MainThread.InvokeOnMainThreadAsync(() => ShowContextApproval(null));
+                }
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
+            catch
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            }
+        }
+    }
+
+    private void ShowContextApproval(ContextApprovalRequest? request)
+    {
+        _pendingContextApproval = request;
+        _contextApprovalCard.IsVisible = request is not null;
+        if (request is null) return;
+        _contextApprovalTitle.Text = request.Capability switch
+        {
+            "fileAccess" => "JACK wants to inspect files",
+            "companionObservation" => "JACK wants to observe the desktop",
+            "runningApplications" => "JACK wants to inspect running applications",
+            "windowsServices" => "JACK wants to inspect Windows services",
+            "eventViewer" => "JACK wants to read Event Viewer",
+            _ => "JACK requests more context"
+        };
+        _contextApprovalSummary.Text = (string.IsNullOrWhiteSpace(request.QuerySummary) ? "Read additional Workstation context" : request.QuerySummary) + "\nAllow once applies only to this tool call.";
+        _contextAllowAlways.IsVisible = request.CanAlwaysAllow;
+    }
+
+    private async Task DecideContextApprovalAsync(string action)
+    {
+        ContextApprovalRequest? request = _pendingContextApproval;
+        if (request is null) return;
+        _contextAllowOnce.IsEnabled = _contextAllowAlways.IsEnabled = _contextDeny.IsEnabled = false;
+        try
+        {
+            await _client.DecideContextApprovalAsync(request.Id, _sessionId, action);
+            ShowContextApproval(null);
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "Context approval failed: " + ex.Message;
+        }
+        finally
+        {
+            _contextAllowOnce.IsEnabled = _contextAllowAlways.IsEnabled = _contextDeny.IsEnabled = true;
+        }
     }
 
     private async Task MonitorNetworkHealthAsync(CancellationToken cancellationToken)
@@ -747,6 +860,7 @@ public sealed class ChatHostPage : ContentPage
             _server, _client, _sessionId, _projectId, model.Id, service,
             _mode == MobileChatMode.Plan ? "plan" : _mode == MobileChatMode.Advanced ? service : "chat", EffectiveReasoningLevel,
             _sessionReasoningInherit.IsToggled ? "inherit" : EffectiveReasoningLevel,
+            model.SupportsTools,
             _jackhammerToggle.IsToggled, EffectiveJackhammerTurnBudget,
             requestMessages, attachments, priorServerMessageCount, user.Content));
         if (!started)
@@ -767,6 +881,34 @@ public sealed class ChatHostPage : ContentPage
     }
 
     private Task StopAsync() => _generation.StopAsync();
+
+    private async Task SteerAsync()
+    {
+        string direction = _prompt.Text?.Trim() ?? "";
+        if (direction.Length == 0) return;
+        if (_attachments.Count > 0)
+        {
+            await DisplayAlertAsync("Text steering only", "Remove attachments before steering the active JackHammer run.", "OK");
+            return;
+        }
+        _steer.IsEnabled = false;
+        try
+        {
+            await _generation.SteerAsync(direction);
+            _messages.Add(new ChatMessage { Role = "user", Content = direction, IsLocalOnly = false });
+            _prompt.Text = "";
+            _status.Text = "Steering accepted — applying at the next JackHammer break";
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "Steering was not accepted";
+            await DisplayAlertAsync("Could not steer JackHammer", ex.Message, "OK");
+        }
+        finally
+        {
+            _steer.IsEnabled = _generation.CanSteer && !string.IsNullOrWhiteSpace(_prompt.Text) && _attachments.Count == 0;
+        }
+    }
 
     private void OnAuthenticationRequired(object? sender, EventArgs e)
     {
@@ -836,9 +978,13 @@ public sealed class ChatHostPage : ContentPage
             : "All granted Guild privileges remain available.";
         _alignmentDrawerTraits.Text = BuildMobileAlignmentTraitText(_alignment.CharacterTraits);
         _alignmentDrawerRecovery.Text = _alignment.RecoveryGuidance;
-        _alignmentDrawerModel.Text = string.IsNullOrWhiteSpace(_alignment.AssessmentModel)
-            ? "Awaiting the selected model’s reading"
-            : "Judged by " + _alignment.AssessmentModel;
+        _alignmentDrawerModel.Text = !string.IsNullOrWhiteSpace(_alignment.AssessmentModel)
+            ? "Checks and Balances completed by " + _alignment.AssessmentModel
+            : string.Equals(_alignment.ChecksAndBalancesStatus, "running", StringComparison.OrdinalIgnoreCase)
+                ? "Checks and Balances is reading the completed Dream"
+                : string.Equals(_alignment.ChecksAndBalancesStatus, "failed", StringComparison.OrdinalIgnoreCase)
+                    ? "Checks and Balances will retry after the next completed Dream"
+                    : "Waiting for a completed Dream before Checks and Balances can run";
         BackgroundColor = negative ? Color.FromArgb("#090000") : Color.FromArgb("#0B1020");
 
         HashSet<string> disabled = new(_alignment.DisabledFeatures ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
@@ -996,9 +1142,12 @@ public sealed class ChatHostPage : ContentPage
         assistant.Tools.Clear();
         foreach (ToolActivity tool in snapshot.Tools)
             assistant.Tools.Add(new ToolActivity { Name = tool.Name, Status = tool.Status, Detail = tool.Detail });
-        assistant.WorkSummary = BuildJackhammerWorkSummary(assistant.Tools, snapshot.IsGenerating);
+        assistant.WorkSummary = BuildJackhammerWorkSummary(snapshot.JackhammerSteps, assistant.Tools, snapshot.JackhammerEnabled, snapshot.IsGenerating);
 
         _send.Text = snapshot.IsGenerating ? "■" : "↑";
+        _steer.IsVisible = snapshot.IsGenerating && snapshot.JackhammerEnabled;
+        _steer.IsEnabled = _generation.CanSteer && !string.IsNullOrWhiteSpace(_prompt.Text) && _attachments.Count == 0;
+        _prompt.Placeholder = snapshot.IsGenerating && snapshot.JackhammerEnabled ? "Add direction for this JackHammer run…" : (_mode == MobileChatMode.Plan ? "Describe what you want planned..." : _mode == MobileChatMode.Advanced ? "Ask JackLLM to work, use tools, or generate media..." : "Chat with JackLLM...");
         _status.Text = snapshot.HasError ? snapshot.Status : snapshot.IsStopped ? "Generation stopped" : snapshot.IsGenerating ? (snapshot.Status.Length > 0 ? snapshot.Status : "Generating…") : "Ready";
         SetLiveActivity(snapshot.IsGenerating, AlignmentLoreForActivity(snapshot.Status), snapshot.Progress);
         if (DateTimeOffset.UtcNow - _lastAutoScroll > TimeSpan.FromMilliseconds(300))
@@ -1496,11 +1645,26 @@ public sealed class ChatHostPage : ContentPage
         return border;
     }
 
-    private static string BuildJackhammerWorkSummary(IEnumerable<ToolActivity> tools, bool isGenerating)
+    private static string BuildJackhammerWorkSummary(IEnumerable<JackhammerPlanStep> steps, IEnumerable<ToolActivity> tools, bool jackhammerEnabled, bool isGenerating)
     {
-        ToolActivity[] items = tools.Take(12).ToArray();
-        if (items.Length == 0) return "";
-        var lines = new List<string> { "### Jackhammer work tree" };
+        JackhammerPlanStep[] planned = steps.Take(8).ToArray();
+        ToolActivity[] items = tools.Where(tool => !tool.Name.Equals("goal_checkpoint", StringComparison.OrdinalIgnoreCase)).TakeLast(6).ToArray();
+        if (!jackhammerEnabled && planned.Length == 0) return "";
+        var lines = new List<string> { "### JackHammer steps" };
+        if (planned.Length == 0)
+            lines.Add("- [>] **Create a clear plan of action**");
+        foreach (JackhammerPlanStep step in planned)
+        {
+            string state = step.Status.Equals("completed", StringComparison.OrdinalIgnoreCase)
+                ? "[x]"
+                : step.Status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
+                    ? "[!]"
+                    : step.Status.Equals("in_progress", StringComparison.OrdinalIgnoreCase)
+                        ? "[>]"
+                        : "[ ]";
+            lines.Add($"- {state} **{step.Action}**");
+        }
+        if (items.Length > 0) lines.Add("\n**Recent activity**");
         foreach (ToolActivity item in items)
         {
             string state = item.Status.Equals("completed", StringComparison.OrdinalIgnoreCase) ||
@@ -1514,7 +1678,7 @@ public sealed class ChatHostPage : ContentPage
             string detail = string.IsNullOrWhiteSpace(item.Detail) ? "" : " - " + item.Detail.Trim();
             lines.Add($"- {state} **{item.Name}**{detail}");
         }
-        lines.Add(isGenerating ? "\n_Work continues automatically._" : "\n_Work run complete._");
+        lines.Add(isGenerating ? "\n_Work continues automatically. Type direction and tap Steer to redirect this run._" : "\n_Work run complete._");
         return string.Join("\n", lines);
     }
 

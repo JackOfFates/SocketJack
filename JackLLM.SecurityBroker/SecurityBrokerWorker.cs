@@ -15,12 +15,15 @@ public sealed class SecurityBrokerWorker : BackgroundService {
     private readonly BuildIntegrityVerifier _integrity;
     private readonly BrokerMode _mode;
     private readonly ILogger<SecurityBrokerWorker> _logger;
+    private readonly IHostApplicationLifetime _hostLifetime;
 
-    public SecurityBrokerWorker(SecurityEngine engine, BuildIntegrityVerifier integrity, BrokerMode mode, ILogger<SecurityBrokerWorker> logger) {
+    public SecurityBrokerWorker(SecurityEngine engine, BuildIntegrityVerifier integrity, BrokerMode mode,
+        ILogger<SecurityBrokerWorker> logger, IHostApplicationLifetime hostLifetime) {
         _engine = engine;
         _integrity = integrity;
         _mode = mode;
         _logger = logger;
+        _hostLifetime = hostLifetime;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -42,6 +45,7 @@ public sealed class SecurityBrokerWorker : BackgroundService {
         using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         SecurityResponse response;
+        bool restartBroker = false;
         try {
             if (!TryGetClientProcessId(pipe, out uint clientProcessId)) {
                 response = Failure(SecurityStateKind.IntegrityFailure, "Unable to identify the security client process.");
@@ -55,7 +59,7 @@ public sealed class SecurityBrokerWorker : BackgroundService {
                 } else {
                     string? line = await reader.ReadLineAsync(cancellationToken);
                     bool clientIsAdministrator = IsClientAdministrator(pipe);
-                    response = await ProcessAsync(line, clientIsAdministrator);
+                    response = Process(line, clientIsAdministrator, out restartBroker);
                 }
             }
         } catch (Exception ex) {
@@ -66,18 +70,27 @@ public sealed class SecurityBrokerWorker : BackgroundService {
         response.BrokerCompatibility = SecurityProtocol.BrokerCompatibility;
         response.BrokerProcessId = Environment.ProcessId;
         await writer.WriteLineAsync(JsonSerializer.Serialize(response, SecurityProtocol.Json));
+        if (restartBroker)
+            _hostLifetime.StopApplication();
     }
 
-    private Task<SecurityResponse> ProcessAsync(string? line, bool clientIsAdministrator) {
+    private SecurityResponse Process(string? line, bool clientIsAdministrator, out bool restartBroker) {
+        restartBroker = false;
         SecurityRequest? request;
         try { request = JsonSerializer.Deserialize<SecurityRequest>(line ?? "", SecurityProtocol.Json); }
         catch { request = null; }
         if (request == null || request.Version != SecurityProtocol.Version)
-            return Task.FromResult(Failure(SecurityStateKind.Error, "Unsupported security protocol request."));
+            return Failure(SecurityStateKind.Error, "Unsupported security protocol request.");
         if (request.Operation is SecurityOperation.Recover or SecurityOperation.RebindHardware && !clientIsAdministrator)
-            return Task.FromResult(Failure(SecurityStateKind.IntegrityFailure, "Recovery and hardware rebinding require an elevated JackLLM process."));
+            return Failure(SecurityStateKind.IntegrityFailure, "Recovery and hardware rebinding require an elevated JackLLM process.");
         SecurityResponse response = request.Operation switch {
             SecurityOperation.Status => _engine.GetStatus(),
+            SecurityOperation.RestartBroker => new SecurityResponse {
+                Success = true,
+                State = SecurityStateKind.Unlocked,
+                Message = "Security Broker startup refresh accepted.",
+                DevelopmentMode = _mode.Development
+            },
             SecurityOperation.BeginEnroll => _engine.Begin(SecurityOperation.BeginEnroll),
             SecurityOperation.Enroll => _engine.Enroll(request),
             SecurityOperation.BeginUnlock => _engine.Begin(SecurityOperation.BeginUnlock),
@@ -92,7 +105,8 @@ public sealed class SecurityBrokerWorker : BackgroundService {
             SecurityOperation.RebindHardware => _engine.RebindHardware(request),
             _ => Failure(SecurityStateKind.Error, "Unsupported security operation.")
         };
-        return Task.FromResult(response);
+        restartBroker = request.Operation == SecurityOperation.RestartBroker && response.Success;
+        return response;
     }
 
     private static NamedPipeServerStream CreatePipe(string pipeName) {

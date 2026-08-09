@@ -149,8 +149,15 @@
                                 <TextBlock Text="DEVELOPMENT CREDENTIALS" FontSize="10" FontWeight="Bold" Foreground="#FFFFD19A"/>
                             </Border>
                         </StackPanel>
-                        <TextBlock x:Name="AuthenticationDetailText" Margin="0,8,0,14" TextWrapping="Wrap"
+                        <TextBlock x:Name="AuthenticationDetailText" Margin="0,8,0,8" TextWrapping="Wrap"
                                    Text="Checking the hardware-bound security broker." FontSize="12.5" Foreground="#AFC1D6"/>
+                        <Border x:Name="BrokerStartupStatusBorder" Padding="10,7" Margin="0,0,0,14" CornerRadius="7"
+                                Background="#33263448" BorderBrush="#554E6A8B" BorderThickness="1">
+                            <TextBlock x:Name="BrokerStartupStatusText"
+                                       Text="Security Broker: checking current process..."
+                                       FontFamily="Consolas" FontSize="11.5" FontWeight="SemiBold"
+                                       Foreground="#FFAFC1D6" TextWrapping="Wrap"/>
+                        </Border>
                         <Border Padding="12,8" Margin="0,0,0,14" CornerRadius="8" Background="#44263448" BorderBrush="#554E6A8B" BorderThickness="1">
                             <StackPanel>
                                 <TextBlock Text="HARDWARE ID" FontSize="10" FontWeight="Bold" Foreground="#7F93AB"/>
@@ -163,10 +170,12 @@
                             <PasswordBox x:Name="CurrentPasswordBox" Margin="0,5,0,12" Height="36" Padding="10,7"
                                          Background="#AA263448" Foreground="#F1F7FF" BorderBrush="#554E6A8B" BorderThickness="1" PasswordChar="●"/>
                         </StackPanel>
-                        <TextBlock x:Name="PasswordLabelText" Text="Workstation password" FontSize="11.5" Foreground="#CFE3FF"/>
-                        <PasswordBox x:Name="AuthenticationPasswordBox" Margin="0,5,0,12" Height="36" Padding="10,7"
-                                     Background="#AA263448" Foreground="#F1F7FF" BorderBrush="#554E6A8B" BorderThickness="1"
-                                     PasswordChar="●" KeyDown="AuthenticationPasswordBox_KeyDown"/>
+                        <StackPanel x:Name="AuthenticationPasswordPanel">
+                            <TextBlock x:Name="PasswordLabelText" Text="Recovery-file password (not used for sign-in)" FontSize="11.5" Foreground="#CFE3FF"/>
+                            <PasswordBox x:Name="AuthenticationPasswordBox" Margin="0,5,0,12" Height="36" Padding="10,7"
+                                         Background="#AA263448" Foreground="#F1F7FF" BorderBrush="#554E6A8B" BorderThickness="1"
+                                         PasswordChar="●" KeyDown="AuthenticationPasswordBox_KeyDown"/>
+                        </StackPanel>
                         <StackPanel x:Name="ConfirmPasswordPanel" Visibility="Collapsed">
                             <TextBlock Text="Confirm password" FontSize="11.5" Foreground="#CFE3FF"/>
                             <PasswordBox x:Name="ConfirmPasswordBox" Margin="0,5,0,10" Height="36" Padding="10,7"
@@ -175,9 +184,9 @@
                                        Margin="0,0,0,10" TextWrapping="Wrap" FontSize="11" Foreground="#7F93AB"/>
                         </StackPanel>
                         <CheckBox x:Name="RememberDeviceCheckBox"
-                                  Content="Remember this device for 30 days"
+                                  Content="Remember Windows Hello on this device for 30 days"
                                   Margin="0,0,0,7"
-                                  IsChecked="False"
+                                  IsChecked="True"
                                   Foreground="#CFE3FF"/>
                         <TextBlock x:Name="RememberDeviceStatusText"
                                    Margin="0,0,0,10"
@@ -228,7 +237,7 @@
                                             BorderThickness="1" ToolTip="Choose where to save the recovery file"
                                             Click="BrowseRecoverySavePathButton_Click"/>
                                 </Grid>
-                                <TextBlock Text="The file is strongly encrypted with your workstation password using Argon2id and AES-256-GCM."
+                                <TextBlock Text="The file is strongly encrypted with your recovery-file password using Argon2id and AES-256-GCM."
                                            Margin="0,0,0,9" TextWrapping="Wrap" FontSize="11" Foreground="#9FB1C8"/>
                                 <Border Margin="0,0,0,9" Padding="9,6" CornerRadius="6"
                                         Background="#33263448" BorderBrush="#554E6A8B" BorderThickness="1">

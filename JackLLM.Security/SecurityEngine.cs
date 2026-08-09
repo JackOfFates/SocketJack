@@ -45,7 +45,11 @@ public sealed class SecurityEngine {
                 return Response(SecurityStateKind.HardwareMismatch, "This enrollment is bound to different hardware.", record.HardwareId);
             if (record.CooldownUntilUtc > DateTimeOffset.UtcNow)
                 return Response(SecurityStateKind.Cooldown, "Too many failed attempts.", record.HardwareId, record.CooldownUntilUtc);
-            return Response(SecurityStateKind.Locked, "Verify Windows Hello, then enter the workstation password.", record.HardwareId);
+            return Response(SecurityStateKind.Locked,
+                record.WindowsHelloOnly
+                    ? "Verify Windows Hello to open JackLLM Workstation."
+                    : "Verify Windows Hello to switch this workstation to password-free sign-in.",
+                record.HardwareId);
         } catch (CryptographicException) {
             return Response(SecurityStateKind.HardwareMismatch, "The protected enrollment cannot be opened on this Windows installation.");
         } catch {
@@ -57,7 +61,7 @@ public sealed class SecurityEngine {
         SecurityResponse status = GetStatus();
         if (operation == SecurityOperation.BeginEnroll && status.State != SecurityStateKind.Unenrolled)
             return status;
-        if (operation == SecurityOperation.BeginUnlock && status.State is not (SecurityStateKind.Unenrolled or SecurityStateKind.Locked or SecurityStateKind.HardwareMismatch or SecurityStateKind.CredentialMissing or SecurityStateKind.CorruptEnrollment))
+        if (operation == SecurityOperation.BeginUnlock && status.State is not (SecurityStateKind.Unenrolled or SecurityStateKind.Locked or SecurityStateKind.Cooldown or SecurityStateKind.HardwareMismatch or SecurityStateKind.CredentialMissing or SecurityStateKind.CorruptEnrollment))
             return status;
         byte[] nonce = RandomNumberGenerator.GetBytes(32);
         string id = Guid.NewGuid().ToString("N");
@@ -100,6 +104,7 @@ public sealed class SecurityEngine {
             RecoverySalt = Convert.ToBase64String(recoverySalt),
             RecoveryVerifier = Convert.ToBase64String(recoveryVerifier),
             Pepper = Convert.ToBase64String(pepper),
+            WindowsHelloOnly = request.UseWindowsHelloOnly,
             EnrolledUtc = DateTimeOffset.UtcNow,
             LastObservedUtc = DateTimeOffset.UtcNow
             ,CredentialGeneration = CreateCredentialGeneration()
@@ -123,35 +128,44 @@ public sealed class SecurityEngine {
         WorkstationCredentialRecord? record;
         try { record = _store.Load(); } catch { return Response(SecurityStateKind.CorruptEnrollment, "The enrollment cannot be read."); }
         if (record == null) return GetStatus();
-        if (record.CooldownUntilUtc > DateTimeOffset.UtcNow) return GetStatus();
         if (!TryConsumeChallenge(request, SecurityOperation.BeginUnlock, out byte[] challenge))
             return Response(SecurityStateKind.Error, "The unlock challenge expired or was already used.");
 
         bool helloValid = VerifyHelloSignature(record.HelloPublicKey, challenge, request.Signature);
+        if (!helloValid)
+            return RejectHello(record);
+
+        if (record.WindowsHelloOnly || request.UseWindowsHelloOnly) {
+            bool migratingToHelloOnly = !record.WindowsHelloOnly;
+            record.WindowsHelloOnly = true;
+            record.FailedAttempts = 0;
+            record.CooldownUntilUtc = null;
+            record.LastObservedUtc = DateTimeOffset.UtcNow;
+            if (migratingToHelloOnly) {
+                record.CredentialGeneration = CreateCredentialGeneration();
+                _store.DeleteRememberedDevice();
+            }
+            _store.Save(record);
+            return CreateUnlockResponse(request, record,
+                migratingToHelloOnly
+                    ? "Windows Hello verified. Password sign-in was removed and the stale lockout was cleared."
+                    : "Windows Hello verified. Workstation unlocked.");
+        }
+
+        if (record.CooldownUntilUtc > DateTimeOffset.UtcNow) return GetStatus();
+
         byte[] pepper = Convert.FromBase64String(record.Pepper);
         bool passwordValid;
         try { passwordValid = PasswordSecurity.Verify(request.Password ?? "", Convert.FromBase64String(record.Salt), pepper, Convert.FromBase64String(record.PasswordVerifier)); }
         finally { CryptographicOperations.ZeroMemory(pepper); }
-        if (!helloValid || !passwordValid) {
-            record.FailedAttempts++;
-            TimeSpan delay = PasswordSecurity.GetCooldown(record.FailedAttempts);
-            record.CooldownUntilUtc = delay > TimeSpan.Zero ? DateTimeOffset.UtcNow.Add(delay) : null;
-            _store.Save(record);
-            SecurityResponse failed = Response(record.CooldownUntilUtc.HasValue ? SecurityStateKind.Cooldown : SecurityStateKind.Locked,
-                "Windows Hello or the workstation password was not accepted.", record.HardwareId, record.CooldownUntilUtc);
-            return failed;
-        }
+        if (!passwordValid)
+            return RegisterPasswordFailure(record,
+                "Windows Hello verified, but the workstation password was not accepted.");
 
         record.FailedAttempts = 0;
         record.CooldownUntilUtc = null;
         _store.Save(record);
-        string grant = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        DateTimeOffset grantExpiresUtc = DateTimeOffset.UtcNow.AddSeconds(30);
-        _grants[grant] = grantExpiresUtc;
-        var response = new SecurityResponse { Success = true, State = SecurityStateKind.Unlocked, Message = "Workstation unlocked.", HardwareId = record.HardwareId, UnlockGrant = grant, UnlockGrantExpiresUtc = grantExpiresUtc, DevelopmentMode = _development };
-        if (request.RememberDevice)
-            AddRememberedDevice(response, record);
-        return response;
+        return CreateUnlockResponse(request, record, "Workstation unlocked.");
     }
 
     public SecurityResponse ChangePassword(SecurityRequest request) {
@@ -160,11 +174,12 @@ public sealed class SecurityEngine {
         if (!TryConsumeChallenge(request, SecurityOperation.BeginUnlock, out byte[] challenge))
             return Response(SecurityStateKind.Error, "The password-change challenge expired or was already used.");
         if (!VerifyHelloSignature(record.HelloPublicKey, challenge, request.Signature))
-            return RegisterFailure(record);
+            return RejectHello(record);
         byte[] pepper = Convert.FromBase64String(record.Pepper);
         try {
             if (!PasswordSecurity.Verify(request.Password ?? "", Convert.FromBase64String(record.Salt), pepper, Convert.FromBase64String(record.PasswordVerifier)))
-                return RegisterFailure(record!);
+                return RegisterPasswordFailure(record!,
+                    "Windows Hello verified, but the current workstation password was not accepted.");
             string? validation = PasswordSecurity.Validate(request.NewPassword);
             if (validation != null) return Response(SecurityStateKind.Locked, validation, record.HardwareId);
             byte[] salt = PasswordSecurity.CreateSalt();
@@ -198,7 +213,7 @@ public sealed class SecurityEngine {
         byte[] pepper = record == null ? PasswordSecurity.CreatePepper() : Convert.FromBase64String(record.Pepper);
         try {
             if (!portableRecovery && !PasswordSecurity.Verify(PasswordSecurity.NormalizeRecoveryKey(request.RecoveryKey), Convert.FromBase64String(record!.RecoverySalt), pepper, Convert.FromBase64String(record.RecoveryVerifier)))
-                return RegisterFailure(record);
+                return RegisterPasswordFailure(record);
             string recoveryKey = request.RecoveryKey ?? "";
             byte[] recoverySalt = record == null ? PasswordSecurity.CreateSalt() : Convert.FromBase64String(record.RecoverySalt);
             byte[] recoveryVerifier = record == null
@@ -241,7 +256,7 @@ public sealed class SecurityEngine {
         byte[] pepper = Convert.FromBase64String(record.Pepper);
         try {
             if (!PasswordSecurity.Verify(PasswordSecurity.NormalizeRecoveryKey(request.RecoveryKey), Convert.FromBase64String(record.RecoverySalt), pepper, Convert.FromBase64String(record.RecoveryVerifier)))
-                return RegisterFailure(record);
+                return RegisterPasswordFailure(record);
             record.HelloPublicKey = request.PublicKey;
             record.HelloAttestation = request.Attestation;
             record.HardwareId = HardwareIdentity.Compute(request.PublicKey);
@@ -335,14 +350,38 @@ public sealed class SecurityEngine {
     private WorkstationCredentialRecord? TryLoadPrimary() { try { return _store.Load(); } catch { return null; } }
     private WorkstationCredentialRecord? TryLoadRecovery() { try { return _store.LoadRecovery() ?? _store.Load(); } catch { return null; } }
 
-    private SecurityResponse RegisterFailure(WorkstationCredentialRecord record) {
+    private SecurityResponse RejectHello(WorkstationCredentialRecord record) =>
+        Response(SecurityStateKind.Locked,
+            "Windows Hello did not match the enrolled workstation key. The password was not evaluated; use recovery if this continues.",
+            record.HardwareId);
+
+    private SecurityResponse CreateUnlockResponse(SecurityRequest request, WorkstationCredentialRecord record, string message) {
+        string grant = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        DateTimeOffset grantExpiresUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        _grants[grant] = grantExpiresUtc;
+        var response = new SecurityResponse {
+            Success = true,
+            State = SecurityStateKind.Unlocked,
+            Message = message,
+            HardwareId = record.HardwareId,
+            UnlockGrant = grant,
+            UnlockGrantExpiresUtc = grantExpiresUtc,
+            DevelopmentMode = _development
+        };
+        if (request.RememberDevice)
+            AddRememberedDevice(response, record);
+        return response;
+    }
+
+    private SecurityResponse RegisterPasswordFailure(WorkstationCredentialRecord record,
+        string message = "Authentication was not accepted.") {
         record.FailedAttempts++;
         record.LastObservedUtc = DateTimeOffset.UtcNow;
         TimeSpan delay = PasswordSecurity.GetCooldown(record.FailedAttempts);
         record.CooldownUntilUtc = delay > TimeSpan.Zero ? DateTimeOffset.UtcNow.Add(delay) : null;
         _store.Save(record);
         return Response(record.CooldownUntilUtc.HasValue ? SecurityStateKind.Cooldown : SecurityStateKind.Locked,
-            "Authentication was not accepted.", record.HardwareId, record.CooldownUntilUtc);
+            message, record.HardwareId, record.CooldownUntilUtc);
     }
 
     private void AddRememberedDevice(SecurityResponse response, WorkstationCredentialRecord credential) {

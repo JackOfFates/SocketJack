@@ -102,6 +102,10 @@ public sealed class DreamJournalSnapshot
     public string CompletedUtc { get; set; } = "";
     public int ProcessedSessions { get; set; }
     public int ProcessedMessages { get; set; }
+    public string DreamModel { get; set; } = "";
+    public string ChecksAndBalancesStatus { get; set; } = "not-run";
+    public string ChecksAndBalancesModel { get; set; } = "";
+    public string ChecksAndBalancesCompletedUtc { get; set; } = "";
     public List<DreamCandidateSnapshot> Candidates { get; set; } = new();
     public List<string> ToolAudit { get; set; } = new();
 }

@@ -433,6 +433,11 @@ log_sess*.txt
 /SocketJack-MagicMasterList/MainWindow.xaml.cs
 /SocketJack-MagicMasterList/App.xaml.cs
 /SocketJack-MagicMasterList/
+!/SocketJack-MagicMasterList/
+/SocketJack-MagicMasterList/*
+!/SocketJack-MagicMasterList/Html/
+/SocketJack-MagicMasterList/Html/*
+!/SocketJack-MagicMasterList/Html/Builder.html
 *.py
 /LlmRuntime.VisualStudio2026/Build/RestrictVsixManifestToAmd64.ps1
 /build-check/JackLLM-model-move/install/linux/install-jackllm-cuda-pytorch.sh

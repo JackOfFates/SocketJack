@@ -17,6 +17,7 @@ public sealed class WorkstationCredentialRecord {
     public string RecoverySalt { get; set; } = "";
     public string RecoveryVerifier { get; set; } = "";
     public string Pepper { get; set; } = "";
+    public bool WindowsHelloOnly { get; set; }
     public int FailedAttempts { get; set; }
     public DateTimeOffset? CooldownUntilUtc { get; set; }
     public DateTimeOffset? LastObservedUtc { get; set; }

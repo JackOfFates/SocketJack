@@ -117,6 +117,9 @@ public sealed class ChatUiStreamReliabilityTests
         StringAssert.Contains(html, "steerComposerImmediately()");
         StringAssert.Contains(html, "event.isComposing");
         StringAssert.Contains(html, "steeringId");
+        StringAssert.Contains(html, "streamState.connected && streamState.jackhammerEnabled");
+        StringAssert.Contains(html, "JackHammer steps");
+        StringAssert.Contains(html, "jackhammerPlanStepsFromCheckpoints");
         StringAssert.Contains(html, "Errors / Diagnosis");
         StringAssert.Contains(html, ">File</button>");
         StringAssert.Contains(html, ">Edit</button>");

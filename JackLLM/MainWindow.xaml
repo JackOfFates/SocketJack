@@ -1139,7 +1139,7 @@
                                                                            Margin="0,2,0,0"/>
                                                             </StackPanel>
                                                             <Button Grid.Column="1"
-                                                                    Content="..."
+                                                                    Content="V"
                                                                     Tag="{Binding}"
                                                                     Click="SessionAdminButton_Click"
                                                                     Padding="8,2"
@@ -1147,7 +1147,7 @@
                                                                     Height="26"
                                                                     Margin="8,0,0,0"
                                                                     VerticalAlignment="Top"
-                                                                    ToolTip="Administrative options"/>
+                                                                    ToolTip="Version Control"/>
                                                         </Grid>
                                                     </Border>
                                                 </DataTemplate>
@@ -1176,8 +1176,8 @@
                                 <Grid>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="*"/>
+                                        <RowDefinition Height="0"/>
                                     </Grid.RowDefinitions>
                                     <DockPanel>
                                         <TextBlock x:Name="PipelineSummaryText"
@@ -1191,7 +1191,6 @@
                                            FontWeight="SemiBold"/>
                                     </DockPanel>
                                     <Grid Grid.Row="1"
-                                          Grid.RowSpan="2"
                                           Margin="0,6,0,0">
                                             <Grid Margin="0,0,0,0">
                                                 <Grid.RowDefinitions>
@@ -1236,7 +1235,7 @@
                                     <Grid x:Name="ServicesPanelHost"
                                           Grid.Row="1"
                                           Margin="-3,0,-3,-3"
-                                          MinHeight="280">
+                                          MinHeight="0">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="*"/>
@@ -1382,7 +1381,7 @@
                                     <Border x:Name="ServiceDetailsPanel"
                                             Grid.Row="1"
                                             Margin="0,8,0,0"
-                                            MinHeight="260"
+                                            MinHeight="0"
                                             Padding="8"
                                             Background="#66070A10"
                                             BorderBrush="{StaticResource PanelBorderBrush}"
@@ -1429,7 +1428,7 @@
                                                        TextWrapping="Wrap"/>
                                             <TabControl Grid.Row="3"
                                                         Margin="0,2,0,0"
-                                                        MinHeight="240"
+                                                        MinHeight="0"
                                                         VerticalAlignment="Stretch">
                                                 <TabItem Header="Configure">
                                                     <Grid Margin="0,8,0,0">
@@ -1452,7 +1451,7 @@
                                                         <ScrollViewer Grid.Row="1"
                                                                       VerticalScrollBarVisibility="Auto"
                                                                       HorizontalScrollBarVisibility="Disabled"
-                                                                      MinHeight="140"
+                                                                      MinHeight="0"
                                                                       VerticalAlignment="Stretch"
                                                                       Padding="0">
                                                             <StackPanel x:Name="ServiceOptionsPanel"
@@ -1468,7 +1467,7 @@
                                                                  BorderBrush="{x:Null}"
                                                                  FontFamily="Consolas"
                                                                  FontSize="12.5"
-                                                                 MinHeight="220"
+                                                                 MinHeight="0"
                                                                  VerticalAlignment="Stretch"
                                                                  IsReadOnly="True"
                                                                  Foreground="#A8FFFFFF"
@@ -3470,7 +3469,6 @@
                                                 <ComboBoxItem Content="Request Host Verification" Tag="request_host_verification"/>
                                                 <ComboBoxItem Content="Verify Renter" Tag="verify_renter"/>
                                                 <ComboBoxItem Content="Suspend Host" Tag="suspend_host"/>
-                                                <ComboBoxItem Content="Mute Renter" Tag="mute_renter"/>
                                                 <ComboBoxItem Content="Ban Renter" Tag="ban_renter"/>
                                                 <ComboBoxItem Content="Block Commands" Tag="block_commands"/>
                                             </ComboBox>
@@ -3837,10 +3835,6 @@
                                                         <ComboBoxItem Content="6 hours" Tag="360"/>
                                                         <ComboBoxItem Content="Until enabled" Tag="0"/>
                                                     </ComboBox>
-                                                    <Button Content="Mute"
-                                                            Click="MuteUserButton_Click"
-                                                            Padding="9,4"
-                                                            Margin="0,0,8,8"/>
                                                     <Button Content="Ban"
                                                             Click="BanUserButton_Click"
                                                             Padding="9,4"
@@ -3880,6 +3874,9 @@
                                                             <CheckBox x:Name="UserPermSqlAdminCheckBox"
                                                                       Content="SQL admin"
                                                                       Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserPermAgentBuilderCheckBox"
+                                                                      Content="Agent Builder"
+                                                                      Margin="0,0,8,7"/>
                                                             <CheckBox x:Name="UserPermTerminalCommandsCheckBox"
                                                                       Content="Terminal commands"
                                                                       Margin="0,0,8,7"/>
@@ -3890,6 +3887,22 @@
                                                             <CheckBox x:Name="UserPermPcAccessCheckBox"
                                                                       Content="PC Access"
                                                                       ToolTip="Allows a permitted JackLLM Mobile device to view/control Windows and access approved filesystem roots."
+                                                                      Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserPermRunningApplicationsCheckBox"
+                                                                      Content="Running applications"
+                                                                      ToolTip="Standing read-only access. Unchecked requests require consent each time."
+                                                                      Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserPermFileAccessCheckBox"
+                                                                      Content="File context (read-only)"
+                                                                      ToolTip="Standing read/list/search access. Unchecked requests require consent each time."
+                                                                      Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserPermWindowsServicesCheckBox"
+                                                                      Content="Windows services"
+                                                                      ToolTip="Standing read-only access. Unchecked requests require consent each time."
+                                                                      Margin="0,0,8,7"/>
+                                                            <CheckBox x:Name="UserPermEventViewerCheckBox"
+                                                                      Content="Event Viewer"
+                                                                      ToolTip="Standing read-only access to Application/System logs. Unchecked requests require consent each time."
                                                                       Margin="0,0,8,7"/>
                                                             <CheckBox x:Name="UserDreamAgentAccessCheckBox" Content="Dream: Agent access" Margin="0,0,8,7"/>
                                                             <CheckBox x:Name="UserDreamVsToolsCheckBox" Content="Dream: VS tools" Margin="0,0,8,7"/>

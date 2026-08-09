@@ -4,8 +4,8 @@ using System.Text.Json.Serialization;
 namespace JackLLM.Security;
 
 public static class SecurityProtocol {
-    public const int Version = 2;
-    public const int BrokerCompatibility = 3;
+    public const int Version = 4;
+    public const int BrokerCompatibility = 5;
     public const string OfficialPipeName = "JackLLM.Workstation.Security.v1";
     public const string DevelopmentPipeName = "JackLLM.Workstation.Security.Development.v1";
     public static readonly JsonSerializerOptions Json = new() {
@@ -16,6 +16,7 @@ public static class SecurityProtocol {
 
 public enum SecurityOperation {
     Status,
+    RestartBroker,
     BeginEnroll,
     Enroll,
     BeginUnlock,
@@ -53,6 +54,7 @@ public sealed class SecurityRequest {
     public string? RecoveryBackup { get; set; }
     public string? UnlockGrant { get; set; }
     public bool RememberDevice { get; set; }
+    public bool UseWindowsHelloOnly { get; set; }
     public string? RememberedDeviceToken { get; set; }
 }
 

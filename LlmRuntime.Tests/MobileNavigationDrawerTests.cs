@@ -43,6 +43,23 @@ public sealed class MobileNavigationDrawerTests
         StringAssert.Contains(diagnostics, "RgbMeter");
     }
 
+    [TestMethod]
+    public void MobileChat_ExposesJackhammerOnlySteeringAndStructuredSteps()
+    {
+        string root = FindRepositoryRoot();
+        string chat = File.ReadAllText(Path.Combine(root, "JackLLM.Android", "Pages", "ChatHostPage.cs"));
+        string coordinator = File.ReadAllText(Path.Combine(root, "JackLLM.Android", "Services", "MobileGenerationCoordinator.cs"));
+        string client = File.ReadAllText(Path.Combine(root, "JackLLM.Android", "Services", "JackLlmClient.cs"));
+
+        StringAssert.Contains(chat, "Text = \"Steer\"");
+        StringAssert.Contains(chat, "snapshot.IsGenerating && snapshot.JackhammerEnabled");
+        StringAssert.Contains(chat, "### JackHammer steps");
+        StringAssert.Contains(coordinator, "public bool CanSteer");
+        StringAssert.Contains(coordinator, "_snapshot.JackhammerEnabled");
+        StringAssert.Contains(client, "steeringId = \"steer_mobile_\"");
+        StringAssert.Contains(client, "ParseJackhammerSteps");
+    }
+
     private static string FindRepositoryRoot()
     {
         DirectoryInfo? current = new(AppContext.BaseDirectory);

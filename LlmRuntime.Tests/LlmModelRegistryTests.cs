@@ -708,6 +708,65 @@ public sealed class LlmModelRegistryTests
     }
 
     [TestMethod]
+    public void IdealModelScanner_EstimatesGpuFitAndAppliesThresholds()
+    {
+        var hardware = new HuggingFaceIdealModelHardwareProfile
+        {
+            DisplayName = "12 GB test GPU",
+            VideoMemoryBytes = 12L * 1024L * 1024L * 1024L,
+            VideoMemoryIsDedicated = true,
+            EstimatedMemoryBandwidthGbps = 480
+        };
+        var thresholds = new HuggingFaceIdealModelThresholds
+        {
+            ModelLimit = 8,
+            MinimumTokensPerSecond = 10,
+            MaxVramUsagePercent = 90,
+            MaximumParametersBillion = 20
+        };
+        var model = new HuggingFaceIdealModel
+        {
+            CategoryId = "text",
+            CategoryLabel = "Text",
+            ModelId = "owner/Example-7B-Q4_K_M-GGUF",
+            Url = "https://huggingface.co/owner/Example-7B-Q4_K_M-GGUF",
+            ParameterCountBillion = 7,
+            QuantizationBits = 4,
+            Score = 100,
+            Reason = "GGUF model"
+        };
+
+        HuggingFaceIdealModel estimated = HuggingFaceIdealModelScanner.ApplyHardwareEstimate(model, hardware, thresholds);
+
+        Assert.IsTrue(estimated.EstimatedVramBytes > 3L * 1024L * 1024L * 1024L);
+        Assert.IsTrue(estimated.EstimatedVramBytes < 6L * 1024L * 1024L * 1024L);
+        Assert.IsTrue(estimated.EstimatedTokensPerSecond > 10);
+        Assert.AreEqual("Comfortable fit", estimated.FitLabel);
+        StringAssert.Contains(estimated.HardwareEstimate, "12 GB test GPU");
+        Assert.IsTrue(HuggingFaceIdealModelScanner.MeetsThresholds(estimated, hardware, thresholds));
+
+        HuggingFaceIdealModel oversized = HuggingFaceIdealModelScanner.ApplyHardwareEstimate(
+            new HuggingFaceIdealModel
+            {
+                CategoryId = "text",
+                ModelId = "owner/Example-70B-Q4_K_M-GGUF",
+                ParameterCountBillion = 70,
+                QuantizationBits = 4
+            },
+            hardware,
+            thresholds);
+        Assert.IsFalse(HuggingFaceIdealModelScanner.MeetsThresholds(oversized, hardware, thresholds));
+    }
+
+    [TestMethod]
+    public void IdealModelScanner_InfersParametersAndQuantizationFromModelName()
+    {
+        Assert.AreEqual(30d, HuggingFaceIdealModelScanner.ReadLargestParameterCountBillion("Qwen3-Coder-30B-A3B-Instruct"));
+        Assert.AreEqual(4d, HuggingFaceIdealModelScanner.InferQuantizationBits("Qwen3-8B-Q4_K_M-GGUF", ["gguf"]));
+        Assert.AreEqual(16d, HuggingFaceIdealModelScanner.InferQuantizationBits("vision-7B", ["safetensors", "bf16"]));
+    }
+
+    [TestMethod]
     public void RepositoryScanner_KeepsStandardGgufChatInModelsLayout()
     {
         var scan = ModelRepositoryScanner.BuildResult("owner/chat-repo", "main",

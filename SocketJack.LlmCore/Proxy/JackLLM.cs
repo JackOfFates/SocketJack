@@ -251,6 +251,8 @@ private sealed class WebChatModelManagerLoadSettings
 
 		public string UndoToken { get; set; } = "";
 
+		public string VersionId { get; set; } = "";
+
 		public string SessionId { get; set; } = "";
 
 		public int ProgressPercent { get; set; } = -1;
@@ -2208,11 +2210,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		foreach (ServerUserUsageDiagnosticsSnapshot user3 in users.Values)
 		{
 			ChatPermissionState permissions = (string.Equals(user3.OwnerKey, "global", StringComparison.OrdinalIgnoreCase) ? GetChatPermissions() : GetChatPermissions(user3.OwnerKey));
-			user3.MutedUntilUtc = permissions.mutedUntilUtc ?? "";
 			user3.BannedUntilUtc = permissions.bannedUntilUtc ?? "";
-			user3.MuteUntilEnabled = permissions.muteUntilEnabled;
 			user3.BanUntilEnabled = permissions.banUntilEnabled;
-			user3.IsMuted = IsChatMuted(permissions);
 			user3.IsBanned = IsChatBanned(permissions);
 			ChatUsageDiagnosticsSnapshot usage = (user3.Usage = BuildChatUsageDiagnosticsSnapshot(string.Equals(user3.OwnerKey, "global", StringComparison.OrdinalIgnoreCase) ? BuildAnonymousChatUsageSnapshot() : GetChatUsageSnapshot(user3.OwnerKey)));
 			user3.ResourceQuota = GetUserResourceQuotaDiagnostics(user3.OwnerKey);
@@ -2415,7 +2414,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			return existing;
 		});
 		EnableChatClient("webauth:" + record.userName.Trim().ToLowerInvariant());
-		LogMessage("[WebAuth] Enabled " + record.userName + " and cleared mute/ban restrictions.");
+		LogMessage("[WebAuth] Enabled " + record.userName + " and cleared ban restrictions.");
 		return WebAuthUserDiagnosticsSnapshotFromRecord(GetWebAuthRecord(record.userName) ?? record);
 	}
 
@@ -2617,11 +2616,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			permissions.bannedUntilUtc = until;
 			permissions.banUntilEnabled = untilEnabled;
 		}
-		else
-		{
-			permissions.mutedUntilUtc = until;
-			permissions.muteUntilEnabled = untilEnabled;
-		}
+		else throw new ArgumentException("Only the ban restriction is supported.", nameof(restriction));
 		SaveChatPermissions(ownerKey, permissions);
 		return BuildChatClientPermissionSnapshot(ownerKey, GetChatPermissions(ownerKey));
 	}
@@ -2630,9 +2625,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	{
 		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
 		ChatPermissionState permissions = GetChatPermissions(ownerKey);
-		permissions.mutedUntilUtc = "";
 		permissions.bannedUntilUtc = "";
-		permissions.muteUntilEnabled = false;
 		permissions.banUntilEnabled = false;
 		SaveChatPermissions(ownerKey, permissions);
 		return BuildChatClientPermissionSnapshot(ownerKey, GetChatPermissions(ownerKey));
@@ -2678,6 +2671,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			_activePromptSessions[id] = state;
 			RecordObservabilityPromptStarted(state, _activePromptSessions.Count);
 		}
+		BeginAutomaticVersionControlRun(id, state.OwnerKey, state.SessionId);
 		return id;
 	}
 
@@ -2755,6 +2749,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		}
 		if (completed != null)
 		{
+			completed.VersionControlVersionId = CompleteAutomaticVersionControlRun(id, completed.Status);
 			RecordObservabilityPromptCompleted(completed);
 		}
 	}
@@ -3469,7 +3464,6 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			highOpenCases = trust.HighOpenCases,
 			commandsBlocked = trust.CommandsBlocked,
 			hostSuspended = trust.HostSuspended,
-			muted = IsChatMuted(permissions),
 			banned = IsChatBanned(permissions),
 			activeSensitivePermissions = CountSensitivePermissions(permissions),
 			marketplacePolicy = BuildPeerRentalMarketplacePolicyPayload(ownerKey, GetRemoteModelServerSelection()),
@@ -3509,10 +3503,6 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		if (permissions.fileDownloads)
 		{
 			score -= 3;
-		}
-		if (IsChatMuted(permissions))
-		{
-			score -= 8;
 		}
 		score -= Math.Min(18, (pendingFilesystem + pendingTerminal) * 4);
 		score -= Math.Min(10, Math.Max(0, allowedRoots - 3) * 2);
@@ -5475,7 +5465,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				_chatTdsProtocolRegistered = false;
 			}
 		}
-		server.SqlAdminPanelEnabled = chatPermissions.sqlAdmin;
+		// Keep the local web surfaces registered. Access is enforced per signed-in
+		// Workstation owner by GateWorkstationUserRequest instead of by removing
+		// routes globally when one user's permission changes.
+		server.SqlAdminPanelEnabled = true;
 		server.IndexPageHtml = null;
 		string[][] chatUiVars = new string[2][]
 		{
@@ -5508,6 +5501,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		RegisterAlignmentRoutes(server);
 		RegisterDreamRoutes(server);
 		RegisterCompanionRoutes(server);
+		RegisterSystemContextRoutes(server);
+		EnsureLocalAgentBuilderStorage();
+		RegisterLocalAgentBuilderRoutes(server);
+		RegisterWorkstationOptionsRoutes(server);
 		server.Map("GET", "/assets/jackllm-workstation-metadata.png", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildWorkstationMetadataImageResponse(request));
 		server.Map("GET", "/Account", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => BuildSocketJackAccountPage(connection, request));
 		RegisterSockJackDmlRoutes(server);
@@ -5715,6 +5712,8 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		server.Map("DELETE", "/api/chat-file", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatFileDeleteRequest(connection, request)));
 		server.Map("GET", "/api/project-file-versions", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleProjectFileVersionsRequest(connection, request)));
 		server.Map("POST", "/api/project-file-versions", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleProjectFileVersionsMutationRequest(connection, request)));
+		server.Map("GET", "/api/project-version-control", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleProjectVersionControlGetRequest(connection, request)));
+		server.Map("POST", "/api/project-version-control", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleProjectVersionControlPostRequest(connection, request)));
 		server.Map("GET", "/api/chat-session-zip", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatSessionZipRequest(connection, request)));
 		server.Map("GET", "/api/chat-sessions", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatSessionsListRequest(connection, request)));
 		server.Map("GET", "/api/chat-projects", (NetworkConnection connection, HttpRequest request, CancellationToken cancellationToken) => HandleAlignmentProtectedRequest(connection, request, () => HandleChatProjectsListRequest(connection, request)));
@@ -5887,17 +5886,32 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 
 		if (AuthenticateMobileDevice(request) != null)
 		{
-			return null;
+			return GateWorkstationFeaturePermission(connection, request, path);
 		}
 
 		if (TryAuthenticateWebAuthRequest(request, out var principal, out var _) &&
 			principal != null &&
 			!string.IsNullOrWhiteSpace(principal.UserName))
 		{
-			return null;
+			return GateWorkstationFeaturePermission(connection, request, path);
 		}
 
 		return "Workstation sign-in required. Use an account created on this JackLLM Workstation; client IP addresses do not grant access.";
+	}
+
+	private string GateWorkstationFeaturePermission(NetworkConnection connection, HttpRequest request, string path)
+	{
+		string normalizedPath = string.IsNullOrWhiteSpace(path) ? "/" : path;
+		ChatPermissionState permissions = GetChatPermissions(GetChatSessionOwnerKey(connection, request));
+		if ((normalizedPath.Equals("/sql", StringComparison.OrdinalIgnoreCase) || normalizedPath.StartsWith("/sql/", StringComparison.OrdinalIgnoreCase)) && !permissions.sqlAdmin)
+		{
+			return "SQL Manager permission is disabled for this Workstation account.";
+		}
+		if ((normalizedPath.Equals("/builder", StringComparison.OrdinalIgnoreCase) || normalizedPath.StartsWith("/builder/", StringComparison.OrdinalIgnoreCase) || normalizedPath.StartsWith("/api/agentbuilder", StringComparison.OrdinalIgnoreCase)) && !permissions.agentBuilder)
+		{
+			return "Agent Builder permission is disabled for this Workstation account.";
+		}
+		return null;
 	}
 
 	private static bool IsWorkstationUnauthenticatedRoute(string method, string path)
@@ -17185,7 +17199,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				});
 			}
 			string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, principal.UserName, ownerKey);
-			if (agentMode || browserMode || terminalMode || companionMode)
+			if (agentMode || browserMode || terminalMode || companionMode || RequestSupportsContextConsentUi(request?.Body))
 			{
 				lmRequestJson = AddProxyResearchTools(lmRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, ownerKey);
 				if (companionMode)
@@ -17305,7 +17319,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 				{
 					return;
 				}
-				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands) || companionMode)
+				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands) || companionMode || RequestSupportsContextConsentUi(request?.Body))
 				{
 					string toolRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, principal.UserName, ownerKey);
 					toolRequestJson = AddProxyResearchTools(toolRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, ownerKey);
@@ -18188,7 +18202,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 	{
 		if (!IsChatCompanionServiceSelected(requestBody))
 			return "";
-		if (permissions == null || !permissions.companionEnabled)
+		if ((permissions == null || !permissions.companionEnabled) && !RequestSupportsContextConsentUi(requestBody))
 			return "Companion mode is disabled. Enable it in the Workstation Companion tab.";
 
 		string requestedModel = "";
@@ -18365,7 +18379,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 		return SanitizeFileName(streamId);
 	}
 
-	private ActiveChatStreamCancellation RegisterActiveChatStreamCancellation(string ownerKey, string streamId, string sessionId)
+	private ActiveChatStreamCancellation RegisterActiveChatStreamCancellation(string ownerKey, string streamId, string sessionId, string requestBody)
 	{
 		ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
 		streamId = NormalizeChatUiStreamId(streamId);
@@ -18376,7 +18390,9 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			StreamId = streamId,
 			SessionId = sessionId,
 			Cancellation = new CancellationTokenSource(),
-			StartedUtc = DateTimeOffset.UtcNow
+			StartedUtc = DateTimeOffset.UtcNow,
+			JackhammerEnabled = IsJackhammerRequestEnabled(requestBody),
+			JackhammerRunId = ExtractJackhammerRunId(requestBody)
 		};
 		lock (_activeChatStreamCancellationLock)
 		{
@@ -18392,7 +18408,7 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				active.Cancellation.Cancel();
 			}
-			if (_pendingChatStreamSteering.TryGetValue(key, out var pendingSteering) &&
+			if (active.JackhammerEnabled && _pendingChatStreamSteering.TryGetValue(key, out var pendingSteering) &&
 				(string.IsNullOrWhiteSpace(pendingSteering.SessionId) || string.Equals(pendingSteering.SessionId, sessionId, StringComparison.Ordinal)))
 			{
 				lock (active.SteeringMessages)
@@ -18404,6 +18420,36 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 		}
 		return active;
+	}
+
+	private static bool IsJackhammerRequestEnabled(string requestBody)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody)) return false;
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			JsonElement root = document.RootElement;
+			if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("jackhammer", out var jackhammer) || jackhammer.ValueKind != JsonValueKind.Object)
+				return false;
+			if (!jackhammer.TryGetProperty("enabled", out var enabled)) return false;
+			return enabled.ValueKind == JsonValueKind.True ||
+				(enabled.ValueKind == JsonValueKind.String && bool.TryParse(enabled.GetString(), out var parsed) && parsed);
+		}
+		catch { return false; }
+	}
+
+	private static string ExtractJackhammerRunId(string requestBody)
+	{
+		if (string.IsNullOrWhiteSpace(requestBody)) return "";
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(requestBody);
+			JsonElement root = document.RootElement;
+			return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("jackhammer", out var jackhammer) && jackhammer.ValueKind == JsonValueKind.Object
+				? (ExtractStringProperty(jackhammer, "runId") ?? "")
+				: "";
+		}
+		catch { return ""; }
 	}
 
 	private bool TryFindActiveChatStreamCancellationLocked(string ownerKey, string streamId, string sessionId, out ActiveChatStreamCancellation active)
@@ -18562,9 +18608,13 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			}
 			if (!TryFindActiveChatStreamCancellationLocked(ownerKey, streamId, sessionId, out var active))
 			{
-				AddPendingChatStreamSteeringLocked(ownerKey, streamId, sessionId, steering, steeringId);
-				state = "buffered";
-				return true;
+				state = "stream_not_ready";
+				return false;
+			}
+			if (!active.JackhammerEnabled)
+			{
+				state = "jackhammer_required";
+				return false;
 			}
 			lock (active.SteeringMessages)
 			{
@@ -18790,10 +18840,16 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				if (string.Equals(state, "stream_closed", StringComparison.Ordinal))
 				{
-					BuildJsonError(request, 409, "Conflict", "The Agent stream closed before this steering update was accepted.");
-					return JsonSerializer.Serialize(new { ok = false, error = "The Agent stream closed before this steering update was accepted.", code = "stream_closed", steeringId });
+					BuildJsonError(request, 409, "Conflict", "The JackHammer stream closed before this steering update was accepted.");
+					return JsonSerializer.Serialize(new { ok = false, error = "The JackHammer stream closed before this steering update was accepted.", code = "stream_closed", steeringId });
 				}
-				return BuildJsonError(request, 404, "Not Found", "No active stream was found to steer.");
+				if (string.Equals(state, "jackhammer_required", StringComparison.Ordinal))
+				{
+					BuildJsonError(request, 409, "Conflict", "Steering is available only for an active JackHammer run.");
+					return JsonSerializer.Serialize(new { ok = false, error = "Steering is available only for an active JackHammer run.", code = "jackhammer_required", steeringId });
+				}
+				BuildJsonError(request, 425, "Too Early", "The JackHammer stream is not registered yet. Try steering again after it connects.");
+				return JsonSerializer.Serialize(new { ok = false, error = "The JackHammer stream is not registered yet. Try steering again after it connects.", code = "stream_not_ready", steeringId });
 			}
 			LogMessage("[Chat UI] Steering added for stream " + NormalizeChatUiStreamId(streamId) + " by " + ownerKey + ".");
 			return JsonSerializer.Serialize(new
@@ -19526,6 +19582,10 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				permissions.sqlAdmin = ReadJsonBool(sqlAdmin, permissions.sqlAdmin);
 			}
+			if (root.TryGetProperty("agentBuilder", out var agentBuilder))
+			{
+				permissions.agentBuilder = ReadJsonBool(agentBuilder, permissions.agentBuilder);
+			}
 			if (root.TryGetProperty("agentAccess", out var agentAccess))
 			{
 				permissions.agentAccess = ReadJsonBool(agentAccess, permissions.agentAccess);
@@ -19546,18 +19606,25 @@ public const int DefaultCopilotDuplicatorPort = 11433;
 			{
 				permissions.terminalForeverApproved = ReadJsonBool(terminalForeverApproved, permissions.terminalForeverApproved);
 			}
-			if (root.TryGetProperty("muteUntilEnabled", out var muteUntilEnabled))
+			if (root.TryGetProperty("runningApplications", out var runningApplications))
 			{
-				permissions.muteUntilEnabled = ReadJsonBool(muteUntilEnabled, permissions.muteUntilEnabled);
+				permissions.runningApplications = ReadJsonBool(runningApplications, permissions.runningApplications);
+			}
+			if (root.TryGetProperty("windowsServices", out var windowsServices))
+			{
+				permissions.windowsServices = ReadJsonBool(windowsServices, permissions.windowsServices);
+			}
+			if (root.TryGetProperty("eventViewer", out var eventViewer))
+			{
+				permissions.eventViewer = ReadJsonBool(eventViewer, permissions.eventViewer);
+			}
+			if (root.TryGetProperty("fileAccess", out var fileAccess))
+			{
+				permissions.fileAccess = ReadJsonBool(fileAccess, permissions.fileAccess);
 			}
 			if (root.TryGetProperty("banUntilEnabled", out var banUntilEnabled))
 			{
 				permissions.banUntilEnabled = ReadJsonBool(banUntilEnabled, permissions.banUntilEnabled);
-			}
-			string mutedUntil = ExtractStringProperty(root, "mutedUntilUtc");
-			if (mutedUntil != null)
-			{
-				permissions.mutedUntilUtc = mutedUntil;
 			}
 			string bannedUntil = ExtractStringProperty(root, "bannedUntilUtc");
 			if (bannedUntil != null)
@@ -21989,28 +22056,18 @@ except Exception as exc:
 				return BuildDatabaseAdminOnlyJsonError(request, "Only administrators or the owner of this shared session can update this client.");
 			}
 			ChatPermissionState permissions = GetChatPermissions(ownerKey);
-			if (action == "mute" || action == "ban")
+			if (action == "ban")
 			{
 				JsonElement minutesElement;
 				int minutes = (root.TryGetProperty("minutes", out minutesElement) ? ReadJsonInt(minutesElement, 0) : 0);
 				bool untilEnabled = minutes <= 0;
 				string until = (untilEnabled ? "" : DateTimeOffset.UtcNow.AddMinutes(minutes).ToString("O"));
-				if (action == "ban")
-				{
-					permissions.bannedUntilUtc = until;
-					permissions.banUntilEnabled = untilEnabled;
-				}
-				else
-				{
-					permissions.mutedUntilUtc = until;
-					permissions.muteUntilEnabled = untilEnabled;
-				}
+				permissions.bannedUntilUtc = until;
+				permissions.banUntilEnabled = untilEnabled;
 			}
-			else if (action == "enable")
+			else if (action == "enable" || action == "unban")
 			{
-				permissions.mutedUntilUtc = "";
 				permissions.bannedUntilUtc = "";
-				permissions.muteUntilEnabled = false;
 				permissions.banUntilEnabled = false;
 			}
 			else
@@ -26206,9 +26263,11 @@ except Exception as exc:
 			string kind = (GetQueryParameter(request, "kind") ?? "session").Trim();
 			bool deleteDirectory = string.Equals((GetQueryParameter(request, "type") ?? "file").Trim(), "directory", StringComparison.OrdinalIgnoreCase);
 			string sessionId = EnsureChatUiSessionId(GetQueryParameter(request, "sessionId"));
-			if (!kind.Equals("session", StringComparison.OrdinalIgnoreCase))
+			bool sessionKind = kind.Equals("session", StringComparison.OrdinalIgnoreCase);
+			bool workspaceKind = kind.Equals("workspace", StringComparison.OrdinalIgnoreCase);
+			if (!sessionKind && !workspaceKind)
 			{
-				return BuildJsonError(request, 403, "Forbidden", "Only Project Files can be deleted here.");
+				return BuildJsonError(request, 403, "Forbidden", "Only Project Files and writable workspace entries can be deleted here.");
 			}
 			if (!ChatSessionBelongsToOwner(sessionId, ownerKey))
 			{
@@ -26223,14 +26282,33 @@ except Exception as exc:
 			{
 				return BuildJsonError(request, 404, "Not Found", error);
 			}
-			string projectRoot = GetChatSessionFilesDirectory(sessionId);
-			if (string.IsNullOrWhiteSpace(projectRoot) || !IsPathInsideRoot(fullPath, projectRoot))
+			if (sessionKind)
 			{
-				return BuildJsonError(request, 400, "Bad Request", "Requested item is outside Project Files.");
+				string projectRoot = GetChatSessionFilesDirectory(sessionId);
+				if (string.IsNullOrWhiteSpace(projectRoot) || !IsPathInsideRoot(fullPath, projectRoot))
+				{
+					return BuildJsonError(request, 400, "Bad Request", "Requested item is outside Project Files.");
+				}
+				if (deleteDirectory && PathsEqual(fullPath, projectRoot))
+				{
+					return BuildJsonError(request, 400, "Bad Request", "The Project Files root cannot be deleted.");
+				}
 			}
-			if (deleteDirectory && PathsEqual(fullPath, projectRoot))
+			else
 			{
-				return BuildJsonError(request, 400, "Bad Request", "The Project Files root cannot be deleted.");
+				ChatWorkspaceRootSnapshot workspaceRoot = FindEffectiveChatWorkspaceRoot(ownerKey, sessionId, fullPath);
+				if (workspaceRoot == null || workspaceRoot.IsSandbox || workspaceRoot.IsInherited)
+				{
+					return BuildJsonError(request, 403, "Forbidden", "The workspace entry is not part of a writable session directory.");
+				}
+				if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, fullPath, requireWrite: true, out string writeError))
+				{
+					return BuildJsonError(request, 403, "Forbidden", writeError);
+				}
+				if (deleteDirectory && PathsEqual(fullPath, workspaceRoot.Path))
+				{
+					return BuildJsonError(request, 400, "Bad Request", "Remove the workspace directory from Workspace & access instead of deleting it from disk.");
+				}
 			}
 
 			IReadOnlyList<string> relatedSessionIds = GetChatProjectSessionIds(sessionId, ownerKey);
@@ -26290,7 +26368,7 @@ except Exception as exc:
 			{
 				return BuildJsonError(request, 403, "Forbidden", "The project files do not belong to this user.");
 			}
-			return BuildProjectFileVersionsPayload(sessionId);
+			return JsonSerializer.Serialize(BuildVersionControlPayload(ownerKey, sessionId, "project", 100, 0));
 		}
 		catch (Exception ex)
 		{
@@ -26314,21 +26392,42 @@ except Exception as exc:
 			string versionId = SanitizeFileName(ExtractStringProperty(root, "versionId") ?? "");
 			if (action == "create")
 			{
-				CreateProjectFileVersion(sessionId, ownerKey, ExtractStringProperty(root, "name"), false);
+				CreateManualVersionControlCheckpoint(ownerKey, sessionId, ExtractStringProperty(root, "name"), true);
 			}
 			else if (action == "restore")
 			{
-				RestoreProjectFileVersion(sessionId, ownerKey, versionId);
+				VersionControlManifest manifest = LoadVersionControlManifest(ownerKey, versionId);
+				if (manifest == null)
+				{
+					string legacyId = versionId.StartsWith("legacy_", StringComparison.OrdinalIgnoreCase) ? versionId.Substring("legacy_".Length) : versionId;
+					RestoreProjectFileVersion(sessionId, ownerKey, legacyId);
+				}
+				else
+				{
+					VersionControlRestorePreview preview = PreviewVersionControlRestore(ownerKey, manifest);
+					CreateManualVersionControlCheckpoint(ownerKey, sessionId, "Before restoring " + (manifest.Name ?? manifest.Id), true, "safety");
+					foreach (VersionControlChange change in preview.Safe) ApplyVersionControlChange(ownerKey, sessionId, change);
+				}
 			}
 			else if (action == "delete")
 			{
-				DeleteProjectFileVersion(sessionId, versionId);
+				VersionControlManifest manifest = LoadVersionControlManifest(ownerKey, versionId);
+				if (manifest == null)
+				{
+					string legacyId = versionId.StartsWith("legacy_", StringComparison.OrdinalIgnoreCase) ? versionId.Substring("legacy_".Length) : versionId;
+					DeleteProjectFileVersion(sessionId, legacyId);
+				}
+				else
+				{
+					string path = GetVersionControlManifestPath(ownerKey, manifest.ProjectId, manifest.Id);
+					if (File.Exists(path)) File.Delete(path);
+				}
 			}
 			else
 			{
 				return BuildJsonError(request, 400, "Bad Request", "Use create, restore, or delete.");
 			}
-			return BuildProjectFileVersionsPayload(sessionId);
+			return JsonSerializer.Serialize(BuildVersionControlPayload(ownerKey, sessionId, "project", 100, 0));
 		}
 		catch (JsonException ex)
 		{
@@ -26995,10 +27094,33 @@ except Exception as exc:
 		return total;
 	}
 
-	private bool TryResolveChatUploadDirectory(string ownerKey, string sessionId, string targetPath, out string directory, out string error)
+	private bool TryResolveChatUploadDirectory(string ownerKey, string sessionId, string targetPath, string targetKind, out string directory, out string error)
 	{
 		directory = null;
 		error = null;
+		if (string.Equals((targetKind ?? "").Trim(), "workspace", StringComparison.OrdinalIgnoreCase))
+		{
+			try
+			{
+				string workspaceDirectory = Path.GetFullPath(NormalizeLoosePathEscapes(targetPath ?? "").Trim().Trim('"', '\'', ',', ' '));
+				if (!Directory.Exists(workspaceDirectory))
+				{
+					error = "Workspace upload directory does not exist: " + workspaceDirectory;
+					return false;
+				}
+				if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, workspaceDirectory, requireWrite: true, out error))
+				{
+					return false;
+				}
+				directory = workspaceDirectory;
+				return true;
+			}
+			catch (Exception ex)
+			{
+				error = ex.Message;
+				return false;
+			}
+		}
 		string sessionRoot = GetChatSessionDefaultWriteDirectory(ownerKey, sessionId);
 		if (string.IsNullOrWhiteSpace(sessionRoot))
 		{
@@ -27037,7 +27159,6 @@ except Exception as exc:
 
 	private string BuildChatUploadFilePath(string ownerKey, string sessionId, string uploadDirectory, string fileId, string fileName, string relativePath)
 	{
-		string sessionRoot = GetChatSessionDefaultWriteDirectory(ownerKey, sessionId);
 		string targetDirectory = Path.GetFullPath(uploadDirectory);
 		string leafName = SanitizeFileName(fileName);
 		string normalizedRelative = NormalizeChatUploadRelativePath(relativePath);
@@ -27058,10 +27179,6 @@ except Exception as exc:
 			}
 		}
 		string path = Path.GetFullPath(Path.Combine(targetDirectory, fileId + "_" + leafName));
-		if (string.IsNullOrWhiteSpace(sessionRoot) || !IsPathInsideRoot(path, sessionRoot))
-		{
-			throw new InvalidOperationException("Upload path is outside the current session files.");
-		}
 		if (!EnsureChatWorkspacePathAccess(ownerKey, sessionId, path, requireWrite: true, out string accessError))
 		{
 			throw new InvalidOperationException(accessError);
@@ -28170,7 +28287,7 @@ except Exception as exc:
 			{
 				return true;
 			}
-			if (!TryResolveChatUploadDirectory(ownerKey, sessionId, "", out var uploadDirectory, out var uploadDirectoryError))
+			if (!TryResolveChatUploadDirectory(ownerKey, sessionId, "", "", out var uploadDirectory, out var uploadDirectoryError))
 			{
 				error = uploadDirectoryError;
 				return false;
@@ -28351,6 +28468,7 @@ except Exception as exc:
 			string rawName = ExtractStringProperty(root, "name") ?? "attachment";
 			string relativePath = ExtractStringProperty(root, "relativePath") ?? "";
 			string targetPath = ExtractStringProperty(root, "targetPath") ?? ExtractStringProperty(root, "directoryPath") ?? "";
+			string targetKind = ExtractStringProperty(root, "targetKind") ?? "";
 			string normalizedUploadName = NormalizeChatUploadRelativePath(string.IsNullOrWhiteSpace(relativePath) ? rawName : relativePath);
 			string uploadLeafName = (string.IsNullOrWhiteSpace(normalizedUploadName) ? rawName : Path.GetFileName(normalizedUploadName));
 			string name = SanitizeFileName(string.IsNullOrWhiteSpace(uploadLeafName) ? rawName : uploadLeafName);
@@ -28392,7 +28510,7 @@ except Exception as exc:
 			{
 				bytes = Encoding.UTF8.GetBytes(text ?? "");
 			}
-			if (!TryResolveChatUploadDirectory(ownerKey, sessionId, targetPath, out var dir, out var targetError))
+			if (!TryResolveChatUploadDirectory(ownerKey, sessionId, targetPath, targetKind, out var dir, out var targetError))
 			{
 				SetHttpStatus(request, 400, "Bad Request");
 				return JsonSerializer.Serialize(new
@@ -28700,14 +28818,13 @@ except Exception as exc:
 		permissions.fileDownloads = true;
 		permissions.ftpServer = true;
 		permissions.sqlAdmin = true;
+		permissions.agentBuilder = true;
 		permissions.terminalCommands = true;
 		permissions.terminalForeverApproved = true;
 		permissions.agentAccess = true;
 		permissions.fileUploads = true;
 		permissions.imageUploads = true;
-		permissions.muteUntilEnabled = false;
 		permissions.banUntilEnabled = false;
-		permissions.mutedUntilUtc = "";
 		permissions.bannedUntilUtc = "";
 		return permissions;
 	}
@@ -28722,6 +28839,7 @@ except Exception as exc:
 			fileDownloads = source.fileDownloads,
 			ftpServer = source.ftpServer,
 			sqlAdmin = source.sqlAdmin,
+			agentBuilder = source.agentBuilder,
 			terminalCommands = source.terminalCommands,
 			terminalForeverApproved = source.terminalForeverApproved,
 			agentAccess = source.agentAccess,
@@ -28737,6 +28855,10 @@ except Exception as exc:
 			companionActivityTranscriptStorage = source.companionActivityTranscriptStorage,
 			companionSensitiveMemory = source.companionSensitiveMemory,
 			companionFinancialActions = source.companionFinancialActions,
+			runningApplications = source.runningApplications,
+			windowsServices = source.windowsServices,
+			eventViewer = source.eventViewer,
+			fileAccess = source.fileAccess,
 			dreamInternetSearch = source.dreamInternetSearch,
 			dreamVsCopilotTools = source.dreamVsCopilotTools,
 			dreamFileDownloads = source.dreamFileDownloads,
@@ -28747,9 +28869,7 @@ except Exception as exc:
 			dreamFileUploads = source.dreamFileUploads,
 			dreamImageUploads = source.dreamImageUploads,
 			dreamPcAccess = source.dreamPcAccess,
-			mutedUntilUtc = source.mutedUntilUtc ?? "",
 			bannedUntilUtc = source.bannedUntilUtc ?? "",
-			muteUntilEnabled = source.muteUntilEnabled,
 			banUntilEnabled = source.banUntilEnabled,
 			updatedUtc = source.updatedUtc ?? ""
 		};
@@ -28824,9 +28944,8 @@ except Exception as exc:
 			updatedUtc = GetRowValue(row, 4),
 			ftpServer = ParseStoredBool(GetRowValue(row, 5), fallback: false),
 			sqlAdmin = ParseStoredBool(GetRowValue(row, 6), fallback: false),
-			mutedUntilUtc = GetRowValue(row, 7),
+			agentBuilder = ParseStoredBool(GetRowValue(row, 36), fallback: false),
 			bannedUntilUtc = GetRowValue(row, 8),
-			muteUntilEnabled = ParseStoredBool(GetRowValue(row, 9), fallback: false),
 			banUntilEnabled = ParseStoredBool(GetRowValue(row, 10), fallback: false),
 			agentAccess = ParseStoredBool(GetRowValue(row, 11), fallback: true),
 			fileUploads = ParseStoredBool(GetRowValue(row, 12), fallback: true),
@@ -28845,14 +28964,18 @@ except Exception as exc:
 			companionTerminalCommands = ParseStoredBool(GetRowValue(row, 32), false),
 			companionActivityTranscriptStorage = ParseStoredBool(GetRowValue(row, 33), false),
 			companionSensitiveMemory = ParseStoredBool(GetRowValue(row, 34), false),
-			companionFinancialActions = ParseStoredBool(GetRowValue(row, 35), false)
+			companionFinancialActions = ParseStoredBool(GetRowValue(row, 35), false),
+			runningApplications = ParseStoredBool(GetRowValue(row, 37), false),
+			windowsServices = ParseStoredBool(GetRowValue(row, 38), false),
+			eventViewer = ParseStoredBool(GetRowValue(row, 39), false),
+			fileAccess = ParseStoredBool(GetRowValue(row, 40), false)
 		};
 	}
 
 	private object[] ChatPermissionStateToRow(string ownerKey, ChatPermissionState permissions)
 	{
 		permissions = permissions ?? new ChatPermissionState();
-		return NormalizeChatPermissionRow(new object[36]
+		return NormalizeChatPermissionRow(new object[41]
 		{
 			string.IsNullOrWhiteSpace(ownerKey) ? "global" : ownerKey.Trim(),
 			permissions.internetSearch ? "true" : "false",
@@ -28861,9 +28984,9 @@ except Exception as exc:
 			DateTimeOffset.UtcNow.ToString("O"),
 			permissions.ftpServer ? "true" : "false",
 			permissions.sqlAdmin ? "true" : "false",
-			permissions.mutedUntilUtc ?? "",
+			"",
 			permissions.bannedUntilUtc ?? "",
-			permissions.muteUntilEnabled ? "true" : "false",
+			"false",
 			permissions.banUntilEnabled ? "true" : "false",
 			permissions.agentAccess ? "true" : "false",
 			permissions.fileUploads ? "true" : "false",
@@ -28881,7 +29004,12 @@ except Exception as exc:
 			permissions.companionTerminalCommands ? "true" : "false",
 			permissions.companionActivityTranscriptStorage ? "true" : "false",
 			permissions.companionSensitiveMemory ? "true" : "false",
-			permissions.companionFinancialActions ? "true" : "false"
+			permissions.companionFinancialActions ? "true" : "false",
+			permissions.agentBuilder ? "true" : "false",
+			permissions.runningApplications ? "true" : "false",
+			permissions.windowsServices ? "true" : "false",
+			permissions.eventViewer ? "true" : "false",
+			permissions.fileAccess ? "true" : "false"
 		});
 	}
 
@@ -28912,6 +29040,10 @@ except Exception as exc:
 		{
 			permissions.sqlAdmin = ReadJsonBool(sqlAdmin, permissions.sqlAdmin);
 		}
+		if (root.TryGetProperty("agentBuilder", out var agentBuilder))
+		{
+			permissions.agentBuilder = ReadJsonBool(agentBuilder, permissions.agentBuilder);
+		}
 		if (root.TryGetProperty("agentAccess", out var agentAccess))
 		{
 			permissions.agentAccess = ReadJsonBool(agentAccess, permissions.agentAccess);
@@ -28936,19 +29068,26 @@ except Exception as exc:
 		{
 			permissions.pcAccess = ReadJsonBool(pcAccess, permissions.pcAccess);
 		}
-		ApplyCompanionPermissionJson(root, permissions);
-		if (root.TryGetProperty("muteUntilEnabled", out var muteUntilEnabled))
+		if (root.TryGetProperty("runningApplications", out var runningApplications))
 		{
-			permissions.muteUntilEnabled = ReadJsonBool(muteUntilEnabled, permissions.muteUntilEnabled);
+			permissions.runningApplications = ReadJsonBool(runningApplications, permissions.runningApplications);
 		}
+		if (root.TryGetProperty("windowsServices", out var windowsServices))
+		{
+			permissions.windowsServices = ReadJsonBool(windowsServices, permissions.windowsServices);
+		}
+		if (root.TryGetProperty("eventViewer", out var eventViewer))
+		{
+			permissions.eventViewer = ReadJsonBool(eventViewer, permissions.eventViewer);
+		}
+		if (root.TryGetProperty("fileAccess", out var fileAccess))
+		{
+			permissions.fileAccess = ReadJsonBool(fileAccess, permissions.fileAccess);
+		}
+		ApplyCompanionPermissionJson(root, permissions);
 		if (root.TryGetProperty("banUntilEnabled", out var banUntilEnabled))
 		{
 			permissions.banUntilEnabled = ReadJsonBool(banUntilEnabled, permissions.banUntilEnabled);
-		}
-		string mutedUntil = ExtractStringProperty(root, "mutedUntilUtc");
-		if (mutedUntil != null)
-		{
-			permissions.mutedUntilUtc = mutedUntil;
 		}
 		string bannedUntil = ExtractStringProperty(root, "bannedUntilUtc");
 		if (bannedUntil != null)
@@ -28967,6 +29106,7 @@ except Exception as exc:
 		permissions.fileDownloads = snapshot.FileDownloads;
 		permissions.ftpServer = snapshot.FtpServer;
 		permissions.sqlAdmin = snapshot.SqlAdmin;
+		permissions.agentBuilder = snapshot.AgentBuilder;
 		permissions.agentAccess = snapshot.AgentAccess;
 		permissions.fileUploads = snapshot.FileUploads;
 		permissions.imageUploads = snapshot.ImageUploads;
@@ -28982,6 +29122,10 @@ except Exception as exc:
 		permissions.companionActivityTranscriptStorage = snapshot.CompanionActivityTranscriptStorage;
 		permissions.companionSensitiveMemory = snapshot.CompanionSensitiveMemory;
 		permissions.companionFinancialActions = snapshot.CompanionFinancialActions;
+		permissions.runningApplications = snapshot.RunningApplications;
+		permissions.windowsServices = snapshot.WindowsServices;
+		permissions.eventViewer = snapshot.EventViewer;
+		permissions.fileAccess = snapshot.FileAccess;
 		permissions.dreamInternetSearch = snapshot.DreamInternetSearch && permissions.internetSearch;
 		permissions.dreamVsCopilotTools = snapshot.DreamVsCopilotTools && permissions.vsCopilotTools;
 		permissions.dreamFileDownloads = snapshot.DreamFileDownloads && permissions.fileDownloads;
@@ -28992,9 +29136,7 @@ except Exception as exc:
 		permissions.dreamFileUploads = snapshot.DreamFileUploads && permissions.fileUploads;
 		permissions.dreamImageUploads = snapshot.DreamImageUploads && permissions.imageUploads;
 		permissions.dreamPcAccess = snapshot.DreamPcAccess && permissions.pcAccess;
-		permissions.mutedUntilUtc = snapshot.MutedUntilUtc ?? "";
 		permissions.bannedUntilUtc = snapshot.BannedUntilUtc ?? "";
-		permissions.muteUntilEnabled = snapshot.MuteUntilEnabled;
 		permissions.banUntilEnabled = snapshot.BanUntilEnabled;
 		return permissions;
 	}
@@ -29010,6 +29152,7 @@ except Exception as exc:
 			FileDownloads = permissions.fileDownloads,
 			FtpServer = permissions.ftpServer,
 			SqlAdmin = permissions.sqlAdmin,
+			AgentBuilder = permissions.agentBuilder,
 			AgentAccess = permissions.agentAccess,
 			FileUploads = permissions.fileUploads,
 			ImageUploads = permissions.imageUploads,
@@ -29025,6 +29168,10 @@ except Exception as exc:
 			CompanionActivityTranscriptStorage = permissions.companionActivityTranscriptStorage,
 			CompanionSensitiveMemory = permissions.companionSensitiveMemory,
 			CompanionFinancialActions = permissions.companionFinancialActions,
+			RunningApplications = permissions.runningApplications,
+			WindowsServices = permissions.windowsServices,
+			EventViewer = permissions.eventViewer,
+			FileAccess = permissions.fileAccess,
 			DreamInternetSearch = permissions.dreamInternetSearch && permissions.internetSearch,
 			DreamVsCopilotTools = permissions.dreamVsCopilotTools && permissions.vsCopilotTools,
 			DreamFileDownloads = permissions.dreamFileDownloads && permissions.fileDownloads,
@@ -29035,11 +29182,8 @@ except Exception as exc:
 			DreamFileUploads = permissions.dreamFileUploads && permissions.fileUploads,
 			DreamImageUploads = permissions.dreamImageUploads && permissions.imageUploads,
 			DreamPcAccess = permissions.dreamPcAccess && permissions.pcAccess,
-			MutedUntilUtc = (permissions.mutedUntilUtc ?? ""),
 			BannedUntilUtc = (permissions.bannedUntilUtc ?? ""),
-			MuteUntilEnabled = permissions.muteUntilEnabled,
 			BanUntilEnabled = permissions.banUntilEnabled,
-			IsMuted = IsChatMuted(permissions),
 			IsBanned = IsChatBanned(permissions),
 			UpdatedUtc = (permissions.updatedUtc ?? "")
 		};
@@ -29235,19 +29379,6 @@ except Exception as exc:
 		return value?.ToString() ?? "";
 	}
 
-	private bool IsChatMuted(ChatPermissionState permissions)
-	{
-		if (permissions == null)
-		{
-			return false;
-		}
-		if (permissions.muteUntilEnabled)
-		{
-			return true;
-		}
-		return IsFutureUtc(permissions.mutedUntilUtc);
-	}
-
 	private bool IsChatBanned(ChatPermissionState permissions)
 	{
 		if (permissions == null)
@@ -29272,10 +29403,6 @@ except Exception as exc:
 		if (IsChatBanned(permissions))
 		{
 			return permissions.banUntilEnabled ? "This client is banned until an administrator enables it." : ("This client is banned until " + FormatRestrictionUntil(permissions.bannedUntilUtc) + ".");
-		}
-		if (IsChatMuted(permissions))
-		{
-			return permissions.muteUntilEnabled ? "This client is muted until an administrator enables it." : ("This client is muted until " + FormatRestrictionUntil(permissions.mutedUntilUtc) + ".");
 		}
 		return "";
 	}
@@ -31113,7 +31240,7 @@ except Exception as exc:
 		}
 		if (mutable != null)
 		{
-			mutable.SqlAdminPanelEnabled = permissions?.sqlAdmin ?? false;
+			mutable.SqlAdminPanelEnabled = true;
 		}
 		if (permissions == null || !permissions.ftpServer)
 		{
@@ -33784,9 +33911,9 @@ except Exception as exc:
 		EnsureColumn(table, 4, "UpdatedUtc", 80);
 		EnsureColumn(table, 5, "FtpServer", 16);
 		EnsureColumn(table, 6, "SqlAdmin", 16);
-		EnsureColumn(table, 7, "MutedUntilUtc", 80);
+		EnsureColumn(table, 7, "ReservedLegacyMuteUntilUtc", 80);
 		EnsureColumn(table, 8, "BannedUntilUtc", 80);
-		EnsureColumn(table, 9, "MuteUntilEnabled", 16);
+		EnsureColumn(table, 9, "ReservedLegacyMuteUntilEnabled", 16);
 		EnsureColumn(table, 10, "BanUntilEnabled", 16);
 		EnsureColumn(table, 11, "AgentAccess", 16);
 		EnsureColumn(table, 12, "FileUploads", 16);
@@ -33796,6 +33923,13 @@ except Exception as exc:
 		EnsureColumn(table, 16, "PcAccess", 16);
 		string[] dreamColumns = { "DreamInternetSearch", "DreamVsCopilotTools", "DreamFileDownloads", "DreamFtpServer", "DreamSqlAdmin", "DreamTerminalCommands", "DreamAgentAccess", "DreamFileUploads", "DreamImageUploads", "DreamPcAccess" };
 		for (int i = 0; i < dreamColumns.Length; i++) EnsureColumn(table, 17 + i, dreamColumns[i], 16);
+		string[] companionColumns = { "CompanionEnabled", "CompanionScreenView", "CompanionCursorControl", "CompanionApplicationLaunch", "CompanionApplicationControl", "CompanionTerminalCommands", "CompanionActivityTranscriptStorage", "CompanionSensitiveMemory", "CompanionFinancialActions" };
+		for (int i = 0; i < companionColumns.Length; i++) EnsureColumn(table, 27 + i, companionColumns[i], 16);
+		EnsureColumn(table, 36, "AgentBuilder", 16);
+		EnsureColumn(table, 37, "RunningApplications", 16);
+		EnsureColumn(table, 38, "WindowsServices", 16);
+		EnsureColumn(table, 39, "EventViewer", 16);
+		EnsureColumn(table, 40, "FileAccess", 16);
 	}
 
 	private void EnsurePersonaPlexConfigColumns(Table table)
@@ -34749,10 +34883,9 @@ except Exception as exc:
 		{
 			normalized[6] = "";
 		}
-		if (normalized[7] == null)
-		{
-			normalized[7] = "";
-		}
+		// Columns 7 and 9 are permanently reserved for the removed mute feature.
+		// Clear legacy values during every normalization without shifting later columns.
+		normalized[7] = "";
 		if (string.IsNullOrWhiteSpace(normalized[8]?.ToString()))
 		{
 			normalized[8] = "General";
@@ -35559,9 +35692,7 @@ except Exception as exc:
 			agentAccess = false,
 			fileUploads = false,
 			imageUploads = false,
-			mutedUntilUtc = source.mutedUntilUtc,
 			bannedUntilUtc = source.bannedUntilUtc,
-			muteUntilEnabled = source.muteUntilEnabled,
 			banUntilEnabled = source.banUntilEnabled,
 			updatedUtc = source.updatedUtc
 		};
@@ -36440,7 +36571,7 @@ except Exception as exc:
 		{
 			normalized[8] = "";
 		}
-		normalized[9] = (ParseStoredBool(normalized[9]?.ToString(), fallback: false) ? "true" : "false");
+		normalized[9] = "false";
 		normalized[10] = (ParseStoredBool(normalized[10]?.ToString(), fallback: false) ? "true" : "false");
 		normalized[11] = (ParseStoredBool(normalized[11]?.ToString(), fallback: true) ? "true" : "false");
 		normalized[12] = (ParseStoredBool(normalized[12]?.ToString(), fallback: true) ? "true" : "false");
@@ -36454,7 +36585,7 @@ except Exception as exc:
 
 	private object[] CreateDefaultChatPermissionRow()
 	{
-		return new object[36]
+		return new object[41]
 		{
 			"global",
 			"false",
@@ -36473,7 +36604,9 @@ except Exception as exc:
 			"true",
 			"false",
 			"false", "false", "false", "false", "false", "false", "false", "false", "false", "false", "false",
-			"false", "false", "false", "false", "false", "false", "false", "false", "false"
+			"false", "false", "false", "false", "false", "false", "false", "false", "false",
+			"false",
+			"false", "false", "false", "false"
 		};
 	}
 
@@ -38220,9 +38353,6 @@ except Exception as exc:
 			return "request_host_verification";
 		case "suspendhost":
 			return "suspend_host";
-		case "muterenter":
-		case "mute":
-			return "mute_renter";
 		case "banrenter":
 		case "ban":
 			return "ban_renter";
@@ -38263,7 +38393,6 @@ except Exception as exc:
 			goto case "suspend_host";
 		case "suspend_host":
 		case "block_commands":
-		case "mute_renter":
 			return "investigating";
 		}
 	}
@@ -38413,9 +38542,6 @@ except Exception as exc:
 		{
 			switch (NormalizeTrustIntervention(record.intervention))
 			{
-			case "mute_renter":
-				RestrictChatClient(ownerKey, "mute", null);
-				break;
 			case "ban_renter":
 				RestrictChatClient(ownerKey, "ban", null);
 				break;
@@ -38548,11 +38674,8 @@ except Exception as exc:
 			TokensUsed = tokensUsed,
 			TokensRemaining = (unlimited ? 0 : Math.Max(0L, tokenLimit - tokensUsed)),
 			Unlimited = unlimited,
-			MutedUntilUtc = (permissions.mutedUntilUtc ?? ""),
 			BannedUntilUtc = (permissions.bannedUntilUtc ?? ""),
-			MuteUntilEnabled = permissions.muteUntilEnabled,
 			BanUntilEnabled = permissions.banUntilEnabled,
-			IsMuted = IsChatMuted(permissions),
 			IsBanned = IsChatBanned(permissions)
 		};
 	}
@@ -41801,6 +41924,7 @@ except Exception as exc:
 				}
 			}
 		}
+		AddStorageUsageBytes(ref total, GetVersionControlStorageUsageBytes(ownerKey));
 		return Math.Max(0L, total);
 	}
 
@@ -44453,7 +44577,7 @@ except Exception as exc:
 			bool imageRequest = ChatUiRequestContainsImageContent(request?.Body);
 			string sessionId = (sharedChat ? sharedSessionId : EnsureChatUiSessionId(ExtractChatUiSessionId(request?.Body)));
 			string requestBody = request?.Body ?? "{}";
-			AlignmentSnapshot alignment = EvaluateAlignmentForRequestAsync(alignmentOwnerKey, requestBody, sessionId, cancellationToken).GetAwaiter().GetResult();
+			AlignmentSnapshot alignment = GetAlignmentSnapshot(alignmentOwnerKey);
 			if (alignment.Locked)
 			{
 				SetHttpStatus(request, 403, "Forbidden");
@@ -44514,7 +44638,7 @@ except Exception as exc:
 			}
 			string lmRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, ownerKey, includeMemories: !sharedChat);
 			string runtimeModelForUse = EnsureWebChatRuntimeModelReadyAsync(lmRequestJson, cancellationToken).GetAwaiter().GetResult();
-			if (agentMode || browserMode || terminalMode || companionMode)
+			if (agentMode || browserMode || terminalMode || companionMode || RequestSupportsContextConsentUi(request?.Body))
 			{
 				lmRequestJson = AddProxyResearchTools(lmRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, ownerKey);
 				if (companionMode)
@@ -44578,6 +44702,7 @@ except Exception as exc:
 				reasoning = completion.Reasoning,
 				raw = completion.Raw,
 				finishReason = completion.FinishReason,
+				versionId = GetCompletedVersionControlVersionId(promptSessionId),
 				usage = usageSnapshot
 			});
 		}
@@ -44649,14 +44774,14 @@ except Exception as exc:
 			}
 			string sessionId = (sharedChat ? sharedSessionId : EnsureChatUiSessionId(ExtractChatUiSessionId(request?.Body)));
 			string promptUserName = ResolveChatUiPromptUserName(connection, request, streamOwnerKey);
-			AlignmentSnapshot alignment = await EvaluateAlignmentForRequestAsync(alignmentOwnerKey, request?.Body ?? "{}", sessionId, cancellationToken).ConfigureAwait(false);
+			AlignmentSnapshot alignment = GetAlignmentSnapshot(alignmentOwnerKey);
 			output.WriteLine(JsonSerializer.Serialize(new { type = "alignment", alignment }, AlignmentJsonOptions));
 			if (alignment.Locked)
 			{
 				WriteChatUiStreamEvent(output, "error", alignment.RecoveryGuidance, "", "", null, null, null, 0, 0L, 0L, tokenUnlimited: false, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, storageUnlimited: false, "", 0.0, 1.0, 0.0, 0.0, 0.0, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, tokensRequired: true, 0L, 0L);
 				return;
 			}
-			activeStreamCancellation = RegisterActiveChatStreamCancellation(streamOwnerKey, ExtractChatUiStreamId(request?.Body), sessionId);
+			activeStreamCancellation = RegisterActiveChatStreamCancellation(streamOwnerKey, ExtractChatUiStreamId(request?.Body), sessionId, request?.Body);
 			linkedStreamCancellation = ((_cts != null) ? CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, activeStreamCancellation.Cancellation.Token) : CancellationTokenSource.CreateLinkedTokenSource(activeStreamCancellation.Cancellation.Token));
 			cancellationToken = linkedStreamCancellation.Token;
 			ChatUsageMeter usageMeter = CreateChatUsageMeter();
@@ -44754,7 +44879,7 @@ except Exception as exc:
 				{
 					WriteChatUiProgressWithUsage(output, streamOwnerKey, usageMeter, progress, "runtime_preflight", status, 0L, 0L);
 				}, requestBody: request?.Body, cancellationToken: cancellationToken).ConfigureAwait(continueOnCapturedContext: false));
-				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands) || companionMode)
+				if ((agentMode && permissions.agentAccess) || browserMode || (terminalMode && permissions.terminalCommands) || companionMode || RequestSupportsContextConsentUi(request?.Body))
 				{
 					string toolRequestJson = BuildChatUiCompletionRequestJson(request?.Body, streamResponses: false, permissions, promptUserName, streamOwnerKey, includeMemories: !sharedChat);
 					toolRequestJson = AddProxyResearchTools(toolRequestJson, permissions, agentMode, agentMode || terminalMode, agentMode || browserMode, streamOwnerKey);
@@ -46848,6 +46973,7 @@ except Exception as exc:
 			sourceCount = toolEvent.SourceCount,
 			error = (toolEvent.Error ?? ""),
 			undoToken = (toolEvent.UndoToken ?? ""),
+			versionId = (toolEvent.VersionId ?? ""),
 			sessionId = (toolEvent.SessionId ?? ""),
 			files = (toolEvent.Files ?? new List<ChatUiFileChangeStreamEntry>()).Select(file => new
 			{
@@ -47137,7 +47263,9 @@ except Exception as exc:
 		{
 			return;
 		}
-		toolEvent.UndoToken = transaction.Token;
+		string versionId = GetActiveAutomaticVersionId(transaction.OwnerKey, transaction.SessionId);
+		toolEvent.UndoToken = string.IsNullOrWhiteSpace(versionId) ? transaction.Token : versionId;
+		toolEvent.VersionId = versionId;
 		toolEvent.SessionId = transaction.SessionId;
 		toolEvent.Files = BuildChatFileChangeStreamEntries(transaction);
 	}
@@ -47161,6 +47289,10 @@ except Exception as exc:
 				return BuildJsonError(request, 400, "Bad Request", "undoToken is required.");
 			}
 			string ownerKey = GetChatSessionOwnerKey(connection, request);
+			if (undoToken.StartsWith("version_", StringComparison.OrdinalIgnoreCase))
+			{
+				return RestoreVersionControlFromUndo(ownerKey, requestedSessionId, undoToken, request);
+			}
 			ChatFileUndoTransaction transaction;
 			lock (_chatFileUndoLock)
 			{
@@ -48816,7 +48948,7 @@ except Exception as exc:
 			return false;
 		}
 		instruction = string.IsNullOrWhiteSpace(latestCheckpoint)
-			? "[Jackhammer continuation] You attempted to answer before creating the required work checkpoint. Do not repeat that answer yet. Call goal_checkpoint now with the user goal, success criteria, completed work, remaining work, concise notes, progressPercent, and the correct status. Use ready_final only if the request is genuinely complete; otherwise continue the work."
+			? "[Jackhammer continuation] You attempted to answer before creating the required work checkpoint. Do not repeat that answer yet. Call goal_checkpoint now with the user goal, 3 to 7 ordered status|action steps, success criteria, completed work, remaining work, concise notes, progressPercent, and the correct status. Use ready_final only if the request is genuinely complete; otherwise continue the work."
 			: "[Jackhammer continuation] The latest checkpoint was not terminal. Do not stop or repeat the draft answer yet. Reassess the completed and remaining work, then call goal_checkpoint with an updated status and progress. Continue with real tools when work remains; use ready_final only when the request and its verification are genuinely complete.";
 		return true;
 	}
@@ -52200,6 +52332,10 @@ except Exception as exc:
 		writer.WriteBoolean("stream", streamResponses);
 		string reasoningLevel = ExtractStringProperty(root, "reasoningLevel") ?? ExtractStringProperty(root, "reasoning_level") ?? "auto";
 		writer.WriteString("reasoningLevel", reasoningLevel);
+		if (RequestSupportsContextConsentUi(requestBody))
+		{
+			writer.WriteBoolean("contextConsentUi", value: true);
+		}
 		string selectedServiceId = ExtractStringProperty(root, "service") ?? "";
 		bool agentMode = string.Equals(selectedServiceId, "agent", StringComparison.OrdinalIgnoreCase);
 		bool companionMode = string.Equals(selectedServiceId, "companion", StringComparison.OrdinalIgnoreCase);
@@ -52303,6 +52439,10 @@ except Exception as exc:
 		writer.WriteString("model", ResolveChatUiRequestModel(requestedModel));
 		writer.WriteBoolean("stream", value: true);
 		writer.WriteBoolean("store", value: false);
+		if (RequestSupportsContextConsentUi(requestBody))
+		{
+			writer.WriteBoolean("contextConsentUi", value: true);
+		}
 		string selectedServiceId = ExtractStringProperty(root, "service") ?? "";
 		bool agentMode = string.Equals(selectedServiceId, "agent", StringComparison.OrdinalIgnoreCase);
 		if (root.TryGetProperty("temperature", out var temperature))
@@ -52474,6 +52614,11 @@ except Exception as exc:
 		{
 			parts.Add(availableServicesHint.Trim());
 		}
+		string capabilityContextHint = BuildJackCapabilityContextSystemHint(permissions, RequestSupportsContextConsentUi(root.GetRawText()));
+		if (!string.IsNullOrWhiteSpace(capabilityContextHint))
+		{
+			parts.Add(capabilityContextHint);
+		}
 		string selectedServiceHint = BuildSelectedChatServiceSystemHint(selectedServiceId, permissions);
 		if (!string.IsNullOrWhiteSpace(selectedServiceHint))
 		{
@@ -52578,7 +52723,7 @@ except Exception as exc:
 			"Run id: " + (string.IsNullOrWhiteSpace(runId) ? "auto" : TruncateForLog(runId, 120)) + "\n" +
 			"Jackhammer turn budget: " + turnBudget.ToString(CultureInfo.InvariantCulture) + "\n" +
 			"Continue the same user request autonomously until it is genuinely complete, blocked, needs user input, reaches a decision-complete plan, or the turn budget is exhausted. " +
-			"Use goal_checkpoint at the start and after each material step. Include concise successCriteria, completed, remaining, notes, and progressPercent so the UI can build a task tree. " +
+			"Use goal_checkpoint before the first real tool call and after each material step. Include 3 to 7 ordered steps using the exact form status|action, where status is pending, in_progress, completed, or blocked; keep exactly one step in_progress while work remains. Include concise successCriteria, completed, remaining, notes, and progressPercent so every client can render a clear plan of action. " +
 			"Use status=in_progress while work remains, status=needs_user only for a decision or external action that cannot be safely inferred, status=blocked only for a real blocker, and status=ready_final only after requested work and any requested tests or verification are complete. " +
 			(planMode
 				? "This run is in Plan mode: remain read-only, use status=plan_ready once the plan is decision-complete, and then stop for explicit user approval. "
@@ -57642,7 +57787,7 @@ except Exception as exc:
 
 	private bool IsProxyOwnedResearchTool(string toolName)
 	{
-		return toolName != null && (toolName.Equals("companion_action", StringComparison.Ordinal) || toolName.Equals("internet_search", StringComparison.Ordinal) || toolName.Equals("download_file", StringComparison.Ordinal) || toolName.Equals("nuget_search", StringComparison.Ordinal) || toolName.Equals("nuget_package_info", StringComparison.Ordinal) || toolName.Equals("github_code_search", StringComparison.Ordinal) || IsProxyOwnedCoordinationTool(toolName) || IsProxyOwnedWorkstationModelTool(toolName) || IsProxyOwnedSockJackDmlTool(toolName) || IsProxyOwnedGitTool(toolName) || IsProxyOwnedTerminalTool(toolName) || IsProxyOwnedBrowserTool(toolName) || IsProxyOwnedVsTool(toolName) || IsLlmRuntimeToolName(toolName));
+		return toolName != null && (IsSystemContextTool(toolName) || toolName.Equals("companion_action", StringComparison.Ordinal) || toolName.Equals("internet_search", StringComparison.Ordinal) || toolName.Equals("download_file", StringComparison.Ordinal) || toolName.Equals("nuget_search", StringComparison.Ordinal) || toolName.Equals("nuget_package_info", StringComparison.Ordinal) || toolName.Equals("github_code_search", StringComparison.Ordinal) || IsProxyOwnedCoordinationTool(toolName) || IsProxyOwnedWorkstationModelTool(toolName) || IsProxyOwnedSockJackDmlTool(toolName) || IsProxyOwnedGitTool(toolName) || IsProxyOwnedTerminalTool(toolName) || IsProxyOwnedBrowserTool(toolName) || IsProxyOwnedVsTool(toolName) || IsLlmRuntimeToolName(toolName));
 	}
 
 	private bool IsProxyOwnedCoordinationTool(string toolName)
@@ -57926,6 +58071,11 @@ except Exception as exc:
 		string remaining = ExtractJsonStringProperty(argumentsJson, "remaining") ?? "";
 		string blockedReason = ExtractJsonStringProperty(argumentsJson, "blockedReason") ?? "";
 		string notes = ExtractJsonStringProperty(argumentsJson, "notes") ?? "";
+		List<string> steps = ExtractStringArrayToolArgument(argumentsJson, "steps")
+			.Where(step => !string.IsNullOrWhiteSpace(step))
+			.Select(step => TruncateForLog(step.Trim(), 240))
+			.Take(8)
+			.ToList();
 		bool blocked = status.Equals("blocked", StringComparison.Ordinal);
 		bool readyFinal = status.Equals("ready_final", StringComparison.Ordinal);
 		bool planReady = status.Equals("plan_ready", StringComparison.Ordinal);
@@ -57938,6 +58088,7 @@ except Exception as exc:
 			status,
 			progressPercent,
 			goal,
+			steps,
 			successCriteria,
 			completed,
 			remaining,
@@ -58181,14 +58332,18 @@ except Exception as exc:
 						}
 						forceFinalAnswerFromCoordination = forceFinalAnswerFromCoordination || coordinationResult.ForceFinalAnswer;
 					}
+					else if (IsVersionControlSensitiveTool(toolCall.Name) && !CanExecuteVersionControlledMutation(ownerKey, sessionId, out string versionControlError))
+					{
+						result = toolCall.Name + " blocked: " + versionControlError;
+					}
 					else if (IsProxyOwnedMutatingVsTool(toolCall.Name))
 					{
 						undoScope = BeginChatFileUndoScope(ownerKey, sessionId, toolCall.Name);
-						result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson, ownerKey, sessionId);
+						result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson, ownerKey, sessionId, requestBody, cancellationToken);
 					}
 					else
 					{
-						result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson, ownerKey, sessionId);
+						result = await ExecuteProxyResearchToolAsync(toolCall.Name, toolCall.ArgumentsJson, ownerKey, sessionId, requestBody, cancellationToken);
 					}
 				}
 				catch (Exception ex)
@@ -59409,8 +59564,14 @@ except Exception as exc:
 		return match.Success ? NormalizeBrowserSkillText(WebUtility.HtmlDecode(match.Groups["value"].Value ?? "")) : "";
 	}
 
-	private async Task<string> ExecuteProxyResearchToolAsync(string toolName, string argumentsJson, string ownerKey = null, string sessionId = null)
+	private async Task<string> ExecuteProxyResearchToolAsync(string toolName, string argumentsJson, string ownerKey = null, string sessionId = null, string requestBody = null, CancellationToken cancellationToken = default)
 	{
+		if (IsSystemContextTool(toolName))
+		{
+			if (!RequestSupportsContextConsentUi(requestBody))
+				return JsonSerializer.Serialize(new { ok = false, status = "unavailable", error = "This client does not provide an interactive context approval UI." });
+			return await ExecuteSystemContextToolAsync(toolName, argumentsJson, ownerKey, sessionId, cancellationToken).ConfigureAwait(false);
+		}
 		if (IsProxyOwnedCoordinationTool(toolName))
 		{
 			return BuildProxyCoordinationToolResult(toolName, argumentsJson, "").Result;
@@ -59418,6 +59579,26 @@ except Exception as exc:
 		ChatPermissionState permissions = (string.IsNullOrWhiteSpace(ownerKey) ? GetChatPermissions() : GetChatPermissions(ownerKey));
 		if (toolName.Equals("companion_action", StringComparison.Ordinal))
 		{
+			bool observation = false;
+			try
+			{
+				using JsonDocument companionDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+				string type = ContextJsonString(companionDocument.RootElement, "type").Trim().ToLowerInvariant();
+				observation = type == "observe" || type == "screen";
+			}
+			catch (JsonException)
+			{
+				return "companion_action blocked: Invalid Companion action JSON.";
+			}
+			if (observation && !IsStandingSystemContextPermissionEnabled(permissions, "companionObservation"))
+			{
+				if (!RequestSupportsContextConsentUi(requestBody))
+					return "companion_action blocked: This client cannot display a context approval prompt.";
+				SystemContextPermissionDecision decision = await QueueSystemContextPermissionRequestAsync(ownerKey, sessionId, "companionObservation", toolName, argumentsJson, cancellationToken).ConfigureAwait(false);
+				if (!decision.Approved)
+					return JsonSerializer.Serialize(new { ok = false, status = "denied", capability = "companionObservation", error = decision.Reason });
+				return ExecuteCompanionToolAction(ownerKey, argumentsJson, true);
+			}
 			if (permissions == null || !permissions.companionEnabled)
 				return "companion_action blocked: Companion mode is disabled in the Workstation Companion tab.";
 			return ExecuteCompanionToolAction(ownerKey, argumentsJson);
@@ -59468,6 +59649,14 @@ except Exception as exc:
 		}
 		if (IsProxyOwnedVsTool(toolName))
 		{
+			if (IsReadOnlyFileContextTool(toolName) && RequestSupportsContextConsentUi(requestBody) &&
+				!IsStandingSystemContextPermissionEnabled(permissions, "fileAccess"))
+			{
+				SystemContextPermissionDecision decision = await QueueSystemContextPermissionRequestAsync(ownerKey, sessionId, "fileAccess", toolName, argumentsJson, cancellationToken).ConfigureAwait(false);
+				if (!decision.Approved)
+					return JsonSerializer.Serialize(new { ok = false, status = "denied", capability = "fileAccess", error = decision.Reason });
+				return ExecuteProxyVsTool(toolName, argumentsJson, ownerKey, sessionId);
+			}
 			if (permissions == null || !permissions.vsCopilotTools)
 			{
 				return toolName + " blocked: VS Copilot Tools permission is disabled.";
@@ -68158,10 +68347,11 @@ except Exception as exc:
 	{
 		try
 		{
+			bool includeContextTools = RequestSupportsContextConsentUi(requestBody);
 			bool includeLlmRuntimeTools = includeVsTools && permissions != null && permissions.agentAccess && permissions.vsCopilotTools && HasLlmRuntimeToolSchemas();
 			bool includeGitTools = includeVsTools && permissions != null && permissions.agentAccess && IsGitCliAvailable();
 			bool includeSockJackDmlTools = includeVsTools && permissions != null && permissions.agentAccess;
-			if (permissions == null || (!permissions.internetSearch && !permissions.fileDownloads && (!includeVsTools || !permissions.vsCopilotTools) && (!includeBrowserTools || !permissions.agentAccess) && !includeGitTools && !includeSockJackDmlTools && (!includeTerminalTools || !permissions.terminalCommands) && !includeLlmRuntimeTools))
+			if (permissions == null || (!includeContextTools && !permissions.internetSearch && !permissions.fileDownloads && (!includeVsTools || !permissions.vsCopilotTools) && (!includeBrowserTools || !permissions.agentAccess) && !includeGitTools && !includeSockJackDmlTools && (!includeTerminalTools || !permissions.terminalCommands) && !includeLlmRuntimeTools))
 			{
 				return requestBody;
 			}
@@ -68209,7 +68399,7 @@ except Exception as exc:
 					{
 						item.WriteTo(writer);
 					}
-					WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools, compactFileToolsOnly);
+					WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools, compactFileToolsOnly, includeContextTools);
 					writer.WriteEndArray();
 				}
 				else if (property.NameEquals("messages") && property.Value.ValueKind == JsonValueKind.Array)
@@ -68223,7 +68413,7 @@ except Exception as exc:
 					}
 					writer.WriteStartObject();
 					writer.WriteString("role", "system");
-					writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey, compactFileToolsOnly));
+					writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey, compactFileToolsOnly, includeContextTools));
 					writer.WriteEndObject();
 					writer.WriteEndArray();
 				}
@@ -68246,7 +68436,7 @@ except Exception as exc:
 			{
 				writer.WritePropertyName("tools");
 				writer.WriteStartArray();
-				WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools, compactFileToolsOnly);
+				WriteProxyResearchToolSchemas(writer, permissions, includeVsTools, includeTerminalTools, includeBrowserTools, compactFileToolsOnly, includeContextTools);
 				writer.WriteEndArray();
 			}
 			if (!wroteMessages)
@@ -68255,7 +68445,7 @@ except Exception as exc:
 				writer.WriteStartArray();
 				writer.WriteStartObject();
 				writer.WriteString("role", "system");
-				writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey, compactFileToolsOnly));
+				writer.WriteString("content", BuildProxyResearchToolSystemPrompt(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, ownerKey, compactFileToolsOnly, includeContextTools));
 				writer.WriteEndObject();
 				writer.WriteEndArray();
 			}
@@ -68461,13 +68651,13 @@ except Exception as exc:
 		return Regex.IsMatch(prompt ?? "", "\\b(reply|respond|say|answer)\\s+(with\\s+)?exactly\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 	}
 
-	private bool ShouldAdvertiseProxyCoordinationTools(ChatPermissionState permissions, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false)
+	private bool ShouldAdvertiseProxyCoordinationTools(ChatPermissionState permissions, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, bool includeContextTools = false)
 	{
 		if (permissions == null)
 		{
 			return false;
 		}
-		return permissions.internetSearch ||
+		return includeContextTools || permissions.internetSearch ||
 			permissions.fileDownloads ||
 			(includeBrowserTools && permissions.agentAccess) ||
 			(includeVsTools && permissions.vsCopilotTools) ||
@@ -68527,7 +68717,7 @@ except Exception as exc:
 		return false;
 	}
 
-	private string BuildProxyResearchToolSystemPrompt(ChatPermissionState permissions, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, string ownerKey = null, bool compactFileToolsOnly = false)
+	private string BuildProxyResearchToolSystemPrompt(ChatPermissionState permissions, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, string ownerKey = null, bool compactFileToolsOnly = false, bool includeContextTools = false)
 	{
 		List<string> tools = new List<string>();
 		if (compactFileToolsOnly)
@@ -68554,6 +68744,13 @@ except Exception as exc:
 		if (permissions != null && permissions.fileDownloads)
 		{
 			tools.Add("download_file");
+		}
+		if (includeContextTools)
+		{
+			tools.Add(RunningApplicationsToolName);
+			tools.Add(WindowsServicesToolName);
+			tools.Add(EventViewerToolName);
+			tools.Add(InspectFilesToolName);
 		}
 		if (includeBrowserTools && permissions != null && permissions.agentAccess)
 		{
@@ -68626,7 +68823,7 @@ except Exception as exc:
 				tools.Add("llmruntime:" + toolName);
 			}
 		}
-		bool includeCoordinationTools = ShouldAdvertiseProxyCoordinationTools(permissions, includeVsTools, includeTerminalTools, includeBrowserTools);
+		bool includeCoordinationTools = ShouldAdvertiseProxyCoordinationTools(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, includeContextTools);
 		if (includeCoordinationTools)
 		{
 			tools.Add(GoalCheckpointToolName);
@@ -68634,7 +68831,8 @@ except Exception as exc:
 		}
 		string rootText = (includeVsTools ? (" " + BuildAccessibleRootDirectorySystemHint(ownerKey)) : "");
 		string coordinationText = includeCoordinationTools ? ("For multi-step requests, use " + GoalCheckpointToolName + " to record the user goal, success criteria, current status, remaining work, blockers, and a 0-100 progressPercent. Use " + ContinueWithToolsToolName + " when you are not done and need more real tool calls: set status=needs_tools, requiredTools to currently available non-coordination tool names, nextStep to the specific next action, and progressPercent if you can estimate it. Do not call " + ContinueWithToolsToolName + " repeatedly without an intervening real tool result. Set status=ready_final only when the requested goal is satisfied; set status=blocked only for a real blocker that needs user action or cannot be recovered with available tools. Coordination tools are internal progress signals, not final-answer content. ") : "";
-		return (includeVsTools ? "[LmVsProxy agent mode] VS_tools is enabled for this request when the VS tool schemas are present. " : "[LmVsProxy permissions] ") + "The admin enabled these proxy-owned tools: " + ((tools.Count == 0) ? "none" : string.Join(", ", tools)) + ". Use tool calls, not prose, to perform actions. If the runtime cannot emit native OpenAI tool_calls, emit exactly Qwen-compatible tool blocks like <tool_call>{\"name\":\"internet_search\",\"arguments\":{\"action\":\"search\",\"query\":\"example\",\"take\":8}}</tool_call>; these are executable calls, not final-answer prose. " + coordinationText + "Prefer internet_search for general web lookup when available. For uncommon, product/project, library, repository, company, person, or current names, do not rely on stale model memory or old scraped GitHub data; use internet_search action=search/read to establish what the name refers to and cite the sources before making claims. Use action=search to find source URLs, then choose the relevant URL yourself and call action=read with url to read/scrape full page text, headings, links, forms, inputs, textareas, lists, tables, metadata, and selector matches. Do not assume search snippets are enough when the user asks for page contents, examples, source material, scraped details, tables, forms, or lists. The internet_search browser client uses realistic browser headers and its cookies/logins are sandboxed to the current owner and chat session; do not paste cookies or credentials into final answers. Cite result-backed claims with bracket citations like [1] and include a Sources section with links at the bottom of the answer. download_file can save public HTTP/HTTPS files and webpages into the current session Downloads folder. If the user asks to download a website or page as HTML, call download_file with the page URL and a fileName ending in .html; do not refuse just because the URL is a website. When download_file succeeds, use the returned savedPath with read_file; never pass the original URL to read_file. When the user asks for examples, source material, scraped details, page contents, or code samples, do not stop at search-result snippets; open/read or download the best source page(s), scrape the useful information, and continue until the requested criteria are actually satisfied or a real blocker is established. " + (includeBrowserTools ? "For Browser Skill work, call browser_open to navigate the visible Web Chat browser, browser_read_page to fetch or re-read page HTML/text, browser_click_link to follow a link from the last browser page by index or visible text, browser_click to activate visible controls, browser_type to enter text, browser_select to choose select/menu values, browser_press to send keys, and browser_find_text to search the current page text. The Web Chat UI shows screenshots and mirrors browser navigation and DOM actions live. Continue until the criteria is met, then output BROWSER_SKILL_DONE on its own line; output BROWSER_SKILL_OBSERVE if another live screenshot/HTML observation is needed, or BROWSER_SKILL_USER if human intervention is required. " : "") + (includeVsTools ? "For VS_tools filesystem work: inspect with vs_read_file or vs_list_files before editing; create files with vs_write_file; copy files with vs_copy_file; do precise edits with vs_replace_in_file; move or rename with vs_rename_file; delete only with vs_delete_file; search with vs_search_files. Only create, edit, copy, rename, delete, list, or read paths inside the current session files or explicitly accessible filesystem roots for this session. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && IsGitCliAvailable()) ? "For Git work, use git_dependency_check when Git availability is unclear, git_changed_files and git_status to understand the repo, git_file_diff for a single file patch, git_file_at_ref to compare a file against HEAD or another ref, git_file_history and git_file_blame for provenance, git_grep for repository search, git_stage with explicit paths, git_commit with a clear message, and git_push only after the user asks or the workflow clearly requires publishing. The Git service blocks destructive reset/clean/checkout-file operations and uses the GUI approval gate for mutating commands. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess) ? "For Workstation model delegation, call workstation_list_models when you need enabled model ids, then call workstation_run_model with a chat-capable enabled model id and a focused prompt when another enabled Web Chat model should check, specialize, compare, or draft a sub-answer. Do not claim that a delegated model ran unless the tool result returns ok, and summarize the returned model id with its answer. For SockJackDml workflow work, use sockjackdml_workflow_status to inspect active plans/progress/executions/evidence, sockjackdml_progress_document_find to locate the matching *_Progress.md tracker, sockjackdml_plan_create to iteratively shape a plan, sockjackdml_progress_document_create to create or refresh the ProjectOrSessionName_FeatureName_Progress.md tracker, sockjackdml_plan_execute for preview, approved_apply, or auto_approval_gated execution packets, sockjackdml_execution_control to pause/resume/cancel/retry/skip execution cursors, and sockjackdml_evidence_link to attach evidence packets. Auto approval-gated execution may continue through supplied bounded actions, but file writes, Git mutations, and terminal commands still use their existing approval and permission gates. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && permissions.vsCopilotTools) ? "For LlmRuntime Agent turns, these proxy-owned OpenAI-style schemas are the supported tool surface. Do not print raw JSON, XML, or proprietary tool transcripts as prose in the final answer. " : "") + "When terminal is enabled, call run_command_in_terminal with the full PowerShell command and a short summary; commands may require JackLLM approval, so do not claim they ran until the tool result says so. " + (includeVsTools ? "FTP and web auth are permissions/surfaces, not chat tools: mention FTP only as the configured server surface, and use web auth only for authenticated session context." : "Respect disabled permissions and do not claim VS_tools filesystem access unless Agent service is active.") + rootText + " Summarize changed files and any command results in the final answer.";
+		string contextText = includeContextTools ? (" " + BuildJackCapabilityContextSystemHint(permissions, consentUi: true) + " Use list_running_applications, list_windows_services, query_event_viewer, or inspect_files when that read-only context is genuinely needed; an unchecked capability will pause for user consent.") : "";
+		return (includeVsTools ? "[LmVsProxy agent mode] VS_tools is enabled for this request when the VS tool schemas are present. " : "[LmVsProxy permissions] ") + "The proxy-owned tools present for this turn are: " + ((tools.Count == 0) ? "none" : string.Join(", ", tools)) + ". Use tool calls, not prose, to perform actions. If the runtime cannot emit native OpenAI tool_calls, emit exactly Qwen-compatible tool blocks like <tool_call>{\"name\":\"internet_search\",\"arguments\":{\"action\":\"search\",\"query\":\"example\",\"take\":8}}</tool_call>; these are executable calls, not final-answer prose. " + coordinationText + "Prefer internet_search for general web lookup when available. For uncommon, product/project, library, repository, company, person, or current names, do not rely on stale model memory or old scraped GitHub data; use internet_search action=search/read to establish what the name refers to and cite the sources before making claims. Use action=search to find source URLs, then choose the relevant URL yourself and call action=read with url to read/scrape full page text, headings, links, forms, inputs, textareas, lists, tables, metadata, and selector matches. Do not assume search snippets are enough when the user asks for page contents, examples, source material, scraped details, tables, forms, or lists. The internet_search browser client uses realistic browser headers and its cookies/logins are sandboxed by chat owner and session; do not paste cookies or credentials into final answers. Cite result-backed claims with bracket citations like [1] and include a Sources section with links at the bottom of the answer. download_file can save public HTTP/HTTPS files and webpages into the current session Downloads folder. If the user asks to download a website or page as HTML, call download_file with the page URL and a fileName ending in .html; do not refuse just because the URL is a website. When download_file succeeds, use the returned savedPath with read_file; never pass the original URL to read_file. When the user asks for examples, source material, scraped details, page contents, or code samples, do not stop at search-result snippets; open/read or download the best source page(s), scrape the useful information, and continue until the requested criteria are actually satisfied or a real blocker is established. " + (includeBrowserTools ? "For Browser Skill work, call browser_open to navigate the visible Web Chat browser, browser_read_page to fetch or re-read page HTML/text, browser_click_link to follow a link from the last browser page by index or visible text, browser_click to activate visible controls, browser_type to enter text, browser_select to choose select/menu values, browser_press to send keys, and browser_find_text to search the current page text. The Web Chat UI shows screenshots and mirrors browser navigation and DOM actions live. Continue until the criteria is met, then output BROWSER_SKILL_DONE on its own line; output BROWSER_SKILL_OBSERVE if another live screenshot/HTML observation is needed, or BROWSER_SKILL_USER if human intervention is required. " : "") + (includeVsTools ? "For VS_tools filesystem work: inspect with vs_read_file or vs_list_files before editing; create files with vs_write_file; copy files with vs_copy_file; do precise edits with vs_replace_in_file; move or rename with vs_rename_file; delete only with vs_delete_file; search with vs_search_files. Only create, edit, copy, rename, delete, list, or read paths inside the current session files or explicitly accessible filesystem roots for this session. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && IsGitCliAvailable()) ? "For Git work, use git_dependency_check when Git availability is unclear, git_changed_files and git_status to understand the repo, git_file_diff for a single file patch, git_file_at_ref to compare a file against HEAD or another ref, git_file_history and git_file_blame for provenance, git_grep for repository search, git_stage with explicit paths, git_commit with a clear message, and git_push only after the user asks or the workflow clearly requires publishing. The Git service blocks destructive reset/clean/checkout-file operations and uses the GUI approval gate for mutating commands. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess) ? "For Workstation model delegation, call workstation_list_models when you need enabled model ids, then call workstation_run_model with a chat-capable enabled model id and a focused prompt when another enabled Web Chat model should check, specialize, compare, or draft a sub-answer. Do not claim that a delegated model ran unless the tool result returns ok, and summarize the returned model id with its answer. For SockJackDml workflow work, use sockjackdml_workflow_status to inspect active plans/progress/executions/evidence, sockjackdml_progress_document_find to locate the matching *_Progress.md tracker, sockjackdml_plan_create to iteratively shape a plan, sockjackdml_progress_document_create to create or refresh the ProjectOrSessionName_FeatureName_Progress.md tracker, sockjackdml_plan_execute for preview, approved_apply, or auto_approval_gated execution packets, sockjackdml_execution_control to pause/resume/cancel/retry/skip execution cursors, and sockjackdml_evidence_link to attach evidence packets. Auto approval-gated execution may continue through supplied bounded actions, but file writes, Git mutations, and terminal commands still use their existing approval and permission gates. " : "") + ((includeVsTools && permissions != null && permissions.agentAccess && permissions.vsCopilotTools) ? "For LlmRuntime Agent turns, these proxy-owned OpenAI-style schemas are the supported tool surface. Do not print raw JSON, XML, or proprietary tool transcripts as prose in the final answer. " : "") + "When terminal is enabled, call run_command_in_terminal with the full PowerShell command and a short summary; commands may require JackLLM approval, so do not claim they ran until the tool result says so. " + (includeVsTools ? "FTP and web auth are permissions/surfaces, not chat tools: mention FTP only as the configured server surface, and use web auth only for authenticated session context." : "Respect disabled permissions and do not claim VS_tools filesystem access unless Agent service is active.") + contextText + rootText + " Summarize changed files and any command results in the final answer.";
 	}
 
 	private string BuildAccessibleRootDirectorySystemHint(string ownerKey)
@@ -68717,7 +68915,7 @@ except Exception as exc:
 		});
 	}
 
-	private void WriteProxyResearchToolSchemas(Utf8JsonWriter writer, ChatPermissionState permissions = null, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, bool compactFileToolsOnly = false)
+	private void WriteProxyResearchToolSchemas(Utf8JsonWriter writer, ChatPermissionState permissions = null, bool includeVsTools = false, bool includeTerminalTools = false, bool includeBrowserTools = false, bool compactFileToolsOnly = false, bool includeContextTools = false)
 	{
 		if (compactFileToolsOnly)
 		{
@@ -68898,6 +69096,10 @@ except Exception as exc:
 			});
 			WriteSockJackDmlToolSchemas(writer);
 		}
+		if (includeContextTools)
+		{
+			WriteSystemContextToolSchemas(this, writer);
+		}
 		if (includeTerminalTools && permissions != null && permissions.terminalCommands)
 		{
 			WriteProxyResearchToolSchema(writer, "run_command_in_terminal", "Run a PowerShell, console, terminal, or shell command on the local machine after JackLLM approval. Use this for commands such as netstat, ipconfig, tasklist, dotnet, git, npm, and PowerShell pipelines.", new string[1] { "command" }, new ProxyToolParameter[5]
@@ -68909,7 +69111,7 @@ except Exception as exc:
 				new ProxyToolParameter("timeoutMs", "integer", "Optional timeout in milliseconds. Default 120000, max 600000.")
 			});
 		}
-		if (ShouldAdvertiseProxyCoordinationTools(permissions, includeVsTools, includeTerminalTools, includeBrowserTools))
+		if (ShouldAdvertiseProxyCoordinationTools(permissions, includeVsTools, includeTerminalTools, includeBrowserTools, includeContextTools))
 		{
 			WriteProxyCoordinationToolSchemas(writer);
 		}
@@ -68917,10 +69119,11 @@ except Exception as exc:
 
 	private void WriteProxyCoordinationToolSchemas(Utf8JsonWriter writer)
 	{
-		WriteProxyResearchToolSchema(writer, GoalCheckpointToolName, "Record the current prompt goal, success criteria, progress percent, completed work, remaining work, and blockers. This is an internal progress checkpoint, not a final answer.", new string[2] { "goal", "status" }, new ProxyToolParameter[8]
+		WriteProxyResearchToolSchema(writer, GoalCheckpointToolName, "Create or update the JackHammer plan of action and record current goal progress. This is an internal progress checkpoint, not a final answer.", new string[3] { "goal", "status", "steps" }, new ProxyToolParameter[9]
 		{
 			new ProxyToolParameter("goal", "string", "Concise restatement of the user-requested goal."),
 			new ProxyToolParameter("status", "string", "One of started, in_progress, needs_user, plan_ready, ready_final, or blocked."),
+			new ProxyToolParameter("steps", "array", "Three to seven ordered plan entries in status|action form. Status is pending, in_progress, completed, or blocked. Keep exactly one in_progress while work remains."),
 			new ProxyToolParameter("progressPercent", "number", "Estimated completion from 0 to 100. Values outside 0-100 are clamped by the runtime."),
 			new ProxyToolParameter("successCriteria", "string", "What must be true before the final answer is ready."),
 			new ProxyToolParameter("completed", "string", "Work already completed."),

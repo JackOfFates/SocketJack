@@ -703,6 +703,7 @@ public partial class MainWindow : Window {
             proxy.CompanionCaptureJpeg = CapturePcAccessDesktopJpeg;
             proxy.CompanionInput = ApplyPcAccessInput;
             proxy.CompanionLaunchApplication = LaunchCompanionApplication;
+            proxy.SystemContextProvider = QueryWindowsSystemContextAsync;
             proxy.CompanionEmergencyStopRequested += OnCompanionEmergencyStopRequested;
             return proxy;
         }, cancellationToken);
@@ -712,6 +713,8 @@ public partial class MainWindow : Window {
 
         ReportStartup(startupProgress, 24, "Loading local settings database", "Reading JackLLM workstation settings before model services start.");
         _settings = await LoadSettingsAsync(cancellationToken);
+        _proxy.WorkstationOptionsCatalogProviderAsync = BuildWorkstationOptionsCatalogJsonAsync;
+        _proxy.WorkstationOptionsCatalogUpdaterAsync = UpdateWorkstationOptionsCatalogJsonAsync;
         if (JackLlmUserData.MigrateModelsFrom(_settings.ModelsLocation)) {
             _settings.ModelsLocation = JackLlmUserData.ModelsRoot;
             PersistSettingsToDisk(_settings, applyToServices: false);
@@ -1475,11 +1478,12 @@ public partial class MainWindow : Window {
 
     private void WorkstationMenuOpenRoute_Click(object sender, RoutedEventArgs e) {
         string route = (sender as FrameworkElement)?.Tag?.ToString() ?? "/";
-        try {
-            Process.Start(new ProcessStartInfo("http://127.0.0.1:" + ChatServerPort.ToString(CultureInfo.InvariantCulture) + route) { UseShellExecute = true });
-        } catch (Exception ex) {
-            AppendLog("Could not open " + route + ": " + TrimForDisplay(ex.Message, 160));
-        }
+        string webUiPath = route.Equals("/Builder", StringComparison.OrdinalIgnoreCase)
+            ? "/?view=builder"
+            : route.Equals("/sql", StringComparison.OrdinalIgnoreCase)
+                ? "/?view=sql"
+                : route;
+        _ = OpenWebUiTabAsync(true, true, webUiPath);
     }
 
     private void WorkstationMenuAbout_Click(object sender, RoutedEventArgs e) {
@@ -2011,7 +2015,7 @@ public partial class MainWindow : Window {
         OpenServiceUrl(BuildAuthenticatedChatServerUrl());
     }
 
-    private async Task OpenWebUiTabAsync(bool focusTab, bool forceNavigate) {
+    private async Task OpenWebUiTabAsync(bool focusTab, bool forceNavigate, string path = "/") {
         if (focusTab && WebUiTabItem != null && MainTabs != null)
             MainTabs.SelectedItem = WebUiTabItem;
 
@@ -2021,7 +2025,7 @@ public partial class MainWindow : Window {
             return;
         }
 
-        _pendingWebUiUrl = BuildAuthenticatedChatServerUrl();
+        _pendingWebUiUrl = BuildAuthenticatedChatServerEndpoint(path);
         _webUiRecoveredRemoteNavigationFailure = false;
         string displayUrl = BuildWebUiDisplayUrl(_pendingWebUiUrl);
         if (!forceNavigate && IsWebUiPageAlreadyLoaded()) {
@@ -4197,16 +4201,8 @@ public partial class MainWindow : Window {
                 var selectItem = CreateReadableMenuItem("Use for explorer", item);
                 selectItem.Click += StoredSessionMenuItem_Click;
                 menuItem.Items.Add(selectItem);
-                menuItem.Items.Add(new Separator());
-                menuItem.Items.Add(BuildRestrictionMenu("Mute", item, "mute"));
-                menuItem.Items.Add(BuildRestrictionMenu("Ban", item, "ban"));
-                menuItem.Items.Add(new Separator());
-                menuItem.Items.Add(BuildAdminActionItem("Enable", item, () => {
-                    string ownerKey = ResolveSessionOwnerKey(item);
-                    ChatClientPermissionSnapshot snapshot = _proxy.EnableChatClient(ownerKey);
-                    AppendLog("Enabled chat client permissions for " + snapshot.OwnerKey + ".");
-                }));
-                menuItem.Items.Add(BuildAdminActionItem("Edit permissions", item, () => ShowClientPermissionsDialog(item)));
+	                menuItem.Items.Add(new Separator());
+	                menuItem.Items.Add(BuildVersionControlMenu(item));
                 menu.Items.Add(menuItem);
             }
         }
@@ -4298,9 +4294,9 @@ public partial class MainWindow : Window {
         }
     }
 
-    private string? PromptForSessionTitle(string currentTitle) {
-        var dialog = new Window {
-            Title = "Rename session",
+	    private string? PromptForSessionTitle(string currentTitle, string windowTitle = "Rename session", string fieldLabel = "Session title") {
+	        var dialog = new Window {
+	            Title = windowTitle,
             Owner = this,
             Width = 420,
             Height = 170,
@@ -4315,7 +4311,7 @@ public partial class MainWindow : Window {
             VerticalContentAlignment = VerticalAlignment.Center
         };
         root.Children.Add(new TextBlock {
-            Text = "Session title",
+	            Text = fieldLabel,
             Foreground = Brushes.White,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 8)
@@ -4339,56 +4335,98 @@ public partial class MainWindow : Window {
         return result == true ? input.Text.Trim() : null;
     }
 
-    private void SessionAdminButton_Click(object sender, RoutedEventArgs e) {
+	    private void SessionAdminButton_Click(object sender, RoutedEventArgs e) {
         e.Handled = true;
         if ((sender as FrameworkElement)?.Tag is not ChatSessionListItem item)
             return;
 
-        string ownerKey = ResolveSessionOwnerKey(item);
-        var menu = CreateReadableContextMenu();
-        menu.Items.Add(CreateReadableMenuItem(
-            string.IsNullOrWhiteSpace(ownerKey) ? "Owner unknown" : ownerKey,
-            isEnabled: false));
-        menu.Items.Add(BuildRestrictionMenu("Mute", item, "mute"));
-        menu.Items.Add(BuildRestrictionMenu("Ban", item, "ban"));
-        menu.Items.Add(new System.Windows.Controls.Separator());
-        menu.Items.Add(BuildAdminActionItem("Enable", item, () => {
-            ChatClientPermissionSnapshot snapshot = _proxy.EnableChatClient(ownerKey);
-            AppendLog("Enabled chat client permissions for " + snapshot.OwnerKey + ".");
-            RefreshSessionsPanel(true);
-        }));
-        menu.Items.Add(BuildAdminActionItem("Edit permissions", item, () => ShowClientPermissionsDialog(item)));
+	        var menu = CreateReadableContextMenu();
+	        MenuItem versionControl = BuildVersionControlMenu(item);
+	        while (versionControl.Items.Count > 0) {
+	            object child = versionControl.Items[0];
+	            versionControl.Items.RemoveAt(0);
+	            menu.Items.Add(child);
+	        }
 
         if (sender is Button button) {
             button.ContextMenu = menu;
             menu.PlacementTarget = button;
         }
-        menu.IsOpen = true;
-    }
+	        menu.IsOpen = true;
+	    }
 
-    private MenuItem BuildRestrictionMenu(string header, ChatSessionListItem item, string restriction) {
-        var menu = CreateReadableMenuItem(header);
-        menu.Items.Add(BuildRestrictionActionItem(header + " 10 minutes", item, restriction, TimeSpan.FromMinutes(10)));
-        menu.Items.Add(BuildRestrictionActionItem(header + " 30 minutes", item, restriction, TimeSpan.FromMinutes(30)));
-        menu.Items.Add(BuildRestrictionActionItem(header + " 60 minutes", item, restriction, TimeSpan.FromMinutes(60)));
-        menu.Items.Add(BuildRestrictionActionItem(header + " 2 hours", item, restriction, TimeSpan.FromHours(2)));
-        menu.Items.Add(BuildRestrictionActionItem(header + " 6 hours", item, restriction, TimeSpan.FromHours(6)));
-        menu.Items.Add(BuildRestrictionActionItem(header + " until enabled", item, restriction, null));
-        return menu;
-    }
+	    private MenuItem BuildVersionControlMenu(ChatSessionListItem item) {
+	        string ownerKey = ResolveSessionOwnerKey(item);
+	        ProjectVersionControlDiagnosticsSnapshot snapshot = _proxy.GetProjectVersionControlDiagnostics(ownerKey, item.SessionId, false);
+	        var root = CreateReadableMenuItem("Version Control", item);
+	        root.Items.Add(CreateReadableMenuItem(snapshot.EffectiveAutomaticEnabled ? "Protected automatically" : "Automatic protection is off", isEnabled: false));
 
-    private MenuItem BuildRestrictionActionItem(string header, ChatSessionListItem item, string restriction, TimeSpan? duration) {
-        return BuildAdminActionItem(header, item, () => {
-            string ownerKey = ResolveSessionOwnerKey(item);
-            ChatClientPermissionSnapshot snapshot = _proxy.RestrictChatClient(ownerKey, restriction, duration);
-            string label = string.Equals(restriction, "ban", StringComparison.OrdinalIgnoreCase) ? "Banned" : "Muted";
-            AppendLog(label + " chat client " + snapshot.OwnerKey + ".");
-            RefreshSessionsPanel(true);
-        });
-    }
+	        ProjectVersionControlVersionSnapshot? latest = snapshot.Versions.FirstOrDefault(version => string.Equals(version.Type, "automatic", StringComparison.OrdinalIgnoreCase));
+	        root.Items.Add(BuildAdminActionItem("Revert Last LLM Response", item, () => {
+	            if (latest == null) throw new InvalidOperationException("This session has no LLM response restore point yet.");
+	            ProjectVersionControlRestoreSnapshot restored = _proxy.RestoreProjectVersionControlDiagnostics(ownerKey, item.SessionId, latest.Id);
+	            AppendLog("Version Control restored " + restored.RestoredFileCount + " file(s)." + (restored.Conflicts.Count > 0 ? " Preserved " + restored.Conflicts.Count + " newer conflict(s)." : ""));
+	        }, isEnabled: latest != null));
+	        root.Items.Add(BuildAdminActionItem("Create Restore Point", item, () => {
+	            string defaultName = "Session restore point " + DateTime.Now.ToString("g", CultureInfo.CurrentCulture);
+	            string? name = PromptForSessionTitle(defaultName, "Create Version Control restore point", "Restore point name");
+	            if (name != null) _proxy.CreateProjectVersionControlCheckpointDiagnostics(ownerKey, item.SessionId, name, false);
+	        }));
 
-    private MenuItem BuildAdminActionItem(string header, ChatSessionListItem item, Action action) {
-        var menuItem = CreateReadableMenuItem(header, item);
+	        var history = CreateReadableMenuItem("Session History", item);
+	        if (snapshot.Versions.Count == 0) history.Items.Add(CreateReadableMenuItem("No restore points yet", isEnabled: false));
+	        foreach (ProjectVersionControlVersionSnapshot version in snapshot.Versions.Take(50)) {
+	            string header = (string.IsNullOrWhiteSpace(version.SemanticVersion) ? "" : "v" + version.SemanticVersion + " · ") + (version.Name ?? version.Id) + " · " + version.Type + " · " + version.AffectedFileCount + " files";
+	            var versionItem = CreateReadableMenuItem(header, version, toolTip: version.CreatedUtc + Environment.NewLine + FormatBytes(version.StorageBytes));
+	            versionItem.Items.Add(CreateReadableMenuItem("Review: " + version.AffectedFileCount + " affected files", isEnabled: false));
+	            var additions = CreateReadableMenuItem("+" + version.Additions + " lines", isEnabled: false);
+	            additions.Foreground = Brushes.ForestGreen;
+	            versionItem.Items.Add(additions);
+	            var deletions = CreateReadableMenuItem("-" + version.Deletions + " lines", isEnabled: false);
+	            deletions.Foreground = Brushes.Firebrick;
+	            versionItem.Items.Add(deletions);
+	            versionItem.Items.Add(BuildAdminActionItem("Restore", item, () => {
+	                ProjectVersionControlRestoreSnapshot restored = _proxy.RestoreProjectVersionControlDiagnostics(ownerKey, item.SessionId, version.Id);
+	                if (restored.Conflicts.Count > 0) {
+	                    MessageBoxResult force = MessageBox.Show(this, restored.Conflicts.Count + " newer file(s) were preserved. Force restore those conflicts?", "Version Control conflicts", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+	                    if (force == MessageBoxResult.Yes) restored = _proxy.RestoreProjectVersionControlDiagnostics(ownerKey, item.SessionId, version.Id, true);
+	                }
+	                AppendLog("Version Control restored " + restored.RestoredFileCount + " file(s).");
+	            }));
+	            history.Items.Add(versionItem);
+	        }
+	        root.Items.Add(history);
+	        root.Items.Add(new Separator());
+	        root.Items.Add(BuildAdminActionItem((snapshot.SessionAutomaticEnabled ? "Disable" : "Enable") + " Session Protection", item, () =>
+	            _proxy.SaveProjectVersionControlDiagnosticsSettings(ownerKey, item.SessionId, null, !snapshot.SessionAutomaticEnabled)));
+
+	        var projectSettings = CreateReadableMenuItem("Project Version Control Settings", item);
+	        projectSettings.Items.Add(CreateReadableMenuItem(snapshot.ProjectName + " · v" + snapshot.CurrentVersion + (string.IsNullOrWhiteSpace(snapshot.ActiveBranch) ? " · main" : " · " + snapshot.ActiveBranch), isEnabled: false));
+	        projectSettings.Items.Add(CreateReadableMenuItem("Storage: " + FormatBytes(snapshot.StorageBytes), isEnabled: false));
+	        projectSettings.Items.Add(CreateReadableMenuItem("Cleanup: oldest automatic restore points first; named restore points retained", isEnabled: false));
+	        projectSettings.Items.Add(new Separator());
+	        projectSettings.Items.Add(BuildAdminActionItem((snapshot.ProjectAutomaticEnabled ? "Disable" : "Enable") + " Project Protection", item, () =>
+	            _proxy.SaveProjectVersionControlDiagnosticsSettings(ownerKey, item.SessionId, !snapshot.ProjectAutomaticEnabled, null)));
+	        projectSettings.Items.Add(BuildAdminActionItem("Create Named Project Restore Point", item, () => {
+	            string defaultName = "Project restore point " + DateTime.Now.ToString("g", CultureInfo.CurrentCulture);
+	            string? name = PromptForSessionTitle(defaultName, "Create project restore point", "Restore point name");
+	            if (name != null) _proxy.CreateProjectVersionControlCheckpointDiagnostics(ownerKey, item.SessionId, name, true);
+	        }));
+	        projectSettings.Items.Add(BuildAdminActionItem("Create Feature Branch", item, () => {
+	            string? name = PromptForSessionTitle("feature", "Create feature branch", "Branch name");
+	            if (name != null) _proxy.CreateProjectVersionControlBranchDiagnostics(ownerKey, item.SessionId, name);
+	        }, isEnabled: string.IsNullOrWhiteSpace(snapshot.ActiveBranch)));
+	        projectSettings.Items.Add(BuildAdminActionItem("Merge Branch to Main (+0.1.0)", item, () =>
+	            _proxy.PromoteProjectVersionControlDiagnostics(ownerKey, item.SessionId, false), isEnabled: !string.IsNullOrWhiteSpace(snapshot.ActiveBranch)));
+	        projectSettings.Items.Add(BuildAdminActionItem("Promote Major Redesign (+1.0.0)", item, () =>
+	            _proxy.PromoteProjectVersionControlDiagnostics(ownerKey, item.SessionId, true)));
+	        root.Items.Add(projectSettings);
+	        return root;
+	    }
+
+	    private MenuItem BuildAdminActionItem(string header, ChatSessionListItem item, Action action, bool isEnabled = true) {
+	        var menuItem = CreateReadableMenuItem(header, item);
+	        menuItem.IsEnabled = isEnabled;
         menuItem.Click += (_, eventArgs) => {
             eventArgs.Handled = true;
             try {
@@ -4409,7 +4447,7 @@ public partial class MainWindow : Window {
             Title = "Edit permissions",
             Owner = this,
             Width = 540,
-            Height = 680,
+            Height = 740,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
             Background = new SolidColorBrush(Color.FromRgb(42, 46, 54))
@@ -4434,11 +4472,16 @@ public partial class MainWindow : Window {
         CheckBox fileDownloads = CreatePermissionCheckBox("File Downloads", snapshot.FileDownloads);
         CheckBox ftpServer = CreatePermissionCheckBox("FTP Server", snapshot.FtpServer);
         CheckBox sqlAdmin = CreatePermissionCheckBox("SQL Admin", snapshot.SqlAdmin);
+        CheckBox agentBuilder = CreatePermissionCheckBox("Agent Builder", snapshot.AgentBuilder);
         CheckBox terminalCommands = CreatePermissionCheckBox("Terminal Commands", snapshot.TerminalCommands);
         CheckBox terminalForeverApproved = CreatePermissionCheckBox("Terminal Forever Approved", snapshot.TerminalForeverApproved);
         terminalForeverApproved.ToolTip = "THIS IS DANGEROUS AND CAN BE USED TO HARM YOUR COMPUTER.";
         CheckBox pcAccess = CreatePermissionCheckBox("PC Access", snapshot.PcAccess);
         pcAccess.ToolTip = "Allows a paired JackLLM Mobile device to view/control Windows and access approved filesystem roots.";
+        CheckBox runningApplications = CreatePermissionCheckBox("Running Applications", snapshot.RunningApplications);
+        CheckBox windowsServices = CreatePermissionCheckBox("Windows Services", snapshot.WindowsServices);
+        CheckBox eventViewer = CreatePermissionCheckBox("Event Viewer (Application/System)", snapshot.EventViewer);
+        CheckBox fileAccess = CreatePermissionCheckBox("File Context (read/list/search)", snapshot.FileAccess);
 
         root.Children.Add(agentAccess);
         root.Children.Add(fileUploads);
@@ -4448,9 +4491,14 @@ public partial class MainWindow : Window {
         root.Children.Add(fileDownloads);
         root.Children.Add(ftpServer);
         root.Children.Add(sqlAdmin);
+        root.Children.Add(agentBuilder);
         root.Children.Add(terminalCommands);
         root.Children.Add(terminalForeverApproved);
         root.Children.Add(pcAccess);
+        root.Children.Add(runningApplications);
+        root.Children.Add(windowsServices);
+        root.Children.Add(eventViewer);
+        root.Children.Add(fileAccess);
 
         root.Children.Add(new TextBlock {
             Text = "Terminal command rules",
@@ -4542,9 +4590,14 @@ public partial class MainWindow : Window {
                 snapshot.FileDownloads = fileDownloads.IsChecked.GetValueOrDefault();
                 snapshot.FtpServer = ftpServer.IsChecked.GetValueOrDefault();
                 snapshot.SqlAdmin = sqlAdmin.IsChecked.GetValueOrDefault();
+                snapshot.AgentBuilder = agentBuilder.IsChecked.GetValueOrDefault();
                 snapshot.TerminalCommands = terminalCommands.IsChecked.GetValueOrDefault();
                 snapshot.TerminalForeverApproved = terminalForeverApproved.IsChecked.GetValueOrDefault();
                 snapshot.PcAccess = pcAccess.IsChecked.GetValueOrDefault();
+                snapshot.RunningApplications = runningApplications.IsChecked.GetValueOrDefault();
+                snapshot.WindowsServices = windowsServices.IsChecked.GetValueOrDefault();
+                snapshot.EventViewer = eventViewer.IsChecked.GetValueOrDefault();
+                snapshot.FileAccess = fileAccess.IsChecked.GetValueOrDefault();
                 ChatClientPermissionSnapshot updated = _proxy.SaveChatClientPermissionsDiagnostics(snapshot);
                 AppendLog("Saved chat client permissions for " + updated.OwnerKey + ".");
                 RefreshSessionsPanel(true);
@@ -13535,12 +13588,9 @@ public partial class MainWindow : Window {
             TokensRemaining = Math.Max(primary.TokensRemaining, secondary.TokensRemaining),
             Unlimited = primary.Unlimited || secondary.Unlimited,
             LastLoginUtc = FirstNonEmpty(primary.LastLoginUtc, secondary.LastLoginUtc),
-            MutedUntilUtc = FirstNonEmpty(primary.MutedUntilUtc, secondary.MutedUntilUtc),
-            BannedUntilUtc = FirstNonEmpty(primary.BannedUntilUtc, secondary.BannedUntilUtc),
-            MuteUntilEnabled = primary.MuteUntilEnabled || secondary.MuteUntilEnabled,
-            BanUntilEnabled = primary.BanUntilEnabled || secondary.BanUntilEnabled,
-            IsMuted = primary.IsMuted || secondary.IsMuted,
-            IsBanned = primary.IsBanned || secondary.IsBanned,
+	            BannedUntilUtc = FirstNonEmpty(primary.BannedUntilUtc, secondary.BannedUntilUtc),
+	            BanUntilEnabled = primary.BanUntilEnabled || secondary.BanUntilEnabled,
+	            IsBanned = primary.IsBanned || secondary.IsBanned,
             SessionCount = Math.Max(primary.SessionCount, secondary.SessionCount),
             ActiveSessionCount = Math.Max(primary.ActiveSessionCount, secondary.ActiveSessionCount),
             LastSessionUtc = FirstNonEmpty(primary.LastSessionUtc, secondary.LastSessionUtc),
@@ -14109,12 +14159,22 @@ public partial class MainWindow : Window {
             UserPermFtpServerCheckBox.IsChecked = enabled;
         if (UserPermSqlAdminCheckBox != null)
             UserPermSqlAdminCheckBox.IsChecked = enabled;
+        if (UserPermAgentBuilderCheckBox != null)
+            UserPermAgentBuilderCheckBox.IsChecked = enabled;
         if (UserPermTerminalCommandsCheckBox != null)
             UserPermTerminalCommandsCheckBox.IsChecked = enabled;
         if (UserPermTerminalTrustCheckBox != null)
             UserPermTerminalTrustCheckBox.IsChecked = enabled;
         if (UserPermPcAccessCheckBox != null)
             UserPermPcAccessCheckBox.IsChecked = enabled;
+        if (UserPermRunningApplicationsCheckBox != null)
+            UserPermRunningApplicationsCheckBox.IsChecked = enabled;
+        if (UserPermWindowsServicesCheckBox != null)
+            UserPermWindowsServicesCheckBox.IsChecked = enabled;
+        if (UserPermEventViewerCheckBox != null)
+            UserPermEventViewerCheckBox.IsChecked = enabled;
+        if (UserPermFileAccessCheckBox != null)
+            UserPermFileAccessCheckBox.IsChecked = enabled;
         if (UserDreamAgentAccessCheckBox != null) UserDreamAgentAccessCheckBox.IsChecked = enabled;
         if (UserDreamVsToolsCheckBox != null) UserDreamVsToolsCheckBox.IsChecked = enabled;
         if (UserDreamInternetSearchCheckBox != null) UserDreamInternetSearchCheckBox.IsChecked = enabled;
@@ -14145,12 +14205,22 @@ public partial class MainWindow : Window {
             UserPermFtpServerCheckBox.IsChecked = snapshot.FtpServer;
         if (UserPermSqlAdminCheckBox != null)
             UserPermSqlAdminCheckBox.IsChecked = snapshot.SqlAdmin;
+        if (UserPermAgentBuilderCheckBox != null)
+            UserPermAgentBuilderCheckBox.IsChecked = snapshot.AgentBuilder;
         if (UserPermTerminalCommandsCheckBox != null)
             UserPermTerminalCommandsCheckBox.IsChecked = snapshot.TerminalCommands;
         if (UserPermTerminalTrustCheckBox != null)
             UserPermTerminalTrustCheckBox.IsChecked = snapshot.TerminalForeverApproved;
         if (UserPermPcAccessCheckBox != null)
             UserPermPcAccessCheckBox.IsChecked = snapshot.PcAccess;
+        if (UserPermRunningApplicationsCheckBox != null)
+            UserPermRunningApplicationsCheckBox.IsChecked = snapshot.RunningApplications;
+        if (UserPermWindowsServicesCheckBox != null)
+            UserPermWindowsServicesCheckBox.IsChecked = snapshot.WindowsServices;
+        if (UserPermEventViewerCheckBox != null)
+            UserPermEventViewerCheckBox.IsChecked = snapshot.EventViewer;
+        if (UserPermFileAccessCheckBox != null)
+            UserPermFileAccessCheckBox.IsChecked = snapshot.FileAccess;
         UserDreamAgentAccessCheckBox.IsChecked = snapshot.DreamAgentAccess;
         UserDreamVsToolsCheckBox.IsChecked = snapshot.DreamVsCopilotTools;
         UserDreamInternetSearchCheckBox.IsChecked = snapshot.DreamInternetSearch;
@@ -14189,9 +14259,14 @@ public partial class MainWindow : Window {
         snapshot.FileDownloads = UserPermFileDownloadsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.FtpServer = UserPermFtpServerCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.SqlAdmin = UserPermSqlAdminCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.AgentBuilder = UserPermAgentBuilderCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.TerminalCommands = UserPermTerminalCommandsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.TerminalForeverApproved = UserPermTerminalTrustCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.PcAccess = UserPermPcAccessCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.RunningApplications = UserPermRunningApplicationsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.WindowsServices = UserPermWindowsServicesCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.EventViewer = UserPermEventViewerCheckBox?.IsChecked.GetValueOrDefault() ?? false;
+        snapshot.FileAccess = UserPermFileAccessCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.DreamAgentAccess = UserDreamAgentAccessCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.DreamVsCopilotTools = UserDreamVsToolsCheckBox?.IsChecked.GetValueOrDefault() ?? false;
         snapshot.DreamInternetSearch = UserDreamInternetSearchCheckBox?.IsChecked.GetValueOrDefault() ?? false;
@@ -14597,11 +14672,6 @@ public partial class MainWindow : Window {
 
     private void EnableUserButton_Click(object sender, RoutedEventArgs e) {
         ApplySelectedOwnerPermissionUpdate(user => _proxy.EnableChatClient(user.OwnerKey), "Enabled");
-    }
-
-    private void MuteUserButton_Click(object sender, RoutedEventArgs e) {
-        int minutes = GetSelectedUserRestrictionMinutes();
-        ApplySelectedOwnerPermissionUpdate(user => _proxy.RestrictChatClient(user.OwnerKey, "mute", minutes <= 0 ? null : TimeSpan.FromMinutes(minutes)), "Muted");
     }
 
     private void BanUserButton_Click(object sender, RoutedEventArgs e) {
@@ -21098,12 +21168,9 @@ public partial class MainWindow : Window {
         public long TokensRemaining { get; init; }
         public bool Unlimited { get; init; }
         public string LastLoginUtc { get; init; } = "";
-        public string MutedUntilUtc { get; init; } = "";
-        public string BannedUntilUtc { get; init; } = "";
-        public bool MuteUntilEnabled { get; init; }
-        public bool BanUntilEnabled { get; init; }
-        public bool IsMuted { get; init; }
-        public bool IsBanned { get; init; }
+	        public string BannedUntilUtc { get; init; } = "";
+	        public bool BanUntilEnabled { get; init; }
+	        public bool IsBanned { get; init; }
         public int SessionCount { get; init; }
         public int ActiveSessionCount { get; init; }
         public string LastSessionUtc { get; init; } = "";
@@ -21136,8 +21203,6 @@ public partial class MainWindow : Window {
                     flags += " | disabled";
                 if (IsBanned)
                     flags += " | banned";
-                else if (IsMuted)
-                    flags += " | muted";
                 return UserName + " (" + OwnerKey + ")" + flags;
             }
         }
@@ -21168,8 +21233,6 @@ public partial class MainWindow : Window {
             get {
                 if (IsBanned)
                     return BanUntilEnabled ? "banned until enabled" : "banned until " + FormatManagementDate(BannedUntilUtc);
-                if (IsMuted)
-                    return MuteUntilEnabled ? "muted until enabled" : "muted until " + FormatManagementDate(MutedUntilUtc);
                 if (!Enabled)
                     return "disabled";
                 return IsAdministrator ? "administrator" : "enabled";
@@ -21192,12 +21255,9 @@ public partial class MainWindow : Window {
                 TokensRemaining = Math.Max(0, snapshot.TokensRemaining),
                 Unlimited = snapshot.Unlimited,
                 LastLoginUtc = snapshot.LastLoginUtc ?? "",
-                MutedUntilUtc = snapshot.MutedUntilUtc ?? "",
-                BannedUntilUtc = snapshot.BannedUntilUtc ?? "",
-                MuteUntilEnabled = snapshot.MuteUntilEnabled,
-                BanUntilEnabled = snapshot.BanUntilEnabled,
-                IsMuted = snapshot.IsMuted,
-                IsBanned = snapshot.IsBanned
+	                BannedUntilUtc = snapshot.BannedUntilUtc ?? "",
+	                BanUntilEnabled = snapshot.BanUntilEnabled,
+	                IsBanned = snapshot.IsBanned
             };
         }
 
@@ -21219,12 +21279,9 @@ public partial class MainWindow : Window {
                 TokensRemaining = Math.Max(0, snapshot.TokensRemaining),
                 Unlimited = snapshot.Unlimited || usage.Unlimited,
                 LastLoginUtc = snapshot.LastLoginUtc ?? "",
-                MutedUntilUtc = snapshot.MutedUntilUtc ?? "",
-                BannedUntilUtc = snapshot.BannedUntilUtc ?? "",
-                MuteUntilEnabled = snapshot.MuteUntilEnabled,
-                BanUntilEnabled = snapshot.BanUntilEnabled,
-                IsMuted = snapshot.IsMuted,
-                IsBanned = snapshot.IsBanned,
+	                BannedUntilUtc = snapshot.BannedUntilUtc ?? "",
+	                BanUntilEnabled = snapshot.BanUntilEnabled,
+	                IsBanned = snapshot.IsBanned,
                 SessionCount = Math.Max(0, snapshot.SessionCount),
                 ActiveSessionCount = Math.Max(0, snapshot.ActiveSessionCount),
                 LastSessionUtc = snapshot.LastSessionUtc ?? "",

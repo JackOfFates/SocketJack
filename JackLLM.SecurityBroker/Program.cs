@@ -36,7 +36,7 @@ builder.Services.AddWindowsService(options => options.ServiceName = "JackLLM Sec
 try {
     using IHost host = builder.Build();
     using var parentLifetime = new CancellationTokenSource();
-    if (localRelease && parentProcessId is int parentId) {
+    if (parentProcessId is int parentId) {
         _ = Task.Run(async () => {
             try {
                 using Process parent = Process.GetProcessById(parentId);

@@ -1,6 +1,6 @@
 # JackLLM Workstation
 
-![JackLLM Workstation Web Console](https://raw.githubusercontent.com/JackOfFates/SocketJack/master/SocketJack/1.jpg)
+![JackLLM Workstation Web Console](docs/images/workstation-ui/web-chat-workspace.png)
 
 JackLLM Workstation is the desktop control center for SocketJack.LlmRuntime: a local AI runtime, generation-node host, agent workstation, and OpenAI-compatible / Visual Studio-compatible bridge for local tools, browsers, and remote clients.
 
@@ -10,12 +10,12 @@ It is part diagnostics dashboard, part runtime manager, part reverse proxy, part
 
 | Component | Version | Target |
 |---|---:|---|
-| JackLLM Workstation WPF | `2026.0` | `net8.0-windows7.0` |
+| JackLLM Workstation WPF | `26.8.4` | `net8.0-windows10.0.17763.0` |
 | JackLLM Workstation Linux host | `2026.0` | `net8.0` |
 | JackLLM Workstation Linux `.deb` | `1:26.0.1` | Debian-compatible package version for the 2026 line |
 | SocketJack.LlmRuntime | `2026 platform` | `net8.0` |
-| SocketJack core | `2026.0` | `.NET Standard 2.1` |
-| SocketJack.WPF | `2026.0` | `net8.0-windows7.0`, `net10.0-windows7.0` |
+| SocketJack core | `2026.9` | `.NET Standard 2.1` |
+| SocketJack.WPF | `2026.5` | `net8.0-windows7.0`, `net10.0-windows7.0` |
 
 The GUI is built for the SocketJack 2026 platform line: the proxy, WPF remoting, web console, server browser, database, payments, and observability surfaces now evolve together under the year-based version scheme. The Debian package uses `1:26.0.1` so Linux package managers get a compact compatible version while still upgrading cleanly from earlier `2026.0.x` packages.
 
@@ -61,7 +61,7 @@ At a glance, JackLLM Workstation gives you:
 | Provider bridge | Talks to SocketJack.LlmRuntime through local port `11435`, with optional forwarding to another OpenAI-compatible provider. |
 | Permission system | Gates agent access, internet search, VS tools, uploads, downloads, image input, SQL admin, FTP, and terminal commands per client. |
 | Server marketplace | Publishes and discovers JackLLM Workstation hosts with model inventory, hardware, pricing, and availability metadata. |
-| Admin workflows | Supports WebAuth users, registration approvals, host-local administration, client mute/ban, terminal approval rules, token-rate decisions, trust review, and filesystem allowlists. |
+| Admin workflows | Supports WebAuth users, registration approvals, host-local administration, client ban/unban, terminal approval rules, token-rate decisions, trust review, and filesystem allowlists. |
 | Runtime observability | Shows service cards, current pipeline, request counts, bandwidth, GPU/CPU/RAM/IO health, billing settings, debug logs, security posture, and active sessions. |
 | Remote Admin | Registers the WPF window for web-based screen capture and direct WPF input routing. |
 | Tray operation | Can start with Windows, hide to tray, and expose quick tray actions such as opening the web console. |
@@ -235,12 +235,44 @@ JackLLM.settings.json
 | Application | Startup behavior, Windows startup, tray behavior, and runtime settings status. |
 | Network | SocketJack.LlmRuntime bridge/tunnel settings, web/FTP port forwarding, and endpoint status. |
 | Billing | Storage profile, cost factor, CPU/GPU/RAM/IO estimates, and usage accounting. |
-| Sessions | Prompt sessions, active sessions, owner keys, mute/ban/admin actions, and history. |
+| Sessions | Prompt sessions, active sessions, owner keys, persistent per-response Version Control, ban/unban actions, and history. |
 | Services | Live status cards for web UI, proxy, SocketJack.LlmRuntime, VS Copilot, agent tools, search, reflection, terminal, FTP, SQL, marketplace, payments, and port forwarding. |
 | Solution Explorer | Approved filesystem roots and session files. |
 | Debug diagnostics | Event stream, endpoint logs, errors, NAT status, proxy status, pending approvals, trust signals, and service activity. |
 | Server Browser | Publish local host metadata and inspect remote model hosts. |
 | Finance | Stripe products, token balances, checkout activity, account settings, and payout state. |
+
+## Workstation UI
+
+The native Windows Workstation provides live service diagnostics, model and GPU controls, Companion safety, user permissions, resource limits, and server administration from one Release interface.
+
+![JackLLM Workstation diagnostics and live service configuration](docs/images/workstation-ui/workstation-diagnostics.png)
+
+| Model management | GPU placement and limits |
+|---|---|
+| <img src="docs/images/workstation-ui/workstation-models.png" alt="JackLLM Workstation model management" width="100%"> | <img src="docs/images/workstation-ui/workstation-gpu.png" alt="JackLLM Workstation GPU configuration" width="100%"> |
+| Downloaded models, runtime source, benchmarks, load settings, access, and memory safeguards. | Per-GPU placement, utilization, VRAM limits, parallelism, offload, and model assignments. |
+
+| Companion safety | Server management |
+|---|---|
+| <img src="docs/images/workstation-ui/workstation-companion.png" alt="JackLLM Workstation Companion permissions and emergency stop" width="100%"> | <img src="docs/images/workstation-ui/workstation-server-management.png" alt="JackLLM Workstation server management and permission controls" width="100%"> |
+| Independent screen, cursor, application, terminal, transcript, memory, and financial-action permissions with a visible Ctrl+Esc emergency stop. | Workstation-owned accounts, global and per-user permissions, token-rate policy, sessions, storage, and resource limits. |
+
+## Web Chat UI
+
+Web Chat connects to the local Workstation and combines chat, project files, sessions, comments, runtime telemetry, Agent Builder, SQL Manager, permissions, and model controls in a responsive interface.
+
+![JackLLM Web Chat workspace with compact live hardware telemetry](docs/images/workstation-ui/web-chat-workspace.png)
+
+| Guided onboarding | Composer modes and generation controls |
+|---|---|
+| <img src="docs/images/workstation-ui/web-chat-welcome.png" alt="JackLLM Web Chat onboarding" width="100%"> | <img src="docs/images/workstation-ui/web-chat-composer-settings.png" alt="JackLLM Web Chat composer modes and settings" width="100%"> |
+| Sign-in, projects, files and images, and model selection explained in one first-run view. | Plan, Goal, Image, Video, Chat, Agent, and Voice modes with model, context, retry, reasoning, and token controls. |
+
+| Permission matrix | Workstation Options |
+|---|---|
+| <img src="docs/images/workstation-ui/web-chat-permissions.png" alt="JackLLM Web Chat permission matrix" width="100%"> | <img src="docs/images/workstation-ui/web-chat-workstation-options.png" alt="JackLLM Web Chat Workstation Options" width="100%"> |
+| Visible tool availability plus separate controls for Internet, VS tools, files, Agent, terminal, PC Access, system context, and administrative features. | Searchable settings grouped by category, with sensitive values redacted and changes applied explicitly. |
 
 ## JackLLM Mobile
 

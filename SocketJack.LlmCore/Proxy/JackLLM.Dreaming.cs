@@ -119,6 +119,10 @@ public partial class LmVsProxy
         public string completedUtc { get; set; } = "";
         public int processedSessions { get; set; }
         public int processedMessages { get; set; }
+        public string dreamModel { get; set; } = "";
+        public string checksAndBalancesStatus { get; set; } = "not-run";
+        public string checksAndBalancesModel { get; set; } = "";
+        public string checksAndBalancesCompletedUtc { get; set; } = "";
         public List<DreamCandidate> candidates { get; set; } = new();
         public List<DreamToolAudit> tools { get; set; } = new();
     }
@@ -151,6 +155,7 @@ public partial class LmVsProxy
     private sealed class DreamTranscript
     {
         public string Text { get; set; } = "";
+        public string SelectedModel { get; set; } = "";
         public int SessionCount { get; set; }
         public int MessageCount { get; set; }
         public Dictionary<string, string> UpdatedBySession { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -647,7 +652,7 @@ public partial class LmVsProxy
             state.processedMessages = transcript.MessageCount;
             if (transcript.MessageCount == 0)
             {
-                entry.status = "completed"; entry.summary = "No changed conversation messages were available to reflect on.";
+                entry.status = "completed"; entry.summary = "No changed conversation messages were available to reflect on."; entry.checksAndBalancesStatus = "not-run";
             }
             else
             {
@@ -660,8 +665,9 @@ public partial class LmVsProxy
                 ChatUiCompletion completion = await ExecuteChatUiCompletionWithProxyToolsAsync(body, state.ownerKey, "dream-" + entry.id, timeout.Token, emitToolCall: tool => {
                     lock (_dreamLock) entry.tools.Add(new DreamToolAudit { tool = tool.Name, permission = DreamPermissionForTool(tool.Name), status = tool.Status, reason = tool.Summary });
                 }).ConfigureAwait(false);
+                entry.dreamModel = ResolveDreamCompletionModel(completion, settings.model);
                 state.phase = "consolidation"; state.progress = 75;
-                ParseDream(completion.Content, entry);
+                ParseDream(FirstNonEmpty(completion.Content, completion.Reasoning), entry);
                 foreach (DreamCandidate candidate in entry.candidates)
                 {
                     candidate.text = NormalizeChatMemoryText(candidate.text, 1000);
@@ -676,6 +682,18 @@ public partial class LmVsProxy
                     }
                 }
                 foreach (var pair in transcript.UpdatedBySession) state.processedSessionUtc[pair.Key] = pair.Value;
+                state.phase = "checks-and-balances"; state.progress = 88;
+                entry.checksAndBalancesModel = ResolveChecksAndBalancesModel(transcript.SelectedModel, entry.dreamModel, settings.model);
+                entry.checksAndBalancesStatus = "running";
+                bool checksCompleted = await RunChecksAndBalancesForDreamAsync(
+                    state.ownerKey,
+                    entry.id,
+                    BuildChecksAndBalancesDreamData(entry, transcript),
+                    entry.processedMessages,
+                    entry.checksAndBalancesModel,
+                    timeout.Token).ConfigureAwait(false);
+                entry.checksAndBalancesStatus = checksCompleted ? "completed" : "failed";
+                entry.checksAndBalancesCompletedUtc = DateTimeOffset.UtcNow.ToString("O");
                 entry.status = "completed";
                 if (string.IsNullOrWhiteSpace(entry.summary)) entry.summary = "Dream completed.";
             }
@@ -714,6 +732,7 @@ public partial class LmVsProxy
             string messagesJson = GetDreamSessionMessages(state.ownerKey, session.Id);
             List<string> messages = ExtractDreamMessages(messagesJson);
             if (messages.Count == 0) { state.processedSessionUtc[session.Id] = session.UpdatedUtc; continue; }
+            if (string.IsNullOrWhiteSpace(result.SelectedModel)) result.SelectedModel = session.Model ?? "";
             string block = "\n<session id=\"" + session.Id + "\" title=\"" + SanitizeDreamText(session.Title, 200) + "\">\n" + string.Join("\n", messages) + "\n</session>\n";
             if (result.Text.Length + block.Length > characterBudget) block = block.Substring(0, Math.Max(0, characterBudget - result.Text.Length));
             result.Text += block;
@@ -723,6 +742,40 @@ public partial class LmVsProxy
             result.SourceTextBySession[session.Id] = string.Join(" ", messages);
         }
         return result;
+    }
+
+    private string ResolveDreamCompletionModel(ChatUiCompletion completion, string requestedModel)
+    {
+        string actualModel = ExtractJsonStringProperty(completion?.Raw, "model") ?? "";
+        return FirstNonEmpty(IsConcreteChecksAndBalancesModel(actualModel) ? actualModel : "", requestedModel, ChatModel, "auto");
+    }
+
+    private string ResolveChecksAndBalancesModel(string selectedModel, string dreamModel, string requestedDreamModel)
+    {
+        return FirstNonEmpty(
+            IsConcreteChecksAndBalancesModel(selectedModel) ? selectedModel : "",
+            IsConcreteChecksAndBalancesModel(dreamModel) ? dreamModel : "",
+            IsConcreteChecksAndBalancesModel(requestedDreamModel) ? requestedDreamModel : "",
+            ChatModel,
+            "auto");
+    }
+
+    private static bool IsConcreteChecksAndBalancesModel(string model)
+    {
+        string value = (model ?? "").Trim();
+        return value.Length > 0 && !value.Equals("auto", StringComparison.OrdinalIgnoreCase) && !value.Equals("$CHAT_MODEL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildChecksAndBalancesDreamData(DreamJournal entry, DreamTranscript transcript)
+    {
+        string candidates = string.Join("\n", entry.candidates.Select(candidate =>
+            "- " + SanitizeDreamText(candidate.text, 1200) + " [" + SanitizeDreamText(candidate.topic, 120) + "]"));
+        return "<completed-dream id=\"" + SanitizeDreamText(entry.id, 80) + "\">\n"
+            + "Summary:\n" + SanitizeDreamText(entry.summary, 1200) + "\n\n"
+            + "Reflection:\n" + SanitizeDreamText(entry.rawReflection, 7000) + "\n\n"
+            + "Candidates:\n" + SanitizeDreamText(candidates, 6000) + "\n\n"
+            + "Source transcript:\n" + SanitizeDreamText(transcript.Text, 14000) + "\n"
+            + "</completed-dream>";
     }
 
     private string GetDreamSessionMessages(string ownerKey, string sessionId)
@@ -1112,7 +1165,7 @@ public partial class LmVsProxy
 
     private static DreamSettingsSnapshot ToSnapshot(DreamSettings s) => new() { Enabled = s.enabled, Preset = s.preset, PollSeconds = s.pollSeconds, StartGraceSeconds = s.startGraceSeconds, PauseGraceSeconds = s.pauseGraceSeconds, RecurrenceMinutes = s.recurrenceMinutes, MaxRunMinutes = s.maxRunMinutes, TokenBudget = s.tokenBudget, SourceTokenBudget = s.sourceTokenBudget, SessionsPerPass = s.sessionsPerPass, StartCpuPercent = s.startCpuPercent, PauseCpuPercent = s.pauseCpuPercent, StartRamPercent = s.startRamPercent, PauseRamPercent = s.pauseRamPercent, StartGpuPercent = s.startGpuPercent, PauseGpuPercent = s.pauseGpuPercent, StartVramPercent = s.startVramPercent, PauseVramPercent = s.pauseVramPercent, StartDiskPercent = s.startDiskPercent, PauseDiskPercent = s.pauseDiskPercent, Model = s.model, Service = s.service, AutoSaveStrictFacts = s.autoSaveStrictFacts };
     private static DreamSettings FromSnapshot(DreamSettingsSnapshot s) => new() { enabled = s.Enabled, preset = s.Preset, pollSeconds = s.PollSeconds, startGraceSeconds = s.StartGraceSeconds, pauseGraceSeconds = s.PauseGraceSeconds, recurrenceMinutes = s.RecurrenceMinutes, maxRunMinutes = s.MaxRunMinutes, tokenBudget = s.TokenBudget, sourceTokenBudget = s.SourceTokenBudget, sessionsPerPass = s.SessionsPerPass, startCpuPercent = s.StartCpuPercent, pauseCpuPercent = s.PauseCpuPercent, startRamPercent = s.StartRamPercent, pauseRamPercent = s.PauseRamPercent, startGpuPercent = s.StartGpuPercent, pauseGpuPercent = s.PauseGpuPercent, startVramPercent = s.StartVramPercent, pauseVramPercent = s.PauseVramPercent, startDiskPercent = s.StartDiskPercent, pauseDiskPercent = s.PauseDiskPercent, model = s.Model, service = s.Service, autoSaveStrictFacts = s.AutoSaveStrictFacts };
-    private static DreamJournalSnapshot ToSnapshot(DreamJournal x) => new() { Id = x.id, Status = x.status, Summary = x.summary, RawReflection = x.rawReflection, CreatedUtc = x.createdUtc, CompletedUtc = x.completedUtc, ProcessedSessions = x.processedSessions, ProcessedMessages = x.processedMessages, Candidates = x.candidates.Select(c => new DreamCandidateSnapshot { Id = c.id, Text = c.text, Topic = c.topic, Disposition = c.disposition, Confidence = c.confidence, ExplicitFact = c.explicitFact, Sensitive = c.sensitive, Conflicting = c.conflicting, SourceSessionId = c.sourceSessionId, StaleMemoryId = c.staleMemoryId, StaleMemoryText = c.staleMemoryText, CandidateType = c.candidateType }).ToList(), ToolAudit = x.tools.Select(t => t.tool + " | " + t.status + " | " + t.reason).ToList() };
+    private static DreamJournalSnapshot ToSnapshot(DreamJournal x) => new() { Id = x.id, Status = x.status, Summary = x.summary, RawReflection = x.rawReflection, CreatedUtc = x.createdUtc, CompletedUtc = x.completedUtc, ProcessedSessions = x.processedSessions, ProcessedMessages = x.processedMessages, DreamModel = x.dreamModel, ChecksAndBalancesStatus = x.checksAndBalancesStatus, ChecksAndBalancesModel = x.checksAndBalancesModel, ChecksAndBalancesCompletedUtc = x.checksAndBalancesCompletedUtc, Candidates = x.candidates.Select(c => new DreamCandidateSnapshot { Id = c.id, Text = c.text, Topic = c.topic, Disposition = c.disposition, Confidence = c.confidence, ExplicitFact = c.explicitFact, Sensitive = c.sensitive, Conflicting = c.conflicting, SourceSessionId = c.sourceSessionId, StaleMemoryId = c.staleMemoryId, StaleMemoryText = c.staleMemoryText, CandidateType = c.candidateType }).ToList(), ToolAudit = x.tools.Select(t => t.tool + " | " + t.status + " | " + t.reason).ToList() };
 
     private void DisposeDreaming() { try { _dreamLifetime.Cancel(); EnsureDreamStateLoaded(); lock (_dreamLock) foreach (DreamState state in _dreamStates.Values) state.cancellation?.Cancel(); SaveDreamState(); _dreamRunGate.Dispose(); _dreamLifetime.Dispose(); } catch { } }
 }

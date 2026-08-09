@@ -260,6 +260,8 @@ namespace LmVs
         public string ReferencesText { get; set; }
         public string AnswerContent { get; set; }
         public string ReasoningContent { get; set; }
+        public string VersionControlVersionId { get; set; }
+        public string VersionControlError { get; set; }
     }
 
     internal sealed class ActiveChatStreamCancellation
@@ -271,6 +273,8 @@ namespace LmVs
         public DateTimeOffset StartedUtc { get; set; }
         public string MediaToolCallId { get; set; }
         public string MediaJobId { get; set; }
+        public bool JackhammerEnabled { get; set; }
+        public string JackhammerRunId { get; set; }
         public List<string> SteeringMessages { get; } = new List<string>();
         public HashSet<string> SteeringIds { get; } = new HashSet<string>(StringComparer.Ordinal);
         public bool AcceptingSteering { get; set; } = true;
@@ -420,6 +424,7 @@ namespace LmVs
         public bool fileDownloads { get; set; } = false;
         public bool ftpServer { get; set; } = false;
         public bool sqlAdmin { get; set; } = false;
+        public bool agentBuilder { get; set; } = false;
         public bool terminalCommands { get; set; } = true;
         public bool terminalForeverApproved { get; set; } = false;
         public bool agentAccess { get; set; } = true;
@@ -435,6 +440,10 @@ namespace LmVs
         public bool companionActivityTranscriptStorage { get; set; }
         public bool companionSensitiveMemory { get; set; }
         public bool companionFinancialActions { get; set; }
+        public bool runningApplications { get; set; }
+        public bool windowsServices { get; set; }
+        public bool eventViewer { get; set; }
+        public bool fileAccess { get; set; }
         public bool dreamInternetSearch { get; set; }
         public bool dreamVsCopilotTools { get; set; }
         public bool dreamFileDownloads { get; set; }
@@ -445,9 +454,7 @@ namespace LmVs
         public bool dreamFileUploads { get; set; }
         public bool dreamImageUploads { get; set; }
         public bool dreamPcAccess { get; set; }
-        public string mutedUntilUtc { get; set; } = "";
         public string bannedUntilUtc { get; set; } = "";
-        public bool muteUntilEnabled { get; set; } = false;
         public bool banUntilEnabled { get; set; } = false;
         public string updatedUtc { get; set; } = "";
     }
@@ -659,6 +666,32 @@ namespace LmVs
 
         public TerminalPermissionRequestSnapshot Request { get; }
         public TaskCompletionSource<TerminalPermissionDecision> Completion { get; }
+    }
+
+    internal sealed class PendingSystemContextPermissionRequest
+    {
+        public PendingSystemContextPermissionRequest(SystemContextPermissionRequestSnapshot request)
+        {
+            Request = request;
+            Completion = new TaskCompletionSource<SystemContextPermissionDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public SystemContextPermissionRequestSnapshot Request { get; }
+        public TaskCompletionSource<SystemContextPermissionDecision> Completion { get; }
+    }
+
+    internal sealed class SystemContextPermissionDecision
+    {
+        public SystemContextPermissionDecision(bool approved, bool always, string reason = "")
+        {
+            Approved = approved;
+            Always = always;
+            Reason = reason ?? "";
+        }
+
+        public bool Approved { get; }
+        public bool Always { get; }
+        public string Reason { get; }
     }
 
     internal sealed class TerminalPermissionDecision

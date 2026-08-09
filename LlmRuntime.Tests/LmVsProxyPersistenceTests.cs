@@ -10,6 +10,32 @@ namespace LlmRuntime.Tests;
 public sealed class LmVsProxyPersistenceTests
 {
     [TestMethod]
+    public void LegacyThirtySevenColumnPermissionRowsKeepExistingIndexes()
+    {
+        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-legacy-permission-row-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var proxy = CreateProxy(dataRoot);
+            object[] row = Enumerable.Repeat<object>("false", 37).ToArray();
+            row[0] = "webauth:legacy-row";
+            row[2] = "true";
+            row[11] = "true";
+            row[36] = "true";
+            var method = typeof(LmVsProxy).GetMethod("ChatPermissionStateFromRow", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+            object state = method.Invoke(proxy, new object[] { row })!;
+            Assert.IsTrue((bool)state.GetType().GetProperty("vsCopilotTools")!.GetValue(state)!);
+            Assert.IsTrue((bool)state.GetType().GetProperty("agentAccess")!.GetValue(state)!);
+            Assert.IsTrue((bool)state.GetType().GetProperty("agentBuilder")!.GetValue(state)!);
+            Assert.IsFalse((bool)state.GetType().GetProperty("runningApplications")!.GetValue(state)!);
+            Assert.IsFalse((bool)state.GetType().GetProperty("windowsServices")!.GetValue(state)!);
+            Assert.IsFalse((bool)state.GetType().GetProperty("eventViewer")!.GetValue(state)!);
+            Assert.IsFalse((bool)state.GetType().GetProperty("fileAccess")!.GetValue(state)!);
+        }
+        finally { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, true); }
+    }
+
+    [TestMethod]
     public void ChatPermissionsPersistWhenDataRootIsExplicit()
     {
         string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-proxy-persistence-" + Guid.NewGuid().ToString("N"));
@@ -24,6 +50,11 @@ public sealed class LmVsProxyPersistenceTests
                 snapshot.FileDownloads = true;
                 snapshot.FtpServer = true;
                 snapshot.SqlAdmin = true;
+                snapshot.AgentBuilder = true;
+                snapshot.RunningApplications = true;
+                snapshot.WindowsServices = true;
+                snapshot.EventViewer = true;
+                snapshot.FileAccess = true;
                 snapshot.TerminalCommands = false;
                 snapshot.PcAccess = true;
                 snapshot.DreamInternetSearch = true;
@@ -40,6 +71,11 @@ public sealed class LmVsProxyPersistenceTests
                 Assert.IsTrue(reloaded.FileDownloads);
                 Assert.IsTrue(reloaded.FtpServer);
                 Assert.IsTrue(reloaded.SqlAdmin);
+                Assert.IsTrue(reloaded.AgentBuilder);
+                Assert.IsTrue(reloaded.RunningApplications);
+                Assert.IsTrue(reloaded.WindowsServices);
+                Assert.IsTrue(reloaded.EventViewer);
+                Assert.IsTrue(reloaded.FileAccess);
                 Assert.IsFalse(reloaded.TerminalCommands);
                 Assert.IsTrue(reloaded.PcAccess);
                 Assert.IsTrue(reloaded.DreamInternetSearch);
@@ -217,16 +253,19 @@ public sealed class LmVsProxyPersistenceTests
             disabled.FileDownloads = false;
             disabled.FtpServer = false;
             disabled.SqlAdmin = false;
+            disabled.AgentBuilder = false;
             disabled.TerminalCommands = false;
             disabled.TerminalForeverApproved = false;
             disabled.AgentAccess = false;
             disabled.FileUploads = false;
             disabled.ImageUploads = false;
             disabled.PcAccess = false;
-            disabled.MuteUntilEnabled = true;
-            disabled.BanUntilEnabled = true;
-            disabled.MutedUntilUtc = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
-            disabled.BannedUntilUtc = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
+            disabled.RunningApplications = false;
+            disabled.WindowsServices = false;
+            disabled.EventViewer = false;
+            disabled.FileAccess = false;
+	            disabled.BanUntilEnabled = true;
+	            disabled.BannedUntilUtc = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
             proxy.SaveChatClientPermissionsDiagnostics(disabled);
 
             ChatClientPermissionSnapshot local = proxy.GetChatClientPermissionsDiagnostics("ip:127.0.0.1");
@@ -234,16 +273,22 @@ public sealed class LmVsProxyPersistenceTests
             Assert.IsTrue(local.FileDownloads);
             Assert.IsTrue(local.FtpServer);
             Assert.IsTrue(local.SqlAdmin);
+            Assert.IsTrue(local.AgentBuilder);
             Assert.IsTrue(local.TerminalCommands);
             Assert.IsTrue(local.TerminalForeverApproved);
             Assert.IsTrue(local.AgentAccess);
             Assert.IsTrue(local.FileUploads);
             Assert.IsTrue(local.ImageUploads);
             Assert.IsFalse(local.PcAccess, "Local admin elevation must not implicitly grant PC Access.");
-            Assert.IsFalse(local.MuteUntilEnabled);
-            Assert.IsFalse(local.BanUntilEnabled);
-            Assert.AreEqual("", local.MutedUntilUtc);
+            Assert.IsFalse(local.RunningApplications, "Localhost must not implicitly grant running-application context.");
+            Assert.IsFalse(local.WindowsServices, "Localhost must not implicitly grant Windows-service context.");
+            Assert.IsFalse(local.EventViewer, "Localhost must not implicitly grant Event Viewer context.");
+            Assert.IsFalse(local.FileAccess, "Localhost must not implicitly grant read-only file context.");
+	            Assert.IsFalse(local.BanUntilEnabled);
             Assert.AreEqual("", local.BannedUntilUtc);
+	        Assert.ThrowsException<ArgumentException>(() => proxy.RestrictChatClient("ip:203.0.113.10", "mute", TimeSpan.FromMinutes(10)), "The removed mute action must be rejected.");
+	        ChatClientPermissionSnapshot banned = proxy.RestrictChatClient("ip:203.0.113.10", "ban", TimeSpan.FromMinutes(10));
+	        Assert.IsTrue(banned.IsBanned, "Ban must remain independent after mute removal.");
         }
         finally
         {

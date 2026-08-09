@@ -105,7 +105,12 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             _ = RefreshModelsAsync();
         };
         ModelBrowserControl.ModelLoadRequested += path => _ = LoadModelAsync(path);
-        ModelBrowserControl.StatusChanged += SetStatus;
+        ModelBrowserControl.StatusChanged += status =>
+        {
+            if (!IsIdealModelSuggestionStatus(status))
+                SetStatus(status);
+        };
+        ModelBrowserControl.IdealModelCountChanged += UpdateBrowserTabModelCount;
         LoadSavedSettings();
         LoadSavedGpuSettings();
         ApplyGlobalGpuSettingsToPanel(_globalGpuSettings);
@@ -205,12 +210,18 @@ public partial class ModelsManagerControl : UserControl, IDisposable
 
     public void ShowModelsTab()
     {
+        ModelsTabItem.Visibility = Visibility.Visible;
+        GpuTabItem.Visibility = Visibility.Collapsed;
+        BrowserTabItem.Visibility = Visibility.Visible;
         ManagerTabs.SelectedItem = ModelsTabItem;
         Focus();
     }
 
     public void ShowGpuTab()
     {
+        ModelsTabItem.Visibility = Visibility.Collapsed;
+        BrowserTabItem.Visibility = Visibility.Collapsed;
+        GpuTabItem.Visibility = Visibility.Visible;
         ManagerTabs.SelectedItem = GpuTabItem;
         Focus();
     }
@@ -2275,19 +2286,49 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                text.Contains("python");
     }
 
-    private void OpenBrowserButton_Click(object sender, RoutedEventArgs e)
+    private static bool IsIdealModelSuggestionStatus(string text)
     {
-        BrowserTabItem.Visibility = Visibility.Visible;
-        ManagerTabs.SelectedItem = BrowserTabItem;
-        OpenBrowserButton.IsEnabled = false;
+        string status = text ?? "";
+        return status.StartsWith("Showing ", StringComparison.OrdinalIgnoreCase) &&
+               status.Contains(" ideal model suggestion", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void UpdateBrowserTabModelCount(int count)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            TryBeginOnUi(() => UpdateBrowserTabModelCount(count));
+            return;
+        }
+
+        BrowserTabModelCountText.Text = " (" + Math.Max(0, count).ToString("N0", CultureInfo.CurrentCulture) + " Models)";
+    }
+
+    private async void ManagerTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, ManagerTabs) || !ReferenceEquals(ManagerTabs.SelectedItem, BrowserTabItem))
+            return;
+
+        await ModelBrowserControl.InitializeBrowserAsync().ConfigureAwait(true);
+    }
+
+    private void RefreshBrowserTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        ModelBrowserControl.RefreshBrowser();
+    }
+
+    private void OpenBrowserExternalButton_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        ModelBrowserControl.OpenCurrentPageExternally();
     }
 
     private void CloseBrowserButton_Click(object sender, RoutedEventArgs e)
     {
-        ModelBrowserControl.SaveCurrentPage();
+        e.Handled = true;
+        ModelBrowserControl.ReleaseBrowserResources();
         ManagerTabs.SelectedItem = ModelsTabItem;
-        BrowserTabItem.Visibility = Visibility.Collapsed;
-        OpenBrowserButton.IsEnabled = true;
     }
 
     private async void RefreshModelsButton_Click(object sender, RoutedEventArgs e) => await RefreshModelsAsync().ConfigureAwait(true);

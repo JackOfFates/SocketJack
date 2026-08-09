@@ -14,10 +14,8 @@ It handles framing, segmentation, serialization, compression, routing, protocol 
 
 | Package | Version | Targets | Role |
 |---|---:|---|---|
-| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.8` | `.NET Standard 2.1` | Core TCP, UDP, HTTP, WebSocket, protocol multiplexing, data, file transfer, and streaming utilities. |
-| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.4` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF live capture, remote input, and GUI remoting on top of SocketJack. |
-
-The companion runtime is documented separately in [`LlmRuntime/README.md`](https://github.com/JackOfFates/SocketJack/blob/master/LlmRuntime/README.md).
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.9` | `.NET Standard 2.1` | Core TCP, UDP, HTTP, WebSocket, protocol multiplexing, data, file transfer, and streaming utilities. |
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.5` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF live capture, remote input, and GUI remoting on top of SocketJack. |
 
 ## Feature Map
 

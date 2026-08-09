@@ -64,11 +64,120 @@ public sealed class SecurityEngineTests {
                 Operation = SecurityOperation.CompleteUnlock, ChallengeId = begin.ChallengeId,
                 Password = "Wrong Password Value 92!", Signature = Sign(begin.Challenge!)
             });
+            Assert.AreEqual("Windows Hello verified, but the workstation password was not accepted.", failed.Message);
             if (attempt < 2) Assert.AreEqual(SecurityStateKind.Locked, failed.State);
             else Assert.AreEqual(SecurityStateKind.Cooldown, failed.State);
         }
         SecurityEngine restarted = new(_store, true);
         Assert.AreEqual(SecurityStateKind.Cooldown, restarted.GetStatus().State);
+    }
+
+    [TestMethod]
+    public void HelloFailureDoesNotConsumePasswordAttempts() {
+        Enroll();
+        using RSA differentHelloKey = RSA.Create(2048);
+
+        for (int attempt = 0; attempt < 6; attempt++) {
+            SecurityResponse begin = _engine.Begin(SecurityOperation.BeginUnlock);
+            string wrongHelloSignature = Convert.ToBase64String(differentHelloKey.SignData(
+                Convert.FromBase64String(begin.Challenge!), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+            SecurityResponse rejected = _engine.Unlock(new SecurityRequest {
+                Operation = SecurityOperation.CompleteUnlock,
+                ChallengeId = begin.ChallengeId,
+                Password = StrongPassword,
+                Signature = wrongHelloSignature
+            });
+
+            Assert.AreEqual(SecurityStateKind.Locked, rejected.State);
+            StringAssert.StartsWith(rejected.Message, "Windows Hello did not match");
+        }
+
+        WorkstationCredentialRecord record = _store.Load()!;
+        Assert.AreEqual(0, record.FailedAttempts);
+        Assert.IsNull(record.CooldownUntilUtc);
+
+        SecurityResponse validBegin = _engine.Begin(SecurityOperation.BeginUnlock);
+        SecurityResponse unlocked = _engine.Unlock(new SecurityRequest {
+            Operation = SecurityOperation.CompleteUnlock,
+            ChallengeId = validBegin.ChallengeId,
+            Password = StrongPassword,
+            Signature = Sign(validBegin.Challenge!)
+        });
+        Assert.IsTrue(unlocked.Success, unlocked.Message);
+    }
+
+    [TestMethod]
+    public void ValidHelloClearsPersistedPasswordCooldownAndMigratesToHelloOnly() {
+        Enroll();
+        for (int attempt = 0; attempt < 3; attempt++) {
+            SecurityResponse begin = _engine.Begin(SecurityOperation.BeginUnlock);
+            _engine.Unlock(new SecurityRequest {
+                Operation = SecurityOperation.CompleteUnlock,
+                ChallengeId = begin.ChallengeId,
+                Password = "Wrong Password Value 92!",
+                Signature = Sign(begin.Challenge!)
+            });
+        }
+        Assert.AreEqual(SecurityStateKind.Cooldown, _engine.GetStatus().State);
+
+        SecurityResponse helloBegin = _engine.Begin(SecurityOperation.BeginUnlock);
+        Assert.IsTrue(helloBegin.Success, "Windows Hello repair must remain available during a password cooldown.");
+        SecurityResponse unlocked = _engine.Unlock(new SecurityRequest {
+            Operation = SecurityOperation.CompleteUnlock,
+            ChallengeId = helloBegin.ChallengeId,
+            Signature = Sign(helloBegin.Challenge!),
+            UseWindowsHelloOnly = true,
+            RememberDevice = true
+        });
+
+        Assert.IsTrue(unlocked.Success, unlocked.Message);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(unlocked.RememberedDeviceToken));
+        WorkstationCredentialRecord record = _store.Load()!;
+        Assert.IsTrue(record.WindowsHelloOnly);
+        Assert.AreEqual(0, record.FailedAttempts);
+        Assert.IsNull(record.CooldownUntilUtc);
+    }
+
+    [TestMethod]
+    public void InvalidHelloCannotClearPersistedPasswordCooldown() {
+        Enroll();
+        for (int attempt = 0; attempt < 3; attempt++) {
+            SecurityResponse begin = _engine.Begin(SecurityOperation.BeginUnlock);
+            _engine.Unlock(new SecurityRequest {
+                Operation = SecurityOperation.CompleteUnlock,
+                ChallengeId = begin.ChallengeId,
+                Password = "Wrong Password Value 92!",
+                Signature = Sign(begin.Challenge!)
+            });
+        }
+        using RSA differentHelloKey = RSA.Create(2048);
+        SecurityResponse helloBegin = _engine.Begin(SecurityOperation.BeginUnlock);
+        string wrongSignature = Convert.ToBase64String(differentHelloKey.SignData(
+            Convert.FromBase64String(helloBegin.Challenge!), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+        SecurityResponse rejected = _engine.Unlock(new SecurityRequest {
+            Operation = SecurityOperation.CompleteUnlock,
+            ChallengeId = helloBegin.ChallengeId,
+            Signature = wrongSignature,
+            UseWindowsHelloOnly = true
+        });
+
+        Assert.IsFalse(rejected.Success);
+        WorkstationCredentialRecord record = _store.Load()!;
+        Assert.IsFalse(record.WindowsHelloOnly);
+        Assert.AreEqual(3, record.FailedAttempts);
+        Assert.IsTrue(record.CooldownUntilUtc > DateTimeOffset.UtcNow);
+    }
+
+    [TestMethod]
+    public void HelloOnlyEnrollmentNeverRequiresTheWorkstationPasswordForUnlock() {
+        Enroll(helloOnly: true);
+        SecurityResponse begin = _engine.Begin(SecurityOperation.BeginUnlock);
+        SecurityResponse unlocked = _engine.Unlock(new SecurityRequest {
+            Operation = SecurityOperation.CompleteUnlock,
+            ChallengeId = begin.ChallengeId,
+            Signature = Sign(begin.Challenge!)
+        });
+        Assert.IsTrue(unlocked.Success, unlocked.Message);
     }
 
     [TestMethod]
@@ -227,7 +336,7 @@ public sealed class SecurityEngineTests {
         Assert.AreEqual(token, tokenStore.Load()!.Token);
     }
 
-    private SecurityResponse Enroll(bool rememberDevice = false) {
+    private SecurityResponse Enroll(bool rememberDevice = false, bool helloOnly = false) {
         SecurityResponse begin = _engine.Begin(SecurityOperation.BeginEnroll);
         string publicKey = Convert.ToBase64String(_helloKey.ExportSubjectPublicKeyInfo());
         return _engine.Enroll(new SecurityRequest {
@@ -237,7 +346,8 @@ public sealed class SecurityEngineTests {
             PublicKey = publicKey,
             Signature = Sign(begin.Challenge!),
             Attestation = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)),
-            RememberDevice = rememberDevice
+            RememberDevice = rememberDevice,
+            UseWindowsHelloOnly = helloOnly
         });
     }
 

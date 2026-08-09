@@ -220,6 +220,44 @@ namespace LmVs
         public TerminalPermissionRequestSnapshot Request { get; }
     }
 
+    public sealed class SystemContextPermissionRequestSnapshot
+    {
+        public string Id { get; set; } = "";
+        public string OwnerKey { get; set; } = "";
+        public string SessionId { get; set; } = "";
+        public string Capability { get; set; } = "";
+        public string ToolName { get; set; } = "";
+        public string QuerySummary { get; set; } = "";
+        public string ArgumentsJson { get; set; } = "{}";
+        public string CreatedUtc { get; set; } = "";
+        public bool CanAlwaysAllow { get; set; }
+    }
+
+    public sealed class SystemContextQuery
+    {
+        public string Kind { get; set; } = "";
+        public string Query { get; set; } = "";
+        public bool IncludeBackground { get; set; }
+        public string Status { get; set; } = "";
+        public string LogName { get; set; } = "both";
+        public string[] Levels { get; set; } = Array.Empty<string>();
+        public string Provider { get; set; } = "";
+        public int? EventId { get; set; }
+        public int SinceMinutes { get; set; } = 120;
+        public int Take { get; set; }
+    }
+
+    public sealed class SystemContextResult
+    {
+        public bool Ok { get; set; }
+        public string Kind { get; set; } = "";
+        public string CapturedUtc { get; set; } = "";
+        public List<Dictionary<string, object>> Items { get; set; } = new List<Dictionary<string, object>>();
+        public bool Truncated { get; set; }
+        public string Warning { get; set; } = "";
+        public string Error { get; set; } = "";
+    }
+
     public sealed class WebAuthRegistrationRequestSnapshot
     {
         public string Id { get; set; } = "";
@@ -361,11 +399,8 @@ namespace LmVs
         public long TokensUsed { get; set; }
         public long TokensRemaining { get; set; }
         public bool Unlimited { get; set; }
-        public string MutedUntilUtc { get; set; } = "";
         public string BannedUntilUtc { get; set; } = "";
-        public bool MuteUntilEnabled { get; set; }
         public bool BanUntilEnabled { get; set; }
-        public bool IsMuted { get; set; }
         public bool IsBanned { get; set; }
     }
 
@@ -437,11 +472,8 @@ namespace LmVs
         public long TokensUsed { get; set; }
         public long TokensRemaining { get; set; }
         public bool Unlimited { get; set; }
-        public string MutedUntilUtc { get; set; } = "";
         public string BannedUntilUtc { get; set; } = "";
-        public bool MuteUntilEnabled { get; set; }
         public bool BanUntilEnabled { get; set; }
-        public bool IsMuted { get; set; }
         public bool IsBanned { get; set; }
         public int SessionCount { get; set; }
         public int ActiveSessionCount { get; set; }
@@ -530,6 +562,7 @@ namespace LmVs
         public bool FileDownloads { get; set; }
         public bool FtpServer { get; set; }
         public bool SqlAdmin { get; set; }
+        public bool AgentBuilder { get; set; }
         public bool TerminalCommands { get; set; } = true;
         public bool TerminalForeverApproved { get; set; }
         public bool AgentAccess { get; set; } = true;
@@ -545,6 +578,10 @@ namespace LmVs
         public bool CompanionActivityTranscriptStorage { get; set; }
         public bool CompanionSensitiveMemory { get; set; }
         public bool CompanionFinancialActions { get; set; }
+        public bool RunningApplications { get; set; }
+        public bool WindowsServices { get; set; }
+        public bool EventViewer { get; set; }
+        public bool FileAccess { get; set; }
         public bool DreamInternetSearch { get; set; }
         public bool DreamVsCopilotTools { get; set; }
         public bool DreamFileDownloads { get; set; }
@@ -555,12 +592,51 @@ namespace LmVs
         public bool DreamFileUploads { get; set; }
         public bool DreamImageUploads { get; set; }
         public bool DreamPcAccess { get; set; }
-        public string MutedUntilUtc { get; set; } = "";
         public string BannedUntilUtc { get; set; } = "";
-        public bool MuteUntilEnabled { get; set; }
         public bool BanUntilEnabled { get; set; }
-        public bool IsMuted { get; set; }
         public bool IsBanned { get; set; }
         public string UpdatedUtc { get; set; } = "";
+    }
+
+    public sealed class ProjectVersionControlDiagnosticsSnapshot
+    {
+        public string OwnerKey { get; set; } = "";
+        public string ProjectId { get; set; } = "";
+        public string ProjectName { get; set; } = "";
+        public string SessionId { get; set; } = "";
+        public string CurrentVersion { get; set; } = "1.0.0";
+        public string MainVersion { get; set; } = "1.0.0";
+        public string ActiveBranch { get; set; } = "";
+        public bool ProjectAutomaticEnabled { get; set; } = true;
+        public bool SessionAutomaticEnabled { get; set; } = true;
+        public bool EffectiveAutomaticEnabled { get; set; } = true;
+        public long StorageBytes { get; set; }
+        public List<string> ProtectedRoots { get; set; } = new List<string>();
+        public List<ProjectVersionControlVersionSnapshot> Versions { get; set; } = new List<ProjectVersionControlVersionSnapshot>();
+    }
+
+    public sealed class ProjectVersionControlVersionSnapshot
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "";
+        public string Status { get; set; } = "";
+        public string SessionId { get; set; } = "";
+        public string PromptId { get; set; } = "";
+        public string CreatedUtc { get; set; } = "";
+        public string SemanticVersion { get; set; } = "";
+        public string BranchName { get; set; } = "";
+        public int AffectedFileCount { get; set; }
+        public int Additions { get; set; }
+        public int Deletions { get; set; }
+        public long StorageBytes { get; set; }
+    }
+
+    public sealed class ProjectVersionControlRestoreSnapshot
+    {
+        public string VersionId { get; set; } = "";
+        public int RestoredFileCount { get; set; }
+        public List<string> Conflicts { get; set; } = new List<string>();
+        public List<string> AlreadyRestored { get; set; } = new List<string>();
     }
 }

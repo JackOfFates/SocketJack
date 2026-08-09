@@ -631,6 +631,12 @@
             Asynchronously saves the current server state (users, databases, tables, rows) to <see cref="P:SocketJack.Net.Database.DataServer.DataPath"/>.
             </summary>
         </member>
+        <member name="M:SocketJack.Net.Database.DataServer.SaveReencryptedCopyAsync(System.String,System.Threading.CancellationToken)">
+            <summary>
+            Writes a path-bound, re-encrypted copy of the currently loaded database.
+            Use this instead of copying encrypted persistence files to a new location.
+            </summary>
+        </member>
         <member name="M:SocketJack.Net.Database.DataServer.SaveIfDirty">
             <summary>
             Saves the current server state only when a mutation has marked it dirty.

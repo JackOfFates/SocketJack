@@ -11,23 +11,52 @@ namespace LlmRuntime.Tests;
 public sealed class ChatWorkspaceTests
 {
     [TestMethod]
+    public void WebChatAdvertisesContextConsentAndApprovalControls()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        StringAssert.Contains(html, "id=\"permRunningApplications\"");
+        StringAssert.Contains(html, "id=\"permWindowsServices\"");
+        StringAssert.Contains(html, "id=\"permEventViewer\"");
+        StringAssert.Contains(html, "id=\"permFileAccess\"");
+        StringAssert.Contains(html, "settings.contextConsentUi = modelSupportsToolsById(normalizedModel)");
+        StringAssert.Contains(html, "id=\"contextApprovalToasts\"");
+        StringAssert.Contains(html, "Allow once");
+        StringAssert.Contains(html, "Always allow");
+        StringAssert.Contains(html, "/api/context-approvals");
+    }
+
+    [TestMethod]
     public void WebChatExposesSessionWorkspaceAndRegexBuilder()
     {
         string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
 
+        int permissionPanel = html.IndexOf("id=\"permissionsMenu\"", StringComparison.Ordinal);
+        int projectExplorer = html.IndexOf("id=\"solutionExplorer\"", StringComparison.Ordinal);
+        int workspaceBrowser = html.IndexOf("id=\"projectWorkspaceBrowser\"", StringComparison.Ordinal);
+        Assert.IsTrue(permissionPanel >= 0 && projectExplorer > permissionPanel && workspaceBrowser > projectExplorer,
+            "Workspace management belongs in Solution Explorer, not the administrator permissions flyout.");
         StringAssert.Contains(html, "id=\"workspaceSetPrimary\"");
         StringAssert.Contains(html, "id=\"workspaceAddAttached\"");
         StringAssert.Contains(html, "id=\"workspaceAddGlobal\"");
+        StringAssert.Contains(html, "id=\"workspaceAddFiles\"");
+        StringAssert.Contains(html, "id=\"workspaceAddFolder\"");
+        StringAssert.Contains(html, "className = 'workspace-access-control'");
+        StringAssert.Contains(html, "['read-only', 'Read only']");
+        StringAssert.Contains(html, "['read-write', 'Read & write']");
+        StringAssert.Contains(html, "function chooseProjectWorkspaceUpload(includeFolder)");
         StringAssert.Contains(html, "id=\"workspaceRegexMode\"");
         StringAssert.Contains(html, "id=\"workspaceRegexPattern\"");
         StringAssert.Contains(html, "id=\"workspaceRegexTestPath\"");
         StringAssert.Contains(html, "/api/chat-workspaces");
         StringAssert.Contains(html, "function generateWorkspaceRegex()");
         StringAssert.Contains(html, "id=\"projectVersionsPanel\"");
-        StringAssert.Contains(html, "/api/project-file-versions");
+	    StringAssert.Contains(html, "/api/project-version-control");
         StringAssert.Contains(html, "preview-upload-overlay");
         StringAssert.Contains(html, "postSessionFileWithProgress");
         StringAssert.Contains(html, "deleteSolutionEntry");
+        StringAssert.Contains(html, "id=\"deleteSelectedSolutionEntries\"");
+        StringAssert.Contains(html, ">delete selected files</button>");
+        StringAssert.Contains(html, "deleteSelectedSolutionFiles");
         StringAssert.Contains(html, "Delete folder and contents from Project Files");
         Assert.IsFalse(html.Contains("showConfirm(", StringComparison.Ordinal));
     }
@@ -48,6 +77,22 @@ public sealed class ChatWorkspaceTests
         int permissionLoad = html.IndexOf("await withTimeout('permissions', loadPermissions(15000), 8000)", bootstrapStart, StringComparison.Ordinal);
         Assert.IsTrue(ownerLoad >= bootstrapStart && permissionLoad > ownerLoad,
             "The authenticated owner must load before its effective permission snapshot.");
+    }
+
+    [TestMethod]
+    public void WebChatExposesPermissionGatedAgentBuilderAndSqlTabs()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "id=\"workspaceBuilderTab\"");
+        StringAssert.Contains(html, "id=\"workspaceSqlTab\"");
+        StringAssert.Contains(html, "id=\"featureWorkspaceFrame\"");
+        StringAssert.Contains(html, "id=\"permAgentBuilder\"");
+        StringAssert.Contains(html, "id=\"permSqlAdmin\"");
+        StringAssert.Contains(html, "permissionState.agentBuilder");
+        StringAssert.Contains(html, "permissionState.sqlAdmin");
+        StringAssert.Contains(html, "const path = view === 'builder' ? '/Builder' : '/sql';");
+        StringAssert.Contains(html, "featureWorkspaceFrame.src = path;");
     }
 
     [TestMethod]

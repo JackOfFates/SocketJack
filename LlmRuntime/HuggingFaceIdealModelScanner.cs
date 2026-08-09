@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace LlmRuntime;
 
@@ -109,13 +110,29 @@ public sealed class HuggingFaceIdealModelScanner
         string? bearerToken = null,
         CancellationToken cancellationToken = default)
     {
-        int limit = Math.Clamp(modelsPerCategory, 1, 12);
+        return await ScanAsync(
+            categoryIds,
+            new HuggingFaceIdealModelScanOptions { ModelsPerCategory = modelsPerCategory },
+            cookies,
+            bearerToken,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<HuggingFaceIdealModelCategoryResult>> ScanAsync(
+        IReadOnlyCollection<string>? categoryIds,
+        HuggingFaceIdealModelScanOptions options,
+        string? cookies = null,
+        string? bearerToken = null,
+        CancellationToken cancellationToken = default)
+    {
+        options ??= new HuggingFaceIdealModelScanOptions();
+        int limit = Math.Clamp(options.ModelsPerCategory, 1, 20);
         HashSet<string>? requested = categoryIds == null || categoryIds.Count == 0
             ? null
             : new HashSet<string>(categoryIds.Where(id => !string.IsNullOrWhiteSpace(id)), StringComparer.OrdinalIgnoreCase);
         Task<HuggingFaceIdealModelCategoryResult>[] scans = DefaultCategories
             .Where(category => requested == null || requested.Contains(category.Id))
-            .Select(category => ScanCategoryAsync(category, limit, cookies, bearerToken, cancellationToken))
+            .Select(category => ScanCategoryAsync(category, limit, options, cookies, bearerToken, cancellationToken))
             .ToArray();
 
         return await Task.WhenAll(scans).ConfigureAwait(false);
@@ -124,6 +141,7 @@ public sealed class HuggingFaceIdealModelScanner
     private async Task<HuggingFaceIdealModelCategoryResult> ScanCategoryAsync(
         HuggingFaceIdealModelCategory category,
         int modelsPerCategory,
+        HuggingFaceIdealModelScanOptions options,
         string? cookies,
         string? bearerToken,
         CancellationToken cancellationToken)
@@ -153,6 +171,8 @@ public sealed class HuggingFaceIdealModelScanner
             Label = category.Label,
             Description = category.Description,
             Models = models.Values
+                .Select(model => ApplyHardwareEstimate(model, options.Hardware, options.Thresholds))
+                .Where(model => MeetsThresholds(model, options.Hardware, options.Thresholds))
                 .OrderByDescending(model => model.Score)
                 .ThenByDescending(model => model.Downloads)
                 .ThenByDescending(model => model.Likes)
@@ -201,6 +221,7 @@ public sealed class HuggingFaceIdealModelScanner
             long downloads = ReadInt64(item, "downloads");
             int likes = (int)Math.Min(int.MaxValue, ReadInt64(item, "likes"));
             long score = CalculateScore(category, query, tags, libraryName, downloads, likes, rank);
+            double parameterCountBillion = ReadParameterCountBillion(item, id, tags);
 
             models.Add(new HuggingFaceIdealModel
             {
@@ -214,6 +235,9 @@ public sealed class HuggingFaceIdealModelScanner
                 Likes = likes,
                 Tags = tags,
                 Score = score,
+                ParameterCountBillion = parameterCountBillion,
+                ActiveParameterCountBillion = ReadActiveParameterCountBillion(id, tags),
+                QuantizationBits = InferQuantizationBits(id, tags, libraryName),
                 Reason = BuildReason(category, query, tags, libraryName)
             });
         }
@@ -256,6 +280,7 @@ public sealed class HuggingFaceIdealModelScanner
         long downloads = ReadInt64(item, "downloads");
         int likes = (int)Math.Min(int.MaxValue, ReadInt64(item, "likes"));
         long score = CalculateScore(category, query, tags, libraryName, downloads, likes, 1);
+        double parameterCountBillion = ReadParameterCountBillion(item, id, tags);
 
         return
         [
@@ -271,6 +296,9 @@ public sealed class HuggingFaceIdealModelScanner
                 Likes = likes,
                 Tags = tags,
                 Score = score,
+                ParameterCountBillion = parameterCountBillion,
+                ActiveParameterCountBillion = ReadActiveParameterCountBillion(id, tags),
+                QuantizationBits = InferQuantizationBits(id, tags, libraryName),
                 Reason = BuildReason(category, query, tags, libraryName)
             }
         ];
@@ -357,6 +385,178 @@ public sealed class HuggingFaceIdealModelScanner
         return "Popular Hugging Face model.";
     }
 
+    internal static HuggingFaceIdealModel ApplyHardwareEstimate(
+        HuggingFaceIdealModel model,
+        HuggingFaceIdealModelHardwareProfile? hardware,
+        HuggingFaceIdealModelThresholds? thresholds = null)
+    {
+        hardware ??= new HuggingFaceIdealModelHardwareProfile();
+        thresholds ??= new HuggingFaceIdealModelThresholds();
+        double parameters = model.ParameterCountBillion;
+        double bits = model.QuantizationBits;
+        if (parameters <= 0 || bits <= 0)
+            return model;
+
+        double activeParameters = model.ActiveParameterCountBillion > 0
+            ? Math.Min(model.ActiveParameterCountBillion, parameters)
+            : parameters;
+        double weightBytes = parameters * 1_000_000_000d * bits / 8d;
+        double overheadBytes = Math.Max(768d * 1024d * 1024d, weightBytes * (bits <= 8 ? 0.10d : 0.16d));
+        long estimatedVramBytes = (long)Math.Min(long.MaxValue, weightBytes + overheadBytes);
+        double tokensPerSecond = 0;
+        if (model.CategoryId.Equals("text", StringComparison.OrdinalIgnoreCase) && hardware.VideoMemoryBytes > 0)
+        {
+            double bandwidthGbps = hardware.EstimatedMemoryBandwidthGbps > 0
+                ? hardware.EstimatedMemoryBandwidthGbps
+                : hardware.VideoMemoryIsDedicated
+                    ? Math.Max(140d, hardware.VideoMemoryBytes / (1024d * 1024d * 1024d) * 28d)
+                    : 55d;
+            double activeWeightBytes = Math.Max(1d, activeParameters * 1_000_000_000d * bits / 8d);
+            double efficiency = bits <= 6 ? 0.55d : bits <= 8 ? 0.50d : 0.42d;
+            tokensPerSecond = bandwidthGbps * 1_000_000_000d * efficiency / activeWeightBytes;
+            if (estimatedVramBytes > hardware.VideoMemoryBytes)
+            {
+                double residentRatio = Math.Clamp(hardware.VideoMemoryBytes / (double)estimatedVramBytes, 0.08d, 1d);
+                tokensPerSecond *= Math.Clamp(residentRatio * 0.38d, 0.08d, 0.38d);
+            }
+            tokensPerSecond = Math.Clamp(tokensPerSecond, 0.1d, 999d);
+        }
+
+        string fitLabel = "Size estimated";
+        double vramPercent = 0;
+        if (hardware.VideoMemoryBytes > 0)
+        {
+            vramPercent = estimatedVramBytes * 100d / hardware.VideoMemoryBytes;
+            fitLabel = vramPercent <= 72d ? "Comfortable fit" :
+                vramPercent <= thresholds.MaxVramUsagePercent ? "Fits threshold" :
+                vramPercent <= 100d ? "Tight fit" : "CPU offload likely";
+        }
+
+        long hardwareScore = 0;
+        if (hardware.VideoMemoryBytes > 0)
+        {
+            hardwareScore += vramPercent <= thresholds.MaxVramUsagePercent ? 30_000_000_000L : -30_000_000_000L;
+            hardwareScore += (long)Math.Min(10_000_000_000d, tokensPerSecond * 100_000_000d);
+        }
+
+        string estimateReason = hardware.VideoMemoryBytes > 0
+            ? $"Estimated {FormatParameters(parameters)} parameters at {bits:0.#}-bit: {FormatBytes(estimatedVramBytes)} VRAM, {fitLabel.ToLowerInvariant()} on {hardware.DisplayName}." +
+              (tokensPerSecond > 0 ? $" Rough generation estimate: {tokensPerSecond:0.#} tok/s." : "")
+            : $"Estimated {FormatParameters(parameters)} parameters at {bits:0.#}-bit; GPU capacity was not detected.";
+
+        return new HuggingFaceIdealModel
+        {
+            CategoryId = model.CategoryId,
+            CategoryLabel = model.CategoryLabel,
+            ModelId = model.ModelId,
+            Url = model.Url,
+            PipelineTag = model.PipelineTag,
+            LibraryName = model.LibraryName,
+            Downloads = model.Downloads,
+            Likes = model.Likes,
+            Tags = model.Tags,
+            Score = model.Score + hardwareScore,
+            Reason = model.Reason,
+            ParameterCountBillion = parameters,
+            ActiveParameterCountBillion = model.ActiveParameterCountBillion,
+            QuantizationBits = bits,
+            EstimatedVramBytes = estimatedVramBytes,
+            EstimatedTokensPerSecond = tokensPerSecond,
+            EstimatedVramPercent = vramPercent,
+            FitLabel = fitLabel,
+            HardwareEstimate = estimateReason
+        };
+    }
+
+    internal static bool MeetsThresholds(
+        HuggingFaceIdealModel model,
+        HuggingFaceIdealModelHardwareProfile? hardware,
+        HuggingFaceIdealModelThresholds? thresholds)
+    {
+        thresholds ??= new HuggingFaceIdealModelThresholds();
+        hardware ??= new HuggingFaceIdealModelHardwareProfile();
+        if (model.ParameterCountBillion > 0)
+        {
+            if (thresholds.MinimumParametersBillion > 0 && model.ParameterCountBillion < thresholds.MinimumParametersBillion)
+                return false;
+            if (thresholds.MaximumParametersBillion > 0 && model.ParameterCountBillion > thresholds.MaximumParametersBillion)
+                return false;
+        }
+        if (model.EstimatedTokensPerSecond > 0 &&
+            thresholds.MinimumTokensPerSecond > 0 &&
+            model.EstimatedTokensPerSecond < thresholds.MinimumTokensPerSecond)
+            return false;
+        if (model.EstimatedVramBytes > 0 && hardware.VideoMemoryBytes > 0 && thresholds.MaxVramUsagePercent > 0 &&
+            model.EstimatedVramBytes > hardware.VideoMemoryBytes * thresholds.MaxVramUsagePercent / 100d)
+            return false;
+        return true;
+    }
+
+    private static double ReadParameterCountBillion(JsonElement item, string modelId, IReadOnlyList<string> tags)
+    {
+        if (item.TryGetProperty("safetensors", out JsonElement safetensors) && safetensors.ValueKind == JsonValueKind.Object)
+        {
+            long total = ReadInt64(safetensors, "total");
+            if (total <= 0 && safetensors.TryGetProperty("parameters", out JsonElement parameters) && parameters.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in parameters.EnumerateObject())
+                    if (property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt64(out long count) && count > 0)
+                        total += count;
+            }
+            if (total > 0)
+                return total / 1_000_000_000d;
+        }
+
+        return ReadLargestParameterCountBillion(string.Join(" ", tags.Prepend(modelId)));
+    }
+
+    internal static double ReadLargestParameterCountBillion(string text)
+    {
+        double largest = 0;
+        foreach (Match match in Regex.Matches(text ?? "", @"(?<![A-Za-z0-9])(\d+(?:\.\d+)?)\s*[Bb](?![A-Za-z])", RegexOptions.CultureInvariant))
+        {
+            if (double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
+                largest = Math.Max(largest, value);
+        }
+        return largest;
+    }
+
+    private static double ReadActiveParameterCountBillion(string modelId, IReadOnlyList<string> tags)
+    {
+        string text = string.Join(" ", tags.Prepend(modelId));
+        Match match = Regex.Match(text, @"(?:^|[-_/\s])A(\d+(?:\.\d+)?)B(?:$|[-_/\s])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success && double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
+            ? value
+            : 0;
+    }
+
+    internal static double InferQuantizationBits(string modelId, IReadOnlyList<string> tags, string libraryName = "")
+    {
+        string text = string.Join(" ", tags.Prepend(modelId).Append(libraryName));
+        Match gguf = Regex.Match(text, @"(?:^|[-_/\s])Q([2-8])(?:_|[-/\s]|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (gguf.Success && double.TryParse(gguf.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out double bits))
+            return bits;
+        if (ContainsAnyText(text, "int4", "4bit", "4-bit", "gptq", "awq")) return 4;
+        if (ContainsAnyText(text, "int8", "8bit", "8-bit", "fp8")) return 8;
+        if (ContainsAnyText(text, "bf16", "fp16", "float16")) return 16;
+        if (ContainsAnyText(text, "fp32", "float32")) return 32;
+        if (ContainsAnyText(text, "gguf")) return 4.5d;
+        return 16d;
+    }
+
+    private static bool ContainsAnyText(string text, params string[] values) =>
+        values.Any(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
+
+    private static string FormatParameters(double billions) =>
+        billions >= 1d ? billions.ToString("0.#", CultureInfo.InvariantCulture) + "B" :
+        (billions * 1000d).ToString("0", CultureInfo.InvariantCulture) + "M";
+
+    private static string FormatBytes(long bytes)
+    {
+        double gib = bytes / (1024d * 1024d * 1024d);
+        return gib >= 10d ? gib.ToString("0", CultureInfo.InvariantCulture) + " GB" : gib.ToString("0.0", CultureInfo.InvariantCulture) + " GB";
+    }
+
     private static bool HasTag(IReadOnlyList<string> tags, string tag) =>
         tags.Any(candidate => candidate.Equals(tag, StringComparison.OrdinalIgnoreCase) ||
                               candidate.Contains(tag, StringComparison.OrdinalIgnoreCase));
@@ -417,6 +617,48 @@ public sealed class HuggingFaceIdealModelCategory
     public string Description { get; init; } = "";
 
     public IReadOnlyList<HuggingFaceIdealModelQuery> Queries { get; init; } = [];
+}
+
+public sealed class HuggingFaceIdealModelScanOptions
+{
+    public int ModelsPerCategory { get; init; } = 6;
+
+    public HuggingFaceIdealModelThresholds Thresholds { get; init; } = new();
+
+    public HuggingFaceIdealModelHardwareProfile Hardware { get; init; } = new();
+}
+
+public sealed class HuggingFaceIdealModelThresholds
+{
+    [JsonPropertyName("modelLimit")]
+    public int ModelLimit { get; init; } = 6;
+
+    [JsonPropertyName("minimumTokensPerSecond")]
+    public double MinimumTokensPerSecond { get; init; }
+
+    [JsonPropertyName("maxVramUsagePercent")]
+    public double MaxVramUsagePercent { get; init; } = 90d;
+
+    [JsonPropertyName("minimumParametersBillion")]
+    public double MinimumParametersBillion { get; init; }
+
+    [JsonPropertyName("maximumParametersBillion")]
+    public double MaximumParametersBillion { get; init; }
+}
+
+public sealed class HuggingFaceIdealModelHardwareProfile
+{
+    [JsonPropertyName("displayName")]
+    public string DisplayName { get; init; } = "this PC";
+
+    [JsonPropertyName("videoMemoryBytes")]
+    public long VideoMemoryBytes { get; init; }
+
+    [JsonPropertyName("videoMemoryIsDedicated")]
+    public bool VideoMemoryIsDedicated { get; init; }
+
+    [JsonPropertyName("estimatedMemoryBandwidthGbps")]
+    public double EstimatedMemoryBandwidthGbps { get; init; }
 }
 
 public sealed class HuggingFaceIdealModelQuery
@@ -488,4 +730,28 @@ public sealed class HuggingFaceIdealModel
 
     [JsonPropertyName("reason")]
     public string Reason { get; init; } = "";
+
+    [JsonPropertyName("parameterCountBillion")]
+    public double ParameterCountBillion { get; init; }
+
+    [JsonPropertyName("activeParameterCountBillion")]
+    public double ActiveParameterCountBillion { get; init; }
+
+    [JsonPropertyName("quantizationBits")]
+    public double QuantizationBits { get; init; }
+
+    [JsonPropertyName("estimatedVramBytes")]
+    public long EstimatedVramBytes { get; init; }
+
+    [JsonPropertyName("estimatedTokensPerSecond")]
+    public double EstimatedTokensPerSecond { get; init; }
+
+    [JsonPropertyName("estimatedVramPercent")]
+    public double EstimatedVramPercent { get; init; }
+
+    [JsonPropertyName("fitLabel")]
+    public string FitLabel { get; init; } = "";
+
+    [JsonPropertyName("hardwareEstimate")]
+    public string HardwareEstimate { get; init; } = "";
 }

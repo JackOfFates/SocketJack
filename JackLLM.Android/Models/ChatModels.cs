@@ -50,6 +50,12 @@ public sealed class ToolActivity
     public override string ToString() => string.Join(" · ", new[] { Name, Status, Detail }.Where(value => !string.IsNullOrWhiteSpace(value)));
 }
 
+public sealed class JackhammerPlanStep
+{
+    public string Status { get; init; } = "pending";
+    public string Action { get; init; } = "";
+}
+
 public sealed class ChatStreamEvent
 {
     public string Type { get; init; } = "unknown";
@@ -72,6 +78,7 @@ public sealed class ChatStreamEvent
     public string ReasoningLevel { get; init; } = "";
     public string RouteReason { get; init; } = "";
     public string PromptFingerprint { get; init; } = "";
+    public IReadOnlyList<JackhammerPlanStep> JackhammerSteps { get; init; } = Array.Empty<JackhammerPlanStep>();
     public MobileAlignmentSnapshot? Alignment { get; init; }
 }
 
@@ -84,6 +91,9 @@ public sealed class MobileAlignmentSnapshot
     public string LastReason { get; set; } = "Every Hero chooses a path.";
     public Dictionary<string, int> CharacterTraits { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string AssessmentModel { get; set; } = "";
+    public string ChecksAndBalancesStatus { get; set; } = "waiting-for-dream";
+    public string ChecksAndBalancesDreamId { get; set; } = "";
+    public string ChecksAndBalancesCompletedUtc { get; set; } = "";
     public string[] DisabledFeatures { get; set; } = Array.Empty<string>();
     public string[] HighlightedFeatures { get; set; } = Array.Empty<string>();
     public bool DreamsEnabled { get; set; } = true;

@@ -50,7 +50,18 @@
                         Type="ownProcess"
                         Start="auto"
                         ErrorControl="normal"
-                        Account="LocalSystem" />
+                        Account="LocalSystem">
+          <util:PermissionEx User="Authenticated Users"
+                             Domain="NT AUTHORITY"
+                             ServiceStart="yes"
+                             ServiceQueryStatus="yes"
+                             ServiceInterrogate="yes" />
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart"
+                              ResetPeriodInDays="1"
+                              RestartServiceDelayInSeconds="1" />
+        </ServiceInstall>
         <ServiceControl Id="SecurityBrokerControl" Name="JackLLMSecurityBroker" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
         <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM\Security" Name="PublisherCertificateSha256" Type="string" Value="$(var.PublisherCertificateSha256)" />
         <RegistryValue Root="HKLM" Key="Software\SocketJack\JackLLM\Security" Name="ManifestPublicKeyBase64" Type="string" Value="$(var.ManifestPublicKeyBase64)" />

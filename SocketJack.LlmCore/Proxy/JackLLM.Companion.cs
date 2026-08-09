@@ -110,21 +110,20 @@ namespace SocketJack.Net
         private string HandleCompanionAction(NetworkConnection connection, HttpRequest request)
         {
             string ownerKey = GetChatSessionOwnerKey(connection, request);
-            return ExecuteCompanionAction(ownerKey, request);
+            return ExecuteCompanionAction(ownerKey, request, false);
         }
 
-        private string ExecuteCompanionToolAction(string ownerKey, string argumentsJson)
+        private string ExecuteCompanionToolAction(string ownerKey, string argumentsJson, bool observationApprovedOnce = false)
         {
             return ExecuteCompanionAction(
                 NormalizeChatFilesystemOwnerKey(ownerKey),
-                new HttpRequest { Body = string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson });
+                new HttpRequest { Body = string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson },
+                observationApprovedOnce);
         }
 
-        private string ExecuteCompanionAction(string ownerKey, HttpRequest request)
+        private string ExecuteCompanionAction(string ownerKey, HttpRequest request, bool observationApprovedOnce)
         {
             ChatPermissionState permissions = GetChatPermissions(ownerKey);
-            if (!permissions.companionEnabled)
-                return BuildJsonError(request, 403, "Forbidden", "Companion mode is disabled.");
             lock (_companionGate)
             {
                 if (_companionEmergencyStopped)
@@ -139,6 +138,9 @@ namespace SocketJack.Net
                 string value = CompanionJsonString(root, "value");
                 string confirmationToken = CompanionJsonString(root, "confirmationToken");
                 string actionMaterial = type + "\n" + (request?.Body ?? value);
+                bool observation = type == "observe" || type == "screen";
+                if (!permissions.companionEnabled && !(observationApprovedOnce && observation))
+                    return BuildJsonError(request, 403, "Forbidden", "Companion mode is disabled.");
 
                 if (IsCompanionFinancialAction(actionMaterial))
                 {
@@ -154,7 +156,7 @@ namespace SocketJack.Net
                 {
                     case "observe":
                     case "screen":
-                        if (!permissions.companionScreenView)
+                        if (!permissions.companionScreenView && !observationApprovedOnce)
                             return BuildJsonError(request, 403, "Forbidden", "Companion Screen View permission is disabled.");
                         if (CompanionCaptureJpeg == null)
                             return BuildJsonError(request, 501, "Not Supported", "Screen capture is unavailable on this host.");
@@ -237,7 +239,8 @@ namespace SocketJack.Net
 
         private string AddCompanionTools(string requestBody, ChatPermissionState permissions, string ownerKey)
         {
-            if (permissions == null || !permissions.companionEnabled || string.IsNullOrWhiteSpace(requestBody))
+            bool consentUi = RequestSupportsContextConsentUi(requestBody);
+            if (permissions == null || (!permissions.companionEnabled && !consentUi) || string.IsNullOrWhiteSpace(requestBody))
                 return requestBody;
             try
             {
@@ -268,7 +271,7 @@ namespace SocketJack.Net
                             message.WriteTo(writer);
                         writer.WriteStartObject();
                         writer.WriteString("role", "system");
-                        writer.WriteString("content", "Companion tools are active for owner " + NormalizeChatFilesystemOwnerKey(ownerKey) + ". Call companion_action with type=observe before desktop actions and after state changes. Permission denials are final. Never attempt to approve financial or sensitive-memory confirmations yourself.");
+                        writer.WriteString("content", "Companion observation is available for owner " + NormalizeChatFilesystemOwnerKey(ownerKey) + ". If standing Companion Screen View is disabled, type=observe or screen requests fresh user consent for that call. Active desktop control remains unavailable unless its existing standing permissions are enabled. Permission denials are final. Never attempt to approve financial or sensitive-memory confirmations yourself.");
                         writer.WriteEndObject();
                         writer.WriteEndArray();
                     }
@@ -290,7 +293,7 @@ namespace SocketJack.Net
                     writer.WriteStartArray();
                     writer.WriteStartObject();
                     writer.WriteString("role", "system");
-                    writer.WriteString("content", "Companion tools are active. Observe before acting and honor every permission denial.");
+                    writer.WriteString("content", "Companion observation may require fresh per-call user consent. Active desktop control still requires the existing standing Companion permissions. Honor every denial.");
                     writer.WriteEndObject();
                     writer.WriteEndArray();
                 }

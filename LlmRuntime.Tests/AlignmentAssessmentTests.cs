@@ -104,6 +104,53 @@ public sealed class AlignmentAssessmentTests
     }
 
     [TestMethod]
+    public void ChecksAndBalancesDoesNotRunWithoutCompletedDreamData()
+    {
+        using var proxy = CreateProxy();
+        var assessment = new AlignmentAssessmentSnapshot
+        {
+            Category = "constructive",
+            Delta = 2,
+            AssessmentModel = "selected-hero-model"
+        };
+
+        bool applied = proxy.ApplyChecksAndBalancesAssessmentForDiagnostics(
+            "owner-a", "", "", 0, assessment);
+        AlignmentSnapshot snapshot = proxy.GetAlignmentSnapshot("owner-a");
+
+        Assert.IsFalse(applied);
+        Assert.AreEqual(0, snapshot.Score);
+        Assert.AreEqual("", snapshot.AssessmentModel);
+        Assert.AreEqual("waiting-for-dream", snapshot.ChecksAndBalancesStatus);
+        Assert.AreEqual("", snapshot.ChecksAndBalancesDreamId);
+    }
+
+    [TestMethod]
+    public void CompletedDreamRunsChecksAndBalancesOnceWithSelectedModel()
+    {
+        using var proxy = CreateProxy();
+        var assessment = new AlignmentAssessmentSnapshot
+        {
+            Category = "constructive",
+            Delta = 2,
+            AssessmentModel = "selected-hero-model",
+            CharacterTraits = new Dictionary<string, int> { ["Nobility"] = 8 }
+        };
+
+        Assert.IsTrue(proxy.ApplyChecksAndBalancesAssessmentForDiagnostics(
+            "owner-a", "dream-1", "completed Dream reflection and transcript", 4, assessment));
+        Assert.IsTrue(proxy.ApplyChecksAndBalancesAssessmentForDiagnostics(
+            "owner-a", "dream-1", "completed Dream reflection and transcript", 4, assessment));
+        AlignmentSnapshot snapshot = proxy.GetAlignmentSnapshot("owner-a");
+
+        Assert.AreEqual(2, snapshot.Score, "The same Dream must not change alignment twice.");
+        Assert.AreEqual("selected-hero-model", snapshot.AssessmentModel);
+        Assert.AreEqual("completed", snapshot.ChecksAndBalancesStatus);
+        Assert.AreEqual("dream-1", snapshot.ChecksAndBalancesDreamId);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(snapshot.ChecksAndBalancesCompletedUtc));
+    }
+
+    [TestMethod]
     public void TwoCriticalFindingsCreateReviewWithoutAutomaticPermanentLock()
     {
         using var proxy = CreateProxy();
