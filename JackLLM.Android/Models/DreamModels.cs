@@ -67,6 +67,18 @@ public sealed class MobileDreamStatus
     public string LastError { get; set; } = "";
     public int ProcessedSessions { get; set; }
     public int ProcessedMessages { get; set; }
+    public int EligibleSessions { get; set; }
+    public int ReadableSessions { get; set; }
+    public int EmptySessions { get; set; }
+    public int UnavailableSessions { get; set; }
+    public string NoWorkReason { get; set; } = "";
+    public string FailureStage { get; set; } = "";
+    public string ResolvedModel { get; set; } = "";
+    public string ResolvedService { get; set; } = "";
+    public int CheckpointVersion { get; set; }
+    public bool BackfillPending { get; set; }
+    public int AlignmentRetryCount { get; set; }
+    public string AlignmentNextRetryUtc { get; set; } = "";
     public bool Enabled { get; set; }
     public bool UserPaused { get; set; }
     public MobileDreamResources Resources { get; set; } = new();
@@ -91,6 +103,19 @@ public sealed class MobileDreamJournalEntry
     public string CreatedUtc { get; set; } = "";
     public int ProcessedSessions { get; set; }
     public int ProcessedMessages { get; set; }
+    public int EligibleSessions { get; set; }
+    public int ReadableSessions { get; set; }
+    public int EmptySessions { get; set; }
+    public int UnavailableSessions { get; set; }
+    public string NoWorkReason { get; set; } = "";
+    public string FailureStage { get; set; } = "";
+    public string DreamModel { get; set; } = "";
+    public string DreamService { get; set; } = "";
+    public string ChecksAndBalancesStatus { get; set; } = "not-run";
+    public string ChecksAndBalancesModel { get; set; } = "";
+    public string ChecksAndBalancesError { get; set; } = "";
+    public int ChecksAndBalancesRetryCount { get; set; }
+    public string ChecksAndBalancesNextRetryUtc { get; set; } = "";
     public List<MobileDreamCandidate> Candidates { get; set; } = new();
     public List<string> ToolAudit { get; set; } = new();
 }

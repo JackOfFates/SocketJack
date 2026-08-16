@@ -40,6 +40,7 @@ public sealed class ChatHostPage : ContentPage
     private readonly NetworkHealthView _networkHealth;
     private readonly Button _send;
     private readonly Button _steer;
+    private readonly Button _stop;
     private readonly Border _liveActivityCard;
     private readonly Border _contextApprovalCard;
     private readonly Label _contextApprovalTitle;
@@ -92,6 +93,12 @@ public sealed class ChatHostPage : ContentPage
     private bool _alignmentDrawerOpen;
     private bool _authenticationPageOpen;
     private bool _sessionKnownToServer;
+    private PendingFollowUp? _pendingFollowUp;
+    private bool _pendingFollowUpStarting;
+    private bool _generationWasRunning;
+    private bool _stickToLatest = true;
+
+    private sealed record PendingFollowUp(string Text, AttachmentInfo[] Attachments);
 
     public ChatHostPage(
         ServerInfo server,
@@ -150,15 +157,24 @@ public sealed class ChatHostPage : ContentPage
         {
             ItemsSource = _messages,
             ItemTemplate = new DataTemplate(MessageTemplate),
-            ItemsUpdatingScrollMode = ItemsUpdatingScrollMode.KeepLastItemInView,
+            ItemsUpdatingScrollMode = ItemsUpdatingScrollMode.KeepItemsInView,
             ItemSizingStrategy = ItemSizingStrategy.MeasureAllItems
+        };
+        _messageList.Scrolled += (_, e) =>
+        {
+            int lastIndex = _messages.Count - 1;
+            _stickToLatest = lastIndex < 0 || e.LastVisibleItemIndex >= lastIndex;
         };
         _prompt = new Editor { Placeholder = "Message JackLLM…", AutoSize = EditorAutoSizeOption.TextChanges, MaximumHeightRequest = 130, TextColor = Colors.White, PlaceholderColor = Color.FromArgb("#64748B"), BackgroundColor = Colors.Transparent };
         _send = new Button { Text = "↑", FontSize = 24, FontAttributes = FontAttributes.Bold, CornerRadius = 15, BackgroundColor = Color.FromArgb("#2563EB"), TextColor = Colors.White, WidthRequest = 54 };
-        _send.Clicked += async (_, _) => { if (!_generation.IsGenerating) await SendAsync(); else await StopAsync(); };
-        _steer = new Button { Text = "Steer", FontSize = 11, FontAttributes = FontAttributes.Bold, CornerRadius = 13, BackgroundColor = Color.FromArgb("#7C3AED"), TextColor = Colors.White, WidthRequest = 66, IsVisible = false, IsEnabled = false };
+        _send.Clicked += async (_, _) => await SendOrQueueAsync();
+        AutomationProperties.SetName(_send, "Send or queue prompt");
+        AutomationProperties.SetHelpText(_send, "Send now, or queue this prompt after the running response");
+        _steer = new Button { Text = "\u21aa", FontSize = 20, FontAttributes = FontAttributes.Bold, CornerRadius = 13, BackgroundColor = Color.FromArgb("#7C3AED"), TextColor = Colors.White, WidthRequest = 48, IsVisible = false, IsEnabled = false };
         _steer.Clicked += async (_, _) => await SteerAsync();
-        _prompt.TextChanged += (_, _) => _steer.IsEnabled = _generation.CanSteer && !string.IsNullOrWhiteSpace(_prompt.Text) && _attachments.Count == 0;
+        AutomationProperties.SetName(_steer, "Steer running response");
+        AutomationProperties.SetHelpText(_steer, "Apply this text to the response that is currently running");
+        _prompt.TextChanged += (_, _) => UpdateComposerActions();
         _attach = new Button { Text = "＋", FontSize = 22, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 46 };
         _attach.Clicked += async (_, _) => await AddAttachmentAsync();
         _voice = new Button { Text = "🎙", FontSize = 18, CornerRadius = 13, BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, WidthRequest = 48 };
@@ -264,8 +280,13 @@ public sealed class ChatHostPage : ContentPage
         _liveActivityText = new Label { Text = "Preparing compute…", TextColor = Color.FromArgb("#BFDBFE"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.TailTruncation };
         _liveProgress = new ProgressBar { Progress = 0, ProgressColor = Color.FromArgb("#60A5FA"), BackgroundColor = Color.FromArgb("#26334D"), HeightRequest = 3 };
         _liveIndicator = new ActivityIndicator { IsRunning = false, Color = Color.FromArgb("#60A5FA"), WidthRequest = 20, HeightRequest = 20 };
-        var liveGrid = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnSpacing = 8 };
+        _stop = new Button { Text = "\u25a0", FontSize = 16, CornerRadius = 10, BackgroundColor = Color.FromArgb("#7F1D1D"), TextColor = Colors.White, WidthRequest = 42, HeightRequest = 36, Padding = 0 };
+        AutomationProperties.SetName(_stop, "Stop response");
+        AutomationProperties.SetHelpText(_stop, "Stop the running response and discard its queued follow-up");
+        _stop.Clicked += async (_, _) => await StopAsync();
+        var liveGrid = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnSpacing = 8 };
         liveGrid.Add(_liveIndicator, 0, 0); Grid.SetRowSpan(_liveIndicator, 2); liveGrid.Add(_liveActivityText, 1, 0); liveGrid.Add(_liveProgress, 1, 1);
+        liveGrid.Add(_stop, 2, 0); Grid.SetRowSpan(_stop, 2);
         _liveActivityCard = new Border { IsVisible = false, Margin = new Thickness(10, 4), Padding = new Thickness(10, 7), BackgroundColor = Color.FromArgb("#101D36"), Stroke = Color.FromArgb("#1D4ED8"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 12 }, Content = liveGrid };
         _contextApprovalTitle = new Label { Text = "JACK requests more context", TextColor = Colors.White, FontSize = 13, FontAttributes = FontAttributes.Bold };
         _contextApprovalSummary = new Label { TextColor = Color.FromArgb("#CBD5E1"), FontSize = 11, LineBreakMode = LineBreakMode.WordWrap };
@@ -784,6 +805,59 @@ public sealed class ChatHostPage : ContentPage
             : "Jackhammer autonomous work is off");
     }
 
+    private async Task SendOrQueueAsync()
+    {
+        if (_generation.IsGenerating)
+        {
+            await QueueFollowUpAsync();
+            return;
+        }
+        await SendAsync();
+    }
+
+    private async Task QueueFollowUpAsync()
+    {
+        string text = _prompt.Text?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(text) && _attachments.Count == 0) return;
+        if (_pendingFollowUp is not null)
+        {
+            await DisplayAlertAsync("Follow-up already queued", "Wait for the queued prompt to start, or use the steer symbol to redirect the response that is running.", "OK");
+            return;
+        }
+        if (_attachments.Any(attachment => attachment.IsUploading || attachment.NeedsAttention))
+        {
+            await DisplayAlertAsync("Attachments not ready", "Wait for uploads to finish. Failed uploads must be retried or removed.", "OK");
+            return;
+        }
+
+        _pendingFollowUp = new PendingFollowUp(text, _attachments.ToArray());
+        _prompt.Text = "";
+        _attachments.Clear();
+        _attachmentStrip.Clear();
+        _attachmentScroll.IsVisible = false;
+        _status.Text = "Next prompt queued — use ↪ to steer the current response instead";
+        UpdateComposerActions();
+    }
+
+    private async Task StartQueuedFollowUpAsync()
+    {
+        if (_pendingFollowUpStarting || _pendingFollowUp is null || _generation.IsGenerating) return;
+        _pendingFollowUpStarting = true;
+        PendingFollowUp followUp = _pendingFollowUp;
+        _pendingFollowUp = null;
+        try
+        {
+            _prompt.Text = followUp.Text;
+            _attachments.AddRange(followUp.Attachments);
+            RestoreAttachmentCards();
+            await SendAsync();
+        }
+        finally
+        {
+            _pendingFollowUpStarting = false;
+        }
+    }
+
     private async Task SendAsync()
     {
         string text = _prompt.Text?.Trim() ?? "";
@@ -828,10 +902,11 @@ public sealed class ChatHostPage : ContentPage
         var user = new ChatMessage { Role = "user", Content = text + AttachmentCaption() };
         var assistant = new ChatMessage { Role = "assistant", Status = "Starting…", IsGenerating = true, IsReasoningExpanded = true };
         _messages.Add(user); _messages.Add(assistant); _prompt.Text = ""; _prompt.Unfocus();
+        _stickToLatest = true;
         _attachments.Clear();
         _attachmentStrip.Clear();
         _attachmentScroll.IsVisible = false;
-        _send.Text = "■"; _status.Text = "Generating…";
+        _send.Text = "↑"; _status.Text = "Generating…";
         SetLiveActivity(true, AlignmentLoreForActivity("Warming up model"), 0);
         if (service.Equals("agent", StringComparison.OrdinalIgnoreCase) && !model.SupportsTools)
         {
@@ -880,7 +955,12 @@ public sealed class ChatHostPage : ContentPage
         ApplyGenerationSnapshot(_generation.Current);
     }
 
-    private Task StopAsync() => _generation.StopAsync();
+    private Task StopAsync()
+    {
+        _pendingFollowUp = null;
+        _status.Text = "Stopping response…";
+        return _generation.StopAsync();
+    }
 
     private async Task SteerAsync()
     {
@@ -888,7 +968,7 @@ public sealed class ChatHostPage : ContentPage
         if (direction.Length == 0) return;
         if (_attachments.Count > 0)
         {
-            await DisplayAlertAsync("Text steering only", "Remove attachments before steering the active JackHammer run.", "OK");
+            await DisplayAlertAsync("Text steering only", "Remove attachments before steering the active response.", "OK");
             return;
         }
         _steer.IsEnabled = false;
@@ -897,17 +977,25 @@ public sealed class ChatHostPage : ContentPage
             await _generation.SteerAsync(direction);
             _messages.Add(new ChatMessage { Role = "user", Content = direction, IsLocalOnly = false });
             _prompt.Text = "";
-            _status.Text = "Steering accepted — applying at the next JackHammer break";
+            _status.Text = "Steering accepted — applying at the next safe response break";
         }
         catch (Exception ex)
         {
             _status.Text = "Steering was not accepted";
-            await DisplayAlertAsync("Could not steer JackHammer", ex.Message, "OK");
+            await DisplayAlertAsync("Could not steer response", ex.Message, "OK");
         }
         finally
         {
-            _steer.IsEnabled = _generation.CanSteer && !string.IsNullOrWhiteSpace(_prompt.Text) && _attachments.Count == 0;
+            UpdateComposerActions();
         }
+    }
+
+    private void UpdateComposerActions()
+    {
+        bool canSteerDraft = _generation.CanSteer && !string.IsNullOrWhiteSpace(_prompt.Text) && _attachments.Count == 0;
+        _steer.IsVisible = canSteerDraft;
+        _steer.IsEnabled = canSteerDraft;
+        _send.IsEnabled = !_pendingFollowUpStarting;
     }
 
     private void OnAuthenticationRequired(object? sender, EventArgs e)
@@ -978,7 +1066,9 @@ public sealed class ChatHostPage : ContentPage
             : "All granted Guild privileges remain available.";
         _alignmentDrawerTraits.Text = BuildMobileAlignmentTraitText(_alignment.CharacterTraits);
         _alignmentDrawerRecovery.Text = _alignment.RecoveryGuidance;
-        _alignmentDrawerModel.Text = !string.IsNullOrWhiteSpace(_alignment.AssessmentModel)
+        _alignmentDrawerModel.Text = string.Equals(_alignment.ChecksAndBalancesStatus, "retry-pending", StringComparison.OrdinalIgnoreCase)
+            ? "Checks and Balances retry " + _alignment.ChecksAndBalancesRetryCount + " pending" + (string.IsNullOrWhiteSpace(_alignment.ChecksAndBalancesAttemptedModel) ? "" : " on " + _alignment.ChecksAndBalancesAttemptedModel) + (string.IsNullOrWhiteSpace(_alignment.ChecksAndBalancesError) ? "" : " · " + _alignment.ChecksAndBalancesError)
+            : !string.IsNullOrWhiteSpace(_alignment.AssessmentModel)
             ? "Checks and Balances completed by " + _alignment.AssessmentModel
             : string.Equals(_alignment.ChecksAndBalancesStatus, "running", StringComparison.OrdinalIgnoreCase)
                 ? "Checks and Balances is reading the completed Dream"
@@ -1104,6 +1194,8 @@ public sealed class ChatHostPage : ContentPage
         if (!snapshot.ServerKey.Equals(_server.LaunchKey, StringComparison.OrdinalIgnoreCase) ||
             !snapshot.SessionId.Equals(_sessionId, StringComparison.OrdinalIgnoreCase)) return;
 
+        bool generationJustFinished = _generationWasRunning && !snapshot.IsGenerating;
+        _generationWasRunning = snapshot.IsGenerating;
         ChatMessage? assistant = _activeAssistant;
         if (assistant is null || !_messages.Contains(assistant) || !assistant.GenerationId.Equals(snapshot.GenerationId, StringComparison.Ordinal))
         {
@@ -1135,6 +1227,7 @@ public sealed class ChatHostPage : ContentPage
         assistant.Telemetry = snapshot.Telemetry;
         assistant.RouteSummary = snapshot.RouteSummary;
         assistant.IsGenerating = snapshot.IsGenerating;
+        assistant.IsIncomplete = snapshot.IsStopped;
         if (reasoningJustStarted)
             assistant.IsReasoningExpanded = true;
         else if (!snapshot.IsGenerating && !string.IsNullOrWhiteSpace(snapshot.Content))
@@ -1144,18 +1237,19 @@ public sealed class ChatHostPage : ContentPage
             assistant.Tools.Add(new ToolActivity { Name = tool.Name, Status = tool.Status, Detail = tool.Detail });
         assistant.WorkSummary = BuildJackhammerWorkSummary(snapshot.JackhammerSteps, assistant.Tools, snapshot.JackhammerEnabled, snapshot.IsGenerating);
 
-        _send.Text = snapshot.IsGenerating ? "■" : "↑";
-        _steer.IsVisible = snapshot.IsGenerating && snapshot.JackhammerEnabled;
-        _steer.IsEnabled = _generation.CanSteer && !string.IsNullOrWhiteSpace(_prompt.Text) && _attachments.Count == 0;
-        _prompt.Placeholder = snapshot.IsGenerating && snapshot.JackhammerEnabled ? "Add direction for this JackHammer run…" : (_mode == MobileChatMode.Plan ? "Describe what you want planned..." : _mode == MobileChatMode.Advanced ? "Ask JackLLM to work, use tools, or generate media..." : "Chat with JackLLM...");
+        _send.Text = "↑";
+        UpdateComposerActions();
+        _prompt.Placeholder = snapshot.IsGenerating ? "Type the next prompt, or use ↪ to steer…" : (_mode == MobileChatMode.Plan ? "Describe what you want planned..." : _mode == MobileChatMode.Advanced ? "Ask JackLLM to work, use tools, or generate media..." : "Chat with JackLLM...");
         _status.Text = snapshot.HasError ? snapshot.Status : snapshot.IsStopped ? "Generation stopped" : snapshot.IsGenerating ? (snapshot.Status.Length > 0 ? snapshot.Status : "Generating…") : "Ready";
         SetLiveActivity(snapshot.IsGenerating, AlignmentLoreForActivity(snapshot.Status), snapshot.Progress);
-        if (DateTimeOffset.UtcNow - _lastAutoScroll > TimeSpan.FromMilliseconds(300))
+        if (_stickToLatest && DateTimeOffset.UtcNow - _lastAutoScroll > TimeSpan.FromMilliseconds(300))
         {
             _lastAutoScroll = DateTimeOffset.UtcNow;
             try { _messageList.ScrollTo(assistant, position: ScrollToPosition.End, animate: false); }
             catch { }
         }
+        if (generationJustFinished && _pendingFollowUp is not null && !snapshot.IsStopped)
+            _ = StartQueuedFollowUpAsync();
     }
 
     private void NewSession()
@@ -1619,6 +1713,21 @@ public sealed class ChatHostPage : ContentPage
         var reasoningTap = new TapGestureRecognizer();
         reasoningTap.Tapped += (_, _) => { if (reasoningExpander.BindingContext is ChatMessage message) message.IsReasoningExpanded = !message.IsReasoningExpanded; };
         reasoningExpander.GestureRecognizers.Add(reasoningTap);
+        var continuationText = new Label { Text = "Response stopped before it finished. Continue from where it ended?", TextColor = Color.FromArgb("#FDE68A"), FontSize = 11, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.WordWrap };
+        var continueButton = new Button { Text = "\u21bb", FontSize = 18, CornerRadius = 9, BackgroundColor = Color.FromArgb("#92400E"), TextColor = Colors.White, WidthRequest = 42, HeightRequest = 34, Padding = 0 };
+        AutomationProperties.SetName(continueButton, "Continue response");
+        AutomationProperties.SetHelpText(continueButton, "Prepare a prompt that continues this incomplete response");
+        continueButton.Clicked += (_, _) =>
+        {
+            _prompt.Text = "Continue the previous answer from exactly where it stopped. Do not repeat completed text.";
+            _prompt.Focus();
+            _status.Text = "Continuation is ready in the next prompt — review it, then send";
+        };
+        var continuationLayout = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, ColumnSpacing = 8 };
+        continuationLayout.Add(continuationText, 0);
+        continuationLayout.Add(continueButton, 1);
+        var continuationCard = new Border { Padding = new Thickness(10, 7), BackgroundColor = Color.FromArgb("#3B2A12"), Stroke = Color.FromArgb("#B45309"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 10 }, Content = continuationLayout };
+        continuationCard.SetBinding(IsVisibleProperty, nameof(ChatMessage.NeedsContinuation));
         var telemetry = new Label { FontSize = 10, TextColor = Color.FromArgb("#A7F3D0"), LineBreakMode = LineBreakMode.WordWrap };
         telemetry.SetBinding(Label.TextProperty, nameof(ChatMessage.Telemetry));
         telemetry.SetBinding(IsVisibleProperty, nameof(ChatMessage.HasTelemetry));
@@ -1639,7 +1748,7 @@ public sealed class ChatHostPage : ContentPage
         workSummary.SetBinding(MarkdownMessageView.MarkdownProperty, nameof(ChatMessage.WorkSummary));
         var workCard = new Border { Padding = new Thickness(10, 8), BackgroundColor = Color.FromArgb("#101D36"), Stroke = Color.FromArgb("#2563EB"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 10 }, Content = workSummary };
         workCard.SetBinding(IsVisibleProperty, nameof(ChatMessage.HasWorkSummary));
-        var border = new Border { Margin = new Thickness(10, 5), Padding = 12, StrokeThickness = 0, StrokeShape = new RoundRectangle { CornerRadius = 16 }, Content = new VerticalStackLayout { Spacing = 7, Children = { role, route, reasoningExpander, content, workCard, tools, telemetry, status } } };
+        var border = new Border { Margin = new Thickness(10, 5), Padding = 12, StrokeThickness = 0, StrokeShape = new RoundRectangle { CornerRadius = 16 }, Content = new VerticalStackLayout { Spacing = 7, Children = { role, route, reasoningExpander, content, continuationCard, workCard, tools, telemetry, status } } };
         border.SetBinding(Border.BackgroundColorProperty, nameof(ChatMessage.BubbleColor));
         AttachMessageLongPress(border);
         return border;

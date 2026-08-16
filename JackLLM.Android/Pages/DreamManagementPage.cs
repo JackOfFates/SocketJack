@@ -132,9 +132,9 @@ public sealed class DreamManagementPage : ContentPage
             MobileDreamStatus status = await _client.GetDreamStatusAsync(owner, token);
             IReadOnlyList<MobileDreamJournalEntry> journal = await _client.GetDreamJournalAsync(owner, cancellationToken: token);
             (MobileDreamPermissionSnapshot permissions, bool canManage) = await _client.GetDreamPermissionsAsync(owner, token);
-            _status.Text = string.Join(" · ", new[] { status.Status, status.Phase, status.LimitingResource, string.IsNullOrWhiteSpace(status.NextRunUtc) ? "" : "next " + status.NextRunUtc }.Where(x => !string.IsNullOrWhiteSpace(x)));
-            _resources.Text = $"CPU {status.Resources.CpuPercent:0}% · RAM {status.Resources.RamPercent:0}% · GPU {status.Resources.GpuPercent:0}% · VRAM {status.Resources.VramPercent:0}% · disk {status.Resources.DiskPercent:0}% · {status.ProcessedSessions} sessions / {status.ProcessedMessages} messages";
-            _notice.Text = status.LastError;
+            _status.Text = string.Join(" · ", new[] { status.Status, status.Phase, status.LimitingResource, status.BackfillPending ? "historical catch-up pending" : "", status.AlignmentRetryCount > 0 ? "alignment retry " + status.AlignmentRetryCount : "", string.IsNullOrWhiteSpace(status.NextRunUtc) ? "" : "next " + status.NextRunUtc }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            _resources.Text = $"CPU {status.Resources.CpuPercent:0}% · RAM {status.Resources.RamPercent:0}% · GPU {status.Resources.GpuPercent:0}% · VRAM {status.Resources.VramPercent:0}% · disk {status.Resources.DiskPercent:0}%\nEligible {status.EligibleSessions} · readable {status.ReadableSessions} · empty {status.EmptySessions} · unavailable {status.UnavailableSessions} · processed {status.ProcessedSessions} sessions / {status.ProcessedMessages} messages" + (string.IsNullOrWhiteSpace(status.ResolvedModel) && string.IsNullOrWhiteSpace(status.ResolvedService) ? "" : $"\n{status.ResolvedService} / {status.ResolvedModel}".Trim(' ', '/'));
+            _notice.Text = string.Join(" · ", new[] { status.NoWorkReason, string.IsNullOrWhiteSpace(status.FailureStage) ? "" : "failed at " + status.FailureStage, status.LastError }.Where(x => !string.IsNullOrWhiteSpace(x)));
             RenderPermissions(permissions, canManage);
             RenderJournal(journal);
         }
@@ -201,7 +201,7 @@ public sealed class DreamManagementPage : ContentPage
         if (entries.Count == 0) { _journal.Add(Muted("No dreams recorded yet.")); return; }
         foreach (MobileDreamJournalEntry entry in entries)
         {
-            var body = new VerticalStackLayout { Spacing = 6, Children = { new Label { Text = entry.Summary + " (" + entry.Status + ")", TextColor = Colors.White, FontAttributes = FontAttributes.Bold }, Muted($"{entry.ProcessedSessions} sessions · {entry.ProcessedMessages} messages · {entry.CreatedUtc}") } };
+            var body = new VerticalStackLayout { Spacing = 6, Children = { new Label { Text = entry.Summary + " (" + entry.Status + ")", TextColor = Colors.White, FontAttributes = FontAttributes.Bold }, Muted($"{entry.ProcessedSessions} sessions · {entry.ProcessedMessages} messages · {entry.CreatedUtc}"), Muted($"Eligible {entry.EligibleSessions} · readable {entry.ReadableSessions} · empty {entry.EmptySessions} · unavailable {entry.UnavailableSessions}"), Muted("Checks and Balances: " + entry.ChecksAndBalancesStatus + (string.IsNullOrWhiteSpace(entry.ChecksAndBalancesModel) ? "" : " · " + entry.ChecksAndBalancesModel) + (entry.ChecksAndBalancesRetryCount > 0 ? " · retry " + entry.ChecksAndBalancesRetryCount : "") + (string.IsNullOrWhiteSpace(entry.ChecksAndBalancesError) ? "" : " · " + entry.ChecksAndBalancesError)) } };
             if (!string.IsNullOrWhiteSpace(entry.RawReflection)) body.Add(new Label { Text = entry.RawReflection, TextColor = Color.FromArgb("#94A3B8"), FontSize = 11, LineBreakMode = LineBreakMode.WordWrap });
             foreach (MobileDreamCandidate candidate in entry.Candidates)
             {
@@ -212,7 +212,7 @@ public sealed class DreamManagementPage : ContentPage
                     actions.Add(ActionButton(action, "#334155", async () => { await _client.DecideDreamCandidateAsync(OwnerKey, candidate.Id, action); await LoadAllAsync(false); }));
                 body.Add(actions);
             }
-            if (!entry.Candidates.Any(item => item.Disposition == "review") && entry.Status != "running") body.Add(ActionButton("Delete entry", "#7F1D1D", async () => { await _client.DeleteDreamJournalAsync(OwnerKey, entry.Id); await LoadAllAsync(false); }));
+            if (!entry.Candidates.Any(item => item.Disposition == "review") && entry.Status is not ("running" or "alignment-retry")) body.Add(ActionButton("Delete entry", "#7F1D1D", async () => { await _client.DeleteDreamJournalAsync(OwnerKey, entry.Id); await LoadAllAsync(false); }));
             _journal.Add(Card(body));
         }
     }

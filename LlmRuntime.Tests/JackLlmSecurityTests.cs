@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
+using LmVs;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack;
 using SocketJack.Net;
@@ -21,6 +22,54 @@ public sealed class JackLlmSecurityTests
         Assert.IsTrue(SocketJack.Net.LmVsProxy.IsCompanionSensitiveText("password: hunter2"));
         Assert.IsFalse(SocketJack.Net.LmVsProxy.IsCompanionSensitiveText("the user prefers dark mode"));
         StringAssert.Contains(SocketJack.Net.LmVsProxy.RedactCompanionSensitiveText("password=hunter2"), "[redacted]");
+    }
+
+    [TestMethod]
+    public void CompanionObservationIsConvertedToFreshVisionInput()
+    {
+        MethodInfo? extract = typeof(LmVsProxy).GetMethod(
+            "TryExtractCompanionImageDataUrl",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.IsNotNull(extract);
+
+        const string jpegBase64 = "/9j/4AAQSkZJRg==";
+        string result = JsonSerializer.Serialize(new
+        {
+            ok = true,
+            type = "screen",
+            contentType = "image/jpeg",
+            data = jpegBase64
+        });
+
+        string dataUrl = (string)extract.Invoke(null, ["companion_action", result])!;
+
+        Assert.AreEqual("data:image/jpeg;base64," + jpegBase64, dataUrl);
+        Assert.AreEqual("", (string)extract.Invoke(null, ["internet_search", result])!);
+    }
+
+    [TestMethod]
+    public void CompanionDesktopControlRaisesAndClearsSafetyStateAroundInput()
+    {
+        const string ownerKey = "webauth:companion-control-state-test";
+        using var proxy = new LmVsProxy("127.0.0.1", 1234, 24434, 24436);
+        ChatClientPermissionSnapshot permissions = proxy.GetChatClientPermissionsDiagnostics(ownerKey);
+        permissions.CompanionEnabled = true;
+        permissions.CompanionCursorControl = true;
+        proxy.SaveChatClientPermissionsDiagnostics(permissions);
+        var states = new List<bool>();
+        int inputCalls = 0;
+        proxy.CompanionControlStateChanged += states.Add;
+        proxy.CompanionInput = _ => inputCalls++;
+        MethodInfo? execute = typeof(LmVsProxy).GetMethod(
+            "ExecuteCompanionToolAction",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(execute);
+
+        string result = (string)execute.Invoke(proxy, [ownerKey, "{\"type\":\"move\",\"x\":10,\"y\":20}", false])!;
+
+        Assert.AreEqual(1, inputCalls);
+        CollectionAssert.AreEqual(new[] { true, false }, states);
+        StringAssert.Contains(result, "\"ok\":true");
     }
 
     [DataTestMethod]
@@ -212,6 +261,11 @@ public sealed class JackLlmSecurityTests
         StringAssert.Contains(html, "body.hidden=open");
         StringAssert.Contains(html, "dreamPermissionEdits.has(dream)");
         StringAssert.Contains(html, "dreamPermissionSaveChain=dreamPermissionSaveChain.then");
+        StringAssert.Contains(html, "status.status==='completed-with-source-errors'||status.status==='alignment-retry'");
+        StringAssert.Contains(html, "status.status==='model-failed'");
+        StringAssert.Contains(html, "eligible '+Number(status.eligibleSessions||0)");
+        StringAssert.Contains(html, "entry.status!=='alignment-retry'");
+        StringAssert.Contains(html, "await loadAlignment().catch(() => { });");
     }
 
     [TestMethod]

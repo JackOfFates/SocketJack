@@ -106,7 +106,7 @@ public sealed class ChatUiStreamReliabilityTests
     }
 
     [TestMethod]
-    public void WebChatSessionUx_UsesPanelsOptimisticRollbackAndEnterSteering()
+    public void WebChatSessionUx_UsesComposerSteeringAndKeepsEnterAsNormalSend()
     {
         string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
 
@@ -115,17 +115,66 @@ public sealed class ChatUiStreamReliabilityTests
         StringAssert.Contains(html, "pendingSessionMutationIds");
         StringAssert.Contains(html, "restoreSessionSnapshot(snapshot)");
         StringAssert.Contains(html, "steerComposerImmediately()");
+        StringAssert.Contains(html, "id=\"steerPrompt\"");
+        StringAssert.Contains(html, "function updateComposerSteeringAction()");
         StringAssert.Contains(html, "event.isComposing");
         StringAssert.Contains(html, "steeringId");
-        StringAssert.Contains(html, "streamState.connected && streamState.jackhammerEnabled");
+        StringAssert.Contains(html, "streamState.connected && streamState.steeringEnabled");
+        StringAssert.Contains(html, "const canInterrupt = active && draftAvailable;");
+        Assert.IsFalse(html.Contains("prompt-processing-steer", StringComparison.Ordinal));
+        Assert.IsFalse(html.Contains("queued-message-steer", StringComparison.Ordinal));
+        Assert.IsFalse(html.Contains("if (canSteerNow)", StringComparison.Ordinal));
+        Assert.IsFalse(html.Contains("Steering is available only during a JackHammer run.", StringComparison.Ordinal));
         StringAssert.Contains(html, "JackHammer steps");
         StringAssert.Contains(html, "jackhammerPlanStepsFromCheckpoints");
         StringAssert.Contains(html, "Errors / Diagnosis");
         StringAssert.Contains(html, ">File</button>");
         StringAssert.Contains(html, ">Edit</button>");
         StringAssert.Contains(html, ">Tools</button>");
-        StringAssert.Contains(html, ">Options</button>");
+        StringAssert.Contains(html, "id=\"menuWorkstationOptions\"");
+        StringAssert.Contains(html, "Options...</button>");
         StringAssert.Contains(html, ">Help</button>");
+    }
+
+    [TestMethod]
+    public void WebChatStreamingMarkdown_RendersRichContentAndPinsOnlyPast95Percent()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "return list.scrollTop >= maxScroll * 0.95;");
+        StringAssert.Contains(html, "const keepPinned = shouldScroll && isMessagesNearEnd();");
+        StringAssert.Contains(html, "function renderAssistantStreamingContentIfChanged(container, markdown)");
+        StringAssert.Contains(html, "renderAssistantContent(container, next);");
+        Assert.IsFalse(html.Contains("fallback.textContent = next", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void WebChatStoppedResponse_OffersContinuationThroughTheNextPrompt()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "assistant-continuation-prompt");
+        StringAssert.Contains(html, "showAssistantContinuationPrompt(streamState.parts");
+        StringAssert.Contains(html, "Continue the previous answer from exactly where it stopped. Do not repeat completed text.");
+        StringAssert.Contains(html, "Continuation is ready in the next prompt. Review it, then Send.");
+        StringAssert.Contains(html, "assistantContentRequestsContinuation(cleanContent)");
+        StringAssert.Contains(html, "Retry stopped before a successful response");
+        StringAssert.Contains(html, "const partialContent = getAssistantAnswerMarkdown(parts)");
+    }
+
+    [TestMethod]
+    public void WebChatFollowUpPrompt_QueuesAfterLateSteeringAndSerializesSessionSaves()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "error.code === 'stream_closed' || error.code === 'stream_not_ready'");
+        StringAssert.Contains(html, "your direction was queued as the next prompt");
+        StringAssert.Contains(html, "function kickPromptQueue()");
+        StringAssert.Contains(html, "if (queuedPrompts.length > 0)");
+        StringAssert.Contains(html, "function cancelActiveStreamReader(streamState)");
+        StringAssert.Contains(html, "streamState.reader = reader;");
+        StringAssert.Contains(html, "const sessionSaveChains = new Map();");
+        StringAssert.Contains(html, ".then(() => persistSessionSnapshotPayload(sessionId, payload));");
     }
 
     [TestMethod]
@@ -145,19 +194,48 @@ public sealed class ChatUiStreamReliabilityTests
     }
 
     [TestMethod]
-    public void AbruptStopContinuationCandidate_DetectsClippedVisibleSentence()
+    public void SplitThinkTags_MovesPostResponseSelfCheckToReasoning()
     {
-        const string clipped = "I notice you've mentioned attached screenshots (Screenshot_00014.jpg, Screenshot_00006";
+        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(LmVsProxy).GetMethod("SplitThinkTags", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        const string raw = "What would work best for you?\n\n- JackLLM\n\n[End of response]\n\nThis concludes my answer. The user asked a conversational question.\n\nVerification: Response is conversational and friendly.";
 
-        Assert.IsTrue(IsAbruptStopContinuationCandidate("stop", clipped));
+        object completion = method.Invoke(proxy, new object[] { raw, "", false })!;
+        string content = (string)(completion.GetType().GetProperty("Content")?.GetValue(completion) ?? "");
+        string reasoning = (string)(completion.GetType().GetProperty("Reasoning")?.GetValue(completion) ?? "");
+
+        Assert.AreEqual("What would work best for you?\n\n- JackLLM", content.Replace("\r\n", "\n"));
+        StringAssert.Contains(reasoning, "This concludes my answer.");
+        StringAssert.Contains(reasoning, "Verification: Response is conversational and friendly.");
+        Assert.IsFalse(content.Contains("End of response", StringComparison.OrdinalIgnoreCase));
     }
 
     [TestMethod]
-    public void AbruptStopContinuationCandidate_IgnoresCompleteOrShortAnswers()
+    public void NormalStop_NeverCreatesAnAutomaticContinuationTurn()
     {
-        Assert.IsFalse(IsAbruptStopContinuationCandidate("stop", "The screenshots show the Web Chat interface."));
-        Assert.IsFalse(IsAbruptStopContinuationCandidate("stop", "The button says Send"));
-        Assert.IsFalse(IsAbruptStopContinuationCandidate("length", "This answer is clipped"));
+        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+            "ShouldAutoContinueChatUiCompletion",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        const string clippedLookingButFinished = "I notice you've mentioned attached screenshots (Screenshot_00014.jpg, Screenshot_00006";
+
+        object?[] args = { "stop", clippedLookingButFinished, "", 0, -1, "ip:127.0.0.1", null, null };
+        Assert.IsFalse((bool)(method.Invoke(proxy, args) ?? true));
+    }
+
+    [TestMethod]
+    public void ExplicitOutputLimit_StillCreatesAnAutomaticContinuationTurn()
+    {
+        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+            "ShouldAutoContinueChatUiCompletion",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+
+        object?[] args = { "length", "This answer is clipped", "", 0, -1, "ip:127.0.0.1", null, null };
+        Assert.IsTrue((bool)(method.Invoke(proxy, args) ?? false));
     }
 
     [TestMethod]
@@ -172,7 +250,7 @@ public sealed class ChatUiStreamReliabilityTests
         {"model":"vision-model","messages":[{"role":"user","content":"Describe both screenshots."}]}
         """;
 
-        string continuation = (string)(method.Invoke(proxy, new object[] { request, "Partial answer", "", "stop", 1 }) ?? "");
+        string continuation = (string)(method.Invoke(proxy, new object[] { request, "Partial answer", "", "length", 1 }) ?? "");
         using JsonDocument document = JsonDocument.Parse(continuation);
         JsonElement messages = document.RootElement.GetProperty("messages");
 
@@ -191,12 +269,4 @@ public sealed class ChatUiStreamReliabilityTests
         return (string)(method.Invoke(null, new object[] { existing, incoming }) ?? "");
     }
 
-    private static bool IsAbruptStopContinuationCandidate(string finishReason, string content)
-    {
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(
-            "IsChatUiAbruptStopContinuationCandidate",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.IsNotNull(method);
-        return (bool)(method.Invoke(null, new object[] { finishReason, content }) ?? false);
-    }
 }

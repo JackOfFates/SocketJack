@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack;
 using SocketJack.Net;
@@ -213,6 +214,39 @@ public sealed class AlignmentAssessmentTests
         Assert.AreEqual(10, snapshot.CharacterTraits["Humility"]);
         Assert.AreEqual(2, snapshot.CharacterTraits["Greed"]);
         Assert.AreEqual(1, snapshot.CharacterTraits["Self-Sabotage"]);
+    }
+
+    [TestMethod]
+    public void UnassessedCharacterSheetStartsViceTraitsAtOne()
+    {
+        using var proxy = CreateProxy();
+
+        AlignmentSnapshot snapshot = proxy.GetAlignmentSnapshot("new-owner");
+
+        foreach (string vice in new[] { "Greed", "Cruelty", "Pride", "Deception", "Coercion", "Self-Sabotage" })
+            Assert.AreEqual(1, snapshot.CharacterTraits[vice], vice);
+        Assert.AreEqual(5, snapshot.CharacterTraits["Nobility"]);
+    }
+
+    [TestMethod]
+    public void LegacyAllMidpointCharacterSheetMigratesViceTraitsToOne()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "jackllm-alignment-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string traits = string.Join(",", new[] { "Nobility", "Humility", "Compassion", "Courage", "Honesty", "Mercy", "Generosity", "Discipline", "Responsibility", "Self-Respect", "Greed", "Cruelty", "Pride", "Deception", "Coercion", "Self-Sabotage" }.Select(name => JsonSerializer.Serialize(name) + ":5"));
+        File.WriteAllText(Path.Combine(root, "alignment-state.json"), "{\"profiles\":[{\"ownerKey\":\"legacy-owner\",\"characterTraits\":{" + traits + "}}],\"events\":[]}");
+        try
+        {
+            using var proxy = new LmVsProxy("127.0.0.1", 1234, 21434, 21436, new LmVsProxyStorageOptions { ChatDataRoot = root });
+
+            AlignmentSnapshot snapshot = proxy.GetAlignmentSnapshot("legacy-owner");
+
+            Assert.AreEqual(5, snapshot.CharacterTraits["Nobility"]);
+            Assert.AreEqual(1, snapshot.CharacterTraits["Greed"]);
+            Assert.AreEqual(1, snapshot.CharacterTraits["Self-Sabotage"]);
+            StringAssert.Contains(File.ReadAllText(Path.Combine(root, "alignment-state.json")), "\"schemaVersion\":2");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     private static LmVsProxy CreateProxy() => new("127.0.0.1", 1234, 21434, 21436,

@@ -2808,8 +2808,11 @@ public sealed class LlmRuntimeHost : IDisposable
     {
         string prompt = request.Messages.LastOrDefault(message => message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Content ?? "";
         int tokens = Math.Max(request.PromptTokenBudget ?? 0, EstimatePromptTokens(request.Messages));
-        return _modelRouter.Route(Registry.ListModels(), new ModelRouteRequest(prompt, "chat", ParseReasoningLevel(request.ReasoningLevel), RequiresVision(request), request.Tools.Count > 0, tokens, QueryAvailableVramBytes()));
+        return _modelRouter.Route(Registry.ListModels(), new ModelRouteRequest(prompt, "chat", ParseReasoningLevel(request.ReasoningLevel), RequiresVision(request), RequestRequiresToolCapableModel(request), tokens, QueryAvailableVramBytes()));
     }
+
+    internal static bool RequestRequiresToolCapableModel(LlmChatRequest request) =>
+        request.Tools.Count > 0 && ToolChoiceForcesTool(request);
 
     private static bool IsAutoModel(string? model) => string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) || model.Equals("model:auto", StringComparison.OrdinalIgnoreCase);
     private static RouterReasoningLevel ParseReasoningLevel(string? value) => Enum.TryParse(value, true, out RouterReasoningLevel level) ? level : RouterReasoningLevel.Auto;
@@ -3165,10 +3168,16 @@ public sealed class LlmRuntimeHost : IDisposable
             return SanitizeToolResultFinalAnswer(finalAnswer, request);
         }
 
-        var firstPassRequest = CloneChatRequest(request, prependMessages:
-        [
-            new LlmChatMessage("system", BuildToolUseInstruction(request.Tools))
-        ]);
+        var firstPassRequest = CloneChatRequest(request, prependMessages: IsJackhammerRequest(request)
+            ?
+            [
+                new LlmChatMessage("system", BuildToolUseInstruction(request.Tools)),
+                new LlmChatMessage("system", "JackHammer already created the initial ordered checkpoint. Choose exactly one next action now. Emit the tool call immediately without a preamble or extended analysis.")
+            ]
+            :
+            [
+                new LlmChatMessage("system", BuildToolUseInstruction(request.Tools))
+            ]);
         ApplyToolSelectionBudget(firstPassRequest);
         var firstPass = await Registry.CompleteChatAsync(firstPassRequest, cancellationToken).ConfigureAwait(false);
         var toolCalls = FilterAvailableToolCalls(request, ParseToolCallsFromModelText(firstPass.Content)).ToArray();
@@ -3250,6 +3259,12 @@ public sealed class LlmRuntimeHost : IDisposable
         request.MaxTokens = Math.Clamp(Math.Min(requested, toolSelectionMaxTokens), 64, toolSelectionMaxTokens);
         request.MaxTokensSpecified = true;
         request.Temperature = Math.Min(Math.Max(request.Temperature, 0f), 0.2f);
+    }
+
+    private static bool IsJackhammerRequest(LlmChatRequest request)
+    {
+        return request?.Messages?.Any(message =>
+            (message.Content ?? "").IndexOf("[Jackhammer work mode]", StringComparison.OrdinalIgnoreCase) >= 0) == true;
     }
 
     private static bool TryRescueToolCallsFromIntent(LlmChatRequest request, string attemptedContent, out IReadOnlyList<LlmToolCall> toolCalls)
@@ -3602,6 +3617,9 @@ public sealed class LlmRuntimeHost : IDisposable
 
             if (request.Tools.Count > 0 && !ShouldBypassToolSelection(request))
             {
+                WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", "assistant", null, null)));
+                if (IsJackhammerRequest(request))
+                    WriteSseData(stream, ToJson(ToOpenAiChatReasoningChunk(id, created, request.Model, "JackHammer is examining the request and selecting the next tool or action. Runtime token usage and each concrete action will appear as they are reported.\n")));
                 var result = await CompleteChatWithToolsAsync(request, cancellationToken).ConfigureAwait(false);
                 int promptTokens = result.Metrics.PromptTokens > 0
                     ? result.Metrics.PromptTokens
@@ -3623,7 +3641,6 @@ public sealed class LlmRuntimeHost : IDisposable
                     managed_memory_bytes = GC.GetTotalMemory(false)
                 };
 
-                WriteSseData(stream, ToJson(ToOpenAiChatChunk(id, created, request.Model, "", "assistant", null, null)));
                 if (result.ToolCalls.Count > 0)
                 {
                     WriteSseData(stream, ToJson(ToOpenAiToolCallChunk(id, created, request.Model, result.ToolCalls, null, null)));

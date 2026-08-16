@@ -82,6 +82,75 @@ public sealed class AgentToolSmokeTests
     }
 
     [TestMethod]
+    public void VsFileToolsWriteEditAndDeleteInsideTheSessionSandbox()
+    {
+        string dataRoot = CreateTemporaryDirectory("session-sandbox");
+        const string owner = "agent-sandbox-smoke-owner";
+        const string session = "agent-sandbox-smoke-session";
+        try
+        {
+            using var proxy = new LmVsProxy("127.0.0.1", 1234, 28444, 28446, dataRoot);
+            MethodInfo execute = typeof(LmVsProxy).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            string Run(string tool, object arguments) => (string)execute.Invoke(proxy,
+                [tool, JsonSerializer.Serialize(arguments), owner, session])!;
+
+            StringAssert.Contains(Run("vs_write_file", new { path = "sandbox-probe.txt", content = "alpha", overwrite = false }), "wrote 5 chars");
+            StringAssert.Contains(Run("vs_replace_in_file", new { path = "sandbox-probe.txt", oldString = "alpha", newString = "beta" }), "1 replacement(s)");
+            StringAssert.Contains(Run("vs_read_file", new { path = "sandbox-probe.txt", startLine = 1, endLine = 5 }), "beta");
+            StringAssert.Contains(Run("vs_delete_file", new { path = "sandbox-probe.txt" }), "deleted");
+            StringAssert.Contains(Run("vs_read_file", new { path = "sandbox-probe.txt", startLine = 1, endLine = 5 }), "could not be found");
+        }
+        finally
+        {
+            Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void SandboxedFileChangesProduceAuthoritativeLineStatsAndRevealMetadata()
+    {
+        string dataRoot = CreateTemporaryDirectory("sandbox-change-event");
+        const string owner = "agent-sandbox-change-owner";
+        const string session = "agent-sandbox-change-session";
+        try
+        {
+            using var proxy = new LmVsProxy("127.0.0.1", 1234, 28454, 28456, dataRoot);
+            MethodInfo execute = typeof(LmVsProxy).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo begin = typeof(LmVsProxy).GetMethod("BeginChatFileUndoScope", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo build = typeof(LmVsProxy).GetMethod("BuildChatFileChangeStreamEntries", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            object scope = begin.Invoke(proxy, [owner, session, "vs_write_file"])!;
+            string result;
+            try
+            {
+                result = (string)execute.Invoke(proxy,
+                    ["vs_write_file", JsonSerializer.Serialize(new { path = "event-probe.txt", content = "alpha\nbeta\n", overwrite = false }), owner, session])!;
+            }
+            finally
+            {
+                ((IDisposable)scope).Dispose();
+            }
+
+            StringAssert.Contains(result, "wrote");
+            object transaction = scope.GetType().GetProperty("Transaction")!.GetValue(scope)!;
+            var entries = ((System.Collections.IEnumerable)build.Invoke(proxy, [transaction])!).Cast<object>().ToArray();
+            Assert.AreEqual(1, entries.Length);
+            object entry = entries[0];
+            Assert.AreEqual("session", entry.GetType().GetProperty("Kind")!.GetValue(entry));
+            Assert.AreEqual(false, entry.GetType().GetProperty("IsLocal")!.GetValue(entry));
+            Assert.AreEqual(false, entry.GetType().GetProperty("CanReveal")!.GetValue(entry));
+            Assert.AreEqual(2, entry.GetType().GetProperty("Additions")!.GetValue(entry));
+            Assert.AreEqual(0, entry.GetType().GetProperty("Deletions")!.GetValue(entry));
+
+            _ = execute.Invoke(proxy, ["vs_delete_file", JsonSerializer.Serialize(new { path = "event-probe.txt" }), owner, session]);
+        }
+        finally
+        {
+            Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task BrowserToolsReadHtmlTextLinksAndControlsFromTheTrackedPage()
     {
         string root = CreateTemporaryDirectory("browser");

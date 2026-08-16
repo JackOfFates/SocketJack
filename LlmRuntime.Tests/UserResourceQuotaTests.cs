@@ -91,6 +91,7 @@ public sealed class UserResourceQuotaTests
         StringAssert.Contains(broker, "ReadIntegerArgument(args, \"--parent-pid\")");
         StringAssert.Contains(broker, "WaitForExitAsync(parentLifetime.Token)");
         StringAssert.Contains(broker, "parentLifetime.Cancel()");
+        Assert.IsFalse(broker.Contains("ReleaseMutex()", StringComparison.Ordinal), "The async broker must not release a thread-owned mutex from a continuation thread.");
     }
 
     private static string FindRepositoryRoot()

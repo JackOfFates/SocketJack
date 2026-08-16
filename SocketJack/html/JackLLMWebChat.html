@@ -1161,77 +1161,6 @@ body.agent-mode .live-changed {
     width: 100%;
     min-width: 0;
 }
-.view-menu-wrap {
-    position: relative;
-    justify-self: end;
-    z-index: 90;
-}
-.view-menu-toggle {
-    min-width: 96px;
-    min-height: 34px;
-    justify-content: center;
-    font: 900 0.72rem var(--ui-font);
-}
-.view-menu-toggle::after {
-    content: "v";
-    margin-left: 8px;
-    color: #7dd3fc;
-    font-size: 0.68rem;
-}
-.view-menu-wrap.open .view-menu-toggle::after {
-    content: "^";
-}
-.view-menu {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    width: min(220px, calc(100vw - 24px));
-    display: grid;
-    gap: 6px;
-    padding: 8px;
-    border: 1px solid rgba(125, 211, 252, 0.30);
-    border-radius: 10px;
-    background: rgba(8, 15, 28, 0.96);
-    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(22px) saturate(1.2);
-}
-.view-menu[hidden] {
-    display: none;
-}
-.view-menu-row {
-    min-width: 0;
-    min-height: 34px;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 8px;
-    color: rgba(229, 237, 247, 0.90);
-    background: rgba(2, 6, 23, 0.34);
-    cursor: pointer;
-    font: 900 0.72rem var(--ui-font);
-}
-.view-menu-row:hover,
-.view-menu-row:focus-within {
-    border-color: rgba(125, 211, 252, 0.38);
-    background: rgba(125, 211, 252, 0.11);
-}
-.view-menu-row input {
-    width: 16px;
-    height: 16px;
-}
-.view-menu-button {
-    grid-template-columns: 1fr auto;
-    width: 100%;
-    text-align: left;
-}
-.view-menu-button::after {
-    content: ">";
-    color: rgba(125, 211, 252, 0.82);
-    font-weight: 900;
-}
 .server-hardware-panel {
     width: 100%;
     padding: 9px;
@@ -6648,6 +6577,17 @@ body.agent-mode .prompt-processing-control:focus-visible {
 .assistant-file-change-row:first-child {
     border-top: 0;
 }
+.assistant-file-change-row.change-created .assistant-file-change-name,
+.assistant-file-change-row.change-created .assistant-file-change-meta {
+    color: #4ade80;
+}
+.assistant-file-change-row.change-deleted .assistant-file-change-name,
+.assistant-file-change-row.change-deleted .assistant-file-change-meta {
+    color: #fb7185;
+}
+.assistant-file-change-row.change-renamed .assistant-file-change-meta {
+    color: #facc15;
+}
 .assistant-file-change-row.assistant-file-change-extra {
     display: none;
 }
@@ -7282,6 +7222,31 @@ body.agent-mode .artifact-source {
     border-color: rgba(52, 211, 153, 0.7);
     color: #bbf7d0;
 }
+.assistant-continuation-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 9px 10px;
+    border: 1px solid rgba(250, 204, 21, 0.34);
+    border-radius: 10px;
+    color: #fef3c7;
+    background: rgba(113, 63, 18, 0.22);
+    font: 700 0.72rem/1.3 var(--ui-font);
+}
+.assistant-continuation-prompt[hidden] {
+    display: none;
+}
+.assistant-continuation-button {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding: 0 10px;
+    border-radius: 8px;
+    color: var(--fluent-accent-text);
+    background: var(--adaptive-button-b);
+    font: 900 0.68rem/1 var(--ui-font);
+}
 .composer {
     position: relative;
     z-index: 120;
@@ -7333,6 +7298,26 @@ body.agent-mode .artifact-source {
     position: relative;
     min-width: 0;
     display: grid;
+}
+.prompt-wrap.steer-available #prompt {
+    padding-right: 86px;
+}
+.composer-steer-action {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    z-index: 4;
+    min-width: 66px;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid rgba(125, 211, 252, 0.48);
+    border-radius: 9px;
+    color: #e0f2fe;
+    background: rgba(14, 116, 144, 0.72);
+    font: 900 0.68rem/1 var(--ui-font);
+}
+.composer-steer-action[hidden] {
+    display: none;
 }
 .prompt-wrap.has-premium-hint #prompt {
     padding-bottom: 14px;
@@ -12512,13 +12497,6 @@ body:not(.portrait-layout) .compact-runtime-controls .model-picker {
     flex: 4 1 460px;
 }
 
-body:not(.portrait-layout) .compact-runtime-controls .view-menu-wrap {
-    order: -2;
-    flex: 0 0 auto;
-    margin-left: auto;
-    align-self: flex-start;
-}
-
 body:not(.portrait-layout) .compact-runtime-controls .header-controls,
 body:not(.portrait-layout) .compact-runtime-controls .server-hardware-panel,
 body:not(.portrait-layout) .compact-runtime-controls .usage-panel {
@@ -14808,7 +14786,7 @@ body.browser-expanded .browser-mini-chat {
 
 /* High-contrast text and agent lava polish. Keep these late so they win over
    older mode accents and glass-panel rules added above. */
-.shell :where(h1, h2, h3, h4, h5, h6, p, span, label, small, strong, em, a, code, pre, kbd, summary, li, td, th, legend, figcaption, output, .meta, .status, .message, .markdown, .rich-block, .session-title, .session-chip, .session-owner, .session-time, .top-panel-copy, .permission-note, .hardware-summary-metric, .usage-topline, .cost-row, .tool-chip-label, .view-menu-row) {
+.shell :where(h1, h2, h3, h4, h5, h6, p, span, label, small, strong, em, a, code, pre, kbd, summary, li, td, th, legend, figcaption, output, .meta, .status, .message, .markdown, .rich-block, .session-title, .session-chip, .session-owner, .session-time, .top-panel-copy, .permission-note, .hardware-summary-metric, .usage-topline, .cost-row, .tool-chip-label) {
     color: var(--readable-text) !important;
     mix-blend-mode: normal;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
@@ -14842,35 +14820,6 @@ body.browser-expanded .browser-mini-chat {
 
 body:not(.portrait-layout) .compact-runtime-controls {
     z-index: 4200 !important;
-}
-
-body:not(.portrait-layout) .compact-runtime-controls .view-menu-wrap,
-.view-menu-wrap.open {
-    z-index: 5200 !important;
-    isolation: isolate;
-}
-
-.view-menu {
-    z-index: 5201 !important;
-    border-color: rgba(255, 255, 255, 0.28) !important;
-    background:
-        linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 36%),
-        rgba(2, 6, 23, 0.98) !important;
-    box-shadow:
-        0 28px 88px rgba(0, 0, 0, 0.68),
-        0 0 0 1px rgba(255, 255, 255, 0.08),
-        inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
-}
-
-body:not(.portrait-layout) .compact-runtime-controls .view-menu-wrap.open .view-menu,
-.view-menu-wrap.open .view-menu {
-    position: fixed;
-    left: var(--view-menu-left, 8px);
-    top: var(--view-menu-top, 64px);
-    right: auto;
-    width: var(--view-menu-width, min(220px, calc(100vw - 16px)));
-    max-height: calc(var(--runtime-viewport-height, 100dvh) - var(--view-menu-top, 64px) - 12px);
-    overflow: auto;
 }
 
 /* Desktop application menu and diagnostics overlays. */
@@ -14951,6 +14900,7 @@ select option { color:#111827; background:#f8fafc; }
     background: linear-gradient(180deg,rgba(30,41,59,.72),rgba(10,15,27,.9));
     box-shadow: inset 0 1px 0 rgba(255,255,255,.07),0 5px 16px rgba(0,0,0,.18);
 }
+.workspace-view-tabs,.workspace-shortcuts { display:inline-flex; align-items:center; gap:2px; }
 .workspace-tab {
     position: relative;
     display: inline-flex;
@@ -14973,6 +14923,9 @@ select option { color:#111827; background:#f8fafc; }
 .workspace-tab.active { color:#f8fbff !important; border-color:rgba(96,165,250,.48); background:linear-gradient(180deg,rgba(59,130,246,.3),rgba(37,99,235,.17)); box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 2px 8px rgba(2,132,199,.14); }
 .workspace-tab.active::after { content:""; position:absolute; left:8px; right:8px; bottom:1px; height:2px; border-radius:999px; background:linear-gradient(90deg,#38bdf8,#60a5fa); box-shadow:0 0 8px rgba(56,189,248,.5); }
 .workspace-tab[hidden] { display:none; }
+.workspace-tab-divider { align-self:stretch; width:1px; margin:3px 2px; background:rgba(148,163,184,.24); }
+.workspace-shortcut { width:28px; min-width:28px; padding:4px 6px; justify-content:center; }
+.workspace-shortcut[aria-pressed='true'] { color:#f8fbff !important; border-color:rgba(96,165,250,.4); background:rgba(59,130,246,.22); }
 .feature-workspace { min-height:0; border:1px solid rgba(96,165,250,.3); border-radius:12px; overflow:hidden; background:#070a10; box-shadow:0 14px 38px rgba(0,0,0,.22); }
 .feature-workspace[hidden] { display:none; }
 .feature-workspace-frame { display:block; width:100%; height:100%; border:0; background:#070a10; }
@@ -15044,10 +14997,6 @@ body:not(.portrait-layout) .compact-runtime-controls .server-hardware-panel.top-
     z-index: 4401 !important;
 }
 
-.view-menu-row {
-    background: rgba(0, 0, 0, 0.52) !important;
-}
-
 body.agent-mode {
     --accent: #1d4ed8;
     --accent-2: #38bdf8;
@@ -15083,6 +15032,25 @@ body.agent-mode .stream-action {
     box-shadow: 0 18px 52px rgba(8, 18, 38, 0.54) !important;
 }
 
+body .shell .session-head-actions .project-toolbar-new {
+    color: #86efac !important;
+    border-color: rgba(74, 222, 128, 0.58) !important;
+    background: rgba(20, 83, 45, 0.42) !important;
+    font-size: 1rem;
+}
+body .shell .session-head-actions .project-toolbar-archive {
+    color: #fda4af !important;
+    border-color: rgba(251, 113, 133, 0.58) !important;
+    background: rgba(127, 29, 29, 0.42) !important;
+    font-size: 1rem;
+}
+body .shell .session-head-actions .project-toolbar-refresh {
+    color: #7dd3fc !important;
+    border-color: rgba(56, 189, 248, 0.58) !important;
+    background: rgba(7, 89, 133, 0.42) !important;
+    font-size: 0.92rem;
+}
+
 body.agent-mode .shell .session-list .session-item.active::after {
     background: linear-gradient(180deg, #7dd3fc, #2563eb 44%, #1e3a8a) !important;
     box-shadow: 0 0 22px rgba(59, 130, 246, 0.68) !important;
@@ -15112,10 +15080,6 @@ body.agent-mode .bg-swirl::after {
 
 body.agent-mode .model-picker .service-model-match {
     color: var(--accent-2) !important;
-}
-
-.view-menu-wrap {
-    display: block !important;
 }
 
 body:not(.portrait-layout) .session-panel-toggle,
@@ -15624,7 +15588,6 @@ body.agent-mode .shell :is(button, .attach, .retry-toggle, .voice-button, .voice
 
 .shell :is(input, select, textarea),
 .context-expander,
-.view-menu,
 .filesystem-menu,
 .token-rate-admin-panel,
 .goal-panel,
@@ -16019,9 +15982,9 @@ body:not(.agent-mode) .composer-attach-stack {
 .goal-panel{position:absolute;left:12px;bottom:calc(100% + 10px);z-index:180;width:min(440px,calc(100% - 24px));box-sizing:border-box;padding:16px;border:1px solid rgba(125,211,252,.34);border-radius:16px;background:rgba(8,18,36,.97);box-shadow:0 24px 70px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(20px) saturate(1.18);display:grid;gap:10px}.goal-panel[hidden]{display:none}.goal-panel-head,.goal-options,.goal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.goal-panel-head{justify-content:space-between}.goal-panel-title{display:flex;align-items:center;gap:9px}.goal-panel-close{width:30px;height:30px;min-height:30px;padding:0;border-radius:8px}.goal-panel textarea{width:100%;min-height:58px;resize:vertical;box-sizing:border-box;border:1px solid var(--border);border-radius:9px;padding:9px;background:rgba(2,6,23,.78);color:inherit}.goal-options small,.goal-stage-summary{color:var(--muted);font-size:12px}.goal-actions button{min-width:92px}.chat-mode-button.goal-mode-button[aria-expanded="true"]{border-color:#7dd3fc;background:rgba(14,165,233,.24);box-shadow:0 0 0 1px rgba(125,211,252,.18),0 8px 24px rgba(2,132,199,.2)}.plan-mode .goal-panel{border-color:#a78bfa}@media(max-width:720px){.goal-panel{position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;max-height:calc(100dvh - 24px);overflow:auto}}.plan-clarification{padding:12px;border:1px solid #8b5cf6;border-radius:12px;margin:8px 0}.plan-clarification button{margin:4px}.plan-card{padding:14px;border:1px solid #8b5cf6;border-radius:14px;background:rgba(76,29,149,.15)}
 .alignment-strip{position:fixed;left:0;right:0;top:0;height:3px;z-index:10031;border:0;padding:0;background:#64748b;cursor:pointer;overflow:visible;transition:top .32s ease,bottom .32s ease,background .32s ease,box-shadow .32s ease}.alignment-strip::after{content:"↓";position:absolute;left:50%;top:3px;width:58px;height:25px;display:grid;place-items:center;border:1px solid rgba(148,163,184,.36);border-top:0;border-radius:0 0 12px 12px;color:#f8fafc;background:rgba(5,12,25,.94);box-shadow:0 9px 24px rgba(0,0,0,.32);font:900 14px/1 var(--ui-font);transform:translate(-50%,-110%);opacity:0;transition:transform .22s ease,opacity .22s ease}.alignment-strip:not(.evil):not(.locked):hover::after,.alignment-strip:not(.evil):not(.locked):focus-visible::after,body.alignment-drawer-open .alignment-strip::after{transform:translate(-50%,0);opacity:1}.alignment-strip.good{background:linear-gradient(90deg,#ff315f,#ffcf3f,#35e27a,#20c8ff,#875cff,#ff45d4,#ff315f);background-size:240% 100%;animation:alignment-rgb 8s linear infinite;box-shadow:0 0 12px rgba(70,220,255,.7)}.alignment-strip.evil,.alignment-strip.locked{top:auto;bottom:0;background:linear-gradient(90deg,#050000,#6f0000,#ef233c,#250000,#050000);box-shadow:0 -2px 14px rgba(255,0,30,.52)}.alignment-strip.evil::after,.alignment-strip.locked::after{content:"↑";top:auto;bottom:3px;border-top:1px solid rgba(239,35,60,.4);border-bottom:0;border-radius:12px 12px 0 0;transform:translate(-50%,110%)}.alignment-strip.evil:hover::after,.alignment-strip.evil:focus-visible::after{transform:translate(-50%,0);opacity:1}.alignment-strip.locked{height:5px}@keyframes alignment-rgb{to{background-position:240% 0}}.alignment-panel{position:fixed;z-index:10030;top:12px;right:12px;width:min(360px,calc(100vw - 24px));display:grid;gap:8px;padding:12px;border:1px solid rgba(148,163,184,.28);border-radius:13px;background:rgba(4,10,22,.96);box-shadow:0 18px 60px rgba(0,0,0,.55);font:12px var(--ui-font)}.alignment-panel[hidden]{display:none}.alignment-panel.evil,.alignment-panel.locked{top:auto;bottom:12px;border-color:rgba(239,35,60,.42);background:linear-gradient(145deg,rgba(31,0,4,.98),rgba(4,0,0,.98))}.alignment-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.alignment-score{font-weight:900;letter-spacing:.05em}.alignment-copy,.alignment-features{color:var(--muted);line-height:1.45}body.alignment-drawer-open{--alignment-drawer-height:148px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){top:0;left:0;right:0;width:auto;min-height:122px;box-sizing:border-box;grid-template-columns:minmax(180px,.7fr) repeat(3,minmax(160px,1fr));align-items:center;padding:18px 32px 24px;border-width:0 0 1px;border-radius:0 0 16px 16px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:122px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked)::after{content:"↑"}body.alignment-drawer-open .shell{margin-top:calc(10px + var(--alignment-drawer-height));height:calc(100vh - 20px - var(--alignment-drawer-height))}.shell{transition:opacity 140ms ease,margin-top .32s ease,height .32s ease}.alignment-feature-highlight{outline:1px solid rgba(80,220,255,.72)!important;box-shadow:0 0 14px rgba(125,92,255,.28)!important}.alignment-hidden{display:none!important}body.alignment-evil .shell{filter:saturate(.62)}body.alignment-evil{background-color:#090000}body.alignment-locked .shell,body.alignment-locked>.remote-admin-sticker{visibility:hidden;pointer-events:none}.alignment-lock-screen{position:fixed;inset:0;z-index:10010;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 35%,#410008 0,#100002 42%,#020000 100%);color:#fff}.alignment-lock-screen[hidden]{display:none}.alignment-lock-card{width:min(620px,100%);padding:28px;border:1px solid rgba(255,54,81,.55);border-radius:18px;background:rgba(8,0,1,.9);box-shadow:0 28px 90px #000;text-align:center}.alignment-lock-quote{font:900 clamp(1.2rem,3vw,2rem)/1.25 var(--ui-font);color:#ff8798}.alignment-lock-message{margin-top:12px;color:#f1c9cf;line-height:1.55}@media(max-width:820px),(hover:none),(pointer:coarse){.alignment-strip:not(.evil):not(.locked)::after{transform:translate(-50%,0);opacity:1}.alignment-panel{width:calc(100vw - 20px);right:10px}.alignment-panel:not(.evil):not(.locked){grid-template-columns:1fr!important;padding:14px 18px 22px!important;min-height:168px!important}body.alignment-drawer-open{--alignment-drawer-height:194px}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:168px}}@media(prefers-reduced-motion:reduce){.alignment-strip.good{animation:none}.alignment-strip,.alignment-strip::after,.shell{transition:none!important}}
 .alignment-traits{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.alignment-trait{display:flex;justify-content:space-between;gap:8px;padding:5px 7px;border:1px solid rgba(148,163,184,.16);border-radius:7px;background:rgba(148,163,184,.06);color:#cbd5e1}.alignment-trait.bad{border-color:rgba(239,68,68,.18);background:rgba(127,29,29,.09)}.alignment-trait-score{font-weight:900;color:#f8fafc}.alignment-footer{display:flex;justify-content:space-between;gap:12px;align-items:end;color:#718096;font-size:10px;line-height:1.35}.alignment-model{white-space:nowrap;color:#64748b}.alignment-panel.evil{width:min(560px,calc(100vw - 24px));max-height:min(72vh,520px);overflow:auto}.alignment-panel.evil .alignment-traits{grid-template-columns:repeat(2,minmax(0,1fr))}.alignment-panel.evil .alignment-footer{align-items:start;flex-direction:column}.alignment-panel.evil .alignment-model{white-space:normal}body.alignment-drawer-open{--alignment-drawer-height:290px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){min-height:262px;grid-template-columns:minmax(180px,.7fr) repeat(2,minmax(180px,1fr));align-content:start}body.alignment-drawer-open .alignment-traits,body.alignment-drawer-open .alignment-footer{grid-column:1/-1}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:262px}@media(max-width:820px),(hover:none),(pointer:coarse){.alignment-traits{grid-template-columns:repeat(2,minmax(0,1fr));max-height:230px;overflow:auto}.alignment-footer{align-items:start;flex-direction:column}.alignment-model{white-space:normal}body.alignment-drawer-open{--alignment-drawer-height:456px}body.alignment-drawer-open .alignment-panel:not(.evil):not(.locked){min-height:430px!important;max-height:430px;overflow:auto}body.alignment-drawer-open .alignment-strip:not(.evil):not(.locked){top:430px}}
-/* One switch language across Web Chat: red is off, blue is on. */
-.shell input[type="checkbox"]:not(.jackhammer-input),
-.login-gate input[type="checkbox"]:not(.jackhammer-input) {
+/* Pill switches are reserved for toggle settings, never list selection. */
+.shell input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox),
+.login-gate input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox) {
     position: relative !important;
     display: inline-block;
     flex: 0 0 30px !important;
@@ -16038,8 +16001,8 @@ body:not(.agent-mode) .composer-attach-stack {
     vertical-align: middle;
     cursor: pointer;
 }
-.shell input[type="checkbox"]:not(.jackhammer-input)::before,
-.login-gate input[type="checkbox"]:not(.jackhammer-input)::before {
+.shell input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox)::before,
+.login-gate input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox)::before {
     content: "";
     position: absolute;
     top: 2px;
@@ -16052,19 +16015,60 @@ body:not(.agent-mode) .composer-attach-stack {
     transform: translateX(0);
     transition: transform 140ms ease;
 }
-.shell input[type="checkbox"]:not(.jackhammer-input):checked,
-.login-gate input[type="checkbox"]:not(.jackhammer-input):checked {
+.shell input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox):checked,
+.login-gate input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox):checked {
     background: #2563eb !important;
 }
-.shell input[type="checkbox"]:not(.jackhammer-input):checked::before,
-.login-gate input[type="checkbox"]:not(.jackhammer-input):checked::before {
+.shell input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox):checked::before,
+.login-gate input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox):checked::before {
     transform: translateX(14px) !important;
     background: #fff;
 }
-.shell input[type="checkbox"]:not(.jackhammer-input):disabled,
-.login-gate input[type="checkbox"]:not(.jackhammer-input):disabled {
+.shell input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox):disabled,
+.login-gate input[type="checkbox"]:not(.jackhammer-input):not(.session-select-checkbox):not(.solution-select-checkbox):disabled {
     opacity: .45;
     cursor: not-allowed;
+}
+/* List selection uses square checkboxes that inherit the active UI theme. */
+.shell :is(.session-select-checkbox, .solution-select-checkbox) {
+    display: grid !important;
+    place-items: center;
+    flex: 0 0 18px !important;
+    width: 18px !important;
+    min-width: 18px;
+    height: 18px !important;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--adaptive-button-border) !important;
+    border-radius: 4px !important;
+    color: var(--fluent-accent-text);
+    background: rgba(2, 6, 23, .72) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(2, 6, 23, .34) !important;
+    cursor: pointer;
+    transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, opacity 140ms ease, transform 140ms ease, filter 140ms ease;
+}
+.shell :is(.session-select-checkbox, .solution-select-checkbox)::before {
+    content: "";
+    width: 8px;
+    height: 4px;
+    border-left: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-1px) rotate(-45deg) scale(0);
+    transform-origin: center;
+    transition: transform 120ms ease;
+}
+.shell :is(.session-select-checkbox, .solution-select-checkbox):checked {
+    border-color: var(--adaptive-button-border) !important;
+    background: var(--adaptive-button-b) !important;
+    box-shadow: 0 0 0 1px var(--adaptive-line), 0 5px 14px var(--adaptive-button-shadow) !important;
+}
+.shell :is(.session-select-checkbox, .solution-select-checkbox):checked::before {
+    transform: translateY(-1px) rotate(-45deg) scale(1);
+}
+.shell :is(.session-select-checkbox, .solution-select-checkbox):focus-visible {
+    outline: 2px solid rgba(186, 230, 253, .92);
+    outline-offset: 2px;
 }
 .shell :is(.retry-toggle, .voice-toggle) {
     position: relative;
@@ -16331,17 +16335,6 @@ body:not(.agent-mode) .composer-attach-stack {
                     </div>
                 </div>
             </nav>
-            <div id="viewMenuWrap" class="view-menu-wrap">
-                <button id="viewMenuToggle" class="ghost view-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">Options</button>
-                <div id="viewMenu" class="view-menu" role="menu" hidden>
-                    <label class="view-menu-row" role="menuitemcheckbox"><input id="sessionPanelToggle" type="checkbox" aria-controls="sessionSidebar">Projects</label>
-                    <label class="view-menu-row" role="menuitemcheckbox"><input id="solutionPanelToggle" type="checkbox" aria-controls="solutionExplorer">Files</label>
-                    <label class="view-menu-row" role="menuitemcheckbox"><input id="commentsPanelToggle" type="checkbox" aria-controls="shareComments">Comments</label>
-                    <button id="memoryPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Memory</button>
-                    <button id="dreamPanelToggle" class="view-menu-row view-menu-button" role="menuitem" type="button">Dreaming</button>
-                    <button id="menuComposerOptions" class="view-menu-row view-menu-button" role="menuitem" type="button">Composer Settings</button>
-                </div>
-            </div>
             <div class="app-menu" data-app-menu>
                 <button type="button" aria-haspopup="menu" aria-expanded="false">Help</button>
                 <div class="app-menu-popup" role="menu" hidden>
@@ -16353,16 +16346,39 @@ body:not(.agent-mode) .composer-attach-stack {
                     <button id="menuAbout" type="button" role="menuitem">About / System Information</button>
                 </div>
             </div>
-            <nav id="workspaceTabStrip" class="workspace-tab-strip" aria-label="Workstation views" role="tablist">
-                <button id="workspaceChatTab" class="workspace-tab active" type="button" role="tab" data-workspace-view="chat" aria-controls="chatWorkspace" aria-selected="true" title="Chat">
-                    <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H10l-5 3v-12a2 2 0 0 1 2-2z"></path><path d="M9 11h6M9 14h4"></path></svg><span>Chat</span>
-                </button>
-                <button id="workspaceBuilderTab" class="workspace-tab" type="button" role="tab" data-workspace-view="builder" aria-controls="featureWorkspace" aria-selected="false" tabindex="-1" title="Agent Builder" hidden>
-                    <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="M8.4 11.1 15.6 7M8.4 12.9l7.2 4.1"></path></svg><span>Agent Builder</span>
-                </button>
-                <button id="workspaceSqlTab" class="workspace-tab" type="button" role="tab" data-workspace-view="sql" aria-controls="featureWorkspace" aria-selected="false" tabindex="-1" title="SQL Manager" hidden>
-                    <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"></path></svg><span>SQL Manager</span>
-                </button>
+            <nav id="workspaceTabStrip" class="workspace-tab-strip" aria-label="Workstation controls">
+                <div class="workspace-view-tabs" role="tablist" aria-label="Workstation views">
+                    <button id="workspaceChatTab" class="workspace-tab active" type="button" role="tab" data-workspace-view="chat" aria-controls="chatWorkspace" aria-selected="true" title="Chat">
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H10l-5 3v-12a2 2 0 0 1 2-2z"></path><path d="M9 11h6M9 14h4"></path></svg><span>Chat</span>
+                    </button>
+                    <button id="workspaceBuilderTab" class="workspace-tab" type="button" role="tab" data-workspace-view="builder" aria-controls="featureWorkspace" aria-selected="false" tabindex="-1" title="Agent Builder" hidden>
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="M8.4 11.1 15.6 7M8.4 12.9l7.2 4.1"></path></svg><span>Agent Builder</span>
+                    </button>
+                    <button id="workspaceSqlTab" class="workspace-tab" type="button" role="tab" data-workspace-view="sql" aria-controls="featureWorkspace" aria-selected="false" tabindex="-1" title="SQL Manager" hidden>
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"></path></svg><span>SQL Manager</span>
+                    </button>
+                </div>
+                <span class="workspace-tab-divider" role="separator" aria-hidden="true"></span>
+                <div class="workspace-shortcuts" role="group" aria-label="Workspace shortcuts">
+                    <button id="sessionPanelToggle" class="workspace-tab workspace-shortcut" type="button" aria-controls="sessionSidebar" aria-expanded="true" aria-pressed="true" aria-label="Projects" title="Projects">
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l2 2h9v9.5h-17z"></path><path d="M3.5 7.5V5h6l2 2h9v2.5"></path></svg>
+                    </button>
+                    <button id="solutionPanelToggle" class="workspace-tab workspace-shortcut" type="button" aria-controls="solutionExplorer" aria-expanded="true" aria-pressed="true" aria-label="Files" title="Files">
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6z"></path><path d="M14 3.5v4h4M9 12h6M9 16h6"></path></svg>
+                    </button>
+                    <button id="commentsPanelToggle" class="workspace-tab workspace-shortcut" type="button" aria-controls="shareComments" aria-expanded="true" aria-pressed="true" aria-label="Comments" title="Comments">
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H10l-5 3z"></path><path d="M8.5 9.5h7M8.5 12.5h5"></path></svg>
+                    </button>
+                    <button id="memoryPanelToggle" class="workspace-tab workspace-shortcut" type="button" aria-haspopup="dialog" aria-label="Memory" title="Memory">
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5.5A3 3 0 0 0 6 8.5a3.2 3.2 0 0 0 .7 2A3.5 3.5 0 0 0 8 17.2V19h4V6.5A2.5 2.5 0 0 0 9.5 4 2.6 2.6 0 0 0 9 5.5Z"></path><path d="M15 5.5a3 3 0 0 1 3 3 3.2 3.2 0 0 1-.7 2 3.5 3.5 0 0 1-1.3 6.7V19h-4V6.5A2.5 2.5 0 0 1 14.5 4a2.6 2.6 0 0 1 .5 1.5ZM8 10h4M12 14h4"></path></svg>
+                    </button>
+                    <button id="dreamPanelToggle" class="workspace-tab workspace-shortcut" type="button" aria-haspopup="dialog" aria-label="Dreaming" title="Dreaming">
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 15.5A8 8 0 0 1 8.5 5a8 8 0 1 0 10.5 10.5Z"></path><path d="M17.5 4v3M16 5.5h3"></path></svg>
+                    </button>
+                    <button id="menuComposerOptions" class="workspace-tab workspace-shortcut" type="button" aria-controls="generationSettingsPanel" aria-haspopup="true" aria-label="Composer Settings" title="Composer Settings">
+                        <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 12h3M11 12h9M4 17h8M16 17h4"></path><circle cx="16" cy="7" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="14" cy="17" r="2"></circle></svg>
+                    </button>
+                </div>
             </nav>
             <button id="diagnosticsToggle" class="ghost topbar-diagnostics-button" type="button" aria-controls="diagnosticsBackdrop" aria-expanded="false" title="Errors and diagnosis">!</button>
             <span id="diagnosticCount" class="diagnostic-count" role="status" aria-label="Unread errors" hidden>0</span>
@@ -16437,9 +16453,9 @@ body:not(.agent-mode) .composer-attach-stack {
                 <div class="session-head-actions">
                     <span id="sessionLoadingThrobber" class="rgb-panel-throbber" aria-hidden="true" hidden></span>
                     <span id="sessionCountPill" class="session-count-pill" title="Saved project count">0</span>
-                    <button id="refreshSessions" class="ghost panel-refresh" type="button" title="Refresh projects" aria-label="Refresh projects">R</button>
-                    <button id="showArchivedProjects" class="ghost" type="button" title="Show archived projects">A</button>
-                    <button id="newProject" class="ghost" type="button" title="New project">P+</button>
+                    <button id="refreshSessions" class="ghost panel-refresh project-toolbar-refresh" type="button" title="Refresh projects" aria-label="Refresh projects">&#x21BB;</button>
+                    <button id="showArchivedProjects" class="ghost project-toolbar-archive" type="button" title="Show archived projects" aria-label="Show archived projects">&minus;</button>
+                    <button id="newProject" class="ghost project-toolbar-new" type="button" title="New project" aria-label="New project">+</button>
                     <button id="newSession" class="ghost" type="button" title="New chat in selected project">+</button>
                 </div>
             </div>
@@ -16806,6 +16822,7 @@ body:not(.agent-mode) .composer-attach-stack {
         </label>
         <div class="prompt-wrap">
             <textarea id="prompt" placeholder="Type a message. Shift+Enter makes a new line."></textarea>
+            <button id="steerPrompt" class="composer-steer-action" type="button" title="Apply this draft to the response currently running" hidden>Steer</button>
             <div id="promptIntellisense" class="intellisense-panel" role="listbox" aria-label="Prompt completions"></div>
         </div>
         <div id="composerModelControls" class="composer-model-controls" aria-label="Model controls">
@@ -17209,7 +17226,7 @@ const alignmentTraits = document.getElementById('alignmentTraits');
 const alignmentRecovery = document.getElementById('alignmentRecovery');
 const alignmentModel = document.getElementById('alignmentModel');
 const alignmentLockScreen = document.getElementById('alignmentLockScreen');
-let alignmentState = { score: 0, tier: 'Neutral', theme: 'neutral', edge: 'top', characterTraits: {}, assessmentModel: '', checksAndBalancesStatus: 'waiting-for-dream', checksAndBalancesDreamId: '', checksAndBalancesCompletedUtc: '', disabledFeatures: [], highlightedFeatures: [], dreamsEnabled: true, locked: false, lastReason: 'Every Hero chooses a path.', recoveryGuidance: 'You can only help others after you help yourself.' };
+let alignmentState = { score: 0, tier: 'Neutral', theme: 'neutral', edge: 'top', characterTraits: {}, assessmentModel: '', checksAndBalancesStatus: 'waiting-for-dream', checksAndBalancesDreamId: '', checksAndBalancesCompletedUtc: '', checksAndBalancesError: '', checksAndBalancesRetryCount: 0, checksAndBalancesNextRetryUtc: '', checksAndBalancesService: '', checksAndBalancesAttemptedModel: '', disabledFeatures: [], highlightedFeatures: [], dreamsEnabled: true, locked: false, lastReason: 'Every Hero chooses a path.', recoveryGuidance: 'You can only help others after you help yourself.' };
 let alignmentLoreIndex = 0;
 let alignmentEdgeTouchStartY = null;
 let alignmentPanelTouchStartY = null;
@@ -17229,6 +17246,7 @@ const loginError = document.getElementById('loginError');
 const loginSubtitle = document.getElementById('loginSubtitle');
 const form = document.getElementById('composer');
 const prompt = document.getElementById('prompt');
+const steerPrompt = document.getElementById('steerPrompt');
 const goalPanel = document.getElementById('goalPanel');
 const goalPanelClose = document.getElementById('goalPanelClose');
 const goalObjective = document.getElementById('goalObjective');
@@ -17307,9 +17325,6 @@ const showArchivedProjects = document.getElementById('showArchivedProjects');
 const seedSession = document.getElementById('seedSession');
 const downloadSessionZip = document.getElementById('downloadSessionZip');
 const sessionCountPill = document.getElementById('sessionCountPill');
-const viewMenuWrap = document.getElementById('viewMenuWrap');
-const viewMenuToggle = document.getElementById('viewMenuToggle');
-const viewMenu = document.getElementById('viewMenu');
 const appMenus = Array.from(document.querySelectorAll('[data-app-menu]'));
 const menuNewProject = document.getElementById('menuNewProject');
 const menuSeedSession = document.getElementById('menuSeedSession');
@@ -17965,6 +17980,7 @@ let remoteActiveStreamState = null;
 let remoteActiveSessionRecoveryInFlight = new Set();
 let activeSessionPollTimer = 0;
 let activeSessionPollInFlight = false;
+let sessionListPollingRenderDeferred = false;
 let sharedSessionPollTimer = 0;
 let sharedSessionPollInFlight = false;
 let sharedSessionFingerprint = '';
@@ -18500,6 +18516,7 @@ let activeStreamId = '';
 let activeStreamState = null;
 let localActiveStreamIds = new Map();
 const localActiveStreamIdTtlMs = 120000;
+const sessionSaveChains = new Map();
 let lmStudioConnectionState = 'connecting';
 let heartbeatInterval = 0;
 let heartbeatBeatTimer = 0;
@@ -18511,6 +18528,7 @@ let serverHardwareInFlight = false;
 let queuedPrompts = [];
 let queuedPromptIdCounter = 0;
 let isProcessingQueue = false;
+let promptQueueKickTimer = 0;
 let stoppedPromptSessionIds = new Set();
 let locallyStoppedPromptSessionIds = new Set();
 let lastPromptReplay = null;
@@ -19520,7 +19538,9 @@ function applyAlignmentSnapshot(snapshot) {
     if (alignmentRecovery) alignmentRecovery.textContent = alignmentState.recoveryGuidance || 'You can only help others after you help yourself.';
     if (alignmentModel) {
         const checksStatus = String(alignmentState.checksAndBalancesStatus || 'waiting-for-dream');
-        alignmentModel.textContent = alignmentState.assessmentModel
+        alignmentModel.textContent = checksStatus === 'retry-pending'
+            ? 'Checks and Balances will retry'+(alignmentState.checksAndBalancesAttemptedModel?' with '+alignmentState.checksAndBalancesAttemptedModel:'')+(alignmentState.checksAndBalancesNextRetryUtc?' after '+new Date(alignmentState.checksAndBalancesNextRetryUtc).toLocaleString():'')
+            : alignmentState.assessmentModel
             ? 'Checks and Balances completed by ' + alignmentState.assessmentModel
             : checksStatus === 'running'
                 ? 'Checks and Balances is reading the completed Dream'
@@ -19572,11 +19592,12 @@ function setAlignmentDrawerOpen(open) {
     }
 }
 
-if (alignmentStrip) alignmentStrip.addEventListener('click', () => {
+if (alignmentStrip) alignmentStrip.addEventListener('click', async () => {
     if (alignmentTouchConsumed) {
         alignmentTouchConsumed = false;
         return;
     }
+    await loadAlignment().catch(() => { });
     setAlignmentDrawerOpen(alignmentPanel ? alignmentPanel.hidden : true);
 });
 
@@ -20276,9 +20297,9 @@ if (workspaceTabStrip) {
     workspaceTabStrip.addEventListener('keydown', event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         const visibleTabs = workspaceTabs.filter(tab => !tab.hidden);
-        if (!visibleTabs.length) return;
+        if (!visibleTabs.length || !visibleTabs.includes(document.activeElement)) return;
         event.preventDefault();
-        const currentIndex = Math.max(0, visibleTabs.indexOf(document.activeElement));
+        const currentIndex = visibleTabs.indexOf(document.activeElement);
         const nextIndex = event.key === 'Home' ? 0
             : event.key === 'End' ? visibleTabs.length - 1
             : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + visibleTabs.length) % visibleTabs.length;
@@ -22521,10 +22542,16 @@ function updatePromptUsage(parts, event) {
             ? 'Tokens ' + formatInteger(meter.remaining) + ' left'
             : 'Tokens ' + formatInteger(meter.visibleBalance);
     const delta = Number(event.tokenDelta || 0);
+    parts.promptTokensUsed = Math.max(0, Number(parts.promptTokensUsed || 0)) + Math.max(0, delta);
+    const promptTokensUsed = Math.max(0, Number(parts.promptTokensUsed || 0));
+    const loadedPromptTokens = Math.max(0, Number(event.promptTokensLoaded || event.prompt_tokens_loaded || parts.promptTokensLoaded || 0));
+    const totalPromptTokens = Math.max(0, Number(event.promptTokensTotal || event.prompt_tokens_total || parts.promptTokensTotal || 0));
     const gpuDelta = Math.max(0, Number(event.gpuSecondsDelta || 0));
     parts.promptGpuSeconds = Math.max(0, Number(parts.promptGpuSeconds || 0)) + gpuDelta;
     const gpuSeconds = Math.max(0, Number(parts.promptGpuSeconds || 0));
     const pieces = [
+        '<span class="prompt-token-delta">' + formatInteger(promptTokensUsed) + ' tokens this prompt</span>',
+        totalPromptTokens > 0 ? '<span>Input ' + formatInteger(Math.min(loadedPromptTokens, totalPromptTokens)) + '/' + formatInteger(totalPromptTokens) + '</span>' : '',
         tokenMeterText ? '<span>' + tokenMeterText + '</span>' : '',
         delta > 0 && tokensRequired ? '<span class="prompt-token-delta">+' + formatInteger(delta) + '</span>' : '',
         '<span class="prompt-cost-delta">&#9889; ' + formatUsd5(usage.electricityCostUsd || event.electricityCostUsd) + '</span>',
@@ -23133,6 +23160,8 @@ function finalizeStoppedActiveStream(streamState) {
     const content = streamState.answerContent || (streamState.reasoningContent ? '(stopped)' : '(stopped)');
     updateActiveStreamDisplay(streamState, content, streamState.reasoningContent || '', true);
     if (streamState.parts)
+        showAssistantContinuationPrompt(streamState.parts, 'Response was stopped before it finished. Continue from where it ended?');
+    if (streamState.parts)
         hidePromptProcessing(streamState.parts);
 }
 
@@ -23145,6 +23174,17 @@ function releaseActiveStream(streamState, streamId) {
         activeStreamState = null;
     if (!activeAbortController && !isProcessingQueue && queuedPrompts.length === 0)
         document.body.classList.remove('prompt-active');
+}
+
+function cancelActiveStreamReader(streamState) {
+    const reader = streamState && streamState.reader;
+    if (!reader || typeof reader.cancel !== 'function') return;
+    streamState.reader = null;
+    try {
+        const cancellation = reader.cancel();
+        if (cancellation && typeof cancellation.catch === 'function')
+            cancellation.catch(() => { });
+    } catch { }
 }
 
 function stopCurrentGeneration() {
@@ -23168,6 +23208,7 @@ function stopCurrentGeneration() {
     if (streamState.controller || activeAbortController) {
         try { (streamState.controller || activeAbortController).abort(); } catch { }
     }
+    cancelActiveStreamReader(streamState);
     finalizeStoppedActiveStream(streamState);
     releaseActiveStream(streamState, stopStreamId);
     setSendButtonStreaming(isProcessingQueue || queuedPrompts.length > 0);
@@ -23193,6 +23234,7 @@ function interruptCurrentGenerationForNext() {
     if (streamState.controller || activeAbortController) {
         try { (streamState.controller || activeAbortController).abort(); } catch { }
     }
+    cancelActiveStreamReader(streamState);
     setSendButtonStreaming(queuedPrompts.length > 0 || !!activeAbortController || isProcessingQueue);
     markLmStudioIdle(queuedPrompts.length > 0 ? 'Moving to the next queued prompt.' : 'LM Studio request was interrupted.');
 }
@@ -23251,7 +23293,20 @@ function setSendButtonStreaming(isStreaming) {
     updateStreamAction(isStreaming);
     refreshActivePromptProcessingActions();
     refreshQueuedPromptActions();
+    updateComposerSteeringAction();
     renderSessionList();
+}
+
+function updateComposerSteeringAction() {
+    if (!steerPrompt || !prompt) return;
+    const streamState = currentSessionStreamState();
+    const hasPlainTextDraft = hasTypedPromptText() && pendingImages.length === 0 && pendingFiles.length === 0 && !pendingMediaSource;
+    const canSteer = !sharedView && !!(streamState && streamState.connected && streamState.steeringEnabled && (streamState.streamId || activeStreamId)) && hasPlainTextDraft;
+    steerPrompt.hidden = !canSteer;
+    steerPrompt.disabled = !canSteer || steeringRequestInFlight;
+    const wrap = prompt.closest('.prompt-wrap');
+    if (wrap)
+        wrap.classList.toggle('steer-available', canSteer);
 }
 
 function retryUntilSuccessEnabled() {
@@ -25421,7 +25476,6 @@ function setTopPanelExpanded(panel, button, expanded) {
     if (!panel || !button) return;
     const allowed = !!expanded;
     if (allowed) {
-        setViewMenuOpen(false);
         collapseRuntimeTopPanels(panel);
         setAccessPanelVisible(false);
         setUsagePanelExpanded(false);
@@ -25689,7 +25743,6 @@ function setAccessPanelVisible(visible) {
     if (!headerControlsPanel || !accessPanelToggle) return;
     const allowed = !!visible && canOpenAccessPanel();
     if (allowed) {
-        setViewMenuOpen(false);
         collapseRuntimeTopPanels(null);
         setUsagePanelExpanded(false);
         setGenerationSettingsOpen(false);
@@ -25707,7 +25760,6 @@ function setUsagePanelExpanded(expanded) {
     if (!usagePanel || !usagePanelToggle) return;
     const allowed = !!expanded;
     if (allowed) {
-        setViewMenuOpen(false);
         collapseRuntimeTopPanels(null);
         setAccessPanelVisible(false);
         setGenerationSettingsOpen(false);
@@ -27224,6 +27276,23 @@ function downloadSolutionFile(entry) {
     anchor.remove();
 }
 
+async function revealSolutionFile(entry) {
+    if (!entry || !entry.path) return;
+    const response = await fetch('/api/chat-file-reveal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            path: entry.path,
+            kind: entry.kind || 'accessible',
+            sessionId: entry.sessionId || currentSessionId || ensureSessionId()
+        })
+    });
+    const data = await readJsonResponse(response, null);
+    if (!response.ok || !data || !data.ok)
+        throw new Error(data && data.error ? data.error : 'Show on disk failed: HTTP ' + response.status);
+    if (solutionExplorerStatus) solutionExplorerStatus.textContent = data.selected ? 'Selected on disk' : 'Opened folder on disk';
+}
+
 function canDeleteSolutionEntry(entry) {
     if (!entry || !entry.path || sharedView) return false;
     const entryKind = String(entry.kind || '').toLowerCase();
@@ -28381,6 +28450,9 @@ function createSolutionNodeActions(entry) {
     if (isDirectory) {
         menu.appendChild(createSolutionNodeMenuButton('↓', 'Download (Zip)', 'Download folder as zip', 'download-zip', () => downloadSolutionDirectoryZip(entry), false));
     } else if (isFile) {
+        menu.appendChild(createSolutionNodeMenuButton('O', 'Open', 'Open in the Web Chat file panel', 'open-file', () => openSolutionFile(entry), false));
+        if (entry.kind !== 'session')
+            menu.appendChild(createSolutionNodeMenuButton('↗', 'Show on disk', 'Show this local file in File Explorer', 'reveal-file', () => revealSolutionFile(entry), false));
         menu.appendChild(createSolutionNodeMenuButton('↓', 'Download file', 'Download file', 'download-file', () => downloadSolutionFile(entry), false));
     }
 
@@ -28982,7 +29054,7 @@ function clearEmpty() {
 function isMessagesNearEnd() {
     const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
     if (maxScroll <= 4) return true;
-    return list.scrollTop >= maxScroll * 0.9;
+    return list.scrollTop >= maxScroll * 0.95;
 }
 
 function scrollMessagesToEndIf(shouldScroll) {
@@ -29133,17 +29205,6 @@ function queuedPromptText(queuedTurn) {
     return stringifyMessageContent(queuedTurn.userContent || '').trim();
 }
 
-function queuedPromptCanSteer(queuedTurn) {
-    if (!queuedTurn || sharedView) return false;
-    const streamState = currentSessionStreamState();
-    if (!streamState || !streamState.connected || !streamState.jackhammerEnabled) return false;
-    if (!queuedPromptText(queuedTurn)) return false;
-    const hasAttachments = (Array.isArray(queuedTurn.images) && queuedTurn.images.length) ||
-        (Array.isArray(queuedTurn.files) && queuedTurn.files.length) ||
-        (Array.isArray(queuedTurn.uploadedFiles) && queuedTurn.uploadedFiles.length);
-    return !hasAttachments;
-}
-
 function clearQueuedPromptAction(queuedTurn, label) {
     const item = queuedTurn && queuedTurn.userItem;
     if (!item || !item.isConnected) return;
@@ -29169,7 +29230,6 @@ function clearQueuedPromptAction(queuedTurn, label) {
 function renderQueuedPromptAction(queuedTurn) {
     const item = queuedTurn && queuedTurn.userItem;
     if (!item || !item.isConnected) return;
-    const canSteer = queuedPromptCanSteer(queuedTurn);
 
     item.classList.add('queued-prompt');
     item.dataset.queueId = queuedTurn.queueId || '';
@@ -29191,19 +29251,6 @@ function renderQueuedPromptAction(queuedTurn) {
         editQueuedPrompt(queuedTurn.queueId);
     });
     actions.appendChild(editButton);
-    if (!canSteer) return;
-    const steerButton = document.createElement('button');
-    steerButton.type = 'button';
-    steerButton.className = 'queued-message-button queued-message-steer';
-    steerButton.textContent = 'Steer';
-    steerButton.title = 'Use this queued prompt to steer the running agent turn, then remove it from the queue';
-    steerButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        steerQueuedPrompt(queuedTurn.queueId)
-            .catch(error => addMessage('error', error && error.message ? error.message : String(error)));
-    });
-    actions.appendChild(steerButton);
 }
 
 function refreshQueuedPromptActions() {
@@ -29232,39 +29279,6 @@ function editQueuedPrompt(queueId) {
     scheduleDraftSessionSave();
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
     return true;
-}
-
-async function steerQueuedPrompt(queueId) {
-    const index = queuedPrompts.findIndex(item => item && item.queueId === queueId);
-    if (index < 0) return false;
-    const queuedTurn = queuedPrompts[index];
-    if (!queuedPromptCanSteer(queuedTurn)) return false;
-
-    queuedPrompts.splice(index, 1);
-    const item = queuedTurn.userItem;
-    if (item) {
-        const button = item.querySelector('.queued-message-steer');
-        if (button) {
-            button.disabled = true;
-            button.textContent = 'Steering';
-        }
-    }
-
-    try {
-        await steerCurrentAgentConversation(queuedPromptText(queuedTurn), {
-            skipUserMessage: true,
-            preservePrompt: true
-        });
-        clearQueuedPromptAction(queuedTurn, 'Steered');
-        refreshQueuedPromptBaseForSession(activeStreamState && activeStreamState.sessionContext);
-        updateContextToggleMeta();
-        setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
-        return true;
-    } catch (error) {
-        queuedPrompts.splice(Math.min(index, queuedPrompts.length), 0, queuedTurn);
-        renderQueuedPromptAction(queuedTurn);
-        throw error;
-    }
 }
 
 function setAssistantMessage(item, content, reasoning, fileChanges, toolCalls) {
@@ -29315,13 +29329,6 @@ function createAssistantParts(item) {
     promptStopButton.title = 'Stop this response and clear queued prompts for this chat';
     promptStopButton.hidden = true;
     promptControls.appendChild(promptStopButton);
-    const promptSteerButton = document.createElement('button');
-    promptSteerButton.type = 'button';
-    promptSteerButton.className = 'prompt-processing-control prompt-processing-action prompt-processing-steer';
-    promptSteerButton.textContent = 'Steer';
-    promptSteerButton.title = 'Inject the current prompt at the next safe agent break';
-    promptSteerButton.hidden = true;
-    promptControls.appendChild(promptSteerButton);
     const promptInterruptButton = document.createElement('button');
     promptInterruptButton.type = 'button';
     promptInterruptButton.className = 'prompt-processing-control prompt-processing-action prompt-processing-interrupt';
@@ -29373,6 +29380,24 @@ function createAssistantParts(item) {
     answer.className = 'answer';
     item.appendChild(answer);
 
+    const continuationPrompt = document.createElement('div');
+    continuationPrompt.className = 'assistant-continuation-prompt';
+    continuationPrompt.hidden = true;
+    const continuationText = document.createElement('span');
+    continuationText.textContent = 'Response may be incomplete. Continue from where it ended?';
+    const continuationButton = document.createElement('button');
+    continuationButton.type = 'button';
+    continuationButton.className = 'assistant-continuation-button';
+    continuationButton.textContent = 'Continue';
+    continuationButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        prepareAssistantContinuationPrompt(parts);
+    });
+    continuationPrompt.appendChild(continuationText);
+    continuationPrompt.appendChild(continuationButton);
+    item.appendChild(continuationPrompt);
+
     const fileChanges = document.createElement('div');
     fileChanges.className = 'assistant-file-changes';
     fileChanges.hidden = true;
@@ -29388,13 +29413,15 @@ function createAssistantParts(item) {
         promptUsage,
         promptControls,
         promptStopButton,
-        promptSteerButton,
         promptInterruptButton,
         details,
         pre,
         toolActivity,
         jackhammerRunCard,
         answer,
+        continuationPrompt,
+        continuationText,
+        continuationButton,
         fileChanges
     };
     wirePromptProcessingControls(parts);
@@ -30238,6 +30265,18 @@ function applyToolCallEvent(streamState, event) {
     streamState.toolCalls = mergeToolCallEvent(streamState.toolCalls, event);
     sessionToolCalls = mergeToolCallEvent(sessionToolCalls, event);
     const activityStatus = buildPromptStatusFromToolCall(event);
+    if (activityStatus) {
+        if (!streamState.activityReasoningKeys) streamState.activityReasoningKeys = new Set();
+        const activityKey = coerceString(event && event.id, '') + '|' + normalizeToolCallStatus(event && event.status) + '|' + activityStatus;
+        if (!streamState.activityReasoningKeys.has(activityKey)) {
+            streamState.activityReasoningKeys.add(activityKey);
+            const activityLine = 'Activity: ' + activityStatus;
+            streamState.activityReasoning = streamState.activityReasoning
+                ? streamState.activityReasoning + '\n' + activityLine
+                : activityLine;
+            updateActiveStreamDisplay(streamState, streamState.answerContent || '', mergeReasoningWithoutOverlap(streamState.reasoningContent || '', streamState.activityReasoning), false);
+        }
+    }
     const activityProgress = event && Number.isFinite(Number(event.progressPercent))
         ? Math.max(0, Math.min(1, Number(event.progressPercent) / 100))
         : null;
@@ -30395,7 +30434,7 @@ function normalizeFileChangeEntry(rawEntry, sessionId) {
     if (!path) return null;
     const entry = {
         type: 'file',
-        kind: 'session',
+        kind: coerceString(rawEntry.kind, rawEntry.isLocal === true ? 'accessible' : 'session'),
         sessionId: coerceString(sessionId, ''),
         path,
         previousPath,
@@ -30405,6 +30444,8 @@ function normalizeFileChangeEntry(rawEntry, sessionId) {
         additions: Math.max(0, Number(rawEntry.additions || rawEntry.linesAdded || 0) || 0),
         deletions: Math.max(0, Number(rawEntry.deletions || rawEntry.linesDeleted || 0) || 0),
         lineStatsAvailable: rawEntry.lineStatsAvailable === true || Number(rawEntry.additions || rawEntry.linesAdded || 0) > 0 || Number(rawEntry.deletions || rawEntry.linesDeleted || 0) > 0,
+        isLocal: rawEntry.isLocal === true || coerceString(rawEntry.kind, '').toLowerCase() === 'accessible',
+        canReveal: rawEntry.canReveal === true || rawEntry.isLocal === true || coerceString(rawEntry.kind, '').toLowerCase() === 'accessible',
         undoToken: coerceString(rawEntry.versionId || rawEntry.undoToken, ''),
         versionId: coerceString(rawEntry.versionId, ''),
         previewKind: 'text'
@@ -30461,6 +30502,7 @@ function bindFileChangeActionButton(button, file, action) {
     button.dataset.fileName = coerceString(file.name, fileNameFromPath(file.path, 'file'));
     button.dataset.fileExtension = coerceString(file.extension, extensionFromPath(file.path));
     button.dataset.filePreviewKind = coerceString(file.previewKind, inferPreviewKindFromFileEntry(file));
+    button.dataset.fileCanReveal = file.canReveal ? '1' : '0';
     if (!button.dataset.fileActionBound) {
         button.addEventListener('click', handleFileChangeDelegatedAction);
         button.dataset.fileActionBound = '1';
@@ -30481,6 +30523,8 @@ function fileChangeEntryFromActionButton(button) {
         extension: coerceString(button.dataset.fileExtension, extensionFromPath(path)),
         previewKind: coerceString(button.dataset.filePreviewKind, 'text')
     };
+    entry.canReveal = button.dataset.fileCanReveal === '1';
+    entry.isLocal = entry.canReveal;
     entry.previewKind = inferPreviewKindFromFileEntry(entry);
     return entry;
 }
@@ -30500,12 +30544,12 @@ function handleFileChangeDelegatedAction(event) {
     const file = fileChangeEntryFromActionButton(target);
     if (!file) return;
     const action = coerceString(target.dataset.fileAction, '');
-    if (action !== 'open' && action !== 'download') return;
+    if (action !== 'open' && action !== 'download' && action !== 'reveal') return;
     event.preventDefault();
     event.stopPropagation();
     const actionPromise = action === 'open'
-        ? (canOfferChatBrowserOpen(file) ? openSolutionFileInBrowser(file) : openSolutionFile(file))
-        : Promise.resolve(downloadSolutionFile(file));
+        ? openSolutionFile(file)
+        : (action === 'reveal' ? revealSolutionFile(file) : Promise.resolve(downloadSolutionFile(file)));
     if (actionPromise && actionPromise.catch) {
         actionPromise.catch(error => {
             addMessage('error', error && error.message ? error.message : String(error));
@@ -30703,7 +30747,7 @@ function updateAssistantFileChanges(parts, payload) {
 
     fileEntries.forEach((file, index) => {
         const row = document.createElement('div');
-        row.className = 'assistant-file-change-row';
+        row.className = 'assistant-file-change-row change-' + normalizeFileChangeKind(file.changeKind);
         if (index >= defaultVisibleCount)
             row.classList.add('assistant-file-change-extra');
         const fileLabel = document.createElement('div');
@@ -30721,14 +30765,19 @@ function updateAssistantFileChanges(parts, payload) {
         actions.className = 'assistant-file-change-actions';
         appendChangedFileStats(actions, file.additions, file.deletions, !!file.lineStatsAvailable);
         const canOpenChangedFile = normalizeFileChangeKind(file.changeKind) !== 'deleted';
-        const openButton = bindFileChangeActionButton(createFileChangeActionButton('Review', 'Review ' + file.name), file, 'open');
+        const openButton = bindFileChangeActionButton(createFileChangeActionButton('Open', 'Open ' + file.name + ' in the Web Chat file panel'), file, 'open');
         openButton.disabled = !canOpenChangedFile;
         actions.appendChild(openButton);
+        const revealButton = file.canReveal
+            ? bindFileChangeActionButton(createFileChangeActionButton('Show on disk', 'Show ' + file.name + ' in File Explorer'), file, 'reveal')
+            : null;
+        if (revealButton) actions.appendChild(revealButton);
         row.appendChild(fileLabel);
         row.appendChild(actions);
         list.appendChild(row);
         payload._buttons.push(openButton);
-        payload.fileRows.push({ row, buttons: [openButton] });
+        if (revealButton) payload._buttons.push(revealButton);
+        payload.fileRows.push({ row, buttons: [openButton].concat(revealButton ? [revealButton] : []) });
     });
     if (fileEntries.length > defaultVisibleCount) {
         const more = document.createElement('div');
@@ -30750,12 +30799,44 @@ function updateAssistantFileChanges(parts, payload) {
         setFileChangeButtonsBusy(payload, true);
 }
 
+function assistantContentRequestsContinuation(content) {
+    const text = normalizeDisplayText(content || '');
+    return /^\s*\(stopped\)\s*$/i.test(text) ||
+        /Retry stopped before a successful response\./i.test(text) ||
+        /Response (?:may be incomplete because the upstream stream closed|stopped because the model hit an output limit|stopped early \(`finish_reason:)/i.test(text);
+}
+
+function hideAssistantContinuationPrompt(parts) {
+    if (!parts || !parts.continuationPrompt) return;
+    parts.continuationPrompt.hidden = true;
+}
+
+function showAssistantContinuationPrompt(parts, message) {
+    if (!parts || !parts.continuationPrompt) return;
+    if (parts.continuationText)
+        parts.continuationText.textContent = message || 'Response may be incomplete. Continue from where it ended?';
+    parts.continuationPrompt.hidden = false;
+}
+
+function prepareAssistantContinuationPrompt(parts) {
+    if (!prompt) return;
+    const instruction = 'Continue the previous answer from exactly where it stopped. Do not repeat completed text.';
+    if (!prompt.value.trim())
+        prompt.value = instruction;
+    prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    prompt.focus();
+    if (parts && parts.continuationText)
+        parts.continuationText.textContent = 'Continuation is ready in the next prompt. Review it, then Send.';
+}
+
 function updateAssistantParts(parts, content, reasoning, isFinal) {
     const shouldScroll = isMessagesNearEnd();
     const cleanReasoning = repairRuntimeSpacingArtifacts(removeSerializedChatStreamControlEvents(stripToolPlanningMarkupForDisplay(normalizeDisplayText(reasoning || '')))).trim();
     const cleanContent = sanitizeToolTranscriptForDisplay(content || '');
     const hasAnswerOutput = !!normalizeDisplayText(cleanContent).trim();
     const shouldPinThinkingScroll = shouldStickThinkingScroll(parts && parts.pre);
+    if (!isFinal)
+        hideAssistantContinuationPrompt(parts);
     if (isFinal)
         hidePromptProcessing(parts);
     else {
@@ -30781,6 +30862,12 @@ function updateAssistantParts(parts, content, reasoning, isFinal) {
     updateMessageCopyButton(parts.host, shouldOfferMessageCopy('assistant', assistantCopyText), assistantCopyText, 'Copy response text');
     if (isFinal)
         updateAssistantFileChanges(parts, parts._pendingFileChanges);
+    if (isFinal) {
+        if (assistantContentRequestsContinuation(cleanContent))
+            showAssistantContinuationPrompt(parts, 'The model could not finish automatically. Continue from where it ended?');
+        else
+            hideAssistantContinuationPrompt(parts);
+    }
     if (isFinal)
         markLiveChanged(parts.host, 0);
     refreshBrowserMiniChat();
@@ -30812,23 +30899,16 @@ function updatePromptProcessingActions(parts) {
     const streamState = currentSessionStreamState();
     const active = !!(streamState && streamState.parts === parts && !parts.promptProcessingRetired);
     const draftAvailable = hasDraftPromptContent();
-    const typedText = hasTypedPromptText();
-    const draftHasAttachments = pendingImages.length > 0 || pendingFiles.length > 0 || !!pendingMediaSource;
-    const jackhammerRun = !sharedView && !!(streamState && streamState.connected && streamState.jackhammerEnabled);
-    const canSteer = active && jackhammerRun && typedText && !draftHasAttachments;
-    const canInterrupt = active && draftAvailable && !canSteer;
+    const canInterrupt = active && draftAvailable;
     if (parts.promptStopButton) {
         parts.promptStopButton.hidden = !active;
         parts.promptStopButton.disabled = !active;
-    }
-    if (parts.promptSteerButton) {
-        parts.promptSteerButton.hidden = !canSteer;
-        parts.promptSteerButton.disabled = !canSteer;
     }
     if (parts.promptInterruptButton) {
         parts.promptInterruptButton.hidden = !canInterrupt;
         parts.promptInterruptButton.disabled = !canInterrupt;
     }
+    updateComposerSteeringAction();
 }
 
 function refreshActivePromptProcessingActions() {
@@ -30847,14 +30927,6 @@ function wirePromptProcessingControls(parts) {
             event.preventDefault();
             event.stopPropagation();
             stopCurrentGeneration();
-        });
-    }
-    if (parts.promptSteerButton) {
-        parts.promptSteerButton.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            steerCurrentAgentConversation(prompt.value)
-                .catch(error => addMessage('error', error && error.message ? error.message : String(error)));
         });
     }
     if (parts.promptInterruptButton) {
@@ -30876,17 +30948,18 @@ function showPromptProcessing(parts) {
     updatePromptProcessingActions(parts);
 }
 
-const assistantLiveRenderIntervalMs = 15;
+const assistantLiveRenderIntervalMs = 40;
 
 function scheduleAssistantContentRender(parts, content, isFinal, shouldScroll) {
     if (!parts || !parts.answer) return;
     const nextContent = String(content || '');
     if (isFinal) {
+        const keepPinned = shouldScroll && isMessagesNearEnd();
         window.clearTimeout(parts.answerRenderTimer);
         parts.answerRenderTimer = 0;
         parts.pendingAnswerContent = nextContent;
         renderAssistantContentIfChanged(parts.answer, nextContent);
-        scrollMessagesToEndIf(shouldScroll);
+        scrollMessagesToEndIf(keepPinned);
         return;
     }
 
@@ -30900,8 +30973,9 @@ function scheduleAssistantContentRender(parts, content, isFinal, shouldScroll) {
     parts.answerRenderTimer = window.setTimeout(() => {
         parts.answerRenderTimer = 0;
         parts.lastAnswerRenderAt = window.performance && window.performance.now ? window.performance.now() : Date.now();
+        const keepPinned = shouldScroll && isMessagesNearEnd();
         renderAssistantStreamingContentIfChanged(parts.answer, parts.pendingAnswerContent || '');
-        scrollMessagesToEndIf(shouldScroll);
+        scrollMessagesToEndIf(keepPinned);
     }, delay);
 }
 
@@ -30927,16 +31001,12 @@ function renderAssistantStreamingContentIfChanged(container, markdown) {
         return;
     container.dataset.renderedMarkdown = next;
     container.dataset.renderMode = 'stream';
-    let fallback = container.firstElementChild;
-    if (!fallback || !fallback.classList || !fallback.classList.contains('assistant-streaming-text')) {
-        fallback = document.createElement('div');
-        fallback.className = 'assistant-streaming-text';
-        fallback.style.whiteSpace = 'pre-wrap';
-        fallback.style.overflowWrap = 'anywhere';
-        container.replaceChildren(fallback);
+    try {
+        renderAssistantContent(container, next);
+    } catch (error) {
+        console.warn('Streaming Markdown render failed; showing plaintext fallback.', error);
+        renderAssistantPlainTextFallback(container, next);
     }
-    if (fallback.textContent !== next)
-        fallback.textContent = next;
 }
 
 function renderAssistantPlainTextFallback(container, text) {
@@ -31945,6 +32015,15 @@ function splitPlainReasoningHeadings(content, reasoning) {
     const source = normalizeDisplayText(content || '');
     const existingReasoning = normalizeDisplayText(reasoning || '');
     if (!source.trim()) return { content: source.trim(), reasoning: existingReasoning.trim() };
+    const responseBoundary = /(?:^|\n)\s*\[\s*end\s+of\s+(?:response|answer)\s*\]\s*(?:\n|$)/i.exec(source);
+    if (responseBoundary) {
+        const before = source.slice(0, responseBoundary.index);
+        const after = source.slice(responseBoundary.index + responseBoundary[0].length);
+        if (looksSubstantiveAssistantAnswer(before)) {
+            const parts = [existingReasoning.trim(), after.trim()].filter(Boolean);
+            return { content: before.trimEnd(), reasoning: parts.join('\n\n') };
+        }
+    }
     const heading = /(?:^|\n)\s*(?:\*\*)?\s*(thought\s+process|chain\s+of\s+thought|reasoning|analysis|thinking)\s*:?\s*(?:\*\*)?\s*(?:\n|$)/ig;
     let match;
     while ((match = heading.exec(source)) !== null) {
@@ -33931,6 +34010,21 @@ function refreshQueuedPromptBaseForSession(sessionContext) {
     });
 }
 
+function kickPromptQueue() {
+    if (isProcessingQueue || queuedPrompts.length === 0 || promptQueueKickTimer)
+        return;
+    promptQueueKickTimer = window.setTimeout(() => {
+        promptQueueKickTimer = 0;
+        if (isProcessingQueue || queuedPrompts.length === 0)
+            return;
+        processPromptQueue().catch(error => {
+            addClientDiagnostic('Prompt queue', error && error.message ? error.message : String(error), { retryable: true, status: 'queue_failed' });
+            if (queuedPrompts.length > 0)
+                kickPromptQueue();
+        });
+    }, 0);
+}
+
 function queuePromptTurn(turn) {
     const sessionId = ensureSessionId();
     const queuedAfterStop = isQueueStopRequestedForSession(sessionId) || isSessionLocallyStopped(sessionId);
@@ -33955,7 +34049,7 @@ function queuePromptTurn(turn) {
         saveSessionSnapshot(sessionId, inferSessionTitle(sessionSnapshot), queuedTurn.model, sessionSnapshot, baseFiles, getPromptDraftText())
             .catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     }
-    processPromptQueue();
+    kickPromptQueue();
     setSendButtonStreaming(true);
 }
 
@@ -34151,8 +34245,12 @@ function finalizeFailedAssistantPlaceholder(item, error) {
 
 function finalizeStoppedRetry(item) {
     const parts = item && item._assistantParts ? item._assistantParts : null;
-    if (parts)
-        updateAssistantParts(parts, 'Retry stopped before a successful response.', '', true);
+    if (parts) {
+        const partialContent = getAssistantAnswerMarkdown(parts) || 'Retry stopped before a successful response.';
+        const partialReasoning = parts.pre ? parts.pre.textContent || '' : '';
+        updateAssistantParts(parts, partialContent, partialReasoning, true);
+        showAssistantContinuationPrompt(parts, 'Response was stopped before it finished. Continue from where it ended?');
+    }
 }
 
 function resendLastPrompt() {
@@ -34168,8 +34266,8 @@ async function steerCurrentAgentConversation(text, options) {
     const steering = (text || '').trim();
     const streamState = currentSessionStreamState();
     if (!steering || !streamState || !(streamState.streamId || activeStreamId)) return false;
-    if (!streamState.jackhammerEnabled) throw Object.assign(new Error('Steering is available only during a JackHammer run.'), { code: 'jackhammer_required' });
-    if (!streamState.connected) throw Object.assign(new Error('Wait for the JackHammer stream to connect before steering.'), { code: 'stream_not_ready' });
+    if (!streamState.steeringEnabled) throw Object.assign(new Error('Steering is not available for this kind of response.'), { code: 'steering_unavailable' });
+    if (!streamState.connected) throw Object.assign(new Error('Wait for the response stream to connect before steering.'), { code: 'stream_not_ready' });
 
     const steeringId = options.steeringId || ('steer_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10));
     const submittedPromptValue = prompt ? prompt.value : '';
@@ -34206,7 +34304,7 @@ async function steerCurrentAgentConversation(text, options) {
         saveCurrentSession(true).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     }
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0);
-    setLmStudioStatus('connecting', 'Steering accepted and will apply at the next JackHammer break.');
+    setLmStudioStatus('connecting', 'Steering accepted and will be applied to this response.');
     return true;
 }
 
@@ -34218,9 +34316,9 @@ async function steerComposerImmediately() {
     try {
         return await steerCurrentAgentConversation(steering);
     } catch (error) {
-        addClientDiagnostic('Agent steering', error.message || String(error), { retryable: true, status: error.code || 'failed' });
-        if (error.code === 'stream_closed') {
-            setLmStudioStatus('connecting', 'The Agent stream closed; your direction was queued as the next prompt.');
+        addClientDiagnostic('Response steering', error.message || String(error), { retryable: true, status: error.code || 'failed' });
+        if (error.code === 'stream_closed' || error.code === 'stream_not_ready') {
+            setLmStudioStatus('connecting', 'The response stream could not accept steering; your direction was queued as the next prompt.');
             await sendMessage();
             return false;
         }
@@ -34228,6 +34326,7 @@ async function steerComposerImmediately() {
         return false;
     } finally {
         steeringRequestInFlight = false;
+        updateComposerSteeringAction();
     }
 }
 
@@ -34482,8 +34581,8 @@ async function processPromptQueue() {
         isProcessingQueue = false;
         setSendButtonStreaming(queuedPrompts.length > 0 || activeAbortController);
         prompt.focus();
-        if (queuedPrompts.length > 0 && !activeAbortController)
-            processPromptQueue();
+        if (queuedPrompts.length > 0)
+            kickPromptQueue();
         else if (!activeAbortController)
             markLmStudioIdle('LM Studio is reachable and idle.');
     }
@@ -34521,10 +34620,13 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
         sessionId: streamSessionId,
         sessionContext,
         controller,
+        reader: null,
         item: pending,
         parts,
         answerContent: '',
         reasoningContent: '',
+        activityReasoning: '',
+        activityReasoningKeys: new Set(),
         fileChanges: null,
         toolCalls: [],
         progress: null,
@@ -34533,6 +34635,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
         status: '',
         connected: false,
         jackhammerEnabled: jackhammerForRun,
+        steeringEnabled: !sharedView && !isMediaGenerationService(selectedService()),
         final: false
     };
     activeStreamState = streamState;
@@ -34566,6 +34669,7 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
         setLmStudioStatus('connected', 'Model runtime stream is connected.');
 
         const reader = response.body.getReader();
+        streamState.reader = reader;
         const decoder = new TextDecoder('utf-8', { fatal: false });
         let buffer = '';
         let done = false;
@@ -34631,7 +34735,8 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             if (!suppressReasoning)
                 explicitReasoning += extractReasoningFromStreamEvent(event);
             const split = splitThinkTags(rawContent);
-            const reasoning = suppressReasoning ? '' : mergeReasoningWithoutOverlap(explicitReasoning, split.reasoning);
+            const modelReasoning = suppressReasoning ? '' : mergeReasoningWithoutOverlap(explicitReasoning, split.reasoning);
+            const reasoning = mergeReasoningWithoutOverlap(modelReasoning, streamState.activityReasoning || '');
             updateActiveStreamDisplay(streamState, split.content, reasoning, false);
             return false;
         };
@@ -34654,7 +34759,8 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             handleStreamEventLine(buffer);
 
         const finalSplit = splitThinkTags(rawContent);
-        const finalReasoning = suppressReasoning ? '' : mergeReasoningWithoutOverlap(explicitReasoning, finalSplit.reasoning);
+        const finalModelReasoning = suppressReasoning ? '' : mergeReasoningWithoutOverlap(explicitReasoning, finalSplit.reasoning);
+        const finalReasoning = mergeReasoningWithoutOverlap(finalModelReasoning, streamState.activityReasoning || '');
         const finalContent = buildAssistantFinalContent(finalSplit.content, getAssistantAnswerMarkdown(parts), finalReasoning, streamState);
         updateActiveStreamDisplay(streamState, finalContent, finalReasoning, true);
         if (streamState.parts)
@@ -34689,6 +34795,8 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             if (streamState.parts)
                 streamState.parts._pendingFileChanges = null;
             updateActiveStreamDisplay(streamState, stoppedContent, stoppedReasoning, true);
+            if (streamState.parts)
+                showAssistantContinuationPrompt(streamState.parts, 'Response was stopped before it finished. Continue from where it ended?');
             markLmStudioIdle('Model runtime request was stopped.');
         } else {
             const recoveredContent = await tryRecoverCompletedAssistantFromSavedSession(error, sessionContext, streamState);
@@ -34700,6 +34808,8 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
         }
         throw error;
     } finally {
+        streamState.connected = false;
+        streamState.reader = null;
         if (activeAbortController === controller) activeAbortController = null;
         if (activeStreamId === streamId) activeStreamId = '';
         if (activeStreamState && activeStreamState.streamId === streamId) activeStreamState = null;
@@ -34713,6 +34823,8 @@ async function streamAssistantTurn(turnMessages, saveToHistory, uploadedFiles, s
             if (currentSessionId === streamSessionId)
                 loadSolutionExplorer().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
         }
+        if (queuedPrompts.length > 0)
+            kickPromptQueue();
     }
 }
 
@@ -35627,7 +35739,6 @@ function setMemoryPanelVisible(visible) {
     if (!memoryBackdrop) return;
     memoryBackdrop.classList.toggle('visible', !!visible);
     if (visible) {
-        setViewMenuOpen(false);
         loadChatMemories();
         window.setTimeout(() => {
             if (memoryInput) memoryInput.focus();
@@ -35732,35 +35843,6 @@ async function clearChatMemories() {
     }
 }
 
-function setViewMenuOpen(open) {
-    const allowed = !!open;
-    if (allowed) {
-        collapseRuntimeTopPanels(null);
-        setAccessPanelVisible(false);
-        setUsagePanelExpanded(false);
-    }
-    if (viewMenuWrap) viewMenuWrap.classList.toggle('open', allowed);
-    if (viewMenuToggle) viewMenuToggle.setAttribute('aria-expanded', allowed ? 'true' : 'false');
-    if (viewMenu) {
-        viewMenu.hidden = !allowed;
-        if (allowed) {
-            positionViewMenu();
-            window.requestAnimationFrame(positionViewMenu);
-        }
-    }
-}
-
-function positionViewMenu() {
-    if (!viewMenu || !viewMenuToggle || !viewMenuWrap || !viewMenuWrap.classList.contains('open') || viewMenu.hidden) return;
-    const rect = viewMenuToggle.getBoundingClientRect();
-    const width = Math.min(240, Math.max(176, window.innerWidth - 16));
-    const left = clampNumber(rect.right - width, 8, Math.max(8, window.innerWidth - width - 8), 8);
-    const top = clampNumber(rect.bottom + 8, 8, Math.max(8, window.innerHeight - 72), rect.bottom + 8);
-    viewMenu.style.setProperty('--view-menu-left', left + 'px');
-    viewMenu.style.setProperty('--view-menu-top', top + 'px');
-    viewMenu.style.setProperty('--view-menu-width', width + 'px');
-}
-
 function updateEdgePanelToggle(button, open, label) {
     if (!button) return;
     const action = open ? 'Hide ' : 'Show ';
@@ -35770,23 +35852,20 @@ function updateEdgePanelToggle(button, open, label) {
     button.title = action + label;
 }
 
-function syncViewMenuState() {
+function syncWorkspaceShortcutState() {
     if (sessionPanelToggle) {
-        sessionPanelToggle.checked = !!sessionsPanelOpen;
         sessionPanelToggle.setAttribute('aria-expanded', sessionsPanelOpen ? 'true' : 'false');
-        sessionPanelToggle.setAttribute('aria-checked', sessionsPanelOpen ? 'true' : 'false');
+        sessionPanelToggle.setAttribute('aria-pressed', sessionsPanelOpen ? 'true' : 'false');
         sessionPanelToggle.title = sessionsPanelOpen ? 'Hide projects' : 'Show projects';
     }
     if (solutionPanelToggle) {
-        solutionPanelToggle.checked = !!solutionExplorerOpen;
         solutionPanelToggle.setAttribute('aria-expanded', solutionExplorerOpen ? 'true' : 'false');
-        solutionPanelToggle.setAttribute('aria-checked', solutionExplorerOpen ? 'true' : 'false');
+        solutionPanelToggle.setAttribute('aria-pressed', solutionExplorerOpen ? 'true' : 'false');
         solutionPanelToggle.title = solutionExplorerOpen ? 'Hide files' : 'Show files';
     }
     if (commentsPanelToggle) {
-        commentsPanelToggle.checked = !commentsCollapsed;
         commentsPanelToggle.setAttribute('aria-expanded', commentsCollapsed ? 'false' : 'true');
-        commentsPanelToggle.setAttribute('aria-checked', commentsCollapsed ? 'false' : 'true');
+        commentsPanelToggle.setAttribute('aria-pressed', commentsCollapsed ? 'false' : 'true');
         commentsPanelToggle.title = commentsCollapsed ? 'Show comments' : 'Hide comments';
     }
     updateEdgePanelToggle(sessionPanelEdgeToggle, sessionsPanelOpen, 'sessions');
@@ -35835,7 +35914,7 @@ function setSolutionExplorerOpen(open, options) {
     solutionExplorerOpen = !!open && !sharedView;
     if (document.body)
         document.body.classList.toggle('solution-panel-open', solutionExplorerOpen);
-    syncViewMenuState();
+    syncWorkspaceShortcutState();
     if (!options || options.save !== false)
         saveWebUiLayoutPatch({ solutionExplorerOpen });
 }
@@ -36054,7 +36133,7 @@ function applyShareStateFromSession(session) {
 function setSessionsPanelOpen(open, options) {
     sessionsPanelOpen = !!open && !sharedView;
     document.body.classList.toggle('sessions-panel-open', sessionsPanelOpen);
-    syncViewMenuState();
+    syncWorkspaceShortcutState();
     if (!options || options.save !== false)
         saveWebUiLayoutPatch({ sessionsPanelOpen });
 }
@@ -36587,7 +36666,7 @@ function setCommentsCollapsed(collapsed) {
     if (workspace) workspace.classList.toggle('comments-collapsed', commentsCollapsed);
     if (shareComments) shareComments.classList.toggle('collapsed', commentsCollapsed);
     document.body.classList.toggle('comments-panel-open', !commentsCollapsed);
-    syncViewMenuState();
+    syncWorkspaceShortcutState();
     if (commentsToggle) {
         commentsToggle.textContent = commentsCollapsed ? 'C' : 'x';
         commentsToggle.title = commentsCollapsed ? 'Expand comments' : 'Collapse comments';
@@ -37296,6 +37375,21 @@ async function saveSessionSnapshot(sessionId, title, model, sessionMessages, fil
         payload.promptTokenBudget = contextBudget;
     if (isSessionTitleLocked(sessionId))
         payload.titleLocked = true;
+
+    const previousSave = sessionSaveChains.get(sessionId) || Promise.resolve();
+    const currentSave = previousSave
+        .catch(() => { })
+        .then(() => persistSessionSnapshotPayload(sessionId, payload));
+    sessionSaveChains.set(sessionId, currentSave);
+    try {
+        return await currentSave;
+    } finally {
+        if (sessionSaveChains.get(sessionId) === currentSave)
+            sessionSaveChains.delete(sessionId);
+    }
+}
+
+async function persistSessionSnapshotPayload(sessionId, payload) {
     const response = await fetch('/api/chat-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -37795,9 +37889,70 @@ async function loadActiveSessions() {
         });
     }
     renderSharedPromptQueue();
-    renderSessionList();
+    renderSessionListFromPolling();
     renderRemoteActiveSessionForCurrentSession();
     setSendButtonStreaming(!!activeAbortController || isProcessingQueue || queuedPrompts.length > 0 || activeChatSessions.length > 0);
+}
+
+function sessionListContainsFocus() {
+    const active = document.activeElement;
+    return !!(sessionList && active && active !== document.body && sessionList.contains(active));
+}
+
+function renderSessionListFromPolling() {
+    if (sessionListContainsFocus()) {
+        sessionListPollingRenderDeferred = true;
+        return false;
+    }
+    sessionListPollingRenderDeferred = false;
+    renderSessionList();
+    return true;
+}
+
+function captureSessionListFocus() {
+    const active = document.activeElement;
+    if (!sessionList || !active || active === document.body || !sessionList.contains(active)) return null;
+    const sessionItem = active.closest ? active.closest('.session-item[data-session-id]') : null;
+    const projectGroup = active.closest ? active.closest('.project-group[data-project-id]') : null;
+    return {
+        element: active,
+        sessionId: sessionItem && sessionItem.dataset ? sessionItem.dataset.sessionId || '' : '',
+        projectId: projectGroup && projectGroup.dataset ? projectGroup.dataset.projectId || '' : '',
+        ariaLabel: active.getAttribute ? active.getAttribute('aria-label') || '' : '',
+        title: active.getAttribute ? active.getAttribute('title') || '' : '',
+        tagName: active.tagName || '',
+        inputType: active.type || '',
+        className: typeof active.className === 'string' ? active.className : '',
+        selectionStart: typeof active.selectionStart === 'number' ? active.selectionStart : null,
+        selectionEnd: typeof active.selectionEnd === 'number' ? active.selectionEnd : null
+    };
+}
+
+function restoreSessionListFocus(snapshot) {
+    if (!snapshot || !sessionList) return;
+    let target = snapshot.element && snapshot.element.isConnected ? snapshot.element : null;
+    let scope = sessionList;
+    if (!target && snapshot.sessionId) {
+        scope = Array.from(sessionList.querySelectorAll('.session-item[data-session-id]'))
+            .find(item => item.dataset.sessionId === snapshot.sessionId) || sessionList;
+    } else if (!target && snapshot.projectId) {
+        scope = Array.from(sessionList.querySelectorAll('.project-group[data-project-id]'))
+            .find(group => group.dataset.projectId === snapshot.projectId) || sessionList;
+    }
+    if (!target) {
+        const candidates = Array.from(scope.querySelectorAll('button, input, textarea, select, [tabindex]'));
+        target = candidates.find(candidate =>
+            (!snapshot.ariaLabel || candidate.getAttribute('aria-label') === snapshot.ariaLabel) &&
+            (!snapshot.title || candidate.getAttribute('title') === snapshot.title) &&
+            (!snapshot.tagName || candidate.tagName === snapshot.tagName) &&
+            (!snapshot.inputType || candidate.type === snapshot.inputType) &&
+            (!snapshot.className || candidate.className === snapshot.className)) || null;
+    }
+    if (!target || typeof target.focus !== 'function') return;
+    try { target.focus({ preventScroll: true }); } catch { target.focus(); }
+    if (snapshot.selectionStart !== null && typeof target.setSelectionRange === 'function') {
+        try { target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd); } catch { }
+    }
 }
 
 function startActiveSessionPolling() {
@@ -39057,6 +39212,7 @@ function buildProjectGroups(visibleSessions, sessionItems, query) {
 
 function renderSessionList() {
     if (!sessionList) return;
+    const focusSnapshot = captureSessionListFocus();
     updateApplicationMenuState();
     updateSessionsLoadingUi();
     updateSessionDownloadButton();
@@ -39097,6 +39253,7 @@ function renderSessionList() {
         updateSessionBulkBar();
         const message = sessionsLoading ? 'Loading sessions' : 'Session list is still loading';
         sessionList.replaceChildren(createPanelLoadingRow(message, 'session-empty loading'));
+        restoreSessionListFocus(focusSnapshot);
         return;
     }
     if (!chatSessions.length && !chatProjects.length) {
@@ -39111,6 +39268,7 @@ function renderSessionList() {
         empty.appendChild(detail);
         sessionList.replaceChildren(empty);
         appendSessionPageControl();
+        restoreSessionListFocus(focusSnapshot);
         return;
     }
     const projectQueryMatch = query && chatProjects.some(project => project && (archivedProjectsVisible || !project.archived) && [project.name, project.workspaceRoot].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()));
@@ -39128,6 +39286,7 @@ function renderSessionList() {
         empty.appendChild(detail);
         sessionList.replaceChildren(empty);
         appendSessionPageControl();
+        restoreSessionListFocus(focusSnapshot);
         return;
     }
 
@@ -39326,6 +39485,7 @@ function renderSessionList() {
     sessionList.replaceChildren(...buildProjectGroups(visibleSessions, nextItems, query));
     appendSessionPageControl();
     syncSessionSelectionUi();
+    restoreSessionListFocus(focusSnapshot);
 }
 
 function appendSessionPageControl() {
@@ -41556,6 +41716,16 @@ if (refreshSessions) {
         loadSessions(false).catch(error => addMessage('error', error && error.message ? error.message : String(error)));
     });
 }
+if (sessionList) {
+    sessionList.addEventListener('focusout', () => {
+        if (!sessionListPollingRenderDeferred) return;
+        window.setTimeout(() => {
+            if (!sessionListPollingRenderDeferred || sessionListContainsFocus()) return;
+            sessionListPollingRenderDeferred = false;
+            renderSessionList();
+        }, 0);
+    });
+}
 if (sessionSearch) {
     sessionSearch.addEventListener('input', () => {
         sessionSearchQuery = sessionSearch.value || '';
@@ -41586,22 +41756,9 @@ document.querySelectorAll('.session-regex-help [data-regex]').forEach(button => 
         renderSessionList();
     });
 });
-if (viewMenuToggle) {
-    viewMenuToggle.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        setViewMenuOpen(!(viewMenuWrap && viewMenuWrap.classList.contains('open')));
-    });
-}
-if (viewMenu) {
-    viewMenu.addEventListener('click', event => {
-        event.stopPropagation();
-    });
-}
 if (memoryPanelToggle) {
     memoryPanelToggle.addEventListener('click', event => {
         event.preventDefault();
-        event.stopPropagation();
         setMemoryPanelVisible(true);
     });
 }
@@ -41627,25 +41784,20 @@ if (memoryBackdrop) {
             setMemoryPanelVisible(false);
     });
 }
-window.addEventListener('resize', positionViewMenu);
-window.addEventListener('scroll', positionViewMenu, true);
 if (sessionPanelToggle)
-    sessionPanelToggle.addEventListener('change', () => setSessionsPanelOpen(!!sessionPanelToggle.checked));
+    sessionPanelToggle.addEventListener('click', () => setSessionsPanelOpen(!sessionsPanelOpen));
 if (solutionPanelToggle)
-    solutionPanelToggle.addEventListener('change', () => setSolutionExplorerOpen(!!solutionPanelToggle.checked));
+    solutionPanelToggle.addEventListener('click', () => setSolutionExplorerOpen(!solutionExplorerOpen));
 if (sessionPanelEdgeToggle)
     sessionPanelEdgeToggle.addEventListener('click', () => {
-        setViewMenuOpen(false);
         setSessionsPanelOpen(!sessionsPanelOpen);
     });
 if (solutionPanelEdgeToggle)
     solutionPanelEdgeToggle.addEventListener('click', () => {
-        setViewMenuOpen(false);
         setSolutionExplorerOpen(!solutionExplorerOpen);
     });
 if (commentsPanelEdgeToggle)
     commentsPanelEdgeToggle.addEventListener('click', () => {
-        setViewMenuOpen(false);
         setCommentsCollapsed(!commentsCollapsed);
     });
 if (deleteSelectedSessions)
@@ -41689,8 +41841,8 @@ if (commentsToggle) {
     });
 }
 if (commentsPanelToggle) {
-    commentsPanelToggle.addEventListener('change', () => {
-        setCommentsCollapsed(!commentsPanelToggle.checked);
+    commentsPanelToggle.addEventListener('click', () => {
+        setCommentsCollapsed(!commentsCollapsed);
     });
 }
 if (shareVisibility) {
@@ -41821,9 +41973,6 @@ document.addEventListener('click', event => {
     }
     if (usagePanel && usagePanel.classList.contains('usage-expanded') && !usagePanel.contains(event.target)) {
         setUsagePanelExpanded(false);
-    }
-    if (viewMenuWrap && viewMenuWrap.classList.contains('open') && !viewMenuWrap.contains(event.target)) {
-        setViewMenuOpen(false);
     }
 });
 window.addEventListener('resize', () => {
@@ -42374,6 +42523,13 @@ prompt.addEventListener('input', () => {
     scheduleDraftSessionSave();
     updateContextToggleMeta();
 });
+if (steerPrompt) {
+    steerPrompt.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        steerComposerImmediately();
+    });
+}
 prompt.addEventListener('mouseup', savePromptInputHeight);
 prompt.addEventListener('blur', savePromptInputHeight);
 
@@ -42403,13 +42559,7 @@ prompt.addEventListener('keydown', event => {
 
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
-        const streamState = currentSessionStreamState();
-        const canSteerNow = !!(streamState && streamState.connected && streamState.jackhammerEnabled && (streamState.streamId || activeStreamId)) &&
-            pendingImages.length === 0 && pendingFiles.length === 0 && !pendingMediaSource;
-        if (canSteerNow)
-            steerComposerImmediately();
-        else
-            sendMessage();
+        sendMessage();
     }
 });
 
@@ -42531,7 +42681,11 @@ if (workstationOptionsSave) workstationOptionsSave.addEventListener('click', () 
         updateWorkstationOptionsDirtyState();
     });
 });
-if (menuComposerOptions && generationSettingsToggle) menuComposerOptions.addEventListener('click', () => generationSettingsToggle.click());
+if (menuComposerOptions) menuComposerOptions.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleGenerationSettings();
+});
 const webOnboardingStorageKey = 'jackllm.onboarding.web.v1';
 const webHints = [
     'Projects group related sessions; moving a session does not duplicate its files.',
@@ -42843,7 +42997,7 @@ const dreamUi = {
     owner: document.getElementById('dreamOwner'), enabled: document.getElementById('dreamEnabled'), preset: document.getElementById('dreamPreset'), resources: document.getElementById('dreamResources'), permissions: document.getElementById('dreamPermissions'),
     fields: { startCpuPercent:'dreamStartCpu', pauseCpuPercent:'dreamPauseCpu', startRamPercent:'dreamStartRam', pauseRamPercent:'dreamPauseRam', startGpuPercent:'dreamStartGpu', pauseGpuPercent:'dreamPauseGpu', startVramPercent:'dreamStartVram', pauseVramPercent:'dreamPauseVram', startDiskPercent:'dreamStartDisk', pauseDiskPercent:'dreamPauseDisk', recurrenceMinutes:'dreamRecurrence', maxRunMinutes:'dreamMaxRun', tokenBudget:'dreamTokenBudget', sourceTokenBudget:'dreamSourceBudget', sessionsPerPass:'dreamSessions' }
 };
-let dreamSettings = null, dreamRecommendedSettings = null, dreamDirty = false, dreamPollTimer = 0, dreamLoadInFlight = false, dreamPermissionSaveChain = Promise.resolve(), dreamHardwarePromptShown = false;
+let dreamSettings = null, dreamRecommendedSettings = null, dreamDirty = false, dreamPollTimer = 0, dreamLoadInFlight = false, dreamPermissionSaveChain = Promise.resolve(), dreamHardwarePromptShown = false, lastDreamAlignmentRefreshKey = '';
 const dreamPermissionEdits = new Map();
 const dreamPresetValues = {
     conservative:{startCpuPercent:35,pauseCpuPercent:65,startRamPercent:65,pauseRamPercent:82,startGpuPercent:30,pauseGpuPercent:70,startVramPercent:55,pauseVramPercent:82,startDiskPercent:35,pauseDiskPercent:75},
@@ -42881,13 +43035,30 @@ async function maybePromptDreamHardwareRecommendation(){
         if(dreamUi.backdrop.classList.contains('visible')&&!dreamDirty)await loadDreamUi(true);
     }catch{dreamHardwarePromptShown=false;}
 }
-function renderDreamStatus(status){ const bits=[status.status||'unknown',status.phase||'',status.limitingResource||'',status.queuePosition?'queue '+status.queuePosition:'',status.nextRunUtc?'next '+new Date(status.nextRunUtc).toLocaleString():''].filter(Boolean); dreamUi.status.textContent=bits.join(' · '); const r=status.resources||{}; dreamUi.resources.textContent='CPU '+Number(r.cpuPercent||0).toFixed(0)+'% · RAM '+Number(r.ramPercent||0).toFixed(0)+'% · GPU '+Number(r.gpuPercent||0).toFixed(0)+'% · VRAM '+Number(r.vramPercent||0).toFixed(0)+'% · Disk '+Number(r.diskPercent||0).toFixed(0)+'% · processed '+Number(status.processedSessions||0)+' sessions / '+Number(status.processedMessages||0)+' messages'+(status.lastError?' · '+status.lastError:''); }
+function renderDreamStatus(status){ const bits=[status.status||'unknown',status.phase||'',status.limitingResource||'',status.queuePosition?'queue '+status.queuePosition:'',status.backfillPending?'historical catch-up pending':'',status.alignmentRetryCount?'alignment retry '+status.alignmentRetryCount:'',status.nextRunUtc?'next '+new Date(status.nextRunUtc).toLocaleString():''].filter(Boolean); dreamUi.status.textContent=bits.join(' · '); const r=status.resources||{}; const source='eligible '+Number(status.eligibleSessions||0)+' / readable '+Number(status.readableSessions||0)+' / empty '+Number(status.emptySessions||0)+' / unavailable '+Number(status.unavailableSessions||0); const route=[status.resolvedService,status.resolvedModel].filter(Boolean).join(' / '); dreamUi.resources.textContent='CPU '+Number(r.cpuPercent||0).toFixed(0)+'% · RAM '+Number(r.ramPercent||0).toFixed(0)+'% · GPU '+Number(r.gpuPercent||0).toFixed(0)+'% · VRAM '+Number(r.vramPercent||0).toFixed(0)+'% · Disk '+Number(r.diskPercent||0).toFixed(0)+'% · '+source+' · processed '+Number(status.processedSessions||0)+' sessions / '+Number(status.processedMessages||0)+' messages'+(route?' · '+route:'')+(status.noWorkReason?' · '+status.noWorkReason:'')+(status.failureStage?' · failed at '+status.failureStage:'')+(status.lastError?' · '+status.lastError:''); }
+function maybeRefreshAlignmentAfterDream(status){const key=[status.lastRunUtc||'',status.status||'',status.alignmentRetryCount||0,status.alignmentNextRetryUtc||''].join('|');if(key===lastDreamAlignmentRefreshKey)return;if(status.status==='completed'||status.status==='completed-with-source-errors'||status.status==='alignment-retry'){lastDreamAlignmentRefreshKey=key;loadAlignment().catch(()=>{});}}
 function renderDreamPermissions(data){ dreamUi.permissions.textContent=''; const p=data&&data.permissions||{}; const rows=[['Internet search','internetSearch','dreamInternetSearch'],['VS tools','vsCopilotTools','dreamVsCopilotTools'],['Agent','agentAccess','dreamAgentAccess'],['Terminal','terminalCommands','dreamTerminalCommands'],['Uploads','fileUploads','dreamFileUploads'],['Images','imageUploads','dreamImageUploads'],['Downloads','fileDownloads','dreamFileDownloads'],['FTP','ftpServer','dreamFtpServer'],['PC Access','pcAccess','dreamPcAccess']]; rows.forEach(([label,base,dream])=>{const wrap=document.createElement('label');wrap.className='permission-row';const box=document.createElement('input');box.type='checkbox';box.checked=dreamPermissionEdits.has(dream)?!!dreamPermissionEdits.get(dream):!!p[dream];box.disabled=!data.canManageOwners||!p[base]||(base==='terminalCommands'&&!p.terminalForeverApproved);box.addEventListener('change',()=>{const next=box.checked;dreamPermissionEdits.set(dream,next);setDreamSaved('Saving permissions...',false);dreamPermissionSaveChain=dreamPermissionSaveChain.then(()=>dreamFetch('/api/dream-permissions',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(dreamOwnerBody({[dream]:next}))})).then(()=>setDreamSaved('Permissions saved',false)).catch(error=>{if(dreamPermissionEdits.get(dream)===next){dreamPermissionEdits.delete(dream);box.checked=!!p[dream];}setDreamSaved(error.message,true);});});wrap.append(box,document.createTextNode(label+(p[base]?'':' (base permission off)')));dreamUi.permissions.appendChild(wrap);}); }
-function renderDreamJournal(entries) { dreamUi.journal.textContent=''; if(!entries.length){dreamUi.journal.innerHTML='<div class="memory-empty">No dreams recorded yet.</div>';return;} entries.forEach(entry=>{const row=document.createElement('div');row.className='memory-row';const details=document.createElement('details');const summary=document.createElement('summary');summary.className='memory-text';summary.textContent=(entry.summary||'Dream')+' ('+(entry.status||'unknown')+') · '+Number(entry.processedSessions||0)+' sessions / '+Number(entry.processedMessages||0)+' messages';details.appendChild(summary);const meta=document.createElement('div');meta.className='memory-meta';meta.textContent=(entry.createdUtc?new Date(entry.createdUtc).toLocaleString():'')+(entry.rawReflection?' · Reflection retained':'');details.appendChild(meta);if(entry.rawReflection){const raw=document.createElement('pre');raw.className='memory-meta';raw.textContent=entry.rawReflection;details.appendChild(raw);} (entry.toolAudit||[]).forEach(tool=>{const audit=document.createElement('div');audit.className='memory-meta';audit.textContent=tool;details.appendChild(audit);});(entry.candidates||[]).forEach(candidate=>{const text=document.createElement('div');text.className='memory-text';text.textContent=candidate.text+' · '+candidate.disposition+' · '+Math.round(Number(candidate.confidence||0)*100)+'%';details.appendChild(text);if(candidate.candidateType==='memory-conflict'){const stale=document.createElement('div');stale.className='memory-meta';stale.textContent='Stale: '+(candidate.staleMemoryText||'');details.appendChild(stale);}if(candidate.disposition==='review'){const actions=document.createElement('div');actions.className='memory-row-actions';(candidate.candidateType==='memory-conflict'?['approve','overwrite','delete-stale','reject']:['approve','reject']).forEach(action=>{const button=document.createElement('button');button.className='ghost';button.textContent=action==='delete-stale'?'Delete stale':action;button.onclick=async()=>{try{await dreamFetch('/api/dream-candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dreamOwnerBody({id:candidate.id,action}))});await loadDreamUi(false);}catch(error){setDreamSaved(error.message,true);}};actions.appendChild(button);});details.appendChild(actions);}});if(!(entry.candidates||[]).some(x=>x.disposition==='review')&&entry.status!=='running'){const del=document.createElement('button');del.className='ghost';del.textContent='Delete entry';del.onclick=async()=>{if(!window.confirm('Delete this resolved Dream journal entry?'))return;await dreamFetch('/api/dream-journal'+dreamOwnerQuery()+(dreamOwnerQuery()?'&':'?')+'id='+encodeURIComponent(entry.id),{method:'DELETE'});await loadDreamUi(false);};details.appendChild(del);}row.appendChild(details);dreamUi.journal.appendChild(row);}); }
+function renderDreamJournal(entries) {
+    dreamUi.journal.textContent='';
+    if(!entries.length){dreamUi.journal.innerHTML='<div class="memory-empty">No dreams recorded yet.</div>';return;}
+    entries.forEach(entry=>{
+        const row=document.createElement('div');row.className='memory-row';const details=document.createElement('details');
+        const summary=document.createElement('summary');summary.className='memory-text';summary.textContent=(entry.summary||'Dream')+' ('+(entry.status||'unknown')+') · '+Number(entry.processedSessions||0)+' sessions / '+Number(entry.processedMessages||0)+' messages';details.appendChild(summary);
+        const meta=document.createElement('div');meta.className='memory-meta';meta.textContent=(entry.createdUtc?new Date(entry.createdUtc).toLocaleString():'')+(entry.rawReflection?' · Reflection retained':'');details.appendChild(meta);
+        const source=document.createElement('div');source.className='memory-meta';source.textContent='Eligible '+Number(entry.eligibleSessions||0)+' · readable '+Number(entry.readableSessions||0)+' · empty '+Number(entry.emptySessions||0)+' · unavailable '+Number(entry.unavailableSessions||0);details.appendChild(source);
+        const route=[entry.dreamService,entry.dreamModel].filter(Boolean).join(' / ');const checks=document.createElement('div');checks.className='memory-meta';checks.textContent=(route?'Dream '+route+' · ':'')+'Checks and Balances: '+(entry.checksAndBalancesStatus||'not-run')+(entry.checksAndBalancesModel?' · '+entry.checksAndBalancesModel:'')+(entry.checksAndBalancesRetryCount?' · retry '+entry.checksAndBalancesRetryCount:'')+(entry.checksAndBalancesNextRetryUtc?' · next '+new Date(entry.checksAndBalancesNextRetryUtc).toLocaleString():'')+(entry.checksAndBalancesError?' · '+entry.checksAndBalancesError:'');details.appendChild(checks);
+        if(entry.rawReflection){const raw=document.createElement('pre');raw.className='memory-meta';raw.textContent=entry.rawReflection;details.appendChild(raw);}
+        (entry.toolAudit||[]).forEach(tool=>{const audit=document.createElement('div');audit.className='memory-meta';audit.textContent=tool;details.appendChild(audit);});
+        (entry.candidates||[]).forEach(candidate=>{const text=document.createElement('div');text.className='memory-text';text.textContent=candidate.text+' · '+candidate.disposition+' · '+Math.round(Number(candidate.confidence||0)*100)+'%';details.appendChild(text);if(candidate.candidateType==='memory-conflict'){const stale=document.createElement('div');stale.className='memory-meta';stale.textContent='Stale: '+(candidate.staleMemoryText||'');details.appendChild(stale);}if(candidate.disposition==='review'){const actions=document.createElement('div');actions.className='memory-row-actions';(candidate.candidateType==='memory-conflict'?['approve','overwrite','delete-stale','reject']:['approve','reject']).forEach(action=>{const button=document.createElement('button');button.className='ghost';button.textContent=action==='delete-stale'?'Delete stale':action;button.onclick=async()=>{try{await dreamFetch('/api/dream-candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dreamOwnerBody({id:candidate.id,action}))});await loadDreamUi(false);}catch(error){setDreamSaved(error.message,true);}};actions.appendChild(button);});details.appendChild(actions);}});
+        if(!(entry.candidates||[]).some(x=>x.disposition==='review')&&entry.status!=='running'&&entry.status!=='alignment-retry'){const del=document.createElement('button');del.className='ghost';del.textContent='Delete entry';del.onclick=async()=>{if(!window.confirm('Delete this resolved Dream journal entry?'))return;await dreamFetch('/api/dream-journal'+dreamOwnerQuery()+(dreamOwnerQuery()?'&':'?')+'id='+encodeURIComponent(entry.id),{method:'DELETE'});await loadDreamUi(false);};details.appendChild(del);}
+        row.appendChild(details);dreamUi.journal.appendChild(row);
+    });
+}
 function renderDreamJournalStable(entries) { const expanded=new Set(Array.from(dreamUi.journal.querySelectorAll('details[open] summary')).map(summary=>summary.textContent||'')); renderDreamJournal(entries); dreamUi.journal.querySelectorAll('details').forEach(details=>{const summary=details.querySelector('summary');if(summary&&expanded.has(summary.textContent||''))details.open=true;}); }
 async function loadDreamOwners(){try{const data=await dreamFetch('/api/dream-owners');const selected=dreamUi.owner.value;dreamUi.owner.innerHTML='<option value="">Current owner</option>';(data.owners||[]).forEach(owner=>{const option=document.createElement('option');option.value=owner.ownerKey;option.textContent=(owner.displayName||owner.ownerKey)+(owner.hasOverride?' · custom':' · global');dreamUi.owner.appendChild(option);});dreamUi.owner.value=selected;}catch{dreamUi.owner.innerHTML='<option value="">Current owner</option>';}}
-async function loadDreamUi(includeSettings=true){if(dreamLoadInFlight)return;dreamLoadInFlight=true;try{const suffix=dreamOwnerQuery();const filter=document.getElementById('dreamJournalFilter').value;const requests=[dreamFetch('/api/dream-status'+suffix),dreamFetch('/api/dream-journal'+suffix+(suffix?'&':'?')+'status='+encodeURIComponent(filter)),dreamFetch('/api/dream-permissions'+suffix)];if(includeSettings&&!dreamDirty)requests.unshift(dreamFetch('/api/dream-settings'+suffix));const result=await Promise.all(requests);let offset=0;if(includeSettings&&!dreamDirty){renderDreamSettings(result[0].settings,result[0]);offset=1;}renderDreamStatus(result[offset]);renderDreamJournalStable(result[offset+1].journal||[]);renderDreamPermissions(result[offset+2]);}catch(error){dreamUi.status.textContent=error.message;}finally{dreamLoadInFlight=false;}}
-async function refreshDreamStatus(){if(dreamLoadInFlight)return;dreamLoadInFlight=true;try{renderDreamStatus(await dreamFetch('/api/dream-status'+dreamOwnerQuery()));}catch(error){dreamUi.status.textContent=error.message;}finally{dreamLoadInFlight=false;}}
+async function loadDreamUi(includeSettings=true){if(dreamLoadInFlight)return;dreamLoadInFlight=true;try{const suffix=dreamOwnerQuery();const filter=document.getElementById('dreamJournalFilter').value;const requests=[dreamFetch('/api/dream-status'+suffix),dreamFetch('/api/dream-journal'+suffix+(suffix?'&':'?')+'status='+encodeURIComponent(filter)),dreamFetch('/api/dream-permissions'+suffix)];if(includeSettings&&!dreamDirty)requests.unshift(dreamFetch('/api/dream-settings'+suffix));const result=await Promise.all(requests);let offset=0;if(includeSettings&&!dreamDirty){renderDreamSettings(result[0].settings,result[0]);offset=1;}const status=result[offset];renderDreamStatus(status);maybeRefreshAlignmentAfterDream(status);renderDreamJournalStable(result[offset+1].journal||[]);renderDreamPermissions(result[offset+2]);}catch(error){dreamUi.status.textContent=error.message;}finally{dreamLoadInFlight=false;}}
+async function refreshDreamStatus(){if(dreamLoadInFlight)return;dreamLoadInFlight=true;try{const status=await dreamFetch('/api/dream-status'+dreamOwnerQuery());renderDreamStatus(status);maybeRefreshAlignmentAfterDream(status);if(status.status==='completed'||status.status==='completed-with-source-errors'||status.status==='alignment-retry'||status.status==='source-failed'||status.status==='model-failed'||status.status==='failed'||status.status==='no-work')await loadDreamJournalOnly();}catch(error){dreamUi.status.textContent=error.message;}finally{dreamLoadInFlight=false;}}
+async function loadDreamJournalOnly(){const suffix=dreamOwnerQuery();const filter=document.getElementById('dreamJournalFilter').value;const data=await dreamFetch('/api/dream-journal'+suffix+(suffix?'&':'?')+'status='+encodeURIComponent(filter));renderDreamJournalStable(data.journal||[]);}
 function startDreamPolling(){window.clearInterval(dreamPollTimer);dreamPollTimer=window.setInterval(()=>{if(dreamUi.backdrop.classList.contains('visible'))refreshDreamStatus();},2500);}
 prepareDreamSliderMarkers();
 document.getElementById('dreamPanelToggle')?.addEventListener('click',async()=>{dreamUi.backdrop.classList.add('visible');const resourceToggle=document.getElementById('dreamResourceToggle');if(resourceToggle&&!resourceToggle.dataset.bound){resourceToggle.dataset.bound='true';let lastPointerToggle=0;const toggleResource=button=>{const body=document.getElementById('dreamResourceBody'),open=button.getAttribute('aria-expanded')==='true';button.setAttribute('aria-expanded',open?'false':'true');if(body)body.hidden=open;};const pointerToggle=event=>{const now=Date.now();event.preventDefault();if(now-lastPointerToggle<250)return;lastPointerToggle=now;toggleResource(event.currentTarget);};resourceToggle.addEventListener('pointerdown',pointerToggle);resourceToggle.addEventListener('click',pointerToggle);resourceToggle.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleResource(event.currentTarget);}});}await loadDreamOwners();await loadDreamUi(true);startDreamPolling();});

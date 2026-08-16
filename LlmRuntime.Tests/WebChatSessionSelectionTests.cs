@@ -108,6 +108,79 @@ public sealed class WebChatSessionSelectionTests
     }
 
     [TestMethod]
+    public void ExplorerListSelectionUsesCheckboxesInsteadOfToggleSwitches()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "Pill switches are reserved for toggle settings, never list selection.");
+        StringAssert.Contains(html, ":not(.session-select-checkbox):not(.solution-select-checkbox)");
+        StringAssert.Contains(html, ".shell :is(.session-select-checkbox, .solution-select-checkbox)");
+        StringAssert.Contains(html, "List selection uses square checkboxes that inherit the active UI theme.");
+        StringAssert.Contains(html, "selection.className = 'solution-select-checkbox';");
+        StringAssert.Contains(html, "checkbox.className = 'session-select-checkbox';");
+    }
+
+    [TestMethod]
+    public void ProjectExplorerPollingDoesNotReplaceFocusedControls()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        int loadActiveSessions = html.IndexOf("async function loadActiveSessions()", StringComparison.Ordinal);
+        int focusGuard = html.IndexOf("function sessionListContainsFocus()", loadActiveSessions, StringComparison.Ordinal);
+        string activeSessionRefresh = html.Substring(loadActiveSessions, focusGuard - loadActiveSessions);
+
+        StringAssert.Contains(activeSessionRefresh, "renderSessionListFromPolling();");
+        Assert.IsFalse(activeSessionRefresh.Contains("renderSessionList();", StringComparison.Ordinal),
+            "The 2.5-second active-session poll must not rebuild and detach focused Project Explorer controls.");
+        StringAssert.Contains(html, "function sessionListContainsFocus()");
+        StringAssert.Contains(html, "sessionList.contains(active)");
+        StringAssert.Contains(html, "sessionListPollingRenderDeferred = true;");
+        StringAssert.Contains(html, "sessionList.addEventListener('focusout'");
+        StringAssert.Contains(html, "if (!sessionListPollingRenderDeferred || sessionListContainsFocus()) return;");
+        StringAssert.Contains(html, "const focusSnapshot = captureSessionListFocus();");
+        StringAssert.Contains(html, "restoreSessionListFocus(focusSnapshot);");
+    }
+
+    [TestMethod]
+    public void ProjectToolbarUsesColoredAccessibleSymbols()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "id=\"refreshSessions\" class=\"ghost panel-refresh project-toolbar-refresh\"");
+        StringAssert.Contains(html, "aria-label=\"Refresh projects\">&#x21BB;</button>");
+        StringAssert.Contains(html, "id=\"showArchivedProjects\" class=\"ghost project-toolbar-archive\"");
+        StringAssert.Contains(html, "aria-label=\"Show archived projects\">&minus;</button>");
+        StringAssert.Contains(html, "id=\"newProject\" class=\"ghost project-toolbar-new\"");
+        StringAssert.Contains(html, "aria-label=\"New project\">+</button>");
+        StringAssert.Contains(html, ".project-toolbar-new");
+        StringAssert.Contains(html, ".project-toolbar-archive");
+        StringAssert.Contains(html, ".project-toolbar-refresh");
+    }
+
+    [TestMethod]
+    public void ChangedFilesOfferOpenAndLocalRevealActions()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "createFileChangeActionButton('Open', 'Open ' + file.name + ' in the Web Chat file panel')");
+        StringAssert.Contains(html, "createFileChangeActionButton('Show on disk', 'Show ' + file.name + ' in File Explorer')");
+        StringAssert.Contains(html, "async function revealSolutionFile(entry)");
+        StringAssert.Contains(html, "fetch('/api/chat-file-reveal'");
+        StringAssert.Contains(html, "className = 'assistant-file-additions'");
+        StringAssert.Contains(html, "className = 'assistant-file-deletions'");
+    }
+
+    [TestMethod]
+    public void LongAgentRunsShowPerPromptTokensAndSafeActivity()
+    {
+        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+
+        StringAssert.Contains(html, "tokens this prompt</span>");
+        StringAssert.Contains(html, "parts.promptTokensUsed");
+        StringAssert.Contains(html, "const activityLine = 'Activity: ' + activityStatus;");
+        StringAssert.Contains(html, "streamState.activityReasoning");
+    }
+
+    [TestMethod]
     public void ChatPayloadWriteKeySurvivesLoginAndProxyRestart()
     {
         string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-chat-key-test-" + Guid.NewGuid().ToString("N"));

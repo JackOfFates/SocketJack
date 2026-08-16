@@ -12,16 +12,18 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     private string _workSummary = "";
     private bool _isReasoningExpanded = true;
     private bool _isGenerating;
+    private bool _isIncomplete;
     private string _routeSummary = "";
 
     public string Role { get => _role; set { if (_role == value) return; _role = value; PropertyChanged?.Invoke(this, new(nameof(Role))); PropertyChanged?.Invoke(this, new(nameof(IsUser))); PropertyChanged?.Invoke(this, new(nameof(BubbleColor))); } }
-    public string Content { get => _content; set { if (_content == value) return; _content = value; PropertyChanged?.Invoke(this, new(nameof(Content))); PropertyChanged?.Invoke(this, new(nameof(HasContent))); } }
+    public string Content { get => _content; set { if (_content == value) return; _content = value; PropertyChanged?.Invoke(this, new(nameof(Content))); PropertyChanged?.Invoke(this, new(nameof(HasContent))); PropertyChanged?.Invoke(this, new(nameof(NeedsContinuation))); } }
     public string Reasoning { get => _reasoning; set { if (_reasoning == value) return; _reasoning = value; PropertyChanged?.Invoke(this, new(nameof(Reasoning))); PropertyChanged?.Invoke(this, new(nameof(HasReasoning))); PropertyChanged?.Invoke(this, new(nameof(ShowReasoning))); } }
-    public string Status { get => _status; set { if (_status == value) return; _status = value; PropertyChanged?.Invoke(this, new(nameof(Status))); PropertyChanged?.Invoke(this, new(nameof(HasStatus))); } }
+    public string Status { get => _status; set { if (_status == value) return; _status = value; PropertyChanged?.Invoke(this, new(nameof(Status))); PropertyChanged?.Invoke(this, new(nameof(HasStatus))); PropertyChanged?.Invoke(this, new(nameof(NeedsContinuation))); } }
     public string Telemetry { get => _telemetry; set { if (_telemetry == value) return; _telemetry = value; PropertyChanged?.Invoke(this, new(nameof(Telemetry))); PropertyChanged?.Invoke(this, new(nameof(HasTelemetry))); } }
     public string WorkSummary { get => _workSummary; set { if (_workSummary == value) return; _workSummary = value; PropertyChanged?.Invoke(this, new(nameof(WorkSummary))); PropertyChanged?.Invoke(this, new(nameof(HasWorkSummary))); } }
     public bool IsReasoningExpanded { get => _isReasoningExpanded; set { if (_isReasoningExpanded == value) return; _isReasoningExpanded = value; PropertyChanged?.Invoke(this, new(nameof(IsReasoningExpanded))); PropertyChanged?.Invoke(this, new(nameof(ReasoningChevron))); } }
     public bool IsGenerating { get => _isGenerating; set { if (_isGenerating == value) return; _isGenerating = value; PropertyChanged?.Invoke(this, new(nameof(IsGenerating))); PropertyChanged?.Invoke(this, new(nameof(ReasoningHeader))); PropertyChanged?.Invoke(this, new(nameof(ShowReasoning))); } }
+    public bool IsIncomplete { get => _isIncomplete; set { if (_isIncomplete == value) return; _isIncomplete = value; PropertyChanged?.Invoke(this, new(nameof(IsIncomplete))); PropertyChanged?.Invoke(this, new(nameof(NeedsContinuation))); } }
     public string RouteSummary { get => _routeSummary; set { if (_routeSummary == value) return; _routeSummary = value; PropertyChanged?.Invoke(this, new(nameof(RouteSummary))); PropertyChanged?.Invoke(this, new(nameof(HasRouteSummary))); } }
     public bool HasRouteSummary => !string.IsNullOrWhiteSpace(RouteSummary);
     public ObservableCollection<ToolActivity> Tools { get; } = new();
@@ -32,6 +34,12 @@ public sealed class ChatMessage : System.ComponentModel.INotifyPropertyChanged
     public bool HasStatus => !string.IsNullOrWhiteSpace(Status);
     public bool HasTelemetry => !string.IsNullOrWhiteSpace(Telemetry);
     public bool HasWorkSummary => !string.IsNullOrWhiteSpace(WorkSummary);
+    public bool NeedsContinuation => !IsUser && (IsIncomplete ||
+        Content.Trim().Equals("(stopped)", StringComparison.OrdinalIgnoreCase) ||
+        Content.Contains("Response may be incomplete because the upstream stream closed", StringComparison.OrdinalIgnoreCase) ||
+        Content.Contains("Response stopped because the model hit an output limit", StringComparison.OrdinalIgnoreCase) ||
+        Content.Contains("Response stopped early (`finish_reason:", StringComparison.OrdinalIgnoreCase) ||
+        Status.Contains("stopped", StringComparison.OrdinalIgnoreCase));
     public string ReasoningHeader => IsGenerating ? "Thinking…" : "Thinking process";
     public string ReasoningChevron => IsReasoningExpanded ? "⌃" : "⌄";
     public bool IsCapturingEmbeddedReasoning { get; set; }
@@ -94,6 +102,11 @@ public sealed class MobileAlignmentSnapshot
     public string ChecksAndBalancesStatus { get; set; } = "waiting-for-dream";
     public string ChecksAndBalancesDreamId { get; set; } = "";
     public string ChecksAndBalancesCompletedUtc { get; set; } = "";
+    public string ChecksAndBalancesError { get; set; } = "";
+    public int ChecksAndBalancesRetryCount { get; set; }
+    public string ChecksAndBalancesNextRetryUtc { get; set; } = "";
+    public string ChecksAndBalancesService { get; set; } = "";
+    public string ChecksAndBalancesAttemptedModel { get; set; } = "";
     public string[] DisabledFeatures { get; set; } = Array.Empty<string>();
     public string[] HighlightedFeatures { get; set; } = Array.Empty<string>();
     public bool DreamsEnabled { get; set; } = true;

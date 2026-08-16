@@ -50,7 +50,11 @@ public sealed record ModelRouteDecision(
 /// <summary>Fast, deterministic, local-only model routing. Hard compatibility and memory gates always win.</summary>
 public sealed class InstantModelRouter
 {
-    public const double MaximumWorkingSetToAvailableVramRatio = 1.25d;
+    // GGUF CUDA inference can spill KV/cache and some layers to system RAM. A 25% allowance
+    // rejected known-good 9B Claude-derived models on 12 GB cards whenever another model had
+    // recently occupied part of VRAM. Keep a hard ceiling, but allow the hybrid runtime's
+    // routinely working 50% headroom.
+    public const double MaximumWorkingSetToAvailableVramRatio = 1.50d;
     private static readonly TimeSpan ClassificationCacheDuration = TimeSpan.FromMinutes(5);
     private readonly ConcurrentDictionary<string, (DateTimeOffset Expires, PromptFeatures Features)> _classificationCache = new();
 

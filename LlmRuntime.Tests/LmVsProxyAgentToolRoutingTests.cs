@@ -44,6 +44,173 @@ public sealed class LmVsProxyAgentToolRoutingTests
     }
 
     [TestMethod]
+    public void JackhammerCreatesServerOwnedCheckpointBeforeModelSelection()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("TryBuildInitialJackhammerCheckpointToolCall", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments =
+        [
+            """{"messages":[{"role":"system","content":"[Jackhammer work mode]\nJackhammer turn budget: 10"},{"role":"user","content":"Inspect, implement, and test the fix."}],"tools":[{"type":"function","function":{"name":"goal_checkpoint","parameters":{"type":"object"}}}]}""",
+            null
+        ];
+
+        Assert.IsTrue((bool)method.Invoke(proxy, arguments)!);
+        object checkpoint = arguments[1]!;
+        Assert.AreEqual("goal_checkpoint", checkpoint.GetType().GetProperty("Name")!.GetValue(checkpoint));
+        string json = (string)checkpoint.GetType().GetProperty("ArgumentsJson")!.GetValue(checkpoint)!;
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.AreEqual("in_progress", document.RootElement.GetProperty("status").GetString());
+        Assert.AreEqual(3, document.RootElement.GetProperty("steps").GetArrayLength());
+        StringAssert.StartsWith(document.RootElement.GetProperty("steps")[0].GetString(), "in_progress|");
+    }
+
+    [TestMethod]
+    public void JackhammerDirectReadOnlyPromptBypassesSlowToolSelectorAfterCheckpoint()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("JackhammerCanAnswerDirectlyWithoutProxyTools", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        const string directRequest = """{"messages":[{"role":"system","content":"[Jackhammer work mode]"},{"role":"user","content":"Use JackHammer to perform exactly two read-only steps: first state today's date, second compute 2 + 2. Show ordered plan progress. Do not modify files or system state."}]}""";
+        const string toolRequest = """{"messages":[{"role":"system","content":"[Jackhammer work mode]"},{"role":"user","content":"Run the project tests in PowerShell and report the output."}]}""";
+
+        Assert.IsTrue((bool)method.Invoke(proxy, new object[] { directRequest })!);
+        Assert.IsFalse((bool)method.Invoke(proxy, new object[] { toolRequest })!);
+    }
+
+    [TestMethod]
+    public void JackhammerCompletesLocalDateAndArithmeticMicrotaskWithoutModelInference()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("TryBuildDeterministicJackhammerReadOnlyCompletion", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments =
+        [
+            """{"messages":[{"role":"system","content":"[Jackhammer work mode]"},{"role":"user","content":"Use JackHammer to perform exactly two read-only steps: first state today's date, second compute 2 + 2. Show ordered plan progress. Do not modify files or system state."}],"tool_choice":"none"}""",
+            null
+        ];
+
+        Assert.IsTrue((bool)method.Invoke(proxy, arguments)!);
+        string content = (string)arguments[1]!.GetType().GetProperty("Content")!.GetValue(arguments[1])!;
+        StringAssert.StartsWith(content, "- Today's date is ");
+        StringAssert.Contains(content, "\n- 2 + 2 = 4.");
+        Assert.AreEqual(2, content.Split('\n').Length);
+    }
+
+    [TestMethod]
+    public void ExplicitTwoLineSandboxFilePromptPreloadsWriteTool()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("TryBuildExplicitRequiredProxyFileWriteToolCall", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments =
+        [
+            """{"messages":[{"role":"user","content":"Create a sandboxed Project Files file named live-file-actions-probe.txt with exactly two lines: alpha and beta. Use vs_write_file. Do not only describe the change."}],"tools":[{"type":"function","function":{"name":"vs_write_file"}}]}""",
+            null
+        ];
+
+        Assert.IsTrue((bool)method.Invoke(proxy, arguments)!);
+        object toolCall = arguments[1]!;
+        Assert.AreEqual("vs_write_file", toolCall.GetType().GetProperty("Name")!.GetValue(toolCall));
+        string json = (string)toolCall.GetType().GetProperty("ArgumentsJson")!.GetValue(toolCall)!;
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.AreEqual("live-file-actions-probe.txt", document.RootElement.GetProperty("path").GetString());
+        Assert.AreEqual("alpha\nbeta", document.RootElement.GetProperty("content").GetString());
+    }
+
+    [TestMethod]
+    public void ExplicitSandboxReplacePromptPreloadsReplaceTool()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("TryBuildExplicitRequiredProxyFileMutationToolCall", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments =
+        [
+            """{"messages":[{"role":"user","content":"In live-file-actions-probe.txt, replace exactly \"alpha\" with \"ALPHA\" using vs_replace_in_file."}],"tools":[{"type":"function","function":{"name":"vs_replace_in_file"}}]}""",
+            null
+        ];
+
+        Assert.IsTrue((bool)method.Invoke(proxy, arguments)!);
+        object toolCall = arguments[1]!;
+        Assert.AreEqual("vs_replace_in_file", toolCall.GetType().GetProperty("Name")!.GetValue(toolCall));
+        string json = (string)toolCall.GetType().GetProperty("ArgumentsJson")!.GetValue(toolCall)!;
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.AreEqual("live-file-actions-probe.txt", document.RootElement.GetProperty("path").GetString());
+        Assert.AreEqual("alpha", document.RootElement.GetProperty("oldString").GetString());
+        Assert.AreEqual("ALPHA", document.RootElement.GetProperty("newString").GetString());
+        Assert.IsFalse(document.RootElement.GetProperty("replaceAll").GetBoolean());
+    }
+
+    [TestMethod]
+    public void ExplicitSandboxDeletePromptPreloadsDeleteTool()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("TryBuildExplicitRequiredProxyFileMutationToolCall", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments =
+        [
+            """{"messages":[{"role":"user","content":"Delete live-file-actions-probe.txt using vs_delete_file."}],"tools":[{"type":"function","function":{"name":"vs_delete_file"}}]}""",
+            null
+        ];
+
+        Assert.IsTrue((bool)method.Invoke(proxy, arguments)!);
+        object toolCall = arguments[1]!;
+        Assert.AreEqual("vs_delete_file", toolCall.GetType().GetProperty("Name")!.GetValue(toolCall));
+        string json = (string)toolCall.GetType().GetProperty("ArgumentsJson")!.GetValue(toolCall)!;
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.AreEqual("live-file-actions-probe.txt", document.RootElement.GetProperty("path").GetString());
+    }
+
+    [TestMethod]
+    public void CompletedExplicitFileToolReturnsWithoutAnotherModelPass()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        MethodInfo method = typeof(LmVsProxy).GetMethod("TryBuildDirectExplicitFileToolCompletion", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments =
+        [
+            """{"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"vs_delete_file","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"vs_delete_file deleted \\live-file-actions-probe.txt."}]}""",
+            "vs_delete_file",
+            null,
+            null
+        ];
+
+        Assert.IsTrue((bool)method.Invoke(proxy, arguments)!);
+        object completion = arguments[3]!;
+        Assert.AreEqual("Done. vs_delete_file deleted \\live-file-actions-probe.txt.", completion.GetType().GetProperty("Content")!.GetValue(completion));
+        Assert.AreEqual("stop", completion.GetType().GetProperty("FinishReason")!.GetValue(completion));
+    }
+
+    [TestMethod]
+    public void JackhammerToolSelectionUsesTheStandardRuntimeBudget()
+    {
+        MethodInfo method = typeof(LlmRuntimeHost).GetMethod("ApplyToolSelectionBudget", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var jackhammer = new LlmChatRequest
+        {
+            MaxTokens = 4096,
+            Messages = [new LlmChatMessage("system", "[Jackhammer work mode]")]
+        };
+        var ordinary = new LlmChatRequest
+        {
+            MaxTokens = 4096,
+            Messages = [new LlmChatMessage("user", "Use a tool.")]
+        };
+
+        method.Invoke(null, new object[] { jackhammer });
+        method.Invoke(null, new object[] { ordinary });
+
+        Assert.AreEqual(512, jackhammer.MaxTokens);
+        Assert.AreEqual(512, ordinary.MaxTokens);
+        Assert.IsTrue(jackhammer.MaxTokensSpecified);
+    }
+
+    [TestMethod]
+    public void ModelPromptHttpClientHasNoElapsedTimeout()
+    {
+        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        FieldInfo field = typeof(LmVsProxy).GetField("_httpClient", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var client = (System.Net.Http.HttpClient)field.GetValue(proxy)!;
+
+        Assert.AreEqual(Timeout.InfiniteTimeSpan, client.Timeout);
+        proxy.PromptTimeout = TimeSpan.FromSeconds(1);
+        Assert.AreEqual(Timeout.InfiniteTimeSpan, client.Timeout,
+            "Long GPU inference must continue until user cancellation or runtime completion.");
+    }
+
+    [TestMethod]
     public void JackhammerGoalCheckpointPreservesOrderedPlanSteps()
     {
         using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
@@ -188,7 +355,7 @@ public sealed class LmVsProxyAgentToolRoutingTests
     }
 
     [TestMethod]
-    public void ChatUiSteeringRejectsNonJackhammerStreams()
+    public void ChatUiSteeringAcceptsOrdinaryChatStreams()
     {
         using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
         const string ownerKey = "owner-for-non-jackhammer-steering-test";
@@ -196,8 +363,8 @@ public sealed class LmVsProxyAgentToolRoutingTests
         const string sessionId = "session-non-jackhammer-steering-test";
         _ = RegisterActiveChatStreamCancellation(proxy, ownerKey, streamId, sessionId, jackhammerEnabled: false);
 
-        Assert.IsFalse(AcceptActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "not allowed", "steer_rejected", out string state));
-        Assert.AreEqual("jackhammer_required", state);
+        Assert.IsTrue(AcceptActiveChatStreamSteering(proxy, ownerKey, streamId, sessionId, "refine this answer", "steer_chat", out string state));
+        Assert.AreEqual("accepted", state);
     }
 
     [TestMethod]

@@ -60,6 +60,7 @@ public sealed class MobileGenerationCoordinator
     private MobileGenerationRequest? _pendingRequest;
     private bool _awaitingAuthentication;
     private bool _streamConnected;
+    private bool _steeringEnabled;
 
     public MobileGenerationCoordinator(IMobileNotificationService notifications) => _notifications = notifications;
 
@@ -79,7 +80,7 @@ public sealed class MobileGenerationCoordinator
         get
         {
             lock (_gate)
-                return _streamConnected && _snapshot.IsGenerating && _snapshot.JackhammerEnabled && _client is not null && !string.IsNullOrWhiteSpace(_streamId);
+                return _streamConnected && _steeringEnabled && _snapshot.IsGenerating && _client is not null && !string.IsNullOrWhiteSpace(_streamId);
         }
     }
 
@@ -94,6 +95,7 @@ public sealed class MobileGenerationCoordinator
             _pendingRequest = request;
             _awaitingAuthentication = false;
             _streamConnected = false;
+            _steeringEnabled = !request.Service.EndsWith("_generation", StringComparison.OrdinalIgnoreCase);
             _streamId = "mobile_" + Guid.NewGuid().ToString("N");
             _milestonePolicy.Reset();
             _streamText.Reset();
@@ -147,8 +149,8 @@ public sealed class MobileGenerationCoordinator
         string sessionId;
         lock (_gate)
         {
-            if (!_streamConnected || !_snapshot.IsGenerating || !_snapshot.JackhammerEnabled || _client is null || string.IsNullOrWhiteSpace(_streamId))
-                throw new InvalidOperationException("Steering is available only after an active JackHammer stream connects.");
+            if (!_streamConnected || !_steeringEnabled || !_snapshot.IsGenerating || _client is null || string.IsNullOrWhiteSpace(_streamId))
+                throw new InvalidOperationException("Steering is available only after an active text response connects.");
             client = _client;
             streamId = _streamId;
             sessionId = _snapshot.SessionId;
@@ -156,7 +158,7 @@ public sealed class MobileGenerationCoordinator
         text = (text ?? "").Trim();
         if (text.Length == 0) throw new ArgumentException("Enter steering direction first.", nameof(text));
         await client.SteerAsync(streamId, sessionId, text, cancellationToken);
-        SetState(snapshot => snapshot with { Status = "Steering accepted — applying at the next JackHammer break" });
+        SetState(snapshot => snapshot with { Status = "Steering accepted — applying at the next safe response break" });
     }
 
     private async Task RunAsync(MobileGenerationRequest request, string streamId, CancellationToken cancellationToken)

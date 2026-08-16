@@ -41,12 +41,17 @@ public sealed class ServerListPage : ContentPage
         _tailscaleStatus = new Label { Text = "Checking Tailscale...", TextColor = Color.FromArgb("#94A3B8"), FontSize = 12 };
         _openTailscale = new Button
         {
-            Text = "Open Tailscale",
+            Text = "\u21c4",
             BackgroundColor = Color.FromArgb("#B91C1C"),
             TextColor = Colors.White,
             CornerRadius = 12,
+            FontSize = 20,
+            MinimumWidthRequest = 0,
+            Padding = new Thickness(8, 4),
             IsVisible = false
         };
+        AutomationProperties.SetName(_openTailscale, "Open Tailscale");
+        AutomationProperties.SetHelpText(_openTailscale, "Open Tailscale or install it");
         _openTailscale.Clicked += async (_, _) =>
         {
             if (!await _connectivity.OpenTailscaleAsync())
@@ -63,24 +68,49 @@ public sealed class ServerListPage : ContentPage
 
         var signIn = new Button
         {
-            Text = "Login / Register",
+            Text = "\uD83D\uDD10",
             BackgroundColor = Color.FromArgb("#2563EB"),
             TextColor = Colors.White,
             CornerRadius = 12,
+            FontSize = 18,
+            MinimumWidthRequest = 0,
+            Padding = new Thickness(8, 4),
             AutomationId = "OpenWorkstationLogin"
         };
+        AutomationProperties.SetName(signIn, "Login or register");
+        AutomationProperties.SetHelpText(signIn, "Login or register with a Workstation");
         signIn.Clicked += async (_, _) => await OpenAuthenticationAsync();
         var add = new Button
         {
-            Text = "Pair code",
+            Text = "\u221e",
             BackgroundColor = Color.FromArgb("#334155"),
             TextColor = Colors.White,
             CornerRadius = 12,
+            FontSize = 20,
+            MinimumWidthRequest = 0,
+            Padding = new Thickness(8, 4),
             AutomationId = "OpenWorkstationPairing"
         };
+        AutomationProperties.SetName(add, "Pair Workstation");
+        AutomationProperties.SetHelpText(add, "Pair a Workstation using a code");
         add.Clicked += async (_, _) => await AddServerAsync();
-        var refresh = new Button { Text = "Refresh", BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, CornerRadius = 12 };
+        var refresh = new Button { Text = "\u21bb", BackgroundColor = Color.FromArgb("#1F2937"), TextColor = Colors.White, CornerRadius = 12, FontSize = 20, MinimumWidthRequest = 0, Padding = new Thickness(8, 4) };
+        AutomationProperties.SetName(refresh, "Refresh Workstations");
+        AutomationProperties.SetHelpText(refresh, "Refresh Workstation and Tailscale status");
         refresh.Clicked += async (_, _) => await ReloadAsync();
+        var connectionActions = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star)
+            },
+            ColumnSpacing = 8
+        };
+        connectionActions.Add(signIn, 0);
+        connectionActions.Add(add, 1);
+        connectionActions.Add(refresh, 2);
+        connectionActions.Add(_openTailscale, 3);
         var pageContent = new Grid
         {
             Padding = new Thickness(16, 12),
@@ -102,7 +132,7 @@ public sealed class ServerListPage : ContentPage
                         _tailscaleStatus
                     }
                 }.Row(0),
-                new HorizontalStackLayout { Spacing = 10, Children = { signIn, add, refresh, _openTailscale } }.Row(1),
+                connectionActions.Row(1),
                 new Label { Text = "Pull down to refresh connection status.", FontSize = 10, TextColor = Color.FromArgb("#64748B") }.Row(2),
                 _servers.Row(3)
             }

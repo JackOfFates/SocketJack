@@ -71,6 +71,7 @@ namespace LmVs
         public string Name { get; set; }
         public string ArgumentsJson { get; set; }
         public string Result { get; set; }
+        public string ImageDataUrl { get; set; }
     }
 
     /// <summary>

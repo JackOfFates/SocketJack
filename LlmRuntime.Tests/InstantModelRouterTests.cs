@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Text.Json;
 
 namespace LlmRuntime.Tests;
 
@@ -32,7 +33,7 @@ public sealed class InstantModelRouterTests
     }
 
     [TestMethod]
-    public void Route_RejectsUnloadedCandidateBeyondOneHundredTwentyFivePercentVram()
+    public void Route_RejectsUnloadedCandidateBeyondOneHundredFiftyPercentVram()
     {
         var router = new InstantModelRouter();
         var loaded = Model("loaded-3B-instruct", 2L << 30, loaded: true);
@@ -42,6 +43,22 @@ public sealed class InstantModelRouterTests
 
         Assert.AreEqual(loaded.Key, result.SelectedModel);
         Assert.AreEqual("vram_limit", result.Candidates.Single(candidate => candidate.Model == oversized.Key).RejectionReason);
+    }
+
+    [TestMethod]
+    public void Route_AllowsKnownGoodNineBClaudeModelWithHybridMemoryHeadroom()
+    {
+        var router = new InstantModelRouter();
+        var claude = Model("Qwythos-9B-Claude-Mythos-5-1M-Q6_K", 7_359_259_296, loaded: false);
+
+        ModelRouteDecision result = router.Route([claude], new ModelRouteRequest(
+            "Assess a completed Dream and return JSON.",
+            Reasoning: RouterReasoningLevel.Minimal,
+            RequiredContextTokens: 2048,
+            AvailableVramBytes: 6_009_389_056));
+
+        Assert.AreEqual(claude.Key, result.SelectedModel);
+        Assert.IsTrue(result.Candidates.Single().FitsVram);
     }
 
     [TestMethod]
@@ -77,6 +94,20 @@ public sealed class InstantModelRouterTests
         ModelRouteDecision result = router.Route([Model("coder-3B-instruct", 2L << 30, loaded: true)], new ModelRouteRequest("write a C# parser"));
         Assert.AreEqual("coding", result.Classification);
         Assert.AreEqual(RouterReasoningLevel.Low, result.EffectiveReasoning);
+    }
+
+    [TestMethod]
+    public void OptionalTools_DoNotRequireToolCapabilityButRequiredChoiceDoes()
+    {
+        using var optionalDocument = JsonDocument.Parse("""
+        {"model":"auto","messages":[{"role":"system","content":"Reflect on saved messages."}],"tools":[{"type":"function","function":{"name":"internet_search"}}]}
+        """);
+        using var requiredDocument = JsonDocument.Parse("""
+        {"model":"auto","messages":[{"role":"user","content":"Search now."}],"tools":[{"type":"function","function":{"name":"internet_search"}}],"tool_choice":"required"}
+        """);
+
+        Assert.IsFalse(LlmRuntimeHost.RequestRequiresToolCapableModel(LlmChatRequest.FromJson(optionalDocument.RootElement)));
+        Assert.IsTrue(LlmRuntimeHost.RequestRequiresToolCapableModel(LlmChatRequest.FromJson(requiredDocument.RootElement)));
     }
 
     private static LlmModelInfo Model(string key, long size, bool loaded, double tokensPerSecond = 0) => new()

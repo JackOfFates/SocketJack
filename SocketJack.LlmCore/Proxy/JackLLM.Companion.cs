@@ -75,7 +75,6 @@ namespace SocketJack.Net
                 using JsonDocument document = JsonDocument.Parse(string.IsNullOrWhiteSpace(request?.Body) ? "{}" : request.Body);
                 string action = CompanionJsonString(document.RootElement, "action").ToLowerInvariant();
                 string goal = CompanionJsonString(document.RootElement, "goal").Trim();
-                bool controlActive;
                 lock (_companionGate)
                 {
                     if (action is "stop" or "cancel")
@@ -84,7 +83,6 @@ namespace SocketJack.Net
                         _companionTaskGoal = "";
                         _companionTaskOwner = "";
                         _companionConfirmations.Clear();
-                        controlActive = false;
                     }
                     else
                     {
@@ -95,10 +93,9 @@ namespace SocketJack.Net
                         _companionTaskStatus = "ready";
                         _companionLastAction = "";
                         _companionEmergencyStopped = false;
-                        controlActive = true;
                     }
                 }
-                CompanionControlStateChanged?.Invoke(controlActive);
+                CompanionControlStateChanged?.Invoke(false);
                 return HandleCompanionStatus(connection, request);
             }
             catch (JsonException ex)
@@ -151,18 +148,24 @@ namespace SocketJack.Net
                             "This action may cause charges, recurring billing, account loss, irreversible transfers, or severe financial damage. Confirm the exact action locally in JackLLM Workstation.");
                 }
 
+                bool controlsDesktop = type is "move" or "click" or "key" or "text" or "scroll" or "clipboard" or "launch" or "terminal";
+                if (controlsDesktop)
+                    CompanionControlStateChanged?.Invoke(true);
+
                 string result;
-                switch (type)
+                try
                 {
-                    case "observe":
-                    case "screen":
-                        if (!permissions.companionScreenView && !observationApprovedOnce)
-                            return BuildJsonError(request, 403, "Forbidden", "Companion Screen View permission is disabled.");
-                        if (CompanionCaptureJpeg == null)
-                            return BuildJsonError(request, 501, "Not Supported", "Screen capture is unavailable on this host.");
-                        byte[] jpeg = CompanionCaptureJpeg(1280, 720, 65);
-                        result = JsonSerializer.Serialize(new { ok = true, type = "screen", contentType = "image/jpeg", data = Convert.ToBase64String(jpeg) });
-                        break;
+                    switch (type)
+                    {
+                        case "observe":
+                        case "screen":
+                            if (!permissions.companionScreenView && !observationApprovedOnce)
+                                return BuildJsonError(request, 403, "Forbidden", "Companion Screen View permission is disabled.");
+                            if (CompanionCaptureJpeg == null)
+                                return BuildJsonError(request, 501, "Not Supported", "Screen capture is unavailable on this host.");
+                            byte[] jpeg = CompanionCaptureJpeg(1280, 720, 65);
+                            result = JsonSerializer.Serialize(new { ok = true, type = "screen", contentType = "image/jpeg", data = Convert.ToBase64String(jpeg) });
+                            break;
 
                     case "move":
                         if (!permissions.companionCursorControl)
@@ -214,8 +217,14 @@ namespace SocketJack.Net
                         result = JsonSerializer.Serialize(new { ok = true, type, memoryId = savedMemory.id, text = "[encrypted sensitive memory]" });
                         break;
 
-                    default:
-                        return BuildJsonError(request, 400, "Bad Request", "Unknown Companion action type.");
+                        default:
+                            return BuildJsonError(request, 400, "Bad Request", "Unknown Companion action type.");
+                    }
+                }
+                finally
+                {
+                    if (controlsDesktop)
+                        CompanionControlStateChanged?.Invoke(false);
                 }
 
                 lock (_companionGate)
@@ -223,7 +232,6 @@ namespace SocketJack.Net
                     _companionTaskStatus = "active";
                     _companionLastAction = permissions.companionActivityTranscriptStorage ? RedactCompanionSensitiveText(type + ": " + value) : type;
                 }
-                CompanionControlStateChanged?.Invoke(true);
                 RecordObservabilityEvent("companion", type, "accepted", "", ownerKey, "/api/companion/action", 0L);
                 return result;
             }
@@ -377,7 +385,6 @@ namespace SocketJack.Net
                 if (_companionTaskStatus is "idle" or "stopped" or "emergency-stopped")
                     _companionTaskStatus = "ready";
             }
-            CompanionControlStateChanged?.Invoke(true);
         }
 
         private string HandleCompanionConfirm(NetworkConnection connection, HttpRequest request)

@@ -283,6 +283,7 @@ public partial class MainWindow : Window {
     private string _workspaceTreeSignature = "";
     private string _servicePanelSignature = "";
     private string _selectedServiceDetailsSignature = "";
+    private string _selectedServiceOptionsSignature = "";
     private string _selectedServiceLogSignature = "";
     private DispatcherTimer? _serviceEventRenderTimer;
     private int? _lastAppliedChatThroughputTokensPerSecond;
@@ -15605,6 +15606,9 @@ public partial class MainWindow : Window {
     }
 
     private bool WasServicePulsed(string name, DateTimeOffset now) {
+        if (ServiceDetailsPanel?.IsKeyboardFocusWithin == true)
+            return false;
+
         string normalizedName = NormalizeServiceName(name);
         return !string.IsNullOrWhiteSpace(normalizedName) &&
                _servicePulseUtc.TryGetValue(normalizedName, out DateTimeOffset lastPulse) &&
@@ -17283,6 +17287,7 @@ public partial class MainWindow : Window {
 
             _servicePanelSignature = namesSignature;
             _selectedServiceDetailsSignature = "";
+            _selectedServiceOptionsSignature = "";
             _selectedServiceLogSignature = "";
             return;
         }
@@ -17318,6 +17323,7 @@ public partial class MainWindow : Window {
         if (service == null) {
             ServiceDetailsPanel.Visibility = Visibility.Collapsed;
             _selectedServiceDetailsSignature = "";
+            _selectedServiceOptionsSignature = "";
             _selectedServiceLogSignature = "";
             return;
         }
@@ -17338,6 +17344,14 @@ public partial class MainWindow : Window {
                 SelectedServiceDetailText.Text = selectedNames.Count > 1
                     ? service.Detail + Environment.NewLine + "Logging: " + string.Join(", ", selectedNames)
                     : service.Detail;
+        }
+
+        // Live service metrics change frequently. Rebuilding Configure here would remove the
+        // focused editor and recreate every action button on each metrics tick. Keep the editor
+        // tree stable until the selected service changes or the user explicitly refreshes it.
+        string optionsSignature = NormalizeServiceName(service.Name) + "\u001E" + selectedNamesSignature;
+        if (!string.Equals(optionsSignature, _selectedServiceOptionsSignature, StringComparison.Ordinal)) {
+            _selectedServiceOptionsSignature = optionsSignature;
             RenderServiceOptions(service);
         }
 
@@ -17404,7 +17418,7 @@ public partial class MainWindow : Window {
             AddServiceConfigRow("Status", service.Status, BuildServiceStatusBrush(service.Status));
             AddServiceConfigRow("Summary", service.CountLine);
             AddServiceConfigRow("Detail", service.Detail);
-            AddServiceActionRow(CreateServiceActionButton("Refresh services", RefreshServicesPanel));
+            AddServiceActionRow(CreateServiceActionButton("Refresh services", RefreshServicesPanelAndOptions));
 
             if (ServiceNameEquals(service.Name, "HTTP")) {
                 RenderWebClientServiceOptions();
@@ -17443,6 +17457,11 @@ public partial class MainWindow : Window {
         } finally {
             _renderingServiceOptions = false;
         }
+    }
+
+    private void RefreshServicesPanelAndOptions() {
+        _selectedServiceOptionsSignature = "";
+        RefreshServicesPanel();
     }
 
     private void UpdateServiceOptionsAndLog(string serviceName) {

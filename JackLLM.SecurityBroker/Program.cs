@@ -51,7 +51,8 @@ try {
     }
     await host.RunAsync(parentLifetime.Token);
 } finally {
-    brokerMutex.ReleaseMutex();
+    // Mutex ownership is thread-affine. RunAsync may resume on another thread,
+    // so closing the process-lifetime handle is the safe singleton teardown.
     brokerMutex.Dispose();
 }
 
