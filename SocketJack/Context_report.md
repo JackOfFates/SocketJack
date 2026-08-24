@@ -4,7 +4,7 @@ Date: 2026-05-17 America/Chicago
 
 ## Summary
 
-- Rebuilt and restarted JackLLM so `http://127.0.0.1:11436/` serves the current `JackLLMWebChat.html`.
+- Rebuilt and restarted heirowLLM so `http://127.0.0.1:11436/` serves the current `heirowLLMWebChat.html`.
 - Verified the chat context expander is present, wired, and opens in the in-app browser.
 - Verified the local WebSocket health bridge code path with a temporary local MasterList instance.
 - Ran a direct `/api/chat-stream` smoke request and did not see `Error in input stream`.
@@ -13,8 +13,8 @@ Date: 2026-05-17 America/Chicago
 
 - `dotnet build ..\SocketJack.LlmCore\SocketJack.LlmCore.csproj --no-restore`: passed.
 - `dotnet build ..\SocketJack-MagicMasterList\SocketJack-MagicMasterList.csproj --no-restore`: passed with 6 existing nullable field warnings in `SocketJack-MagicMasterList\Program.cs`.
-- `dotnet build ..\JackLLM\JackLLM.csproj --no-restore`: passed after stopping the old running JackLLM process.
-- Restarted JackLLM from `JackLLM\bin\Debug\net8.0-windows7.0\JackLLM.exe`.
+- `dotnet build ..\heirowLLM\heirowLLM.csproj --no-restore`: passed after stopping the old running heirowLLM process.
+- Restarted heirowLLM from `heirowLLM\bin\Debug\net8.0-windows7.0\heirowLLM.exe`.
 - Post-restart health: `http://127.0.0.1:11436/api/health` returned HTTP 200 with `"ok": true`.
 
 ## Context Expander
@@ -56,8 +56,8 @@ Source and live page checks:
 
 - `SocketJack-MagicMasterList\Program.cs` registers `ShellProxyJsonWebSocketHandler`.
 - The handler accepts `/proxy/{route}/api/health`, `/proxy/{route}/health`, and `/proxy/{route}/api/server-hardware`.
-- `JackLLMWebChat.html` includes `requestLocalJsonViaWebSocket()` and routes proxied `/api/health` reads through it before falling back to HTTP.
-- The restarted local JackLLM page includes the WebSocket bridge code and the heartbeat pill is connected.
+- `heirowLLMWebChat.html` includes `requestLocalJsonViaWebSocket()` and routes proxied `/api/health` reads through it before falling back to HTTP.
+- The restarted local heirowLLM page includes the WebSocket bridge code and the heartbeat pill is connected.
 
 Runtime WebSocket probe:
 

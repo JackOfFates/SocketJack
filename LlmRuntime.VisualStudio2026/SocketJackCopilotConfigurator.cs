@@ -420,12 +420,12 @@ internal sealed class SocketJackCopilotConfigurator
 
             using HttpResponseMessage response = await this.httpClient.PostAsJsonAsync("http://127.0.0.1:11436/api/copilot-duplicator", payload, cancellationToken);
             return response.IsSuccessStatusCode
-                ? "Local JackLLM copilot duplicator updated."
-                : "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
+                ? "Local heirowLLM copilot duplicator updated."
+                : "Local heirowLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
+            return "Local heirowLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
     }
 
@@ -703,8 +703,8 @@ internal static class SocketJackLocalProxySupervisor
             return false;
         }
 
-        var authService = new JackLlmWorkstationAuthService();
-        JackLlmWorkstationAuthState authState = authService.Load();
+        var authService = new HeirowLlmWorkstationAuthService();
+        HeirowLlmWorkstationAuthState authState = authService.Load();
         if (string.IsNullOrWhiteSpace(authState.AccessToken))
         {
             WriteSupervisorStatus("workstation_auth_missing");
@@ -715,7 +715,7 @@ internal static class SocketJackLocalProxySupervisor
         {
             authState = await authService.ValidateAsync(authState, cancellationToken).ConfigureAwait(false);
         }
-        catch (JackLlmWorkstationAuthenticationException)
+        catch (HeirowLlmWorkstationAuthenticationException)
         {
             authService.Clear();
             await TryStopPackagedProxyAsync(port, cancellationToken).ConfigureAwait(false);
@@ -818,7 +818,7 @@ internal static class SocketJackLocalProxySupervisor
         {
             string directory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "JackLLM",
+                "heirowLLM",
                 "VisualStudio");
             Directory.CreateDirectory(directory);
             JsonObject root = new()

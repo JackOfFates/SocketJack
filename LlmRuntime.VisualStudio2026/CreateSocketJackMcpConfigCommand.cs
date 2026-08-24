@@ -24,8 +24,8 @@ internal sealed class CreateSocketJackMcpConfigCommand : SocketJackAuthenticated
     {
         try
         {
-            var authService = new JackLlmWorkstationAuthService(this.httpClient);
-            JackLlmWorkstationAuthState authState = await authService.ValidateAsync(authService.Load(), cancellationToken);
+            var authService = new HeirowLlmWorkstationAuthService(this.httpClient);
+            HeirowLlmWorkstationAuthState authState = await authService.ValidateAsync(authService.Load(), cancellationToken);
             var configurator = new SocketJackCopilotConfigurator(this.Extensibility, this.httpClient);
             configurator.SetWorkstationAuth(authState.AccessToken, authState.UserName);
             SocketJackConfigureResult result = await configurator.ConfigureFirstEligibleAsync(authState.AccessToken, authState.UserName, cancellationToken);

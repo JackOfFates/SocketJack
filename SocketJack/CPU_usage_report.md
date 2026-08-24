@@ -30,7 +30,7 @@ A short 3-second CPU delta sample showed current local CPU was from other proces
 | Process | Approx CPU over one core | Notes |
 | --- | ---: | --- |
 | `tar.exe` | 132.3% | Linux package build/archive still running |
-| `JackLLM.exe` | 86.5% | Active JackLLM process, not MasterList |
+| `heirowLLM.exe` | 86.5% | Active heirowLLM process, not MasterList |
 | `powershell.exe` | 52.6% | Build/release helper process |
 | `Codex.exe` | 24.5% | Current investigation tooling |
 

@@ -117,7 +117,36 @@ public sealed class LlmRuntimeCompatibilityTests
     }
 
     [TestMethod]
-    public void Status_MissingTorchMessageNamesJackLlmPythonEnvironment()
+    public void Status_UsesConfiguredPythonWhenRequestDoesNotSpecifyOne()
+    {
+        const string configuredPython = @"C:\Users\Example\AppData\Local\SocketJack\heirowLLM\PythonCudaLegacy\python.exe";
+        var probe = new FakeCompatibilityProbe
+        {
+            Gpus = [new LlmDetectedGpu { Name = "GeForce GTX TITAN X", IsNvidia = true, ComputeCapability = "5.2" }],
+            Python = new LlmPythonRuntimeStatus
+            {
+                IsAvailable = true,
+                Version = "3.11.9",
+                HasTorch = true,
+                TorchVersion = "2.1.2+cu118",
+                TorchCudaVersion = "11.8",
+                TorchCudaAvailable = true,
+                TorchCudaDeviceCapability = "5.2",
+                TorchCudaArchList = ["sm_52"]
+            }
+        };
+        var service = new LlmRuntimeCompatibilityService(
+            new LlmRuntimeOptions { PythonExecutable = configuredPython },
+            probe);
+
+        LlmRuntimeCompatibilityStatus status = service.GetStatus();
+
+        Assert.AreEqual(configuredPython, status.Diagnostics.Python.ExecutablePath);
+        Assert.AreEqual("ok", status.Status);
+    }
+
+    [TestMethod]
+    public void Status_MissingTorchMessageNamesHeirowLlmPythonEnvironment()
     {
         var probe = new FakeCompatibilityProbe
         {
@@ -136,7 +165,7 @@ public sealed class LlmRuntimeCompatibilityTests
 
         Assert.AreEqual("repair_required", status.Status);
         Assert.IsTrue(status.GenerationDisabled);
-        StringAssert.Contains(status.Message, "JackLLM's image-generation Python environment");
+        StringAssert.Contains(status.Message, "heirowLLM's image-generation Python environment");
         Assert.IsFalse(status.Message.Contains("CUDA is not installed", StringComparison.OrdinalIgnoreCase));
     }
 

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>netstandard2.1;</TargetFrameworks>
     <SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
@@ -427,7 +427,7 @@
     <Folder Include="Net\Payments\" />
     <Folder Include="Net\Services\" />
     <Folder Include="Net\P2P\" />
-    <Folder Include="LmVs\" />
+    <Folder Include="HeirowLlm\" />
     <Folder Include="Serialization\Json\Converters\" />
   </ItemGroup>
   <ItemGroup>

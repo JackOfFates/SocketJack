@@ -7,9 +7,9 @@ Target tested:
 - Live page: `https://socketjack.com/Auto?mode=tools&origin=hybrid&pool=1`
 - Live API: `https://socketjack.com/auto/api`
 - Browser test session: Codex in-app browser
-- Primary routed server during UI tests: `TitanX` / `lmvs-shell-05d29369622672e5`
+- Primary routed server during UI tests: `TitanX` / `heirowllm-shell-05d29369622672e5`
 - Model actually selected by the page during UI tests: `Qwen3.5-2B-Claude-4.6-Opus-Reasoning-Distilled-GGUF`
-- Requested 35B/Sable target checked separately: `lmvs-shell-410c6a730b24f473` with `Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled.Q5_K_M`
+- Requested 35B/Sable target checked separately: `heirowllm-shell-410c6a730b24f473` with `Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled.Q5_K_M`
 
 ## Executive Summary
 
@@ -31,15 +31,15 @@ The original 35B/Sable route is not usable right now: pinned `/auto/api` status 
 
 `GET /auto/model-cache` returned two relevant servers:
 
-- `TitanX` (`lmvs-shell-05d29369622672e5`): model cache says online, shell proxy connected, tools/vision/media supported.
-- `sable` (`lmvs-shell-410c6a730b24f473`): model cache says offline, but has the 35B Claude-style model loaded.
+- `TitanX` (`heirowllm-shell-05d29369622672e5`): model cache says online, shell proxy connected, tools/vision/media supported.
+- `sable` (`heirowllm-shell-410c6a730b24f473`): model cache says offline, but has the 35B Claude-style model loaded.
 
 ### Pinned 35B/Sable Check
 
 Request:
 
 ```text
-GET /auto/api?mode=tools&origin=hybrid&pool=true&server_id=lmvs-shell-410c6a730b24f473&model=Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled.Q5_K_M
+GET /auto/api?mode=tools&origin=hybrid&pool=true&server_id=heirowllm-shell-410c6a730b24f473&model=Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled.Q5_K_M
 ```
 
 Result:
@@ -57,12 +57,12 @@ Plain `GET /auto/api` status checks:
 
 | Mode | HTTP | Eligible | Selected | Selected status | Result |
 | --- | ---: | ---: | --- | --- | --- |
-| text | 200 | 1 | TitanX | Offline - JackLLM did not pong: The operation was canceled. | Inconsistent |
-| tools | 200 | 1 | TitanX | Offline - JackLLM did not pong: The operation was canceled. | Inconsistent |
+| text | 200 | 1 | TitanX | Offline - heirowLLM did not pong: The operation was canceled. | Inconsistent |
+| tools | 200 | 1 | TitanX | Offline - heirowLLM did not pong: The operation was canceled. | Inconsistent |
 | image | 503 | n/a | n/a | n/a | Broken |
-| audio | 200 | 1 | TitanX | Offline - JackLLM did not pong: The operation was canceled. | Inconsistent |
-| video | 200 | 1 | TitanX | Offline - JackLLM did not pong: The operation was canceled. | Inconsistent |
-| multimodal | 200 | 1 | TitanX | Offline - JackLLM did not pong: The operation was canceled. | Inconsistent |
+| audio | 200 | 1 | TitanX | Offline - heirowLLM did not pong: The operation was canceled. | Inconsistent |
+| video | 200 | 1 | TitanX | Offline - heirowLLM did not pong: The operation was canceled. | Inconsistent |
+| multimodal | 200 | 1 | TitanX | Offline - heirowLLM did not pong: The operation was canceled. | Inconsistent |
 | embedding | 503 | n/a | n/a | n/a | Broken |
 
 The status surface is contradictory: it reports an eligible selected server but also says the selected server is offline / did not pong.
@@ -199,7 +199,7 @@ Broken response excerpt:
 
 ```text
 Browser Skill opened the page.
-Tool event ... [LmVsProxy tool result digest] ...
+Tool event ... [HeirowLlm tool result digest] ...
 ```
 
 Conclusion: `browser_open` works, but the loop stopped before producing the requested final answer.
@@ -326,7 +326,7 @@ Conclusion: download works, but argument extraction and tool-loop continuation a
 
 4. Make the send-button tool/vision capability state use the same source of truth as `/auto/model-cache` and `/auto/api`.
 
-5. Fix `/auto/api` status eligibility so an `ok:true` selected route does not simultaneously report `Offline - JackLLM did not pong`.
+5. Fix `/auto/api` status eligibility so an `ok:true` selected route does not simultaneously report `Offline - heirowLLM did not pong`.
 
 6. Investigate direct POST hangs for `/auto/api` and `/auto/route`.
 
@@ -453,7 +453,7 @@ Date: 2026-06-02 03:18 CDT
 
 Authoritative advertised tool source inspected:
 
-- `SocketJack.LlmCore/Proxy/JackLLM.cs`
+- `SocketJack.LlmCore/Proxy/heirowLLM.cs`
 - `BuildProxyResearchToolSystemPrompt(...)`
 - `WriteProxyResearchToolSchemas(...)`
 - `WriteGitToolSchemas(...)`

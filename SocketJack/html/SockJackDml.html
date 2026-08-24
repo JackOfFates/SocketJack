@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SockJackDml Mission Control</title>
+<title>heirowDml Mission Control</title>
 <style>
 :root {
     color-scheme: dark;
@@ -322,7 +322,7 @@ h1 {
         <div class="brand">
             <div class="brand-mark">AD</div>
             <div>
-                <h1>SockJackDml Mission Control</h1>
+                <h1>heirowDml Mission Control</h1>
                 <div id="identityLine" class="muted mono">SocketJack.com</div>
             </div>
         </div>
@@ -333,7 +333,7 @@ h1 {
         </div>
     </header>
 
-    <nav class="tabs" aria-label="SockJackDml views">
+    <nav class="tabs" aria-label="heirowDml views">
         <a href="/sockjackdml/missions" data-tab="missions">Missions</a>
         <a href="/sockjackdml/packs" data-tab="packs">Packs</a>
         <a href="/sockjackdml/operator" data-tab="operator">Operator</a>
@@ -636,7 +636,7 @@ window.addEventListener('unhandledrejection', event => {
 });
 
 window.addEventListener('error', event => {
-    showToast(event.message || 'SockJackDml UI error', true);
+    showToast(event.message || 'heirowDml UI error', true);
 });
 
 function prop(source, ...names) {
@@ -876,7 +876,7 @@ function renderAssist() {
 function renderCapabilities() {
     const data = state.capabilities || {};
     const router = data.router || data.Router || {};
-    $('routerPanel').innerHTML = '<div class="item"><div class="title">' + html(prop(router, 'Name') || 'SockJackDml Capability Router') + '</div>' +
+    $('routerPanel').innerHTML = '<div class="item"><div class="title">' + html(prop(router, 'Name') || 'heirowDml Capability Router') + '</div>' +
         '<div class="meta">Runtime: ' + html(prop(router, 'ActiveRuntime') || '') + '</div>' +
         '<div class="pill-row"><span class="pill ' + (prop(router, 'LocalRuntimeHealthy') ? 'ok' : 'warn') + '">local ' + (prop(router, 'LocalRuntimeHealthy') ? 'ready' : 'fallback') + '</span><span class="pill ' + (prop(router, 'PeerSelected') ? 'ok' : '') + '">peer ' + (prop(router, 'PeerSelected') ? 'selected' : 'none') + '</span></div>' +
         '<div class="meta">' + ((prop(router, 'Scoring') || []).map(html).join(' | ')) + '</div></div>';
@@ -997,7 +997,7 @@ document.querySelectorAll('[data-tab]').forEach(tab => {
 });
 window.addEventListener('popstate', () => activateTab(currentTab()));
 
-$('refreshAll').addEventListener('click', () => loadAll().then(() => showToast('SockJackDml refreshed')).catch(error => showToast(error.message, true)));
+$('refreshAll').addEventListener('click', () => loadAll().then(() => showToast('heirowDml refreshed')).catch(error => showToast(error.message, true)));
 
 $('missionSelect').addEventListener('change', async event => {
     state.selectedMissionId = event.target.value;
@@ -1053,7 +1053,7 @@ document.body.addEventListener('click', async event => {
             eventId: decision.dataset.event,
             approved,
             decision: approved ? 'approved' : 'rejected',
-            note: approved ? 'Approved in SockJackDml' : 'Rejected in SockJackDml'
+            note: approved ? 'Approved in heirowDml' : 'Rejected in heirowDml'
         }});
         await loadAll();
         showToast(approved ? 'Proposal approved' : 'Proposal rejected');
@@ -1112,7 +1112,7 @@ $('workflowEvidenceForm').addEventListener('submit', async event => {
         evidencePacketId: $('workflowEvidencePacketId').value,
         executionId,
         actionId: $('workflowEvidenceActionId').value,
-        title: 'SockJackDml workflow evidence',
+        title: 'heirowDml workflow evidence',
         summary: $('workflowEvidenceSummary').value,
         sourceKind: $('workflowEvidenceSourceKind').value,
         sourceRef: $('workflowEvidenceSourceRef').value || executionId,

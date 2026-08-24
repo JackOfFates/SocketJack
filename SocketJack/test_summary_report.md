@@ -6,11 +6,11 @@ Workspace: `C:\Users\Vin\Documents\GitHub\SocketJack\SocketJack`
 
 ## Scope
 
-Validated the LLM consistency fix against real LM Studio and the local LlmRuntime-backed JackLLM server. The goal was to stop visible clipping, avoid prompt-specific shortcuts, preserve LM Studio-compatible `finish_reason` behavior, and allow recursive continuation without a fixed pass cap while tokens/server capacity remain available.
+Validated the LLM consistency fix against real LM Studio and the local LlmRuntime-backed heirowLLM server. The goal was to stop visible clipping, avoid prompt-specific shortcuts, preserve LM Studio-compatible `finish_reason` behavior, and allow recursive continuation without a fixed pass cap while tokens/server capacity remain available.
 
 ## Changed Areas
 
-- `SocketJack.LlmCore/Proxy/JackLLM.cs`
+- `SocketJack.LlmCore/Proxy/heirowLLM.cs`
   - Removed the fixed auto-continuation pass limiter.
   - Continuation is now driven by output-limit/abrupt-stream finish reasons plus token-capacity checks and cancellation.
   - `/api/chat-stream` emits `auto_continuation` progress events whenever it recursively continues a clipped response.
@@ -18,7 +18,7 @@ Validated the LLM consistency fix against real LM Studio and the local LlmRuntim
 - `LlmRuntime/LlamaSharpBackend.cs`
   - Fixed the live `cuda12`/LLamaSharp path, which previously hardcoded `FinishReason = "stop"`.
   - Tracks generated tokens and emits final stream finish metadata.
-  - Treats hidden-reasoning-only output as `length`, so JackLLM can continue instead of accepting an empty visible answer as complete.
+  - Treats hidden-reasoning-only output as `length`, so heirowLLM can continue instead of accepting an empty visible answer as complete.
 
 - `LlmRuntime/DirectMlRunner/DirectMlRunnerProgram.cs`
   - Emits `length` when generated tokens reach the cap.
@@ -38,7 +38,7 @@ dotnet test ..\LlmRuntime.Tests\LlmRuntime.Tests.csproj --no-restore --nologo -v
 Result: 274 passed, 0 failed, 0 skipped.
 
 ```powershell
-dotnet build ..\JackLLM\JackLLM.csproj --no-restore --nologo -v:minimal -maxcpucount:1
+dotnet build ..\heirowLLM\heirowLLM.csproj --no-restore --nologo -v:minimal -maxcpucount:1
 ```
 
 Result: build succeeded, 0 warnings, 0 errors.
@@ -51,7 +51,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-DirectMlGguf
 
 ## Live TitanX Verification
 
-- JackLLM PID: `20868`
+- heirowLLM PID: `20868`
 - Health endpoint: `http://127.0.0.1:11436/api/health`
 - Runtime endpoint: `http://127.0.0.1:11435/v1/chat/completions`
 - LM Studio comparison endpoint: `http://127.0.0.1:1234/v1/chat/completions`
@@ -90,9 +90,9 @@ Result:
 
 - Observed `auto_continuation` progress events: 4
 - The client intentionally cancelled after the fourth event.
-- JackLLM stayed healthy after cancellation.
+- heirowLLM stayed healthy after cancellation.
 - This confirms continuation is not stopped by a fixed 3-pass cap.
 
 ## Conclusion
 
-The TitanX server now treats clipped/hidden-only low-budget model output like LM Studio, surfaces `finish_reason: "length"` through both CUDA and DirectML paths, and recursively continues clipped JackLLM chat streams without a hardcoded pass limit.
+The TitanX server now treats clipped/hidden-only low-budget model output like LM Studio, surfaces `finish_reason: "length"` through both CUDA and DirectML paths, and recursively continues clipped heirowLLM chat streams without a hardcoded pass limit.

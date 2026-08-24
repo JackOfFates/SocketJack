@@ -1,4 +1,4 @@
-﻿# SocketJack Updates
+# SocketJack Updates
 
 Last updated: 2026-05-11
 
@@ -16,7 +16,7 @@ This change log is synthesized from repository progress files that contain "prog
 
 - Completed the SocketJack.com SockJackDml surface.
 - Added `/sockjackdml/*` routes that load the mission-control application.
-- Added durable SockJackDml storage and backend APIs in `JackLLM`.
+- Added durable SockJackDml storage and backend APIs in `heirowLLM`.
 - Added chat header navigation into SockJackDml.
 - Added service catalog integration and project content copy for the SockJackDml resource.
 - Completed Mission Control, mission packs, Live AI Operator, zero-trust remote assist, capability scoring, evidence packets, JSON evidence export, and realtime accessibility artifacts.
@@ -28,7 +28,7 @@ This change log is synthesized from repository progress files that contain "prog
 - Added local `/api/sockjackdml/tools/*` endpoints.
 - Added approval-gated execution modes for preview, approved apply, and auto approval-gated file, Git, and terminal actions.
 - Mirrored proprietary HTTP tool definitions into embedded LlmRuntime export through `/api/v1/tools/openai`.
-- Verification recorded passing builds for `SocketJack`, `JackLLM`, and `LlmRuntime`, plus passing `LlmRuntime.Tests`.
+- Verification recorded passing builds for `SocketJack`, `heirowLLM`, and `LlmRuntime`, plus passing `LlmRuntime.Tests`.
 
 ### Companion Process Control And Start Browser
 
@@ -43,7 +43,7 @@ This change log is synthesized from repository progress files that contain "prog
 
 ### Companion Running Processes And Windows Tool Service
 
-- Completed a process/window inventory service for `JackLLMCompanion`.
+- Completed a process/window inventory service for `heirowLLMCompanion`.
 - Added process snapshots with PID, name, executable path, memory, admin state, denied/unavailable reasons, CPU, RAM, total RAM, and best-effort GPU metadata.
 - Added visible top-level window enumeration with Win32 `EnumWindows`, title/class reads, and PID joins.
 - Added `GET /api/companion/processes` and `GET /api/companion/windows`.
@@ -51,7 +51,7 @@ This change log is synthesized from repository progress files that contain "prog
 - Added a sortable/filterable WPF Processes tab with refresh, auto-refresh, window-only toggle, resource columns, admin state, and Open File Location.
 - Added a web Processes tab in `/Workspace`.
 - Added bounded read-only runner tools: `list_running_processes` and `list_open_windows`.
-- Verification recorded passing `JackLLMCompanion` and `JackLLM` builds plus local API smoke checks.
+- Verification recorded passing `heirowLLMCompanion` and `heirowLLM` builds plus local API smoke checks.
 
 ### Companion Self-Training Skills
 
@@ -64,8 +64,8 @@ This change log is synthesized from repository progress files that contain "prog
 - Connected reviewed enabled skills into the LLM runner prompt through context ranking.
 - Added WPF and `/Workspace` Training tabs.
 - Added training state/start/cancel/settings, skill review, replay index, and replay frame routes.
-- Added a detailed `JackLLMCompanion/README.md` user guide.
-- Replaced companion model-name text entry with WPF and web dropdowns populated from JackLLM/runtime model lists.
+- Added a detailed `heirowLLMCompanion/README.md` user guide.
+- Replaced companion model-name text entry with WPF and web dropdowns populated from heirowLLM/runtime model lists.
 
 ### Companion Remote Desktop, File Sharing, And LLM Control
 
@@ -96,7 +96,7 @@ This change log is synthesized from repository progress files that contain "prog
 - Added image, audio, and video generation foundations with model-specific execution deferred until local model layouts are selected.
 - Connected JackONNX to LlmRuntime tools and SocketJack routes.
 - Added artifact serving and SSE progress streaming.
-- Latest validation recorded `JackONNX.Tests`, CLI manifest validation, and `JackLLM` build success.
+- Latest validation recorded `JackONNX.Tests`, CLI manifest validation, and `heirowLLM` build success.
 
 ### Endpoint Security And Bot Filtering
 
@@ -106,7 +106,7 @@ This change log is synthesized from repository progress files that contain "prog
 - Added HTTP request gating, post-response recording, and blocked responses with retry metadata.
 - Wired SocketJack protocol routing, unknown protocol probes, SocketJack frames, WebSocket handshakes, and WebSocket frames into the shared monitor.
 - Hardened static file resolution against mapped-root escapes and traversal probes.
-- Added default-on daily HTTP access logs under `C:\JackLLM\Logs`.
+- Added default-on daily HTTP access logs under `C:\heirowLLM\Logs`.
 - Added Loose, Firm, and Strict tuning profiles.
 - Verification recorded `dotnet build SocketJack.csproj` with 0 warnings and 0 errors.
 
@@ -119,7 +119,7 @@ This change log is synthesized from repository progress files that contain "prog
 - Added SocketJack website proxy routes for `GET`, `POST`, and `OPTIONS` on `/SecureAuthority/*`.
 - Verification recorded successful `SocketJack-MagicMasterList`, `SocketJack.Update`, and `SocketJack.Update.Publisher` builds plus clean PowerShell repair script parsing.
 
-### JackLLM Session Management Refresh
+### heirowLLM Session Management Refresh
 
 - Expanded scope from side-panel refresh to a broader session-management installment.
 - Added rename API work and title persistence work.
@@ -129,7 +129,7 @@ This change log is synthesized from repository progress files that contain "prog
 
 ## Deferred Next Steps
 
-- Finish the JackLLM session-management refresh.
+- Finish the heirowLLM session-management refresh.
 - Select local model layouts for JackONNX image, audio, and video execution.
 - Implement model-specific ONNX graph orchestration after those layouts are selected.
 - Run a live Web Chat Agent-mode smoke test for the three SockJackDml workflow tools.

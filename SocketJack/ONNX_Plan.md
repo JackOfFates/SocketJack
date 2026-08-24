@@ -12,7 +12,7 @@ Create a production-ready inference library that can:
 - Fall back to CPU cleanly.
 - Expose simple high-level APIs for image, audio, and video generation.
 - Connect directly with `llmruntime` so LLM workflows can call local media generation as tools, return generated artifacts, and stream progress back into chat/agent sessions.
-- Stream progress, previews, logs, and artifacts back through SocketJack/JackLLM.
+- Stream progress, previews, logs, and artifacts back through SocketJack/heirowLLM.
 
 ## Recommended Project Shape
 
@@ -55,7 +55,7 @@ Keep JackONNX as one source project with domain folders and namespaces. Native p
 | `JackONNX/Media/Audio` | TTS, audio generation, vocoder, transcription-ready utilities. |
 | `JackONNX/Media/Video` | Frame generation, animation, interpolation, video assembly. |
 | `JackONNX/Integrations/LlmRuntime` | Adapter that exposes JackONNX generation as `llmruntime` tools, capabilities, jobs, and artifact outputs. |
-| `JackONNX/Integrations/SocketJack` | SocketJack/JackLLM integration layer. |
+| `JackONNX/Integrations/SocketJack` | SocketJack/heirowLLM integration layer. |
 
 ## Runtime Backend Plan
 
@@ -325,18 +325,18 @@ llmruntime cancellation -> JackONNX cancellation token
 
 The first connected workflow should be: user asks an LLM to create an image, `llmruntime` plans or invokes `jackonnx.image.generate`, JackONNX runs the ONNX pipeline on CUDA/DirectML/CPU, previews stream into the session, and the final PNG is returned as a `llmruntime` artifact plus a SocketJack-served URL when hosted.
 
-## JackLLM Changeover
+## heirowLLM Changeover
 
-The JackLLM should gradually change over from directly owning LLM/tool runtime behavior to presenting and controlling `llmruntime` state. JackONNX should plug into that same path, so image, audio, and video generation appear as `llmruntime` capabilities instead of a separate one-off media system.
+The heirowLLM should gradually change over from directly owning LLM/tool runtime behavior to presenting and controlling `llmruntime` state. JackONNX should plug into that same path, so image, audio, and video generation appear as `llmruntime` capabilities instead of a separate one-off media system.
 
 Changeover goals:
 
 - Show `llmruntime` as the active local runtime behind chat, tools, agent actions, and media generation.
 - Surface JackONNX capabilities through `llmruntime`, including available providers, models, queue status, running jobs, previews, and final artifacts.
-- Keep existing JackLLM affordances for approvals, permissions, terminal/tool safety, sessions, diagnostics, and remote admin, but route runtime decisions through `llmruntime`.
+- Keep existing heirowLLM affordances for approvals, permissions, terminal/tool safety, sessions, diagnostics, and remote admin, but route runtime decisions through `llmruntime`.
 - Add GUI status for `llmruntime` connection health, tool schema refresh, runtime version, enabled providers, and JackONNX media availability.
-- Update labels and diagnostics so users understand the stack as `JackLLM -> llmruntime -> JackONNX/LLM tools/providers`.
-- Preserve backward-compatible routes while the GUI migrates, especially where existing clients still call JackLLM APIs directly.
+- Update labels and diagnostics so users understand the stack as `heirowLLM -> llmruntime -> JackONNX/LLM tools/providers`.
+- Preserve backward-compatible routes while the GUI migrates, especially where existing clients still call heirowLLM APIs directly.
 
 Suggested GUI areas to update:
 
@@ -513,8 +513,8 @@ Integration tests:
    - Register JackONNX as `llmruntime` tools/capabilities.
    - Bridge job progress, preview artifacts, cancellation, and final results into `llmruntime` sessions.
    - Add policy hooks for permissions, cost limits, and artifact access.
-   - Plan the JackLLM changeover so chat, tools, approvals, diagnostics, and media generation are presented as `llmruntime`-backed surfaces.
-   - Review the JackLLM/SocketJack-MagicMasterList list for optional `llmruntime` and JackONNX capability metadata, but leave it unchanged if discovery already has enough information.
+   - Plan the heirowLLM changeover so chat, tools, approvals, diagnostics, and media generation are presented as `llmruntime`-backed surfaces.
+   - Review the heirowLLM/SocketJack-MagicMasterList list for optional `llmruntime` and JackONNX capability metadata, but leave it unchanged if discovery already has enough information.
 
 6. **Audio MVP**
    - Add TTS pipeline.
@@ -556,7 +556,7 @@ For `v0.1`, keep the target tight:
 - `JackONNX.SocketJack` namespace
 - Text-to-image generation
 - `llmruntime` tool registration for image generation, model listing, job status, and cancellation
-- JackLLM changeover notes for showing JackONNX through `llmruntime`
+- heirowLLM changeover notes for showing JackONNX through `llmruntime`
 - Model manifests
 - Device/provider detection
 - Job queue

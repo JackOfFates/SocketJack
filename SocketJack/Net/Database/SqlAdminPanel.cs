@@ -51,7 +51,7 @@ namespace SocketJack.Net.Database {
         private static readonly ConcurrentDictionary<string, string> _pageTemplateCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, string> _pageHashCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly JsonSerializerOptions _reflectJsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        private const string ErrorDiagnosticsTableName = "LmVsProxyErrorLog";
+        private const string ErrorDiagnosticsTableName = "HeirowLlmErrorLog";
         private const string SqlAdminAuditTableName = "SqlAdminAuditLog";
         private const string SqlAdminRestorePointsTableName = "SqlAdminRestorePoints";
         private const int MaxSqlRestorePointRows = 32;
@@ -2119,7 +2119,7 @@ namespace SocketJack.Net.Database {
             if (rows.Count == 0)
                 return JsonSerializer.Serialize(new {
                     success = true,
-                    analysis = "No stored LmVsProxy errors are available to analyze.",
+                    analysis = "No stored HeirowLlm errors are available to analyze.",
                     entries = new List<object>()
                 });
 
@@ -2182,7 +2182,7 @@ namespace SocketJack.Net.Database {
                 messages = new[] {
                     new {
                         role = "system",
-                        content = "You diagnose SocketJack LmVsProxy server errors for an administrator. Be concise and operational. Return: Summary, Most likely cause, Evidence, Next checks, and Suggested fix. If the evidence is weak, say what is uncertain."
+                        content = "You diagnose SocketJack HeirowLlm server errors for an administrator. Be concise and operational. Return: Summary, Most likely cause, Evidence, Next checks, and Suggested fix. If the evidence is weak, say what is uncertain."
                     },
                     new {
                         role = "user",
@@ -2221,7 +2221,7 @@ namespace SocketJack.Net.Database {
 
         private string BuildErrorDiagnosticsPrompt(List<object[]> rows, string focus) {
             var sb = new StringBuilder();
-            sb.AppendLine("Analyze these stored LmVsProxy errors.");
+            sb.AppendLine("Analyze these stored HeirowLlm errors.");
             if (!string.IsNullOrWhiteSpace(focus))
                 sb.AppendLine("Admin focus: " + focus.Trim());
             sb.AppendLine();

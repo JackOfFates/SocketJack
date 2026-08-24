@@ -5,7 +5,7 @@ using SocketJack.Net;
 
 namespace LlmRuntime;
 
-public sealed class LlmRuntimeModelRuntimeAdapter : ILmVsProxyModelRuntime, IDisposable
+public sealed class LlmRuntimeModelRuntimeAdapter : IHeirowLlmModelRuntime, IDisposable
 {
     private readonly object _sync = new();
     private readonly LlmRuntimeOptions _options;

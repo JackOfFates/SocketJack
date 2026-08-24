@@ -2,7 +2,7 @@
 
 Goal: download a local code model, load it into LlmRuntime, run an approved agent edit, test it, and prepare a PR path without requiring LM Studio.
 
-1. Build `JackLLM`.
+1. Build `heirowLLM`.
 2. Launch the GUI.
 3. Choose `Embedded LlmRuntime` in the provider dropdown.
 4. Open `Model Browser`.

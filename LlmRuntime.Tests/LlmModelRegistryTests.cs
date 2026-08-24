@@ -142,6 +142,8 @@ public sealed class LlmModelRegistryTests
         CollectionAssert.Contains(ModelHeuristics.DetectModelTags("llava-vision-Q4_0.gguf").ToList(), "vision");
         Assert.AreEqual("vlm", ModelHeuristics.DetectModelType(null, "Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF-Q6_K.gguf"));
         CollectionAssert.Contains(ModelHeuristics.DetectModelTags("Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF-Q6_K.gguf").ToList(), "vision");
+        CollectionAssert.Contains(ModelHeuristics.DetectModelTags("gemma-4-12B-it-Q4_0.gguf").ToList(), "tool-use");
+        CollectionAssert.Contains(ModelHeuristics.DetectModelTags("Qwythos-9B-Claude-Mythos-5-1M-Q4_K_M.gguf").ToList(), "tool-use");
     }
 
     [TestMethod]

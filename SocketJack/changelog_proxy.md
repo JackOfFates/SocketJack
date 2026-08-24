@@ -9,7 +9,7 @@ Date: 2026-05-13
   - Resolves registered `MasterShellRelay` instances, checks relay health, rewrites proxied HTML for the `/proxy/{servername}` prefix, and forwards browser/API traffic into the reverse TCP relay.
 - `SocketJack/Net/HttpServer.cs`
   - Contains generic host proxy support. It also opens upstream connections per request, but `/proxy/{servername}` shell sessions do not primarily use this path.
-- `SocketJack/html/JackLLMWebChat.html`
+- `SocketJack/html/heirowLLMWebChat.html`
   - Detects `/proxy/{servername}` and prefixes local `/api/*` calls so the browser routes API calls through the shell proxy.
 - `SocketJack/Net/Services/TerminalService.cs`
   - Executes approved terminal commands after the proxied UI is loaded. It is not the startup bottleneck for loading `/proxy/{servername}` pages.
@@ -49,13 +49,13 @@ That made a proxied shell session pay setup cost for every HTML, API, and pollin
 
 ### Affected areas analyzed
 
-- `SocketJack.LlmCore/Proxy/JackLLM.cs`
+- `SocketJack.LlmCore/Proxy/heirowLLM.cs`
   - Handles chat UI streaming, native `/api/v1/chat` runtime events, model-load progress events, prompt-processing progress events, and usage metering emitted to the browser.
 - `SocketJack.LlmCore/Proxy/Sessions/ChatSessionModels.cs`
   - Stores per-native-stream state used while reading LM Studio/LlmRuntime stream events.
 - `SocketJack/Net/HttpServer.cs`
   - `ChunkedStream` flushes each streamed line immediately. That is useful for token deltas, but expensive when the upstream sends very frequent progress ticks.
-- `SocketJack/html/JackLLMWebChat.html`
+- `SocketJack/html/heirowLLMWebChat.html`
   - Renders `model_load` and `prompt_processing` progress events into the visible loading/progress bar.
 
 ### Root cause
@@ -67,7 +67,7 @@ When LM Studio or LlmRuntime emits tiny progress deltas quickly, that creates ma
 ### Changes made
 
 - Added per-native-stream progress tracking to `ChatUiNativeStreamState`.
-- Added `WriteNativeProgressIfDue` in `JackLLM.cs`.
+- Added `WriteNativeProgressIfDue` in `heirowLLM.cs`.
 - Coalesced native progress updates so repeated tiny deltas are skipped unless:
   - the phase changes,
   - the update is a forced start/end event,
@@ -83,7 +83,7 @@ When LM Studio or LlmRuntime emits tiny progress deltas quickly, that creates ma
 
 ### Files changed
 
-- `SocketJack.LlmCore/Proxy/JackLLM.cs`
+- `SocketJack.LlmCore/Proxy/heirowLLM.cs`
 - `SocketJack.LlmCore/Proxy/Sessions/ChatSessionModels.cs`
 - `SocketJack/changelog_proxy.md`
 
@@ -95,14 +95,14 @@ The chat stream could be alive and still emitting thousands of tokens, but once 
 
 ### Changes made
 
-- Updated `JackLLMWebChat.html` so live reasoning opens the thinking panel while the response is still streaming.
+- Updated `heirowLLMWebChat.html` so live reasoning opens the thinking panel while the response is still streaming.
 - Once any answer or reasoning output exists, progress events no longer restore the large percentage bar.
 - Progress is condensed to a compact strip with `Thinking...` or `Receiving response...` while content/thoughts are visible.
 - Final responses still collapse into the normal completed assistant message behavior.
 
 ### Files changed
 
-- `SocketJack/html/JackLLMWebChat.html`
+- `SocketJack/html/heirowLLMWebChat.html`
 - `SocketJack/changelog_proxy.md`
 
 ## 2026-05-13 follow-up: shell waiting page relay race
@@ -122,61 +122,61 @@ The public `/proxy/{servername}` route immediately returned the waiting page whe
 - `SocketJack-MagicMasterList/Program.cs`
 - `SocketJack/changelog_proxy.md`
 
-## 2026-05-13 follow-up: JackLLM security and bot filtering defaults
+## 2026-05-13 follow-up: heirowLLM security and bot filtering defaults
 
 ### Affected areas analyzed
 
-- `SocketJack.LlmCore/Proxy/JackLLM.cs`
-  - Creates the JackLLM/LmVsProxy chat UI server and configures request gating, robots policy, and SocketJack endpoint security.
+- `SocketJack.LlmCore/Proxy/heirowLLM.cs`
+  - Creates the heirowLLM/HeirowLlm chat UI server and configures request gating, robots policy, and SocketJack endpoint security.
 - `SocketJack-MagicMasterList/Program.cs`
-  - Creates the MagicMasterList API, website, HTTPS, and Jackcast proxy listeners used by JackLLM project publishing and shell proxy flows.
+  - Creates the MagicMasterList API, website, HTTPS, and Jackcast proxy listeners used by heirowLLM project publishing and shell proxy flows.
 - `SocketJack/Net/EndpointSecurity.cs`
-  - Provides the shared SocketJack endpoint security and bot filtering options. The core default remains enabled for non-JackLLM consumers.
+  - Provides the shared SocketJack endpoint security and bot filtering options. The core default remains enabled for non-heirowLLM consumers.
 
 ### Root cause
 
-JackLLM-facing servers inherited SocketJack endpoint security defaults unless each listener opted out individually. The chat UI server also installed an access request gate and advertised a crawler-disallow robots policy.
+heirowLLM-facing servers inherited SocketJack endpoint security defaults unless each listener opted out individually. The chat UI server also installed an access request gate and advertised a crawler-disallow robots policy.
 
-That meant JackLLM projects could still pay for bot/security classification and could present blocking behavior by default even when the intended JackLLM behavior is a permissive local/project proxy.
+That meant heirowLLM projects could still pay for bot/security classification and could present blocking behavior by default even when the intended heirowLLM behavior is a permissive local/project proxy.
 
 ### Changes made
 
-- Added a JackLLM chat-server security disable path that:
+- Added a heirowLLM chat-server security disable path that:
   - removes the default `RequestGate`,
   - disables `EndpointSecurity.Enabled`,
   - disables known-bad-path blocking,
   - disables suspicious user-agent treatment, and
   - switches the chat UI robots policy from `Disallow: /` to `Allow: /`.
 - Moved MagicMasterList listener security defaults into `CreateServer` so the API listener, website listener, HTTPS listener, and Jackcast dedicated listeners all start with endpoint security disabled.
-- Removed the previous one-off HTTPS-only endpoint security disable because all MagicMasterList-created listeners now share the same JackLLM-facing default.
+- Removed the previous one-off HTTPS-only endpoint security disable because all MagicMasterList-created listeners now share the same heirowLLM-facing default.
 - Left the shared SocketJack `EndpointSecurityOptions` default unchanged so unrelated SocketJack hosts can still opt into the existing protective defaults.
 
 ### Expected effect
 
-- JackLLM projects no longer run SocketJack bot filtering or endpoint security by default.
-- Unlisted JackLLM chat servers are no longer blocked by the default request gate; listing visibility can remain a discovery concept without also acting as a transport block.
+- heirowLLM projects no longer run SocketJack bot filtering or endpoint security by default.
+- Unlisted heirowLLM chat servers are no longer blocked by the default request gate; listing visibility can remain a discovery concept without also acting as a transport block.
 - MagicMasterList shell/proxy listeners use a consistent permissive default across HTTP, HTTPS, and Jackcast listeners.
 
 ### Files changed
 
-- `SocketJack.LlmCore/Proxy/JackLLM.cs`
+- `SocketJack.LlmCore/Proxy/heirowLLM.cs`
 - `SocketJack-MagicMasterList/Program.cs`
 - `SocketJack/changelog_proxy.md`
 
-## 2026-05-13 follow-up: shell relay agents for unlisted JackLLM routes
+## 2026-05-13 follow-up: shell relay agents for unlisted heirowLLM routes
 
 ### Affected areas analyzed
 
-- `JackLLM/MainWindow.xaml.cs`
-  - Starts the JackLLM local chat server, controls the Published/Unlisted state, requests `/api/shell/proxies`, and starts `ReverseTcpRelayClient` agents.
+- `heirowLLM/MainWindow.xaml.cs`
+  - Starts the heirowLLM local chat server, controls the Published/Unlisted state, requests `/api/shell/proxies`, and starts `ReverseTcpRelayClient` agents.
 - `SocketJack/Net/ReverseTcpDuplicator.cs`
-  - Maintains the reverse TCP relay agent pool, connects desktop agents to master relay ports, and bridges public socket sessions to the local JackLLM chat server.
+  - Maintains the reverse TCP relay agent pool, connects desktop agents to master relay ports, and bridges public socket sessions to the local heirowLLM chat server.
 - `SocketJack-MagicMasterList/Program.cs`
   - Reports relay runtime counts and forwards `/proxy/{servername}` traffic only when reverse agents are available.
 
 ### Root cause
 
-JackLLM restored the Shell publishing checkbox as checked by default, but startup only started the reverse shell relay through the Published listing path.
+heirowLLM restored the Shell publishing checkbox as checked by default, but startup only started the reverse shell relay through the Published listing path.
 
 When a host was unlisted, or auto-publish was disabled, the master route could still exist and accept authenticated `/proxy/{servername}` navigation, but the desktop app never parked reverse agents on the route's agent port. The public page then stayed on the waiting screen with `Server not responding ...%` because MagicMasterList correctly saw `WaitingAgents = 0`.
 
@@ -184,23 +184,23 @@ Relay connection failures were also too easy to miss: `ReverseTcpRelayClient` us
 
 ### Changes made
 
-- Changed JackLLM startup so a checked Shell publishing control starts shell mode even when the listing is Unlisted.
+- Changed heirowLLM startup so a checked Shell publishing control starts shell mode even when the listing is Unlisted.
 - Changed the unlisted publish path so it starts the shell relay and keeps the route reachable while leaving website visibility off.
 - Preserved Published as a discovery/listing setting instead of letting it decide whether the transport relay exists.
 - Added bounded reverse-agent connection timeouts:
   - 10 seconds when connecting to the master relay agent port.
-  - 5 seconds when pairing to the local JackLLM chat server.
+  - 5 seconds when pairing to the local heirowLLM chat server.
 - Added master-side pruning for disconnected queued relay sockets before reporting runtime counts or pairing sockets, so stale waiting public clients do not make relay status misleading.
 
 ### Expected effect
 
-- Authenticated `/proxy/{servername}` URLs should work for unlisted JackLLM projects as long as Shell publishing is enabled and the local JackLLM chat server is running.
+- Authenticated `/proxy/{servername}` URLs should work for unlisted heirowLLM projects as long as Shell publishing is enabled and the local heirowLLM chat server is running.
 - If the desktop cannot reach the master relay port, the Shell debug log should show reconnect timeout messages instead of silently looking enabled forever.
 - MagicMasterList relay counts should recover from abandoned browser/public sockets more cleanly.
 
 ### Files changed
 
-- `JackLLM/MainWindow.xaml.cs`
+- `heirowLLM/MainWindow.xaml.cs`
 - `SocketJack/Net/ReverseTcpDuplicator.cs`
 - `SocketJack-MagicMasterList/Program.cs`
 - `SocketJack/changelog_proxy.md`
@@ -279,15 +279,15 @@ The master proxy's upstream `HttpClient` could keep TCP connections to the relay
 
 ### Root cause
 
-A half-closed idle agent socket can sometimes accept the relay's one-byte start signal before the relay notices the client is gone. That made the signal write check insufficient: the public browser request could still be attached to an agent that would never connect to local JackLLM.
+A half-closed idle agent socket can sometimes accept the relay's one-byte start signal before the relay notices the client is gone. That made the signal write check insufficient: the public browser request could still be attached to an agent that would never connect to local heirowLLM.
 
 ### Changes made
 
-- After the relay sends the start signal, the workstation agent now connects to local JackLLM and writes a one-byte ready acknowledgement back to the relay.
+- After the relay sends the start signal, the workstation agent now connects to local heirowLLM and writes a one-byte ready acknowledgement back to the relay.
 - The relay only starts bridging the public client after receiving that acknowledgement within a short timeout.
 - Agents that do not acknowledge readiness are dropped before they can consume a public request.
 
 ### Expected effect
 
 - Stale waiting-agent sockets should no longer create browser requests that hang with zero bytes received.
-- Page-load bursts should consume only agents that have already proven they can reach the local JackLLM server.
+- Page-load bursts should consume only agents that have already proven they can reach the local heirowLLM server.

@@ -14,7 +14,7 @@ public sealed class InternetSearchQueryExtractionTests
     [DataTestMethod]
     [DataRow("search the internet for vincent christopher davis superior wisconsin 54880 age 30", "vincent christopher davis superior wisconsin 54880 age 30")]
     [DataRow("search the web for 3 links for SocketJack releases", "SocketJack releases")]
-    [DataRow("find online JackLLM workstation download", "JackLLM workstation download")]
+    [DataRow("find online heirowLLM workstation download", "heirowLLM workstation download")]
     [DataRow("find current links for SocketJack docs", "SocketJack docs")]
     [DataRow("search the internet for who owns valve", "who owns valve")]
     [DataRow("Search for who owns valve", "who owns valve")]
@@ -32,8 +32,8 @@ public sealed class InternetSearchQueryExtractionTests
     public void EmptyOutputLimitForExplicitSearch_ForcesInternetSearch(string finishReason, string content, string reasoning, bool expected)
     {
         const string request = "{\"messages\":[{\"role\":\"user\",\"content\":\"search the internet for current SocketJack releases\"}]}";
-        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod("ShouldForceInternetSearchAfterEmptyOutputLimit", BindingFlags.Instance | BindingFlags.NonPublic);
+        using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod("ShouldForceInternetSearchAfterEmptyOutputLimit", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method, "ShouldForceInternetSearchAfterEmptyOutputLimit was not found.");
         Assert.AreEqual(expected, (bool)method!.Invoke(proxy, new object[] { request, finishReason, content, reasoning })!);
     }
@@ -56,7 +56,7 @@ public sealed class InternetSearchQueryExtractionTests
           ]
         }
         """;
-        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
         MethodInfo method = GetPrivateMethod("BuildContextAwareInternetSearchPlannerRequest");
         string plannerRequest = (string)method.Invoke(proxy, new object[] { request, 1 })!;
 
@@ -69,10 +69,10 @@ public sealed class InternetSearchQueryExtractionTests
         Assert.IsFalse(root.TryGetProperty("tools", out _));
         JsonElement messages = root.GetProperty("messages");
         Assert.AreEqual(5, messages.GetArrayLength());
-        Assert.AreEqual("We are discussing SocketJack.", messages[1].GetProperty("content").GetString());
-        Assert.AreEqual("Search for its latest release.", messages[3].GetProperty("content").GetString());
-        Assert.AreEqual("system", messages[4].GetProperty("role").GetString());
-        StringAssert.Contains(messages[4].GetProperty("content").GetString(), "complete conversation above");
+        Assert.AreEqual("system", messages[1].GetProperty("role").GetString());
+        StringAssert.Contains(messages[1].GetProperty("content").GetString(), "complete current conversation context");
+        Assert.AreEqual("We are discussing SocketJack.", messages[2].GetProperty("content").GetString());
+        Assert.AreEqual("Search for its latest release.", messages[4].GetProperty("content").GetString());
     }
 
     [DataTestMethod]
@@ -84,7 +84,7 @@ public sealed class InternetSearchQueryExtractionTests
     [DataRow("first line\nsecond line", false, "")]
     public void SearchQueryPlannerOutput_ParsesOnlyUsableModelQueries(string output, bool expected, string expectedQuery)
     {
-        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
         MethodInfo method = GetPrivateMethod("TryParseContextAwareInternetSearchPlannerOutput");
         object?[] arguments = { output, null };
         Assert.AreEqual(expected, (bool)method.Invoke(proxy, arguments)!);
@@ -99,7 +99,7 @@ public sealed class InternetSearchQueryExtractionTests
     [DataRow("", true)]
     public void SearchQueryPlanning_PreservesValidNativeQueriesAndRejectsCommandText(string rawQuery, bool expected)
     {
-        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
         string normalized = (string)GetPrivateMethod("NormalizeContextAwareInternetSearchQuery").Invoke(proxy, new object[] { rawQuery })!;
         bool requiresPlanning = (bool)GetPrivateMethod("InternetSearchQueryRequiresPlanning").Invoke(proxy, new object[] { rawQuery, normalized })!;
         Assert.AreEqual(expected, requiresPlanning);
@@ -109,7 +109,7 @@ public sealed class InternetSearchQueryExtractionTests
     public void SearchQueryPlanning_RejectsOverlongQuery()
     {
         string rawQuery = new string('x', 221);
-        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
+        using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
         string normalized = (string)GetPrivateMethod("NormalizeContextAwareInternetSearchQuery").Invoke(proxy, new object[] { rawQuery })!;
         Assert.IsTrue((bool)GetPrivateMethod("InternetSearchQueryRequiresPlanning").Invoke(proxy, new object[] { rawQuery, normalized })!);
     }
@@ -147,23 +147,23 @@ public sealed class InternetSearchQueryExtractionTests
 
     private static string ExtractSearchQuery(string prompt)
     {
-        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod("ExtractExplicitInternetSearchQuery", BindingFlags.Instance | BindingFlags.NonPublic);
+        using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod("ExtractExplicitInternetSearchQuery", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method, "ExtractExplicitInternetSearchQuery was not found.");
         return (string)method!.Invoke(proxy, new object[] { prompt })!;
     }
 
     private static MethodInfo GetPrivateMethod(string name)
     {
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method, name + " was not found.");
         return method!;
     }
 
-    private static LmVsProxy CreateProxyWithHttpClient(HttpMessageHandler handler)
+    private static HeirowLlm CreateProxyWithHttpClient(HttpMessageHandler handler)
     {
-        var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
-        FieldInfo? field = typeof(LmVsProxy).GetField("_httpClient", BindingFlags.Instance | BindingFlags.NonPublic);
+        var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
+        FieldInfo? field = typeof(HeirowLlm).GetField("_httpClient", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(field, "_httpClient was not found.");
         field!.SetValue(proxy, new System.Net.Http.HttpClient(handler));
         return proxy;

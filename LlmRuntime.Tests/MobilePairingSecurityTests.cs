@@ -11,8 +11,8 @@ public sealed class MobilePairingSecurityTests
     [TestMethod]
     public void HashSecret_IsStableAndDoesNotStorePlaintext()
     {
-        string first = LmVsProxy.HashSecret("123456");
-        string second = LmVsProxy.HashSecret("123456");
+        string first = HeirowLlm.HashSecret("123456");
+        string second = HeirowLlm.HashSecret("123456");
 
         Assert.AreEqual(first, second);
         Assert.AreEqual(64, first.Length);
@@ -22,20 +22,20 @@ public sealed class MobilePairingSecurityTests
     [TestMethod]
     public void FixedEquals_RejectsDifferentOrMalformedValues()
     {
-        string expected = LmVsProxy.HashSecret("pairing-token");
+        string expected = HeirowLlm.HashSecret("pairing-token");
 
-        Assert.IsTrue(LmVsProxy.FixedEquals(expected, expected));
-        Assert.IsFalse(LmVsProxy.FixedEquals(expected, LmVsProxy.HashSecret("other-token")));
-        Assert.IsFalse(LmVsProxy.FixedEquals(expected, "short"));
+        Assert.IsTrue(HeirowLlm.FixedEquals(expected, expected));
+        Assert.IsFalse(HeirowLlm.FixedEquals(expected, HeirowLlm.HashSecret("other-token")));
+        Assert.IsFalse(HeirowLlm.FixedEquals(expected, "short"));
     }
 
     [TestMethod]
     public void WorkstationAccountsAreTheDefaultAuthenticationAuthority()
     {
-        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-workstation-auth-" + Guid.NewGuid().ToString("N"));
+        string dataRoot = Path.Combine(Path.GetTempPath(), "heirowllm-workstation-auth-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435, 0, dataRoot);
+            using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435, 0, dataRoot);
 
             Assert.IsTrue(proxy.StoreLocalWebAuthAccounts);
             Assert.IsTrue(proxy.RequireWorkstationUserAuthentication);
@@ -52,7 +52,7 @@ public sealed class MobilePairingSecurityTests
     [TestMethod]
     public void WorkstationPreLoginRoutesExposeOnlyAccountBootstrapApis()
     {
-        MethodInfo? routeCheck = typeof(LmVsProxy).GetMethod(
+        MethodInfo? routeCheck = typeof(HeirowLlm).GetMethod(
             "IsWorkstationUnauthenticatedRoute",
             BindingFlags.NonPublic | BindingFlags.Static);
 
@@ -77,16 +77,16 @@ public sealed class MobilePairingSecurityTests
     [TestMethod]
     public void ClosedRegistrationCreatesAnAdminApprovedWorkstationAccount()
     {
-        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-registration-approval-" + Guid.NewGuid().ToString("N"));
+        string dataRoot = Path.Combine(Path.GetTempPath(), "heirowllm-registration-approval-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435, 0, dataRoot);
+            using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435, 0, dataRoot);
             Assert.IsFalse(proxy.AllowOpenRegistration);
 
-            MethodInfo? directRegister = typeof(LmVsProxy).GetMethod(
+            MethodInfo? directRegister = typeof(HeirowLlm).GetMethod(
                 "HandleWebAuthRegisterRequest",
                 BindingFlags.NonPublic | BindingFlags.Instance);
-            MethodInfo? requestRegistration = typeof(LmVsProxy).GetMethod(
+            MethodInfo? requestRegistration = typeof(HeirowLlm).GetMethod(
                 "HandleWebAuthRegistrationRequest",
                 BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.IsNotNull(directRegister);
@@ -131,13 +131,13 @@ public sealed class MobilePairingSecurityTests
     [TestMethod]
     public void WorkstationAccountSupportsConcurrentRememberedSessionsAndPerDeviceLogout()
     {
-        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-concurrent-auth-" + Guid.NewGuid().ToString("N"));
+        string dataRoot = Path.Combine(Path.GetTempPath(), "heirowllm-concurrent-auth-" + Guid.NewGuid().ToString("N"));
         try
         {
             const string userName = "multi-device-user";
             const string password = "correct horse battery staple";
             string secondToken;
-            using (var proxy = new LmVsProxy("127.0.0.1", 11434, 11435, 0, dataRoot))
+            using (var proxy = new HeirowLlm("127.0.0.1", 11434, 11435, 0, dataRoot))
             {
 
                 InvokeWebAuth(proxy, "HandleWebAuthRegistrationRequest", new HttpRequest
@@ -167,7 +167,7 @@ public sealed class MobilePairingSecurityTests
                 Assert.IsTrue(IsAuthenticated(proxy, secondToken), "Logging out the first device must not revoke another active device.");
             }
 
-            using var reloadedProxy = new LmVsProxy("127.0.0.1", 11434, 11435, 0, dataRoot);
+            using var reloadedProxy = new HeirowLlm("127.0.0.1", 11434, 11435, 0, dataRoot);
             Assert.IsTrue(IsAuthenticated(reloadedProxy, secondToken), "Active device sessions must survive a Workstation restart.");
         }
         finally
@@ -191,7 +191,7 @@ public sealed class MobilePairingSecurityTests
         return request;
     }
 
-    private static bool IsAuthenticated(LmVsProxy proxy, string token)
+    private static bool IsAuthenticated(HeirowLlm proxy, string token)
     {
         string response = InvokeWebAuth(
             proxy,
@@ -200,9 +200,9 @@ public sealed class MobilePairingSecurityTests
         return ParseRoot(response).GetProperty("authenticated").GetBoolean();
     }
 
-    private static string InvokeWebAuth(LmVsProxy proxy, string methodName, HttpRequest request)
+    private static string InvokeWebAuth(HeirowLlm proxy, string methodName, HttpRequest request)
     {
-        MethodInfo method = typeof(LmVsProxy).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance)!;
+        MethodInfo method = typeof(HeirowLlm).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance)!;
         Assert.IsNotNull(method);
         return (string)(method.Invoke(proxy, new object?[] { null, request }) ?? "");
     }

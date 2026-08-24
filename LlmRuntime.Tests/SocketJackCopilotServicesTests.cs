@@ -337,7 +337,7 @@ public sealed class SocketJackCopilotServicesTests
         SocketJackServerCandidate? server = await SocketJackLocalWorkstationDiscovery.TryDetectAsync(client);
 
         Assert.IsNotNull(server);
-        Assert.AreEqual("local-jackllm-workstation", server.Id);
+        Assert.AreEqual("local-heirowllm-workstation", server.Id);
         Assert.AreEqual("http://127.0.0.1:11436", server.EffectiveEndpoint);
         Assert.AreEqual("http://127.0.0.1:11436", server.ModelApiBaseUrl);
         Assert.IsTrue(server.CanUseForCopilot);
@@ -374,7 +374,7 @@ public sealed class SocketJackCopilotServicesTests
 
         Assert.IsFalse(remoteCalled);
         Assert.AreEqual(1, servers.Count);
-        Assert.AreEqual("local-jackllm-workstation", servers[0].Id);
+        Assert.AreEqual("local-heirowllm-workstation", servers[0].Id);
     }
 
     [TestMethod]
@@ -659,7 +659,7 @@ public sealed class SocketJackCopilotServicesTests
         using var client = new HttpClient(new RouteResponseHandler(_ =>
             new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
             {
-                Content = new StringContent("""{"ok":false,"error":"JackLLM has not connected its reverse agent."}""")
+                Content = new StringContent("""{"ok":false,"error":"heirowLLM has not connected its reverse agent."}""")
             }));
         var prober = new SocketJackEndpointAccessProber(client);
 

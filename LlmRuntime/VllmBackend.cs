@@ -94,7 +94,7 @@ public sealed class VllmBackend : ILlmBackend
         if (string.IsNullOrWhiteSpace(pythonPath))
         {
             throw new LlmRuntimeException(
-                "vLLM backend requires Python with vLLM installed. Set JACKLLM_VLLM_PYTHON or LLMRUNTIME_VLLM_PYTHON to the vLLM environment python.",
+                "vLLM backend requires Python with vLLM installed. Set HEIROWLLM_VLLM_PYTHON or LLMRUNTIME_VLLM_PYTHON to the vLLM environment python.",
                 "backend_error",
                 "vllm_python_missing");
         }
@@ -462,7 +462,7 @@ public sealed class VllmBackend : ILlmBackend
         if (targetCount > 1)
             return targetCount;
 
-        int configured = ReadPositiveIntEnvironment("JACKLLM_VLLM_TENSOR_PARALLEL_SIZE", "LLMRUNTIME_VLLM_TENSOR_PARALLEL_SIZE");
+        int configured = ReadPositiveIntEnvironment("HEIROWLLM_VLLM_TENSOR_PARALLEL_SIZE", "LLMRUNTIME_VLLM_TENSOR_PARALLEL_SIZE");
         if (configured > 1)
             return configured;
 
@@ -514,7 +514,7 @@ public sealed class VllmBackend : ILlmBackend
             {
                 StartInfo = new ProcessStartInfo
                 {
-                    FileName = Environment.GetEnvironmentVariable("JACKLLM_NVIDIA_SMI") ??
+                    FileName = Environment.GetEnvironmentVariable("HEIROWLLM_NVIDIA_SMI") ??
                                Environment.GetEnvironmentVariable("NVIDIA_SMI_PATH") ??
                                "nvidia-smi",
                     Arguments = "--query-gpu=index --format=csv,noheader,nounits",

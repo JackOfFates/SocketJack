@@ -14,8 +14,8 @@ It handles framing, segmentation, serialization, compression, routing, protocol 
 
 | Package | Version | Targets | Role |
 |---|---:|---|---|
-| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.9` | `.NET Standard 2.1` | Core TCP, UDP, HTTP, WebSocket, protocol multiplexing, data, file transfer, and streaming utilities. |
-| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.5` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF live capture, remote input, and GUI remoting on top of SocketJack. |
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.11` | `.NET Standard 2.1` | Core TCP, UDP, HTTP, WebSocket, protocol multiplexing, data, file transfer, and streaming utilities. |
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.7` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF live capture, remote input, and GUI remoting on top of SocketJack. |
 
 ## Feature Map
 
@@ -80,7 +80,7 @@ public sealed record ChatMessage(string Text);
 ```csharp
 using SocketJack.Net;
 
-var server = new HttpServer(port: 8080);
+var server = new HttpServer(8080);
 
 server.Map("GET", "/health", (connection, request, ct) =>
 {
@@ -108,6 +108,30 @@ var client = new WebSocketClient();
 await client.Connect("127.0.0.1", 9000);
 client.Send(new ChatMessage("hello from websocket"));
 ```
+
+## TypeScript clients
+
+SocketJack can generate a dependency-free TypeScript client from the routes currently mapped on an `HttpServer`. Typed request bodies become TypeScript types, route parameters become required method inputs, and resolvable WebSocket message types from the server whitelist become exported interfaces.
+
+```csharp
+public sealed class CreateMessage
+{
+    public string Text { get; set; }
+}
+
+var server = new HttpServer(port: 8080);
+server.Map<CreateMessage>("POST", "/rooms/{roomId}/messages",
+    (connection, body, request, ct) => new { saved = true, body.Text });
+
+string source = server.GenerateTypeScriptClient(new TypeScriptClientOptions
+{
+    ClassName = "ChatApi",
+    BaseUrl = "https://chat.example.com"
+});
+File.WriteAllText("socketjack-client.ts", source);
+```
+
+The generated class uses the standard `fetch` and `WebSocket` APIs and includes query, header, cancellation, JSON, text, binary, and HTTP-error handling.
 
 ## MutableTcpServer
 

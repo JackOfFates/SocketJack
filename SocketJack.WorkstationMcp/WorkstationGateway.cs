@@ -41,7 +41,7 @@ public sealed class WorkstationGateway
             WorkstationEndpoint.ChatPermissions => "/api/chat-permissions",
             WorkstationEndpoint.TerminalApprovals => "/api/terminal-approvals",
             WorkstationEndpoint.CopilotDuplicator => "/api/copilot-duplicator",
-            WorkstationEndpoint.JackLlmServers => "/api/jackllm/servers",
+            WorkstationEndpoint.HeirowLlmServers => "/api/heirowllm/servers",
             _ => throw new ArgumentOutOfRangeException(nameof(endpoint), endpoint, "Unknown workstation endpoint.")
         };
 
@@ -91,7 +91,7 @@ public sealed class WorkstationGateway
         {
             ["ok"] = true,
             ["server"] = "SocketJack.WorkstationMcp",
-            ["jackLLM"] = _options.JackLlmBaseUri.ToString(),
+            ["heirowLLM"] = _options.HeirowLlmBaseUri.ToString(),
             ["timestampUtc"] = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
         };
 

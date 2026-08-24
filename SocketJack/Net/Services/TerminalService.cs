@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,16 +11,17 @@ using System.Threading.Tasks;
 namespace SocketJack.Net.Services;
 
 /// <summary>
-/// Executes local terminal commands for LmVsProxy after the caller has passed
+/// Executes local terminal commands for HeirowLlm after the caller has passed
 /// the GUI-owned permission gate.
 /// </summary>
-public sealed class TerminalService
+public sealed class TerminalService : IDisposable
 {
     private const int DefaultTimeoutMs = 120000;
     private const int MaxTimeoutMs = 600000;
     private const int MaxCapturedChars = 24000;
     private const int StreamReadBufferBytes = 65536;
     private const int PostExitDrainMs = 750;
+    private readonly ConcurrentDictionary<int, TrackedTerminalProcess> _trackedProcesses = new ConcurrentDictionary<int, TrackedTerminalProcess>();
 
     public async Task<TerminalCommandResult> ExecuteAsync(TerminalCommandRequest request, CancellationToken cancellationToken = default)
     {
@@ -110,6 +113,177 @@ public sealed class TerminalService
                 Canceled = canceled
             };
         }
+    }
+
+    public async Task<TerminalTrackedProcessSnapshot> StartTrackedAsync(TerminalCommandRequest request, string ownerKey, CancellationToken cancellationToken = default)
+    {
+        if (request == null)
+            throw new ArgumentNullException(nameof(request));
+
+        string command = (request.Command ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(command))
+            throw new InvalidOperationException("Terminal command is required.");
+
+        string workingDirectory = ResolveWorkingDirectory(request.WorkingDirectory, request.AllowedWorkingDirectories);
+        ProcessStartInfo startInfo = BuildStartInfo(command, request.Shell, workingDirectory, request.AllowExecutionPolicyBypass);
+        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        try
+        {
+            if (!process.Start())
+                throw new InvalidOperationException("Process failed to start.");
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
+
+        var tracked = new TrackedTerminalProcess(
+            process,
+            ownerKey ?? "",
+            command,
+            NormalizeShell(request.Shell),
+            workingDirectory,
+            string.IsNullOrWhiteSpace(request.Summary) ? command : request.Summary.Trim(),
+            DateTimeOffset.UtcNow,
+            new CapturedTextBuffer(MaxCapturedChars),
+            new CapturedTextBuffer(MaxCapturedChars));
+        if (!_trackedProcesses.TryAdd(process.Id, tracked))
+        {
+            TryKillProcessTree(process);
+            process.Dispose();
+            throw new InvalidOperationException("Could not register the started process.");
+        }
+
+        tracked.StdoutTask = CaptureStreamAsync(process.StandardOutput.BaseStream, tracked.Stdout, CancellationToken.None);
+        tracked.StderrTask = CaptureStreamAsync(process.StandardError.BaseStream, tracked.Stderr, CancellationToken.None);
+        ObserveTaskException(tracked.StdoutTask);
+        ObserveTaskException(tracked.StderrTask);
+        process.Exited += (_, __) => tracked.CompletedUtc = DateTimeOffset.UtcNow;
+        PruneTrackedProcesses();
+        await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+        return CreateTrackedSnapshot(tracked);
+    }
+
+    public IReadOnlyList<TerminalTrackedProcessSnapshot> ListTrackedProcesses(string ownerKey)
+    {
+        string normalizedOwner = ownerKey ?? "";
+        return _trackedProcesses.Values
+            .Where(process => string.Equals(process.OwnerKey, normalizedOwner, StringComparison.Ordinal))
+            .OrderByDescending(process => process.StartedUtc)
+            .Select(CreateTrackedSnapshot)
+            .ToArray();
+    }
+
+    public TerminalTrackedProcessSnapshot GetTrackedProcess(string ownerKey, int processId)
+    {
+        if (!_trackedProcesses.TryGetValue(processId, out var tracked) ||
+            !string.Equals(tracked.OwnerKey, ownerKey ?? "", StringComparison.Ordinal))
+            return null;
+        return CreateTrackedSnapshot(tracked);
+    }
+
+    public async Task<TerminalTrackedProcessSnapshot> StopTrackedProcessAsync(string ownerKey, int processId, CancellationToken cancellationToken = default)
+    {
+        if (!_trackedProcesses.TryGetValue(processId, out var tracked) ||
+            !string.Equals(tracked.OwnerKey, ownerKey ?? "", StringComparison.Ordinal))
+            return null;
+
+        if (IsRunning(tracked.Process))
+        {
+            TryKillProcessTree(tracked.Process);
+            Task waitTask = Task.Run(() =>
+            {
+                try { tracked.Process.WaitForExit(); } catch { }
+            }, cancellationToken);
+            await WaitWithoutThrowAsync(waitTask, 5000).ConfigureAwait(false);
+        }
+        tracked.CompletedUtc ??= DateTimeOffset.UtcNow;
+        await WaitWithoutThrowAsync(Task.WhenAll(tracked.StdoutTask ?? Task.CompletedTask, tracked.StderrTask ?? Task.CompletedTask), PostExitDrainMs).ConfigureAwait(false);
+        return CreateTrackedSnapshot(tracked);
+    }
+
+    private void PruneTrackedProcesses()
+    {
+        if (_trackedProcesses.Count <= 64)
+            return;
+        foreach (TrackedTerminalProcess tracked in _trackedProcesses.Values
+            .Where(process => !IsRunning(process.Process))
+            .OrderBy(process => process.StartedUtc)
+            .Take(Math.Max(0, _trackedProcesses.Count - 64)))
+        {
+            if (_trackedProcesses.TryRemove(tracked.Process.Id, out var removed))
+                removed.Process.Dispose();
+        }
+    }
+
+    private static TerminalTrackedProcessSnapshot CreateTrackedSnapshot(TrackedTerminalProcess tracked)
+    {
+        bool running = IsRunning(tracked.Process);
+        int? exitCode = null;
+        if (!running)
+        {
+            try { exitCode = tracked.Process.ExitCode; } catch { }
+            tracked.CompletedUtc ??= DateTimeOffset.UtcNow;
+        }
+        return new TerminalTrackedProcessSnapshot
+        {
+            ProcessId = tracked.Process.Id,
+            Command = tracked.Command,
+            Shell = tracked.Shell,
+            WorkingDirectory = tracked.WorkingDirectory,
+            Summary = tracked.Summary,
+            Running = running,
+            ExitCode = exitCode,
+            StartedUtc = tracked.StartedUtc,
+            CompletedUtc = tracked.CompletedUtc,
+            Output = tracked.Stdout.GetText(),
+            Error = tracked.Stderr.GetText()
+        };
+    }
+
+    private static bool IsRunning(Process process)
+    {
+        try { return process != null && !process.HasExited; }
+        catch { return false; }
+    }
+
+    private static void TryKillProcessTree(Process process)
+    {
+        if (!IsRunning(process))
+            return;
+        try
+        {
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+            {
+                using var taskkill = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "taskkill.exe",
+                    Arguments = "/PID " + process.Id + " /T /F",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                });
+                taskkill?.WaitForExit(5000);
+            }
+            if (IsRunning(process))
+                process.Kill();
+        }
+        catch
+        {
+            try { process.Kill(); } catch { }
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (TrackedTerminalProcess tracked in _trackedProcesses.Values)
+        {
+            TryKillProcessTree(tracked.Process);
+            tracked.Process.Dispose();
+        }
+        _trackedProcesses.Clear();
     }
 
     private static ProcessStartInfo BuildStartInfo(string command, string shell, string workingDirectory, bool allowExecutionPolicyBypass)
@@ -301,6 +475,35 @@ public sealed class TerminalService
             _tail.Remove(0, _tail.Length - tailLimit);
         }
     }
+
+    private sealed class TrackedTerminalProcess
+    {
+        public TrackedTerminalProcess(Process process, string ownerKey, string command, string shell, string workingDirectory, string summary, DateTimeOffset startedUtc, CapturedTextBuffer stdout, CapturedTextBuffer stderr)
+        {
+            Process = process;
+            OwnerKey = ownerKey;
+            Command = command;
+            Shell = shell;
+            WorkingDirectory = workingDirectory;
+            Summary = summary;
+            StartedUtc = startedUtc;
+            Stdout = stdout;
+            Stderr = stderr;
+        }
+
+        public Process Process { get; }
+        public string OwnerKey { get; }
+        public string Command { get; }
+        public string Shell { get; }
+        public string WorkingDirectory { get; }
+        public string Summary { get; }
+        public DateTimeOffset StartedUtc { get; }
+        public DateTimeOffset? CompletedUtc { get; set; }
+        public CapturedTextBuffer Stdout { get; }
+        public CapturedTextBuffer Stderr { get; }
+        public Task StdoutTask { get; set; }
+        public Task StderrTask { get; set; }
+    }
 }
 
 public sealed class TerminalCommandRequest
@@ -325,4 +528,19 @@ public sealed class TerminalCommandResult
     public int DurationMs { get; set; }
     public bool TimedOut { get; set; }
     public bool Canceled { get; set; }
+}
+
+public sealed class TerminalTrackedProcessSnapshot
+{
+    public int ProcessId { get; set; }
+    public string Command { get; set; } = "";
+    public string Shell { get; set; } = "";
+    public string WorkingDirectory { get; set; } = "";
+    public string Summary { get; set; } = "";
+    public bool Running { get; set; }
+    public int? ExitCode { get; set; }
+    public DateTimeOffset StartedUtc { get; set; }
+    public DateTimeOffset? CompletedUtc { get; set; }
+    public string Output { get; set; } = "";
+    public string Error { get; set; } = "";
 }

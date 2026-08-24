@@ -7,7 +7,7 @@ using Microsoft.VisualStudio.Extensibility;
 using Microsoft.VisualStudio.Extensibility.UI;
 
 [DataContract]
-internal sealed class SocketJackCopilotServersViewModel : JackLlmLocalViewModel
+internal sealed class SocketJackCopilotServersViewModel : HeirowLlmLocalViewModel
 {
     private readonly SocketJackCopilotConfigurator configurator;
     private readonly List<SocketJackServerDisplayItem> allServers = new();
@@ -281,7 +281,7 @@ internal sealed class SocketJackCopilotServersViewModel : JackLlmLocalViewModel
         bool restored = await SocketJackLocalProxySupervisor.EnsureActiveProxyFromStoredSelectionAsync(cancellationToken).ConfigureAwait(false);
         this.Status = restored
             ? "Signed in and restored the authenticated Visual Studio Copilot bridge."
-            : "Signed in to JackLLM Workstation. Select a model and choose Configure to activate Copilot.";
+            : "Signed in to heirowLLM Workstation. Select a model and choose Configure to activate Copilot.";
     }
 
     private void UpdateServerSummary()
@@ -438,7 +438,7 @@ internal sealed class SocketJackCopilotServersViewModel : JackLlmLocalViewModel
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            this.Status = "JackLLM Workstation operation failed: " + ex.Message;
+            this.Status = "heirowLLM Workstation operation failed: " + ex.Message;
         }
         finally
         {

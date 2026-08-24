@@ -2,7 +2,7 @@
 
 ## Why This Exists
 
-The JackLLM model browser can currently land on Hugging Face repositories where the injected downloader panel says:
+The heirowLLM model browser can currently land on Hugging Face repositories where the injected downloader panel says:
 
 ```text
 No GGUF files found in this repository.

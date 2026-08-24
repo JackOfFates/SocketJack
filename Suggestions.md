@@ -16,7 +16,7 @@ Checks run:
 `SocketJack.Tests/SockJackDmlWorkflowEndpointTests.cs` still reads:
 
 - `SocketJack/Resources/SockJackDml.html`
-- `SocketJack/Resources/JackLLMWebChat.html`
+- `SocketJack/Resources/heirowLLMWebChat.html`
 
 Those files now live under `SocketJack/html/`, and the project embeds `html/*.html` through `SocketJack/HtmlPageResources.cs`. Update the test to read `html`, or better, test through `HtmlPageResources.TryGetHtml(...)` so future file moves do not break the test.
 
@@ -203,7 +203,7 @@ Add first-class APIs for loading certificates from PFX, Windows cert store, PEM 
 
 ### Typed client generation
 
-Use route metadata to generate small C# or TypeScript clients for mapped HTTP APIs and WebSocket messages.
+TypeScript generation is now available through `HttpServer.GenerateTypeScriptClient`, including typed request bodies, route variables, and whitelisted WebSocket message interfaces. A matching generated C# client remains a useful follow-up.
 
 ### Connection policy presets
 
@@ -215,7 +215,7 @@ Add structured JSON logs for connect, disconnect, request, response, rate-limit,
 
 ## LLM-related project suggestions
 
-This pass covered `LlmRuntime`, `LlmRuntime.Tests`, `LlmRuntime.Wpf`, `LlmRuntime.VisualStudio`, `JackONNX`, `JackONNX.Tests`, `JackLLM`, `JackLLMCompanion`, `SocketJack.LlmCore`, `SocketJack-MagicMasterList`, and `JackLLM.Android`. Updater, installer, and publisher projects were intentionally skipped except where a reviewed app directly depends on them.
+This pass covered `LlmRuntime`, `LlmRuntime.Tests`, `LlmRuntime.Wpf`, `LlmRuntime.VisualStudio`, `JackONNX`, `JackONNX.Tests`, `heirowLLM`, `heirowLLMCompanion`, `SocketJack.LlmCore`, `SocketJack-MagicMasterList`, and `heirowLLM.Android`. Updater, installer, and publisher projects were intentionally skipped except where a reviewed app directly depends on them.
 
 Additional checks run:
 
@@ -223,18 +223,18 @@ Additional checks run:
 - `dotnet test JackONNX.Tests/JackONNX.Tests.csproj --no-restore -v:minimal` passed 9 tests and skipped 2 native provider smoke tests because DirectML/CUDA native runtimes were not available.
 - `dotnet build SocketJack.LlmCore/SocketJack.LlmCore.csproj --no-restore -v:minimal` passed.
 - `dotnet build LlmRuntime.Wpf/LlmRuntime.Wpf.csproj --no-restore -v:minimal` passed.
-- `dotnet build JackLLMCompanion/JackLLMCompanion.csproj --no-restore -v:minimal` passed.
+- `dotnet build heirowLLMCompanion/heirowLLMCompanion.csproj --no-restore -v:minimal` passed.
 - `dotnet build SocketJack-MagicMasterList/SocketJack-MagicMasterList.csproj --no-restore -v:minimal` passed.
-- `dotnet build JackLLM/JackLLM.csproj --no-restore -v:minimal` passed.
+- `dotnet build heirowLLM/heirowLLM.csproj --no-restore -v:minimal` passed.
 - `dotnet build LlmRuntime.VisualStudio/LlmRuntime.VisualStudio.csproj --no-restore -v:minimal` passed and produced the VSIX output.
-- `dotnet build JackLLM.Android/JackLLM.Android.csproj --no-restore -v:minimal` failed under the installed .NET 10 SDK because `net8.0-android` is out of support, and Android/MAUI types did not resolve.
-- Vulnerability scans reported no vulnerable packages for `LlmRuntime`, `JackONNX`, `JackLLM`, `JackLLMCompanion`, `LlmRuntime.Wpf`, `LlmRuntime.VisualStudio`, `SocketJack.LlmCore`, and `SocketJack-MagicMasterList`. `JackLLM.Android` could not complete the vulnerable-package command because the unsupported Android workload error stops evaluation.
+- `dotnet build heirowLLM.Android/heirowLLM.Android.csproj --no-restore -v:minimal` failed under the installed .NET 10 SDK because `net8.0-android` is out of support, and Android/MAUI types did not resolve.
+- Vulnerability scans reported no vulnerable packages for `LlmRuntime`, `JackONNX`, `heirowLLM`, `heirowLLMCompanion`, `LlmRuntime.Wpf`, `LlmRuntime.VisualStudio`, `SocketJack.LlmCore`, and `SocketJack-MagicMasterList`. `heirowLLM.Android` could not complete the vulnerable-package command because the unsupported Android workload error stops evaluation.
 
 ## LLM high-priority bug fixes
 
-### Repair `JackLLM.Android` build and support baseline
+### Repair `heirowLLM.Android` build and support baseline
 
-`JackLLM.Android/JackLLM.Android.csproj` targets `net8.0-android` while referencing MAUI `10.0.60` packages. Under the installed .NET 10 SDK, the build fails with `NETSDK1202`, then fails to resolve Android and MAUI types such as `ActivityAttribute`, `MauiAppCompatActivity`, and `MauiApplication`.
+`heirowLLM.Android/heirowLLM.Android.csproj` targets `net8.0-android` while referencing MAUI `10.0.60` packages. Under the installed .NET 10 SDK, the build fails with `NETSDK1202`, then fails to resolve Android and MAUI types such as `ActivityAttribute`, `MauiAppCompatActivity`, and `MauiApplication`.
 
 Suggested fix: either retarget the app to a supported Android TFM and matching MAUI package set, or add a `global.json` and documented workload install path that pins a supported SDK for this project. Also move `android:usesCleartextTraffic="true"` and `UsesCleartextTraffic = true` behind a debug-only or localhost-only network-security config.
 
@@ -246,7 +246,7 @@ Suggested fix: align ONNX Runtime package versions, centralize native provider r
 
 ### Gate Companion process control routes
 
-`JackLLMCompanion/CompanionHttpHost.cs` binds to loopback and has a local-only request gate, but `/api/companion/processes/kill` and `/api/companion/processes/start` call directly into `CompanionProcessService` without a separate capability check. Any local process or browser page that can reach the loopback port can attempt process start/kill requests.
+`heirowLLMCompanion/CompanionHttpHost.cs` binds to loopback and has a local-only request gate, but `/api/companion/processes/kill` and `/api/companion/processes/start` call directly into `CompanionProcessService` without a separate capability check. Any local process or browser page that can reach the loopback port can attempt process start/kill requests.
 
 Suggested fix: require an unguessable per-run token, validate `Origin`/CSRF for browser requests, and add a distinct approval gate for process start/kill. Prefer binding a high random loopback port instead of trying port 80 first.
 
@@ -262,21 +262,21 @@ Suggested fix: require `UseFiles` for every file-register/share/download path, s
 
 Suggested fix: require explicit user/admin consent before any Python, pip, or package mutation; verify downloaded installer/archive hashes or signatures; record exactly which packages were installed; and provide a dry-run/status command.
 
-### Remove chat tab from JackLLM Workstation WPF project
+### Remove chat tab from heirowLLM Workstation WPF project
 
-The JackLLM Workstation WPF shell still exposes a `Chat` tab even though chat is now available through the newer workstation flow and web chat surfaces. Keeping the duplicate tab makes navigation noisier and increases the chance that stale chat UI code remains wired into runtime behavior.
+The heirowLLM Workstation WPF shell still exposes a `Chat` tab even though chat is now available through the newer workstation flow and web chat surfaces. Keeping the duplicate tab makes navigation noisier and increases the chance that stale chat UI code remains wired into runtime behavior.
 
-Suggested fix: remove the `Chat` tab from `JackLLM/MainWindow.xaml` and its associated event handlers/view-state code in `JackLLM/MainWindow.xaml.cs`. Verify startup, provider selection, model management, and any web chat/admin entry points still work without the tab.
+Suggested fix: remove the `Chat` tab from `heirowLLM/MainWindow.xaml` and its associated event handlers/view-state code in `heirowLLM/MainWindow.xaml.cs`. Verify startup, provider selection, model management, and any web chat/admin entry points still work without the tab.
 
-### Fix clipped right-side tabs in JackLLM Workstation
+### Fix clipped right-side tabs in heirowLLM Workstation
 
-The JackLLM Workstation WPF tab strip is visually clipped/cramped at the right side of the UI. In the attached screenshot, the tab row runs through `Diagnostics`, `Chat`, `Copilot Files`, `Servers`, `Rent My PC`, `Models`, `Trust & Abuse`, and `Server Management`, with the right-side tabs pressed against the container edge.
+The heirowLLM Workstation WPF tab strip is visually clipped/cramped at the right side of the UI. In the attached screenshot, the tab row runs through `Diagnostics`, `Chat`, `Copilot Files`, `Servers`, `Rent My PC`, `Models`, `Trust & Abuse`, and `Server Management`, with the right-side tabs pressed against the container edge.
 
 Suggested fix: inspect the tab strip/control template and parent layout constraints, including padding, margins, clipping, min widths, scroll behavior, and DPI scaling. The active/inactive tab labels and borders should render fully at common window sizes without being cut off.
 
-### Polish JackLLM Workstation web chat adaptive theming
+### Polish heirowLLM Workstation web chat adaptive theming
 
-In the JackLLM Workstation web chat UI, buttons should change color with the animated background. Panels should also change with the background color, animate in sync with the background, and render with `66%` transparency so the animated theme remains visible behind them.
+In the heirowLLM Workstation web chat UI, buttons should change color with the animated background. Panels should also change with the background color, animate in sync with the background, and render with `66%` transparency so the animated theme remains visible behind them.
 
 Suggested fix: move the background animation colors into shared CSS variables, derive button and panel colors from those variables, and apply synchronized transitions/animations to panel backgrounds. Verify contrast, hover/focus states, readability, and reduced-motion behavior.
 
@@ -286,9 +286,9 @@ Chat output can fail with a decoding error and return truncated text. The runtim
 
 Suggested fix: audit the LlmRuntime chat completion streaming and non-streaming decode paths, including tokenizer detokenization, UTF-8/SSE chunk handling, partial multibyte characters, stop-sequence handling, and exception recovery. Add a regression test that feeds fragmented output and verifies the final chat text is complete.
 
-### Add JackLLM Workstation startup loading window and async startup pipeline
+### Add heirowLLM Workstation startup loading window and async startup pipeline
 
-JackLLM Workstation should show a dedicated database/loading window while startup services initialize. Database loading and everything JackLLM uses on startup, including SocketJack, LlmRuntime, JackONNX, and Python asset preparation, should run asynchronously so the WPF shell does not freeze on load.
+heirowLLM Workstation should show a dedicated database/loading window while startup services initialize. Database loading and everything heirowLLM uses on startup, including SocketJack, LlmRuntime, JackONNX, and Python asset preparation, should run asynchronously so the WPF shell does not freeze on load.
 
 Suggested fix: add a centered borderless startup loading window with minimize and close controls, require confirmation before canceling startup, show app startup/database/runtime/Python asset progress in one place, and report progress through cancellation-aware async initialization paths.
 
@@ -328,13 +328,13 @@ Suggested fix: issue a random runtime token, require it on mutating routes and W
 
 ### Split the largest orchestration files
 
-`SocketJack.LlmCore/Proxy/JackLLM.cs` is about 38,937 lines and 2.1 MB. `JackLLM/MainWindow.xaml.cs` is about 13,892 lines and 764 KB. These files mix UI, routing, model proxying, usage accounting, sessions, payments, remote control, and tool orchestration.
+`SocketJack.LlmCore/Proxy/heirowLLM.cs` is about 38,937 lines and 2.1 MB. `heirowLLM/MainWindow.xaml.cs` is about 13,892 lines and 764 KB. These files mix UI, routing, model proxying, usage accounting, sessions, payments, remote control, and tool orchestration.
 
 Suggested fix: split by ownership: OpenAI-compatible proxy, chat sessions, file/session storage, trust/usage accounting, remote model leasing, UI view models, and WPF event handlers. Add narrow tests around each extracted service.
 
 ### Re-enable nullability pressure in LLM projects
 
-`JackLLM.csproj` suppresses many nullable warnings, and `SocketJack.LlmCore` has nullable disabled. These projects handle prompts, secrets, files, sessions, payment-adjacent data, and remote execution, so null-handling bugs can become security or data-loss bugs.
+`heirowLLM.csproj` suppresses many nullable warnings, and `SocketJack.LlmCore` has nullable disabled. These projects handle prompts, secrets, files, sessions, payment-adjacent data, and remote execution, so null-handling bugs can become security or data-loss bugs.
 
 Suggested fix: enable nullable in new files first, then retire broad `NoWarn` entries by folder. Keep suppressions local with comments where the code has a real interop or framework reason.
 
@@ -344,9 +344,9 @@ Suggested fix: enable nullable in new files first, then retire broad `NoWarn` en
 
 Suggested fix: pin exact versions, update intentionally, and add a CI job that builds the VSIX from a clean restore.
 
-### Decouple JackLLM from updater build artifacts
+### Decouple heirowLLM from updater build artifacts
 
-`JackLLM.csproj` has a `ProjectReference` to `JackLLMUpdater` with `ReferenceOutputAssembly="false"` and a copy target. Even though updater projects are out of scope for this pass, building the main app currently pulls updater output into the build flow.
+`heirowLLM.csproj` has a `ProjectReference` to `heirowLLMUpdater` with `ReferenceOutputAssembly="false"` and a copy target. Even though updater projects are out of scope for this pass, building the main app currently pulls updater output into the build flow.
 
 Suggested fix: gate updater-copy behavior behind a release/publish property so normal app builds and tests do not depend on updater artifacts.
 
@@ -376,7 +376,7 @@ Cover shell tools, HTTP tools, named pipes, required secrets, allowed-project sc
 
 ### Add prompt and tool-call regression suites
 
-Store small representative prompts and expected tool-call decisions for JackLLM/LlmRuntime. Run them against a deterministic mock model so parser, schema, approval, and continuation behavior can be tested without depending on a live model.
+Store small representative prompts and expected tool-call decisions for heirowLLM/LlmRuntime. Run them against a deterministic mock model so parser, schema, approval, and continuation behavior can be tested without depending on a live model.
 
 ## LLM feature ideas
 

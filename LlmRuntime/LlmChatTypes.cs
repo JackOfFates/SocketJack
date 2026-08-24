@@ -107,8 +107,8 @@ public sealed class LlmChatRequest
             return;
 
         JsonElement source = metadata;
-        if (metadata.TryGetProperty("lmvsproxy", out var lmvsproxy) && lmvsproxy.ValueKind == JsonValueKind.Object)
-            source = lmvsproxy;
+        if (metadata.TryGetProperty("heirowllm", out var heirowllm) && heirowllm.ValueKind == JsonValueKind.Object)
+            source = heirowllm;
         if (source.TryGetProperty("session", out var nestedSession) && nestedSession.ValueKind == JsonValueKind.Object)
             source = nestedSession;
 

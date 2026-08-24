@@ -14,7 +14,7 @@ public sealed class SocketJackVisualStudioExtension : Extension
             version: this.ExtensionAssemblyVersion,
             publisherName: "SocketJack",
             displayName: "SocketJack for Visual Studio 2026",
-            description: "Connect Visual Studio Copilot to a local JackLLM Workstation, configure MCP/Ollama BYOM, and sync session files locally.")
+            description: "Connect Visual Studio Copilot to a local heirowLLM Workstation, configure MCP/Ollama BYOM, and sync session files locally.")
         {
             Icon = "Assets\\SocketJackIcon128.png",
             PreviewImage = "Assets\\SocketJackPreview200.png",

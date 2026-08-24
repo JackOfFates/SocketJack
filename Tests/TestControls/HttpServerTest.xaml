@@ -92,9 +92,9 @@
 
                         <!-- Operators -->
                         <SyntaxBox:KeywordRule Foreground="Gray" Keywords="*,C#" WholeWordsOnly="False" />
-                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFB9F6FF" Pattern="^\[LmVsProxy\].*" />
-                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFFF9A9A" Pattern="^\[LmVsProxy\].*(Error|ERROR|failed|Failed|exception|Exception|Invalid|Build failed).*" />
-                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF9CFF82" Pattern="^\[LmVsProxy\].*(OK|success|successful|passed|Created|Forwarding).*" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFB9F6FF" Pattern="^\[HeirowLlm\].*" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FFFF9A9A" Pattern="^\[HeirowLlm\].*(Error|ERROR|failed|Failed|exception|Exception|Invalid|Build failed).*" />
+                        <SyntaxBox:RegexRule Op="Line" Foreground="#FF9CFF82" Pattern="^\[HeirowLlm\].*(OK|success|successful|passed|Created|Forwarding).*" />
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FFFFD866" Pattern="\[(Request|HTTP|Streaming|Responses Bridge|Tool Calls|Conversation Tool Call|Conversation Tool Result Error|Native Tool Args Repair|Tool Args Repair|Create File Redirect|Create File Guard|Build Error Hint|Build Error Continuation|JSON Repair|Path Repair|Chat UI)\]" />
                         <SyntaxBox:RegexRule Op="Line" Foreground="#FF7DC1FF" Pattern="\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b|/v1/(chat/completions|responses)|/api/chat|/health|tool_choice=auto|streaming=(True|False)" />
                         <SyntaxBox:KeywordRule Foreground="#FF40C9A2" Keywords="get_projects_in_solution,get_files_in_project,file_search,code_search,get_file,create_file,replace_string_in_file,multi_replace_string_in_file,run_build,get_errors,find_symbol,run_command_in_terminal" WholeWordsOnly="True" />

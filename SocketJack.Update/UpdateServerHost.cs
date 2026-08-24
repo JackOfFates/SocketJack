@@ -1185,7 +1185,7 @@ public sealed class UpdateServerHost : IDisposable {
 
     private object HandleUpdateRoot(HttpRequest request) {
         if (IsLegacyGuiUpdateRequest(request)) {
-            UpdateChannel? guiChannel = FindChannel("jackllm");
+            UpdateChannel? guiChannel = FindChannel("heirowllm");
             if (guiChannel != null)
                 return Json(request, LoadOrCreateManifest(guiChannel));
         }
@@ -1202,7 +1202,7 @@ public sealed class UpdateServerHost : IDisposable {
         UpdateChannel? channel = FindChannel(parts[0]);
         string relativePath;
         if (channel == null) {
-            channel = FindChannel("jackllm");
+            channel = FindChannel("heirowllm");
             relativePath = string.Join("/", parts);
         } else {
             relativePath = string.Join("/", parts.Skip(1));
@@ -2097,7 +2097,7 @@ public sealed class UpdateServerHost : IDisposable {
 
     private static bool IsUserWorkstationChannel(UpdateChannel channel) {
         string id = UpdateServerOptions.NormalizeChannelId(channel?.Id ?? "");
-        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
+        return id.Equals("heirowllm", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsExecutableRunning(string executablePath) {
@@ -2401,7 +2401,7 @@ public sealed class UpdateServerHost : IDisposable {
             error = "File path must stay inside the update channel.";
             return false;
         }
-        if (IsJackLlmWorkstationChannel(channelId) && IsBlockedJackLlmPayloadPath(relativePath, out error))
+        if (IsHeirowLlmWorkstationChannel(channelId) && IsBlockedHeirowLlmPayloadPath(relativePath, out error))
             return false;
 
         string[] segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -2422,7 +2422,7 @@ public sealed class UpdateServerHost : IDisposable {
         string normalized = NormalizeRelativePath(relativePath);
         if (IsMetadataFile(normalized))
             return false;
-        if (IsJackLlmWorkstationChannel(channelId))
+        if (IsHeirowLlmWorkstationChannel(channelId))
             return false;
 
         string[] segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -2442,30 +2442,30 @@ public sealed class UpdateServerHost : IDisposable {
                fileName.Equals("dataserver.json", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsJackLlmWorkstationChannel(string channelId) {
+    private static bool IsHeirowLlmWorkstationChannel(string channelId) {
         string id = UpdateServerOptions.NormalizeChannelId(channelId);
-        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
+        return id.Equals("heirowllm", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsBlockedJackLlmPayloadPath(string relativePath, out string error) {
+    private static bool IsBlockedHeirowLlmPayloadPath(string relativePath, out string error) {
         string normalized = NormalizeRelativePath(relativePath);
         string[] segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        string blockedSegment = segments.FirstOrDefault(IsJackLlmRuntimeDataSegment) ?? "";
+        string blockedSegment = segments.FirstOrDefault(IsHeirowLlmRuntimeDataSegment) ?? "";
         if (!string.IsNullOrWhiteSpace(blockedSegment)) {
-            error = "JackLLM update payloads cannot include runtime/user data folders: " + blockedSegment + ".";
+            error = "heirowLLM update payloads cannot include runtime/user data folders: " + blockedSegment + ".";
             return true;
         }
 
         string fileName = Path.GetFileName(normalized);
-        if (IsMetadataFile(normalized) || IsJackLlmRuntimeDataFile(fileName)) {
-            error = "JackLLM update payloads cannot include runtime/user data files: " + fileName + ".";
+        if (IsMetadataFile(normalized) || IsHeirowLlmRuntimeDataFile(fileName)) {
+            error = "heirowLLM update payloads cannot include runtime/user data files: " + fileName + ".";
             return true;
         }
 
         if (fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase) &&
             !fileName.EndsWith(".runtimeconfig.json", StringComparison.OrdinalIgnoreCase) &&
             !fileName.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase)) {
-            error = "JackLLM update payloads cannot include app/user JSON config files.";
+            error = "heirowLLM update payloads cannot include app/user JSON config files.";
             return true;
         }
 
@@ -2473,7 +2473,7 @@ public sealed class UpdateServerHost : IDisposable {
         return false;
     }
 
-    private static bool IsJackLlmRuntimeDataSegment(string segment) {
+    private static bool IsHeirowLlmRuntimeDataSegment(string segment) {
         return segment.Equals("agents", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("artifacts", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("cache", StringComparison.OrdinalIgnoreCase) ||
@@ -2485,7 +2485,7 @@ public sealed class UpdateServerHost : IDisposable {
                segment.Equals("database", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("databases", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("downloads", StringComparison.OrdinalIgnoreCase) ||
-               segment.Equals("jackllmchat", StringComparison.OrdinalIgnoreCase) ||
+               segment.Equals("heirowllmchat", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("log", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("logs", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("models", StringComparison.OrdinalIgnoreCase) ||
@@ -2506,7 +2506,7 @@ public sealed class UpdateServerHost : IDisposable {
                segment.Equals("workspaces", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsJackLlmRuntimeDataFile(string fileName) {
+    private static bool IsHeirowLlmRuntimeDataFile(string fileName) {
         if (string.IsNullOrWhiteSpace(fileName))
             return true;
 
@@ -2514,7 +2514,7 @@ public sealed class UpdateServerHost : IDisposable {
         return fileName.Equals("appsettings.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("auth.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("dynamicUpdates.json", StringComparison.OrdinalIgnoreCase) ||
-               fileName.Equals("JackLLM.settings.json", StringComparison.OrdinalIgnoreCase) ||
+               fileName.Equals("heirowLLM.settings.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("lastUpdates.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("updater-config.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("updater-status.json", StringComparison.OrdinalIgnoreCase) ||

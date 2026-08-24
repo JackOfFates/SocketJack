@@ -11,7 +11,7 @@ public enum WorkstationMcpTransport
 public sealed class WorkstationMcpOptions
 {
     public WorkstationMcpTransport Transport { get; private init; } = WorkstationMcpTransport.Stdio;
-    public Uri JackLlmBaseUri { get; private init; } = new("http://127.0.0.1:11436/");
+    public Uri HeirowLlmBaseUri { get; private init; } = new("http://127.0.0.1:11436/");
     public int HttpPort { get; private init; } = 11573;
     public int RequestTimeoutSeconds { get; private init; } = 20;
     public bool Verbose { get; private init; }
@@ -27,22 +27,22 @@ public sealed class WorkstationMcpOptions
 
         Options:
           --port <number>          HTTP port for --http mode. Default: 11573.
-          --jackllm <url>          JackLLM loopback base URL. Default: http://127.0.0.1:11436/.
-          --timeout <seconds>      Per-request timeout when proxying to JackLLM. Default: 20.
+          --heirowllm <url>          heirowLLM loopback base URL. Default: http://127.0.0.1:11436/.
+          --timeout <seconds>      Per-request timeout when proxying to heirowLLM. Default: 20.
           --verbose                Enable debug logging to stderr.
           --help                   Show this help.
 
         Safety:
           HTTP mode binds only to 127.0.0.1 and refuses to start unless codex.exe is running.
-          Proxied JackLLM URLs must also be loopback-only.
+          Proxied heirowLLM URLs must also be loopback-only.
         """;
 
     public static WorkstationMcpOptions Parse(string[] args)
     {
         WorkstationMcpTransport transport = WorkstationMcpTransport.Stdio;
-        Uri jackLlmBaseUri = ReadLoopbackBaseUri(
+        Uri heirowLLMBaseUri = ReadLoopbackBaseUri(
             Environment.GetEnvironmentVariable("SOCKETJACK_WORKSTATION_URL") ??
-            Environment.GetEnvironmentVariable("JACKLLM_URL") ??
+            Environment.GetEnvironmentVariable("HEIROWLLM_URL") ??
             "http://127.0.0.1:11436/");
         int port = ReadPort(Environment.GetEnvironmentVariable("SOCKETJACK_WORKSTATION_MCP_PORT"), 11573, "SOCKETJACK_WORKSTATION_MCP_PORT");
         int timeoutSeconds = ReadPositiveInt(Environment.GetEnvironmentVariable("SOCKETJACK_WORKSTATION_TIMEOUT_SECONDS"), 20, "SOCKETJACK_WORKSTATION_TIMEOUT_SECONDS");
@@ -73,9 +73,9 @@ public sealed class WorkstationMcpOptions
                 case "--port":
                     port = ReadPort(RequireValue(args, ref i, arg), port, arg);
                     break;
-                case "--jackllm":
-                case "--jackllm-url":
-                    jackLlmBaseUri = ReadLoopbackBaseUri(RequireValue(args, ref i, arg));
+                case "--heirowllm":
+                case "--heirowllm-url":
+                    heirowLLMBaseUri = ReadLoopbackBaseUri(RequireValue(args, ref i, arg));
                     break;
                 case "--timeout":
                     timeoutSeconds = ReadPositiveInt(RequireValue(args, ref i, arg), timeoutSeconds, arg);
@@ -96,7 +96,7 @@ public sealed class WorkstationMcpOptions
         return new WorkstationMcpOptions
         {
             Transport = transport,
-            JackLlmBaseUri = jackLlmBaseUri,
+            HeirowLlmBaseUri = heirowLLMBaseUri,
             HttpPort = port,
             RequestTimeoutSeconds = timeoutSeconds,
             Verbose = verbose,
@@ -136,14 +136,14 @@ public sealed class WorkstationMcpOptions
     private static Uri ReadLoopbackBaseUri(string value)
     {
         if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out Uri? uri))
-            throw new ArgumentException("JackLLM URL is not a valid absolute URI.");
+            throw new ArgumentException("heirowLLM URL is not a valid absolute URI.");
 
         if (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
             !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("JackLLM URL must be http or https.");
+            throw new ArgumentException("heirowLLM URL must be http or https.");
 
         if (!IsLoopbackHost(uri.Host))
-            throw new ArgumentException("JackLLM URL must target 127.0.0.1, localhost, or ::1.");
+            throw new ArgumentException("heirowLLM URL must target 127.0.0.1, localhost, or ::1.");
 
         UriBuilder builder = new(uri)
         {

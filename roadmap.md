@@ -1,10 +1,10 @@
-﻿# SocketJack LlmRuntime Roadmap
+# SocketJack LlmRuntime Roadmap
 
 ## Goal
 
 Build SocketJack into a local-first coding agent platform with embedded GGUF inference, LM Studio-compatible APIs, Visual Studio-grade IDE assistance, proprietary/private tool support, and Codex-grade autonomous engineering workflows.
 
-The first replacement target is LM Studio inside `JackLLM`. The longer-term product target is to equal or exceed GitHub Copilot for Visual Studio and Codex for coding-agent workflows.
+The first replacement target is LM Studio inside `heirowLLM`. The longer-term product target is to equal or exceed GitHub Copilot for Visual Studio and Codex for coding-agent workflows.
 
 ## Overall Progress
 
@@ -42,21 +42,21 @@ Status: **Complete**
 - [x] Add native SockJackDml F32 GGUF tensor payload dispatch smoke path.
 - [x] Add `LlmRuntime -p:BuildSockJackDmlNative=true` so `dotnet build SocketJack.sln` builds `Tools\DirectML\SockJackDml.dll`.
 
-## Phase 2: JackLLM Embedded Runtime Integration
+## Phase 2: heirowLLM Embedded Runtime Integration
 
 Status: **Complete**
 
 `[####################] 100%`
 
-- [x] Add `IJackLLMModelRuntime` abstraction in SocketJack.
+- [x] Add `IheirowLLMModelRuntime` abstraction in SocketJack.
 - [x] Keep LM Studio as fallback/debug provider.
-- [x] Add provider dropdown in `JackLLM` for LM Studio vs embedded LlmRuntime.
+- [x] Add provider dropdown in `heirowLLM` for LM Studio vs embedded LlmRuntime.
 - [x] Add `LlmRuntimeModelRuntimeAdapter` in `LlmRuntime`.
-- [x] Start embedded `LlmRuntimeHost` from `JackLLM` with a build-clean integration path.
+- [x] Start embedded `LlmRuntimeHost` from `heirowLLM` with a build-clean integration path.
 - [x] Route local model-runtime wrapper calls to provider-neutral `/v1/*` and `/api/v1/*` surfaces.
 - [x] Preserve remote model routing for Copilot duplicator mode.
 - [x] Add provider-neutral status fields while keeping old LM Studio fields temporarily.
-- [x] Add same-origin model-management wrapper endpoints in `JackLLM`.
+- [x] Add same-origin model-management wrapper endpoints in `heirowLLM`.
 - [x] Make `cwd\Models` the default model root for LlmRuntime.
 
 ## Phase 3: Model Browser, Downloader, And Hardware Fit
@@ -67,7 +67,7 @@ Status: **Complete**
 
 - [x] Add WPF Edge/WebView2 Hugging Face downloader control.
 - [x] Detect existing files, drive space, and estimated memory fit.
-- [x] Integrate downloader into `JackLLM`.
+- [x] Integrate downloader into `heirowLLM`.
 - [x] Show download button directly on Hugging Face model cards.
 - [x] Suggest only GGUF files likely to fit disk and shared video memory.
 - [x] Add quantization-aware recommendations: Q2, Q4, Q5, Q6, Q8.
@@ -118,7 +118,7 @@ Status: **Complete**
 - [x] Add MCP-compatible adapter layer.
 - [x] Add tool-call execution loop.
 - [x] Add audit logs and approval gates.
-- [x] Wire proprietary tools into `JackLLM` local agent/chat flow.
+- [x] Wire proprietary tools into `heirowLLM` local agent/chat flow.
 - [x] Add approved built-in Windows desktop automation tool with window inspection/control, program launch, foreground keyboard/mouse input, non-cursor target-window mouse operations, cursor position inspection, and human cursor path generation.
 
 ### Proprietary Tool Registry
@@ -245,7 +245,7 @@ Status: **Complete as runtime readiness APIs, docs, signing scaffold, and regres
 ## Acceptance Criteria
 
 - [x] SocketJack can build and run its local embedded runtime path without requiring a reverse reference from `SocketJack` to `LlmRuntime`.
-  Evidence: solution build passes; JackLLM provider abstraction and embedded runtime adapter are present. Remaining manual smoke test: launch GUI on a machine with no LM Studio service running and load a real GGUF.
+  Evidence: solution build passes; heirowLLM provider abstraction and embedded runtime adapter are present. Remaining manual smoke test: launch GUI on a machine with no LM Studio service running and load a real GGUF.
 - [x] Local GGUF runtime exposes chat and streaming endpoints.
   Evidence: `ChatCompletionsEndpoint_ReturnsOpenAiChatCompletion`, `ChatCompletionsEndpoint_StreamsOpenAiSseChunks`, and native `/api/v1/chat` tests pass with a fake backend. Real-model quality still depends on the selected GGUF and LLamaSharp backend.
 - [x] Local GGUF models can power edits and full autonomous agent workflows end to end.
@@ -258,8 +258,8 @@ Status: **Complete as runtime readiness APIs, docs, signing scaffold, and regres
   Evidence: tool secret expansion/redaction tests pass; secrets are stored outside definitions. Remaining hardening: DPAPI/Credential Manager/key vault instead of a local encrypted file key.
 - [x] Local GGUF-compatible chat can receive tool definitions, emit a tool call, execute the tool, and continue with tool result context.
   Evidence: `ChatCompletion_ExecutesNativeToolCallLoop` passes through `/v1/chat/completions`.
-- [x] `JackLLM` can execute approved proprietary tools and feed results back to the model.
-  Evidence: JackLLM forwards LlmRuntime tool schemas, calls `/api/v1/tools/calls`, and retries approval-required calls through the existing approval path.
+- [x] `heirowLLM` can execute approved proprietary tools and feed results back to the model.
+  Evidence: heirowLLM forwards LlmRuntime tool schemas, calls `/api/v1/tools/calls`, and retries approval-required calls through the existing approval path.
 - [x] Tool definitions can be exported/imported without exporting secrets.
   Evidence: tool pack import/export exists in `ToolDefinitionsControl`; secret values are separate from tool definition JSON.
 - [x] Proprietary HTTP, executable, PowerShell, named-pipe, .NET assembly, MCP, and built-in Windows desktop automation tools plus private schemas are supported without requiring source disclosure.

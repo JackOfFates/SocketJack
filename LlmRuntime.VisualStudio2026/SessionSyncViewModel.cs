@@ -13,7 +13,7 @@ using Microsoft.VisualStudio.Extensibility.UI;
 using Microsoft.VisualStudio.ProjectSystem.Query;
 
 [DataContract]
-internal sealed class SessionSyncViewModel : JackLlmLocalViewModel
+internal sealed class SessionSyncViewModel : HeirowLlmLocalViewModel
 {
     private const string GlyphOk = "\u2713";
     private const string GlyphPending = "\u25CF";
@@ -640,7 +640,7 @@ internal sealed class SessionSyncViewModel : JackLlmLocalViewModel
         bool confirmed = await this.extensibility.Shell().ShowPromptAsync(
             "Reset Session Sync for this solution?" + Environment.NewLine +
             "This will delete the local session file: " + displayPath + Environment.NewLine +
-            "Synced files stored by JackLLM Workstation are not deleted.",
+            "Synced files stored by heirowLLM Workstation are not deleted.",
             options,
             cancellationToken);
         if (!confirmed)
@@ -885,7 +885,7 @@ internal sealed class SessionSyncViewModel : JackLlmLocalViewModel
             this.mirrorRoot = Path.Combine(this.tempRoot, "files");
             this.sessionFilePath = Path.Combine(this.solutionRoot, ".vs", SessionFileName);
             this.snapshotPath = this.sessionFilePath;
-            this.ignoreManifestPath = Path.Combine(this.solutionRoot, "jackllm.ignore.manifest");
+            this.ignoreManifestPath = Path.Combine(this.solutionRoot, "heirowllm.ignore.manifest");
             Directory.CreateDirectory(this.mirrorRoot);
         }
 
@@ -920,7 +920,7 @@ internal sealed class SessionSyncViewModel : JackLlmLocalViewModel
     {
         if (!this.bridgeSelection.HasRemoteApi)
         {
-            return "Local JackLLM Workstation session endpoint: " + SessionSyncBridgeSelection.LocalWorkstationEndpoint + ".";
+            return "Local heirowLLM Workstation session endpoint: " + SessionSyncBridgeSelection.LocalWorkstationEndpoint + ".";
         }
 
         string sessionPart = this.HasSessionFile ? ".vs\\" + SessionFileName : "create .vs\\" + SessionFileName + " first";
@@ -932,7 +932,7 @@ internal sealed class SessionSyncViewModel : JackLlmLocalViewModel
     {
         this.IsWorkstationUnavailable = false;
         this.WorkstationStatus =
-            "Session Sync uses JackLLM Workstation at " + SessionSyncBridgeSelection.LocalWorkstationEndpoint + ".";
+            "Session Sync uses heirowLLM Workstation at " + SessionSyncBridgeSelection.LocalWorkstationEndpoint + ".";
     }
 
     private void ThrowIfSessionFileMissing()
@@ -1498,7 +1498,7 @@ internal sealed class SessionSyncViewModel : JackLlmLocalViewModel
         string name = Path.GetFileName(file);
         return name.EndsWith(".user", StringComparison.OrdinalIgnoreCase) ||
             name.EndsWith(".suo", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("jackllm.ignore.manifest", StringComparison.OrdinalIgnoreCase);
+            name.Equals("heirowllm.ignore.manifest", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AggregateFolder(SessionSyncTreeItem folder)
@@ -1813,7 +1813,7 @@ internal sealed class SessionSyncService
         selection.ThrowIfMissing();
         Uri uri = selection.BuildAutoUri("/api/session-sync/files?sessionId=" + Uri.EscapeDataString(sessionId));
         using HttpRequestMessage request = new(HttpMethod.Get, uri);
-        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        HeirowLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         string json = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -1843,7 +1843,7 @@ internal sealed class SessionSyncService
         };
 
         using HttpRequestMessage request = new(HttpMethod.Post, selection.BuildAutoUri("/api/session-sync/files"));
-        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        HeirowLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         string json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -1872,7 +1872,7 @@ internal sealed class SessionSyncService
         }
 
         using HttpRequestMessage request = new(HttpMethod.Post, selection.BuildAutoUri("/api/session-sync/github-import"));
-        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        HeirowLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         string json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -1917,7 +1917,7 @@ internal sealed class SessionSyncService
         }
 
         using HttpRequestMessage request = new(HttpMethod.Get, uri);
-        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        HeirowLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -1933,7 +1933,7 @@ internal sealed class SessionSyncService
         selection.ThrowIfMissing();
         Uri uri = selection.BuildAutoUri("/api/session-sync/file?sessionId=" + Uri.EscapeDataString(sessionId) + "&name=" + Uri.EscapeDataString(relativePath));
         using HttpRequestMessage request = new(HttpMethod.Delete, uri);
-        JackLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
+        HeirowLlmWorkstationAuthService.ApplyAuth(request, selection.AuthToken, selection.AuthUserName);
         using HttpResponseMessage response = await this.httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
         {
@@ -2150,7 +2150,7 @@ internal sealed class SessionSyncBridgeSelection
 {
     public const string LocalWorkstationEndpoint = "http://127.0.0.1:11436";
     private const string LocalWorkstationServerId = "local-workstation";
-    private const string LocalWorkstationServerName = "Local JackLLM Workstation";
+    private const string LocalWorkstationServerName = "Local heirowLLM Workstation";
 
     public string ServerEndpoint { get; private init; } = "";
     public string AutoApiBase { get; private init; } = "";
@@ -2201,7 +2201,7 @@ internal sealed class SessionSyncBridgeSelection
     {
         if (string.IsNullOrWhiteSpace(this.AutoApiBase))
         {
-            throw new InvalidOperationException("No local JackLLM Workstation session API base is configured.");
+            throw new InvalidOperationException("No local heirowLLM Workstation session API base is configured.");
         }
 
         return new Uri(new Uri(this.AutoApiBase.TrimEnd('/') + "/"), pathAndQuery.TrimStart('/'));
@@ -2211,7 +2211,7 @@ internal sealed class SessionSyncBridgeSelection
     {
         if (!this.HasRemoteApi)
         {
-            throw new InvalidOperationException("Start JackLLM Workstation at " + LocalWorkstationEndpoint + " before using Session Sync.");
+            throw new InvalidOperationException("Start heirowLLM Workstation at " + LocalWorkstationEndpoint + " before using Session Sync.");
         }
     }
 

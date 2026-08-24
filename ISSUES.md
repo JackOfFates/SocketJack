@@ -1,4 +1,4 @@
-﻿# LlmRuntime Roadmap Issues
+# LlmRuntime Roadmap Issues
 
 This file reflects the current LlmRuntime implementation state as of May 10, 2026.
 
@@ -9,13 +9,13 @@ This file reflects the current LlmRuntime implementation state as of May 10, 202
 ## External Setup Required
 
 - GitHub CLI is installed locally at `C:\Program Files\GitHub CLI\gh.exe`, but it is not authenticated. Live issue, PR, and Actions workflows require running `tools\Initialize-GitHubCliAuth.ps1` and completing the GitHub browser login.
-- Production signing is wired through `.github\workflows\jackllm-signing.yml`, but a real production PFX certificate is still required. Run `tools\Set-GitHubSigningSecrets.ps1 -CertificatePath <path-to-production.pfx> -Repository <owner/repo>` to set `CODE_SIGNING_PFX_BASE64` and `CODE_SIGNING_PFX_PASSWORD`.
+- Production signing is wired through `.github\workflows\heirowllm-signing.yml`, but a real production PFX certificate is still required. Run `tools\Set-GitHubSigningSecrets.ps1 -CertificatePath <path-to-production.pfx> -Repository <owner/repo>` to set `CODE_SIGNING_PFX_BASE64` and `CODE_SIGNING_PFX_PASSWORD`.
 - DirectML runner installation is source-backed. Run `tools\Install-DirectMlGgufRunner.ps1` to build `LlmRuntime.DirectMlRunner` and copy it to `Tools\DirectML`.
 - Native DirectML bridge installation is source-backed. `dotnet build SocketJack.sln` now builds `Tools\DirectML\SockJackDml.dll` through the `LlmRuntime -p:BuildSockJackDmlNative=true` solution project; `tools\Build-SockJackDml.ps1` remains available for direct native-only builds, and `tools\Install-DirectMlGgufRunner.ps1` still builds SockJackDml unless `-SkipNativeSockJackDml` is passed.
 
 ## Current Implemented State
 
-- `LlmRuntime` exists as a `net8.0` hostable library with model management, LM Studio/OpenAI-compatible API surfaces, tool invocation, autonomous agent workflows, production readiness endpoints, and JackLLM provider integration.
+- `LlmRuntime` exists as a `net8.0` hostable library with model management, LM Studio/OpenAI-compatible API surfaces, tool invocation, autonomous agent workflows, production readiness endpoints, and heirowLLM provider integration.
 - `LlmRuntime.VisualStudio` now produces an installable VSIX at `LlmRuntime.VisualStudio\bin\Debug\net472\SocketJack.LlmRuntime.VisualStudio.vsix`.
 - The Visual Studio VSIX includes `extension.vsixmanifest`, `LlmRuntime.VisualStudio.dll`, and generated `LlmRuntime.VisualStudio.pkgdef`.
 - `LlmRuntime.VisualStudio` now declares the package as `Microsoft.VisualStudio.VsPackage`, not a MEF-only component, and targets Visual Studio 2022 17.x `amd64`.

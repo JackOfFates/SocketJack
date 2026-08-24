@@ -4,6 +4,7 @@ using SocketJack.Net.P2P;
 using SocketJack.Serialization;
 using SocketJack.Serialization.Json;
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 
@@ -239,9 +240,10 @@ namespace SocketJack.Net {
         public bool HttpAccessLogging { get; set; } = true;
 
         /// <summary>
-        /// Directory for daily HTTP access logs. Default is <c>C:\LmVsProxy\Logs</c>.
+        /// Directory for daily HTTP access logs. Defaults to a SocketJack folder
+        /// under the current user's temporary directory.
         /// </summary>
-        public string HttpAccessLogDirectory { get; set; } = @"C:\LmVsProxy\Logs";
+        public string HttpAccessLogDirectory { get; set; } = Path.Combine(Path.GetTempPath(), "SocketJack", "Logs");
 
         /// <summary>
         /// Date format used for HTTP access log file names, followed by <c>.log</c>.

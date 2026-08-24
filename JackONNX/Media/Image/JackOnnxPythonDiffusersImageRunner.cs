@@ -26,12 +26,14 @@ public sealed class JackOnnxPythonDiffusersImageRunner : IJackOnnxImageModelRunn
     private const string MinimumQwenDiffusersVersion = "0.35.0";
     private const string MinimumTorchVersion = "2.1.0";
     private const string MinimumTransformersVersion = "4.30.0";
+    private const string LegacyMaximumTransformersVersionExclusive = "4.37.0";
     private const string MinimumPeftVersion = "0.10.0";
     private const string LegacyMinimumHuggingFaceHubVersion = "0.34.0";
     private const string LegacyMaximumHuggingFaceHubVersionExclusive = "1.0.0";
     private const string ModernMinimumHuggingFaceHubVersion = "1.5.0";
     private const string ModernMaximumHuggingFaceHubVersionExclusive = "2.0.0";
     private const string GetPipUrl = "https://bootstrap.pypa.io/get-pip.py";
+    private const string GetPipFallbackUrl = "https://raw.githubusercontent.com/pypa/get-pip/main/public/get-pip.py";
     private const string DefaultTorchCudaIndexUrl = "https://download.pytorch.org/whl/cu128";
     private const string TorchCudaIndexEnvironmentVariable = "JACKONNX_TORCH_CUDA_INDEX_URL";
     private const string AutoCudaTorchEnvironmentVariable = "JACKONNX_AUTO_CUDA_TORCH";
@@ -39,14 +41,23 @@ public sealed class JackOnnxPythonDiffusersImageRunner : IJackOnnxImageModelRunn
         "python-" + BundledPythonVersion + (RuntimeInformation.ProcessArchitecture == Architecture.X64 ? "-amd64" : "") + ".exe";
     private static string BundledPythonEmbedFile =>
         "python-" + BundledPythonVersion + "-embed-" + GetPythonArchiveArchitecture() + ".zip";
-    private static string CudaLegacyPythonInstallerFile =>
-        "python-" + CudaLegacyPythonVersion + (RuntimeInformation.ProcessArchitecture == Architecture.X64 ? "-amd64" : "") + ".exe";
+    private static string CudaLegacyPythonEmbedFile =>
+        "python-" + CudaLegacyPythonVersion + "-embed-" + GetPythonArchiveArchitecture() + ".zip";
     private static string ApplicationBaseDirectory => Path.GetFullPath(AppContext.BaseDirectory);
-    private static string BundledPythonDirectory => Path.Combine(ApplicationBaseDirectory, "Python");
+    private static string ManagedApplicationDataDirectory {
+        get {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrWhiteSpace(localAppData))
+                localAppData = Path.GetTempPath();
+            return Path.Combine(localAppData, "SocketJack", "heirowLLM");
+        }
+    }
+    private static string PythonInstallerCacheDirectory => Path.Combine(ManagedApplicationDataDirectory, "PythonInstallers");
+    private static string BundledPythonDirectory => Path.Combine(ManagedApplicationDataDirectory, "Python");
     private static string BundledPythonExecutable => OperatingSystem.IsWindows()
         ? Path.Combine(BundledPythonDirectory, "python.exe")
         : Path.Combine(BundledPythonDirectory, "bin", "python3");
-    private static string CudaLegacyPythonDirectory => Path.Combine(ApplicationBaseDirectory, "PythonCudaLegacy");
+    private static string CudaLegacyPythonDirectory => Path.Combine(ManagedApplicationDataDirectory, "PythonCudaLegacy");
     private static string CudaLegacyPythonExecutable => OperatingSystem.IsWindows()
         ? Path.Combine(CudaLegacyPythonDirectory, "python.exe")
         : Path.Combine(CudaLegacyPythonDirectory, "bin", "python3");
@@ -788,6 +799,38 @@ public sealed class JackOnnxPythonDiffusersImageRunner : IJackOnnxImageModelRunn
         return command?.FileName ?? "";
     }
 
+    public static async Task<string> EnsurePreferredImageGenerationPythonRuntimeAsync(
+        CancellationToken cancellationToken = default,
+        IProgress<string>? status = null)
+    {
+        if (!OperatingSystem.IsWindows())
+            return "";
+
+        if (File.Exists(CudaLegacyPythonExecutable))
+        {
+            status?.Report("Preparing the installed legacy CUDA image runtime...");
+            return await EnsureCudaLegacyPythonRuntimeAsync(cancellationToken, status).ConfigureAwait(false);
+        }
+
+        string pythonPath = await EnsureBundledPythonAsync(cancellationToken, status).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(pythonPath))
+            await EnsureQwenDiffusersSupportAsync(pythonPath, cancellationToken, status).ConfigureAwait(false);
+        return pythonPath;
+    }
+
+    public static async Task<string> EnsureBundledPythonExecutableAsync(
+        CancellationToken cancellationToken = default,
+        IProgress<string>? status = null)
+    {
+        if (!OperatingSystem.IsWindows())
+            return "";
+
+        PythonCommand? command = await ResolveBundledPythonAsyncInternal(cancellationToken, status).ConfigureAwait(false);
+        if (command != null)
+            status?.Report("Python executable ready at " + command.FileName + ".");
+        return command?.FileName ?? "";
+    }
+
     public static async Task EnsureQwenDiffusersSupportAsync(
         string pythonPath,
         CancellationToken cancellationToken = default,
@@ -1113,11 +1156,7 @@ except Exception as exc:
         if (!string.IsNullOrWhiteSpace(installedVersion) && hasMinimum && belowMaximum)
             return;
 
-        string specifier = packageName;
-        if (!string.IsNullOrWhiteSpace(minimumVersion))
-            specifier += ">=" + minimumVersion;
-        if (!string.IsNullOrWhiteSpace(maximumExclusiveVersion))
-            specifier += ",<" + maximumExclusiveVersion;
+        string specifier = BuildPythonPackageSpecifier(packageName, minimumVersion, maximumExclusiveVersion);
 
         status?.Report("Installing/upgrading Python package '" + specifier + "' in " + command.FileName + "...");
         var pipArgs = new List<string> { "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "--force-reinstall", specifier };
@@ -1133,6 +1172,19 @@ except Exception as exc:
             throw new InvalidOperationException("Python at " + command.FileName + " still has package '" + packageName + "' at '" + installedVersion + "'. Required at least '" + minimumVersion + "'.");
         if (!string.IsNullOrWhiteSpace(maximumExclusiveVersion) && !IsVersionLessThan(installedVersion, maximumExclusiveVersion))
             throw new InvalidOperationException("Python at " + command.FileName + " still has package '" + packageName + "' at '" + installedVersion + "'. Required below '" + maximumExclusiveVersion + "'.");
+    }
+
+    private static string BuildPythonPackageSpecifier(
+        string packageName,
+        string minimumVersion,
+        string maximumExclusiveVersion)
+    {
+        string specifier = packageName;
+        if (!string.IsNullOrWhiteSpace(minimumVersion))
+            specifier += ">=" + minimumVersion;
+        if (!string.IsNullOrWhiteSpace(maximumExclusiveVersion))
+            specifier += (string.IsNullOrWhiteSpace(minimumVersion) ? "<" : ",<") + maximumExclusiveVersion;
+        return specifier;
     }
 
     private static async Task EnsureQwenRuntimeAsync(
@@ -1196,11 +1248,12 @@ except Exception as exc:
     {
         string? transformersVersion = await ReadPythonPackageVersionAsync(command, "transformers", cancellationToken).ConfigureAwait(false);
         string? diffusersVersion = await ReadPythonPackageVersionAsync(command, "diffusers", cancellationToken).ConfigureAwait(false);
-        bool plannedUnboundedDiffusersUpgrade = !string.IsNullOrWhiteSpace(plannedDiffusersMinimumVersion) &&
+        bool hasPlannedDiffusersRange = !string.IsNullOrWhiteSpace(plannedDiffusersMinimumVersion);
+        bool plannedUnboundedDiffusersUpgrade = hasPlannedDiffusersRange &&
             string.IsNullOrWhiteSpace(plannedDiffusersMaximumExclusiveVersion);
         bool needsModernHub =
             !string.IsNullOrWhiteSpace(transformersVersion) && HasAtLeastMinimumVersion(transformersVersion, "5.0.0") ||
-            !string.IsNullOrWhiteSpace(diffusersVersion) && HasAtLeastMinimumVersion(diffusersVersion, "0.38.0") ||
+            !hasPlannedDiffusersRange && !string.IsNullOrWhiteSpace(diffusersVersion) && HasAtLeastMinimumVersion(diffusersVersion, "0.38.0") ||
             plannedUnboundedDiffusersUpgrade;
 
         return needsModernHub
@@ -1356,8 +1409,10 @@ except Exception as exc:
 
         if (File.Exists(BundledPythonExecutable))
         {
+            var command = new PythonCommand(BundledPythonExecutable, []);
+            await EnsurePipAvailableAsync(command, "bundled Python", cancellationToken, status).ConfigureAwait(false);
             status?.Report("Using existing bundled Python at " + BundledPythonExecutable + ".");
-            return new PythonCommand(BundledPythonExecutable, []);
+            return command;
         }
 
         await PythonProvisioningGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -1365,12 +1420,15 @@ except Exception as exc:
         {
             if (File.Exists(BundledPythonExecutable))
             {
+                var command = new PythonCommand(BundledPythonExecutable, []);
+                await EnsurePipAvailableAsync(command, "bundled Python", cancellationToken, status).ConfigureAwait(false);
                 status?.Report("Using existing bundled Python at " + BundledPythonExecutable + ".");
-                return new PythonCommand(BundledPythonExecutable, []);
+                return command;
             }
 
             Directory.CreateDirectory(BundledPythonDirectory);
-            string installerPath = Path.Combine(BundledPythonDirectory, BundledPythonInstallerFile);
+            Directory.CreateDirectory(PythonInstallerCacheDirectory);
+            string installerPath = Path.Combine(PythonInstallerCacheDirectory, BundledPythonInstallerFile);
             string installerUrl = string.Join("/", BundledPythonBaseUrl, BundledPythonVersion, BundledPythonInstallerFile);
             if (!File.Exists(installerPath))
             {
@@ -1393,8 +1451,10 @@ except Exception as exc:
 
             if (File.Exists(BundledPythonExecutable))
             {
+                var command = new PythonCommand(BundledPythonExecutable, []);
+                await EnsurePipAvailableAsync(command, "bundled Python", cancellationToken, status).ConfigureAwait(false);
                 status?.Report("Python bootstrap install completed at " + BundledPythonExecutable + ".");
-                return new PythonCommand(BundledPythonExecutable, []);
+                return command;
             }
 
             status?.Report("Python installer completed but did not create python.exe; extracting embedded Python runtime...");
@@ -1414,55 +1474,117 @@ except Exception as exc:
             return "";
 
         PythonCommand command = await EnsureCudaLegacyPythonAsync(cancellationToken, status).ConfigureAwait(false);
-        status?.Report("Installing legacy CUDA PyTorch for Maxwell/Pascal GPUs in " + command.FileName + "...");
-        var torch = await RunPythonArgumentsAsync(
-            command,
-            [
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-input",
-                "--upgrade",
-                "--force-reinstall",
-                "torch==2.1.*",
-                "torchvision==0.16.*",
-                "torchaudio==2.1.*",
-                "--index-url",
-                CudaLegacyTorchIndexUrl
-            ],
-            TimeSpan.FromMinutes(30),
-            cancellationToken).ConfigureAwait(false);
-        if (torch.ExitCode != 0)
-            throw new InvalidOperationException("Legacy CUDA PyTorch install failed. " + BuildProcessDetail(torch));
+        TorchRuntimeStatus currentTorch = await ReadTorchRuntimeStatusAsync(command, cancellationToken).ConfigureAwait(false);
+        bool compatibleTorchAlreadyInstalled = currentTorch.HasTorch &&
+                                               currentTorch.CudaAvailable &&
+                                               currentTorch.Version.StartsWith("2.1.", StringComparison.OrdinalIgnoreCase) &&
+                                               currentTorch.CudaVersion.StartsWith("11.8", StringComparison.OrdinalIgnoreCase);
+        if (compatibleTorchAlreadyInstalled)
+        {
+            status?.Report("Compatible legacy CUDA PyTorch is already installed in " + command.FileName + ".");
+        }
+        else
+        {
+            status?.Report("Installing legacy CUDA PyTorch for Maxwell/Pascal GPUs in " + command.FileName + "...");
+            var torch = await RunPythonArgumentsAsync(
+                command,
+                [
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-input",
+                    "--upgrade",
+                    "--force-reinstall",
+                    "torch==2.1.*",
+                    "torchvision==0.16.*",
+                    "torchaudio==2.1.*",
+                    "--index-url",
+                    CudaLegacyTorchIndexUrl
+                ],
+                TimeSpan.FromMinutes(30),
+                cancellationToken).ConfigureAwait(false);
+            if (torch.ExitCode != 0)
+                throw new InvalidOperationException("Legacy CUDA PyTorch install failed. " + BuildProcessDetail(torch));
+        }
 
-        status?.Report("Pinning NumPy for legacy CUDA PyTorch in " + command.FileName + "...");
-        var numpy = await RunPythonArgumentsAsync(
+        await EnsurePythonPackageInRangeAsync(
+            "transformers",
+            MinimumTransformersVersion,
+            LegacyMaximumTransformersVersionExclusive,
             command,
-            [
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-input",
-                "--upgrade",
-                "--force-reinstall",
-                "numpy<2"
-            ],
-            TimeSpan.FromMinutes(8),
-            cancellationToken).ConfigureAwait(false);
-        if (numpy.ExitCode != 0)
-            throw new InvalidOperationException("Legacy CUDA NumPy pin failed. " + BuildProcessDetail(numpy));
+            cancellationToken,
+            status).ConfigureAwait(false);
+        await EnsureDiffusersAtLeastAsync(
+            command,
+            cancellationToken,
+            status,
+            MinimumSchedulerDiffusersVersion,
+            MaximumSchedulerDiffusersVersionExclusive).ConfigureAwait(false);
+        await EnsurePythonPackageInRangeAsync(
+            "numpy",
+            "",
+            "2.0.0",
+            command,
+            cancellationToken,
+            status).ConfigureAwait(false);
 
         LlmRuntimeCompatibilityStatus compatibility = new LlmRuntimeCompatibilityService(new LlmRuntimeOptions())
             .GetStatus(command.FileName, cancellationToken, forceRefresh: true);
         if (!compatibility.IsGpuGenerationEnabled)
             throw new InvalidOperationException("Legacy CUDA PyTorch installed, but GPU image generation is still disabled. " + BuildGpuGenerationDisabledDetail(compatibility));
 
-        await EnsureTorchRuntimeAsync(command, cancellationToken, status).ConfigureAwait(false);
-        await EnsureDiffusersAtLeastAsync(command, cancellationToken, status).ConfigureAwait(false);
+        await VerifyLegacyCudaImageRuntimeAsync(command, cancellationToken).ConfigureAwait(false);
         status?.Report("Legacy CUDA image-generation Python runtime is ready at " + command.FileName + ".");
         return command.FileName;
+    }
+
+    public static async Task<string> EnsureCudaLegacyPythonExecutableAsync(
+        CancellationToken cancellationToken = default,
+        IProgress<string>? status = null)
+    {
+        if (!OperatingSystem.IsWindows())
+            return "";
+
+        PythonCommand command = await EnsureCudaLegacyPythonAsync(cancellationToken, status).ConfigureAwait(false);
+        status?.Report("Legacy CUDA Python executable ready at " + command.FileName + ".");
+        return command.FileName;
+    }
+
+    private static async Task VerifyLegacyCudaImageRuntimeAsync(
+        PythonCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string code = """
+import json
+import diffusers
+import numpy
+import torch
+import transformers
+
+if not torch.cuda.is_available():
+    raise RuntimeError("PyTorch cannot access CUDA")
+if int(numpy.__version__.split(".")[0]) >= 2:
+    raise RuntimeError("Legacy CUDA PyTorch requires NumPy below 2.0")
+value = torch.tensor([2.0], device="cuda")
+if float((value * value).item()) != 4.0:
+    raise RuntimeError("CUDA kernel verification returned an unexpected result")
+print(json.dumps({
+    "torch": str(torch.__version__),
+    "torch_cuda": str(torch.version.cuda or ""),
+    "diffusers": str(diffusers.__version__),
+    "transformers": str(transformers.__version__),
+    "numpy": str(numpy.__version__),
+    "device": str(torch.cuda.get_device_name(0)),
+}))
+""";
+        ProcessRunResult verification = await RunPythonArgumentsAsync(
+            command,
+            ["-c", code],
+            TimeSpan.FromMinutes(2),
+            cancellationToken).ConfigureAwait(false);
+        if (verification.ExitCode != 0)
+            throw new InvalidOperationException("Legacy CUDA image runtime verification failed. " + BuildProcessDetail(verification));
     }
 
     private static async Task<PythonCommand> EnsureCudaLegacyPythonAsync(
@@ -1471,8 +1593,10 @@ except Exception as exc:
     {
         if (File.Exists(CudaLegacyPythonExecutable))
         {
+            var command = new PythonCommand(CudaLegacyPythonExecutable, []);
+            await EnsurePipAvailableAsync(command, "legacy CUDA Python", cancellationToken, status).ConfigureAwait(false);
             status?.Report("Using existing legacy CUDA Python at " + CudaLegacyPythonExecutable + ".");
-            return new PythonCommand(CudaLegacyPythonExecutable, []);
+            return command;
         }
 
         await PythonProvisioningGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -1480,36 +1604,39 @@ except Exception as exc:
         {
             if (File.Exists(CudaLegacyPythonExecutable))
             {
+                var existingCommand = new PythonCommand(CudaLegacyPythonExecutable, []);
+                await EnsurePipAvailableAsync(existingCommand, "legacy CUDA Python", cancellationToken, status).ConfigureAwait(false);
                 status?.Report("Using existing legacy CUDA Python at " + CudaLegacyPythonExecutable + ".");
-                return new PythonCommand(CudaLegacyPythonExecutable, []);
+                return existingCommand;
             }
 
             Directory.CreateDirectory(CudaLegacyPythonDirectory);
-            string installerPath = Path.Combine(CudaLegacyPythonDirectory, CudaLegacyPythonInstallerFile);
-            string installerUrl = string.Join("/", BundledPythonBaseUrl, CudaLegacyPythonVersion, CudaLegacyPythonInstallerFile);
-            if (!File.Exists(installerPath))
+            Directory.CreateDirectory(PythonInstallerCacheDirectory);
+            string archivePath = Path.Combine(PythonInstallerCacheDirectory, CudaLegacyPythonEmbedFile);
+            string archiveUrl = string.Join("/", BundledPythonBaseUrl, CudaLegacyPythonVersion, CudaLegacyPythonEmbedFile);
+            if (!File.Exists(archivePath))
             {
-                status?.Report("Downloading Python " + CudaLegacyPythonVersion + " for legacy CUDA PyTorch...");
-                await DownloadFileAsync(installerUrl, installerPath, cancellationToken).ConfigureAwait(false);
+                status?.Report("Downloading self-contained Python " + CudaLegacyPythonVersion + " for legacy CUDA PyTorch...");
+                await DownloadFileAsync(archiveUrl, archivePath, cancellationToken).ConfigureAwait(false);
             }
 
-            status?.Report("Installing legacy CUDA Python to " + CudaLegacyPythonDirectory + "...");
-            var install = await InstallPythonAsync(installerPath, CudaLegacyPythonDirectory, cancellationToken).ConfigureAwait(false);
-            if (install.ExitCode != 0)
-                throw new InvalidOperationException("Legacy CUDA Python installer returned exit code " + install.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ". " + BuildProcessDetail(install));
-
+            status?.Report("Extracting self-contained legacy CUDA Python to " + CudaLegacyPythonDirectory + "...");
+            ZipFile.ExtractToDirectory(archivePath, CudaLegacyPythonDirectory, overwriteFiles: true);
+            EnableSitePackagesForEmbeddedPython(CudaLegacyPythonDirectory);
             if (!File.Exists(CudaLegacyPythonExecutable))
-                throw new InvalidOperationException("Legacy CUDA Python install completed but did not create " + CudaLegacyPythonExecutable + ".");
+                throw new InvalidOperationException("Legacy CUDA Python extraction completed but did not create " + CudaLegacyPythonExecutable + ".");
 
+            var command = new PythonCommand(CudaLegacyPythonExecutable, []);
+            await EnsurePipAvailableAsync(command, "legacy CUDA Python", cancellationToken, status).ConfigureAwait(false);
             var pip = await RunPythonArgumentsAsync(
-                new PythonCommand(CudaLegacyPythonExecutable, []),
+                command,
                 ["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "pip", "setuptools", "wheel"],
                 TimeSpan.FromMinutes(8),
                 cancellationToken).ConfigureAwait(false);
             if (pip.ExitCode != 0)
                 status?.Report("Legacy CUDA Python is usable, but pip upgrade failed: " + BuildProcessDetail(pip));
 
-            return new PythonCommand(CudaLegacyPythonExecutable, []);
+            return command;
         }
         finally
         {
@@ -1722,12 +1849,12 @@ except Exception as exc:
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrWhiteSpace(home))
         {
-            yield return Path.Combine(home, ".jackllm", "python");
-            yield return Path.Combine(home, ".jackllm", "venv");
-            yield return Path.Combine(home, ".local", "share", "JackLLM", "Python");
-            yield return Path.Combine(home, ".local", "share", "JackLLM", "venv");
-            yield return Path.Combine(home, ".cache", "jackllm", "python");
-            yield return Path.Combine(home, ".cache", "jackllm", "venv");
+            yield return Path.Combine(home, ".heirowllm", "python");
+            yield return Path.Combine(home, ".heirowllm", "venv");
+            yield return Path.Combine(home, ".local", "share", "heirowLLM", "Python");
+            yield return Path.Combine(home, ".local", "share", "heirowLLM", "venv");
+            yield return Path.Combine(home, ".cache", "heirowllm", "python");
+            yield return Path.Combine(home, ".cache", "heirowllm", "venv");
         }
     }
 
@@ -1736,7 +1863,8 @@ except Exception as exc:
         IProgress<string>? status)
     {
         Directory.CreateDirectory(BundledPythonDirectory);
-        string archivePath = Path.Combine(BundledPythonDirectory, BundledPythonEmbedFile);
+        Directory.CreateDirectory(PythonInstallerCacheDirectory);
+        string archivePath = Path.Combine(PythonInstallerCacheDirectory, BundledPythonEmbedFile);
         string archiveUrl = string.Join("/", BundledPythonBaseUrl, BundledPythonVersion, BundledPythonEmbedFile);
         if (!File.Exists(archivePath))
         {
@@ -1749,19 +1877,64 @@ except Exception as exc:
         if (!File.Exists(BundledPythonExecutable))
             throw new InvalidOperationException("Embedded Python archive did not create " + BundledPythonExecutable + ".");
 
-        status?.Report("Bootstrapping pip for embedded Python...");
-        string getPipPath = Path.Combine(BundledPythonDirectory, "get-pip.py");
-        await DownloadFileAsync(GetPipUrl, getPipPath, cancellationToken).ConfigureAwait(false);
-        var pip = await RunPythonArgumentsAsync(
-            new PythonCommand(BundledPythonExecutable, []),
-            [getPipPath, "--disable-pip-version-check", "--no-warn-script-location"],
-            TimeSpan.FromMinutes(6),
-            cancellationToken).ConfigureAwait(false);
-        if (pip.ExitCode != 0)
-            throw new InvalidOperationException("Embedded Python pip bootstrap failed. " + BuildProcessDetail(pip));
+        var command = new PythonCommand(BundledPythonExecutable, []);
+        await EnsurePipAvailableAsync(command, "embedded Python", cancellationToken, status).ConfigureAwait(false);
 
         status?.Report("Embedded Python runtime ready at " + BundledPythonExecutable + ".");
-        return new PythonCommand(BundledPythonExecutable, []);
+        return command;
+    }
+
+    private static async Task EnsurePipAvailableAsync(
+        PythonCommand command,
+        string runtimeName,
+        CancellationToken cancellationToken,
+        IProgress<string>? status)
+    {
+        ProcessRunResult existing = await RunPythonArgumentsAsync(
+            command,
+            ["-m", "pip", "--version"],
+            TimeSpan.FromMinutes(1),
+            cancellationToken).ConfigureAwait(false);
+        if (existing.ExitCode == 0)
+            return;
+
+        status?.Report("Bootstrapping pip for " + runtimeName + "...");
+        Directory.CreateDirectory(PythonInstallerCacheDirectory);
+        string getPipPath = Path.Combine(PythonInstallerCacheDirectory, "get-pip.py");
+        if (!File.Exists(getPipPath))
+            await DownloadGetPipAsync(getPipPath, cancellationToken, status).ConfigureAwait(false);
+
+        ProcessRunResult bootstrap = await RunPythonArgumentsAsync(
+            command,
+            [getPipPath, "--disable-pip-version-check", "--no-warn-script-location"],
+            TimeSpan.FromMinutes(8),
+            cancellationToken).ConfigureAwait(false);
+        if (bootstrap.ExitCode != 0)
+            throw new InvalidOperationException("Pip bootstrap failed for " + runtimeName + ". " + BuildProcessDetail(bootstrap));
+    }
+
+    private static async Task DownloadGetPipAsync(
+        string destinationPath,
+        CancellationToken cancellationToken,
+        IProgress<string>? status)
+    {
+        Exception? lastFailure = null;
+        foreach (string url in new[] { GetPipUrl, GetPipFallbackUrl })
+        {
+            try
+            {
+                await DownloadFileAsync(url, destinationPath, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                                       ex is HttpRequestException or IOException or TaskCanceledException)
+            {
+                lastFailure = ex;
+                status?.Report("Could not download pip bootstrap from " + new Uri(url).Host + "; trying another official source...");
+            }
+        }
+
+        throw new InvalidOperationException("Could not download the pip bootstrap from any configured source.", lastFailure);
     }
 
     private static void EnableSitePackagesForEmbeddedPython(string pythonDirectory)
@@ -1842,21 +2015,33 @@ except Exception as exc:
 
     private static async Task DownloadFileAsync(string url, string destinationPath, CancellationToken cancellationToken)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath) ?? ManagedApplicationDataDirectory);
+        string temporaryPath = destinationPath + "." + Guid.NewGuid().ToString("N") + ".download";
         using var client = new HttpClient();
         client.Timeout = TimeSpan.FromMinutes(10);
-        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
 
-        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        await using var destination = new FileStream(
-            destinationPath,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.None,
-            1 << 16,
-            useAsync: true);
+            await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
+            await using (var destination = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                1 << 16,
+                useAsync: true))
+            {
+                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            }
 
-        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(temporaryPath); } catch { }
+        }
     }
 
     private static async Task<ProcessRunResult> RunPythonArgumentsAsync(

@@ -18,7 +18,7 @@ Console.ReadLine();
 
 ## Download And Load A Model
 
-1. Open `JackLLM`.
+1. Open `heirowLLM`.
 2. Select `Embedded LlmRuntime` as the provider.
 3. Open the `Model Browser` tab.
 4. Pick a GGUF model that the card marks as fitting memory and disk.

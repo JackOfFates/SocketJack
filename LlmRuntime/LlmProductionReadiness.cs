@@ -49,7 +49,7 @@ public sealed class LlmProductionReadinessService
                 dotnetAvailable,
                 gitAvailable,
                 ghAvailable,
-                File.Exists(Path.Combine(Environment.CurrentDirectory, "JackLLM", "README.md")) ||
+                File.Exists(Path.Combine(Environment.CurrentDirectory, "heirowLLM", "README.md")) ||
                 File.Exists(Path.Combine(Environment.CurrentDirectory, "README.md"))
             ]),
             Items =
@@ -57,7 +57,7 @@ public sealed class LlmProductionReadinessService
                 Item("runtime", true, "LlmRuntime host can be created and served through SocketJack HttpServer.", "Start LlmRuntimeHost from the host app."),
                 Item("models-folder", Directory.Exists(_options.ModelRoot), "Model folder exists: " + _options.ModelRoot, "Open the Model Browser and download a GGUF to cwd\\Models."),
                 Item("local-model", hasModel, hasModel ? "Local model files detected: " + models.Count : "No local model files detected.", "Download a fitting GGUF model from Hugging Face."),
-                Item("ide-integration", dotnetAvailable, dotnetAvailable ? ".NET SDK is available for JackLLM/IDE integration builds." : ".NET SDK was not found on PATH.", "Install a compatible .NET SDK."),
+                Item("ide-integration", dotnetAvailable, dotnetAvailable ? ".NET SDK is available for heirowLLM/IDE integration builds." : ".NET SDK was not found on PATH.", "Install a compatible .NET SDK."),
                 Item("git", gitAvailable, gitAvailable ? "git is available for local repo workflows." : "git was not found on PATH.", "Run tools\\Install-GitForWindows.ps1 and reopen the host."),
                 Item("github-auth", ghAvailable, ghAvailable ? "GitHub CLI is available; authenticate with gh auth login if needed." : "GitHub CLI is not installed.", "Run tools\\Install-GitHubCli.ps1, then tools\\Initialize-GitHubCliAuth.ps1."),
                 Item("directml-runner", directMl.Configured || _options.DefaultBackend != LlmBackendKind.DirectML, directMl.Configured ? directMl.Message : "DirectML runner is optional unless DirectML is selected.", "Run tools\\Install-DirectMlGgufRunner.ps1 with a trusted runner path or download URL."),
@@ -148,11 +148,11 @@ public sealed class LlmProductionReadinessService
 
     public LlmInstallerReadinessReport BuildInstallerReadinessReport()
     {
-        string installerProject = Path.Combine(Environment.CurrentDirectory, "JackLLMInstaller", "JackLLMInstaller.wixproj");
-        string updaterProject = Path.Combine(Environment.CurrentDirectory, "JackLLMUpdater", "JackLLMUpdater.csproj");
-        string publishScript = Path.Combine(Environment.CurrentDirectory, "tools", "Publish-JackLLMUpdate.ps1");
-        string signScript = Path.Combine(Environment.CurrentDirectory, "tools", "Sign-JackLLMInstaller.ps1");
-        string signingWorkflow = Path.Combine(Environment.CurrentDirectory, ".github", "workflows", "lmvsproxy-signing.yml");
+        string installerProject = Path.Combine(Environment.CurrentDirectory, "heirowLLMInstaller", "heirowLLMInstaller.wixproj");
+        string updaterProject = Path.Combine(Environment.CurrentDirectory, "heirowLLMUpdater", "heirowLLMUpdater.csproj");
+        string publishScript = Path.Combine(Environment.CurrentDirectory, "tools", "Publish-heirowLLMUpdate.ps1");
+        string signScript = Path.Combine(Environment.CurrentDirectory, "tools", "Sign-heirowLLMInstaller.ps1");
+        string signingWorkflow = Path.Combine(Environment.CurrentDirectory, ".github", "workflows", "heirowllm-signing.yml");
         string signingSecretScript = Path.Combine(Environment.CurrentDirectory, "tools", "Set-GitHubSigningSecrets.ps1");
 
         return new LlmInstallerReadinessReport
@@ -165,11 +165,11 @@ public sealed class LlmProductionReadinessService
             SigningCertificateRequired = true,
             Items =
             [
-                Item("installer-project", File.Exists(installerProject), "WiX installer project is present.", "Create JackLLMInstaller.wixproj."),
-                Item("updater-project", File.Exists(updaterProject), "Updater project is present.", "Create JackLLMUpdater."),
-                Item("publish-script", File.Exists(publishScript), "Update publish script is present.", "Create tools\\Publish-JackLLMUpdate.ps1."),
-                Item("signing-script", File.Exists(signScript), "Signing script is present.", "Create tools\\Sign-JackLLMInstaller.ps1."),
-                Item("github-signing-workflow", File.Exists(signingWorkflow), "GitHub Actions signing workflow is present.", "Create .github\\workflows\\lmvsproxy-signing.yml."),
+                Item("installer-project", File.Exists(installerProject), "WiX installer project is present.", "Create heirowLLMInstaller.wixproj."),
+                Item("updater-project", File.Exists(updaterProject), "Updater project is present.", "Create heirowLLMUpdater."),
+                Item("publish-script", File.Exists(publishScript), "Update publish script is present.", "Create tools\\Publish-heirowLLMUpdate.ps1."),
+                Item("signing-script", File.Exists(signScript), "Signing script is present.", "Create tools\\Sign-heirowLLMInstaller.ps1."),
+                Item("github-signing-workflow", File.Exists(signingWorkflow), "GitHub Actions signing workflow is present.", "Create .github\\workflows\\heirowllm-signing.yml."),
                 Item("github-signing-secrets-script", File.Exists(signingSecretScript), "GitHub signing secret setup script is present.", "Create tools\\Set-GitHubSigningSecrets.ps1."),
                 Item("certificate", false, "A real code-signing certificate is required outside source control.", "Store CODE_SIGNING_PFX_BASE64 and CODE_SIGNING_PFX_PASSWORD as GitHub repository secrets.")
             ]
@@ -184,7 +184,7 @@ public sealed class LlmProductionReadinessService
             [
                 "dotnet test .\\LlmRuntime.Tests\\LlmRuntime.Tests.csproj --no-restore",
                 "dotnet build .\\LlmRuntime.Wpf\\LlmRuntime.Wpf.csproj --no-restore",
-                "dotnet build .\\JackLLM\\JackLLM.csproj --no-restore",
+                "dotnet build .\\heirowLLM\\heirowLLM.csproj --no-restore",
                 "dotnet build .\\SocketJack.sln --no-restore"
             ],
             Coverage =
@@ -194,7 +194,7 @@ public sealed class LlmProductionReadinessService
                 "Downloader helpers and cleanup",
                 "Tool registry, safety, invocation, and audit",
                 "Agent sessions and GitHub workflow fallbacks",
-                "JackLLM provider routing"
+                "heirowLLM provider routing"
             ]
         };
     }
@@ -206,7 +206,7 @@ public sealed class LlmProductionReadinessService
             Title = "Download code model, load it, run an agent edit, test, and prepare a PR",
             Steps =
             [
-                "Open JackLLM and choose Embedded LlmRuntime as provider.",
+                "Open heirowLLM and choose Embedded LlmRuntime as provider.",
                 "Open the Model Browser tab and download a GGUF code/instruct model that fits memory and drive space.",
                 "Keep Load after download checked so the model is loaded into LlmRuntime automatically.",
                 "Call GET /v1/models and confirm the downloaded model appears.",

@@ -12,7 +12,7 @@ This matrix is the starting option range for `SandboxOptions`. Defaults should b
 | `AuditOnly` | Host passthrough plus audit | Host passthrough plus audit | Metadata | Audit log | Inventory before migration. |
 | `ReadOnlyHost` | Read-only bind mounts | Read-only allowlist | Lazy cache | None | Browsing and diagnostics. |
 | `CopyOnWrite` | Host reads, virtual writes | Host reads, virtual writes | Write layer | Snapshot optional | Existing app migration. |
-| `MemoryOverlay` | Virtual writes and hot cache | Virtual writes | Bounded memory | Snapshot optional | JackLLM sessions and uploads. |
+| `MemoryOverlay` | Virtual writes and hot cache | Virtual writes | Bounded memory | Snapshot optional | heirowLLM sessions and uploads. |
 | `FullMemory` | Preload declared root | Virtual hive preload | Bounded full preload | Snapshot or discard | Short-lived isolated sessions. |
 | `LockedDown` | Deny except explicit mounts | Deny except explicit hives | Write layer only | Discard by default | Untrusted tools or public sessions. |
 

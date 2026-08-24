@@ -1078,7 +1078,7 @@ public sealed class LlmModelRegistry : IDisposable
     {
         try
         {
-            string nvidiaSmi = Environment.GetEnvironmentVariable("JACKLLM_NVIDIA_SMI") ??
+            string nvidiaSmi = Environment.GetEnvironmentVariable("HEIROWLLM_NVIDIA_SMI") ??
                                Environment.GetEnvironmentVariable("NVIDIA_SMI_PATH") ??
                                "nvidia-smi";
             using var process = new Process

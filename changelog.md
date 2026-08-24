@@ -190,14 +190,14 @@
 ### Root cause
 
 - Session Sync could push normal files but failed on a zero-byte solution file because the public Auto session-file endpoint treated an explicitly empty `base64`/`dataUrl` value as a missing payload.
-- The VS Copilot configuration status surfaced JackLLM's optional local duplicator endpoint as an error even when the packaged VSIX bridge was already configured for BYOM.
+- The VS Copilot configuration status surfaced heirowLLM's optional local duplicator endpoint as an error even when the packaged VSIX bridge was already configured for BYOM.
 
 ### Changes made
 
 - Updated `LlmRuntime.VisualStudio2026` package versioning to `0.2.45`.
 - Updated VS Session Sync uploads to use the same `dataUrl` envelope as the SocketJack Auto web uploader.
 - Updated the Auto session-file upload and restore handlers to accept explicitly empty file payloads.
-- Changed the Copilot configuration status to say the local JackLLM duplicator was skipped while the packaged VSIX bridge remains configured.
+- Changed the Copilot configuration status to say the local heirowLLM duplicator was skipped while the packaged VSIX bridge remains configured.
 
 ### Verification
 

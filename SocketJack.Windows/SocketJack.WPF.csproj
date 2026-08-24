@@ -28,20 +28,20 @@
     <AssemblyTitle>SocketJack</AssemblyTitle>
     <Product>SocketJack</Product>
     <Copyright>Copyright © JackOfFates 2026</Copyright>
-    <AssemblyVersion>2026.6.0.0</AssemblyVersion>
-    <FileVersion>2026.6.0.0</FileVersion>
+    <AssemblyVersion>2026.7.0.0</AssemblyVersion>
+    <FileVersion>2026.7.0.0</FileVersion>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <PackageLicenseFile>License.txt</PackageLicenseFile>
     <Title>SocketJack</Title>
     <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. LLM. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS 1.2 encryption, GZip/Deflate compression, bandwidth throttling, and live WPF control sharing. Send any object across a unified, transport-agnostic API. Targets .NET Standard 2.1, .NET 8</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>2026.6</Version>
+    <Version>2026.7</Version>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes>2026.6 aligns the WPF package line with SocketJack 2026.10.</PackageReleaseNotes>
+    <PackageReleaseNotes>2026.7 aligns the WPF package line with SocketJack 2026.11 TypeScript client generation.</PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack.WPF/</PackageProjectUrl>
     <PackageIcon>SocketJackWpfIcon.png</PackageIcon>
     <PackageReadmeFile>Readme.md</PackageReadmeFile>
@@ -330,6 +330,7 @@
     <Compile Include="..\SocketJack\Net\HtmlBuilder.cs" Link="Net\HtmlBuilder.cs" />
     <Compile Include="..\SocketJack\Net\HttpClient.cs" Link="Net\HttpClient.cs" />
     <Compile Include="..\SocketJack\Net\HttpServer.cs" Link="Net\HttpServer.cs" />
+    <Compile Include="..\SocketJack\Net\TypeScriptClientGenerator.cs" Link="Net\TypeScriptClientGenerator.cs" />
     <Compile Include="..\SocketJack\Net\ISocket.cs" Link="Net\ISocket.cs" />
     <Compile Include="..\SocketJack\Net\MutableTcpServer.cs" Link="Net\MutableTcpServer.cs" />
     <Compile Include="..\SocketJack\Net\NetworkBase.cs" Link="Net\NetworkBase.cs" />
@@ -372,6 +373,7 @@
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketClient.cs" Link="Net\WebSockets\WebSocketClient.cs" />
     <Compile Include="..\SocketJack\Net\WebSockets\WebSocketServer.cs" Link="Net\WebSockets\WebSocketServer.cs" />
     <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderJson.cs" Link="Net\AgentBuilder\AgentBuilderJson.cs" />
+    <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderApplicationModels.cs" Link="Net\AgentBuilder\AgentBuilderApplicationModels.cs" />
     <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderModels.cs" Link="Net\AgentBuilder\AgentBuilderModels.cs" />
     <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderReflectionExecutor.cs" Link="Net\AgentBuilder\AgentBuilderReflectionExecutor.cs" />
     <Compile Include="..\SocketJack\Net\AgentBuilder\AgentBuilderWorkflowEngine.cs" Link="Net\AgentBuilder\AgentBuilderWorkflowEngine.cs" />
@@ -445,7 +447,7 @@
       <None Include="..\SocketJack\Sandbox\README.md" Link="Sandbox\README.md" />
       <None Include="..\SocketJack\Sandbox\SandboxFeatureSetPlan.md" Link="Sandbox\SandboxFeatureSetPlan.md" />
       <None Include="..\SocketJack\Sandbox\SandboxOptionsMatrix.md" Link="Sandbox\SandboxOptionsMatrix.md" />
-      <None Include="..\SocketJack\Sandbox\JackLLMMigrationPlan.md" Link="Sandbox\JackLLMMigrationPlan.md" />
+      <None Include="..\SocketJack\Sandbox\heirowLLMMigrationPlan.md" Link="Sandbox\heirowLLMMigrationPlan.md" />
     </ItemGroup>
     <ItemGroup>
       <None Include="Readme.md">

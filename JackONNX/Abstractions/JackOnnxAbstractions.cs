@@ -261,6 +261,30 @@ public abstract class JackOnnxGenerationRequest
 
 public sealed class ImageGenerationRequest : JackOnnxGenerationRequest
 {
+    public string Operation { get; set; } = "generate";
+
+    public string MaskPath { get; set; } = "";
+
+    public string MaskDataUrl { get; set; } = "";
+
+    public double Strength { get; set; } = 0.75;
+
+    public int OutpaintTop { get; set; }
+
+    public int OutpaintRight { get; set; }
+
+    public int OutpaintBottom { get; set; }
+
+    public int OutpaintLeft { get; set; }
+
+    public string ControlModel { get; set; } = "";
+
+    public string TargetRegionJson { get; set; } = "";
+
+    public int BatchSize { get; set; } = 1;
+
+    public Dictionary<string, string> ArtifactLineage { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public int Width { get; set; } = 512;
 
     public int Height { get; set; } = 512;

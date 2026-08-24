@@ -5,12 +5,12 @@ on:
       - "LlmRuntime/**"
       - "LlmRuntime.Tests/**"
       - "LlmRuntime.Wpf/**"
-      - "JackLLMBridgeInstaller/**"
-      - "JackLLM/**"
-      - "JackLLMInstaller/**"
-      - "JackLLMUpdater/**"
+      - "heirowLLMBridgeInstaller/**"
+      - "heirowLLM/**"
+      - "heirowLLMInstaller/**"
+      - "heirowLLMUpdater/**"
       - "SocketJack-MagicMasterList/**"
-      - "artifacts/JackLLM/**"
+      - "artifacts/heirowLLM/**"
 
 permissions:
   contents: read
@@ -40,8 +40,8 @@ jobs:
     - name: "Build SocketJack.WPF"
       run: dotnet build ./SocketJack.Windows/SocketJack.WPF.csproj --configuration Release --no-restore -p:NoWarn=true
 
-    - name: "Publish Linux JackLLM Workstation"
-      run: dotnet publish ./JackLLM.Workstation/JackLLM.Workstation.csproj --configuration Release --runtime linux-x64 --self-contained false -p:NoWarn=true
+    - name: "Publish Linux heirowLLM Workstation"
+      run: dotnet publish ./heirowLLM.Workstation/heirowLLM.Workstation.csproj --configuration Release --runtime linux-x64 --self-contained false -p:NoWarn=true
 
  deploy:
     name: "Deploy"

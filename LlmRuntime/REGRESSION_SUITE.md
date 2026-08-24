@@ -5,7 +5,7 @@ Run these from the repository root:
 ```powershell
 dotnet test .\LlmRuntime.Tests\LlmRuntime.Tests.csproj --no-restore
 dotnet build .\LlmRuntime.Wpf\LlmRuntime.Wpf.csproj --no-restore
-dotnet build .\JackLLM\JackLLM.csproj --no-restore
+dotnet build .\heirowLLM\heirowLLM.csproj --no-restore
 dotnet build .\SocketJack.sln --no-restore
 ```
 
@@ -18,7 +18,7 @@ Covered now:
 - Tool definition persistence, safety, invocation, secrets, and audit.
 - Agent session, file, terminal, and workflow primitives.
 - GitHub workflow fallbacks and local git paths.
-- JackLLM provider routing.
+- heirowLLM provider routing.
 - Production readiness endpoints.
 
 Known repo-wide failures should be tracked in `ISSUES.md` and fixed without blocking focused LlmRuntime validation.

@@ -1,6 +1,6 @@
-# JackLLM Web Chat UI Example
+# heirowLLM Web Chat UI Example
 
-This example captures the JackLLM Workstation Web Chat UI from the authenticated local browser session. The screenshots were taken from `http://localhost:11436/` after the auth token was consumed, so the page URL shown in the app state does not expose the token.
+This example captures the heirowLLM Workstation Web Chat UI from the authenticated local browser session. The screenshots were taken from `http://localhost:11436/` after the auth token was consumed, so the page URL shown in the app state does not expose the token.
 
 ## Web Chat Overview
 

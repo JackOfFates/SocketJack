@@ -20,7 +20,7 @@
 
 ## Next Steps
 
-1. Rebuild and restart JackLLM from the current workstation location so the updated Web Chat HTML is served.
+1. Rebuild and restart heirowLLM from the current workstation location so the updated Web Chat HTML is served.
 2. Open the Codex app browser with the auth-token URL and verify Chat mode, Agent mode, file preview, browser-open, and copy controls.
 3. Run an Agent file boundary test: accessible file opens, inaccessible path is rejected, and downloaded HTML opens only after preview access succeeds.
 4. Run a long streamed Agent response to confirm the input stream no longer drops halfway through.

@@ -362,8 +362,8 @@ public sealed class SocketJackCopilotServersControl : UserControl
 
     private async Task<string> TryConfigureLocalDuplicatorAsync(SocketJackServerCandidate server, SocketJackModelCandidate model, string modelAccessUrl)
     {
-        if (string.IsNullOrWhiteSpace(_options.LocalJackLlmUrl))
-            return "Local JackLLM duplicator skipped.";
+        if (string.IsNullOrWhiteSpace(_options.LocalHeirowLlmUrl))
+            return "Local heirowLLM duplicator skipped.";
 
         try
         {
@@ -377,16 +377,16 @@ public sealed class SocketJackCopilotServersControl : UserControl
                 ["modelDisplayName"] = model.Id
             };
 
-            string baseUrl = _options.LocalJackLlmUrl.TrimEnd('/') + "/";
+            string baseUrl = _options.LocalHeirowLlmUrl.TrimEnd('/') + "/";
             using var content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
             using HttpResponseMessage response = await _httpClient.PostAsync(new Uri(new Uri(baseUrl), "api/copilot-duplicator"), content).ConfigureAwait(true);
             return response.IsSuccessStatusCode
-                ? "Local JackLLM copilot duplicator updated."
-                : "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
+                ? "Local heirowLLM copilot duplicator updated."
+                : "Local heirowLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
         catch (Exception)
         {
-            return "Local JackLLM duplicator skipped; packaged VSIX bridge remains configured.";
+            return "Local heirowLLM duplicator skipped; packaged VSIX bridge remains configured.";
         }
     }
 
@@ -567,9 +567,9 @@ public sealed class SocketJackCopilotSelectionOptions : DialogPage
     public int PreferredLocalProxyPort { get; set; } = 11574;
 
     [Category("Visual Studio Copilot")]
-    [DisplayName("Local JackLLM URL")]
-    [Description("Optional local JackLLM URL used for the copilot duplicator notification.")]
-    public string LocalJackLlmUrl { get; set; } = "http://127.0.0.1:11436/";
+    [DisplayName("Local heirowLLM URL")]
+    [Description("Optional local heirowLLM URL used for the copilot duplicator notification.")]
+    public string LocalHeirowLlmUrl { get; set; } = "http://127.0.0.1:11436/";
 
     [Category("Security")]
     [DisplayName("SocketJack auth token")]

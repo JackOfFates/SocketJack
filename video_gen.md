@@ -1,4 +1,4 @@
-﻿# JackLLM / LlmRuntime Video Generation Plan
+# heirowLLM / LlmRuntime Video Generation Plan
 
 ## Goal
 Replace the JackONNX video scaffold with a real local video generation path so LlmRuntime `jackonnx_video_generate` returns a generated artifact instead of `Video pipeline scaffold is ready; model execution is not implemented yet.`
@@ -13,9 +13,9 @@ Replace the JackONNX video scaffold with a real local video generation path so L
 | Prefer Titan X compatible CUDA legacy Python | `████████████████████` 100% | Wired through Python command preference |
 | Encode generated frames to playable media | `████████████████████` 100% | MP4 smoke passed; GIF fallback remains available |
 | Preserve LlmRuntime tool/API compatibility | `████████████████████` 100% | Tool args and chat payload options wired and verified |
-| Build JackONNX/JackLLM | `████████████████████` 100% | JackONNX and JackLLM builds passed |
+| Build JackONNX/heirowLLM | `████████████████████` 100% | JackONNX and heirowLLM builds passed |
 | Smoke test local video generation | `████████████████████` 100% | Local LlmRuntime tool call succeeded |
-| Browser/proxy verification | `██████████████░░░░░░` 70% | Public proxy health/page passed; direct public HTTP stream POST timed out before reaching JackLLM |
+| Browser/proxy verification | `██████████████░░░░░░` 70% | Public proxy health/page passed; direct public HTTP stream POST timed out before reaching heirowLLM |
 
 ## Implementation Notes
 - Use the same registered CompleteModels manifests as image generation.
@@ -34,15 +34,15 @@ Replace the JackONNX video scaffold with a real local video generation path so L
 - Added video request options: width, height, frames, seconds, fps, steps, guidance scale, seed.
 - Updated Chat UI media materialization so video jobs can store MP4/WebM output and animated GIF fallbacks in the session folder.
 - `dotnet build JackONNX/JackONNX.csproj -c Debug` passed with existing nullable warnings only.
-- `dotnet build JackLLM/JackLLM.csproj -c Debug` passed with 0 warnings and 0 errors after the OpenCV MP4 repair hook was added.
-- Restarted JackLLM and confirmed `http://127.0.0.1:11436/api/health` returns `ok: true`.
+- `dotnet build heirowLLM/heirowLLM.csproj -c Debug` passed with 0 warnings and 0 errors after the OpenCV MP4 repair hook was added.
+- Restarted heirowLLM and confirmed `http://127.0.0.1:11436/api/health` returns `ok: true`.
 - Local smoke call to `http://127.0.0.1:11435/api/v1/tools/calls` with `jackonnx_video_generate`, model `cerspense-zeroscope_v2_576w-pytorch`, `128x72`, `frames=2`, `steps=1`, `seed=11` succeeded in ~20s.
 - Smoke artifact: `Artifacts/JackONNX/job_d064be96432d4adb94678956b221b5d6/video_job_d064be96432d4adb94678956b221b5d6.gif`.
 - MP4 export requested OpenCV (`opencv-python`); initial fallback generated animated GIF instead of failing the video job.
 - Fixed the Python video runner to repair legacy CUDA Torch environments by pinning NumPy back to `<2` before Torch loads.
 - Changed OpenCV repair installs to use `--no-deps` so `opencv-python` does not upgrade NumPy past the CUDA Torch compatibility range.
-- Rebuilt `JackLLM/JackLLM.csproj` after the NumPy/OpenCV repair patch; build passed with 0 warnings and 0 errors.
-- Restarted JackLLM and confirmed `http://127.0.0.1:11436/api/health` returns `ok: true`.
+- Rebuilt `heirowLLM/heirowLLM.csproj` after the NumPy/OpenCV repair patch; build passed with 0 warnings and 0 errors.
+- Restarted heirowLLM and confirmed `http://127.0.0.1:11436/api/health` returns `ok: true`.
 - Local smoke call to `http://127.0.0.1:11435/api/v1/tools/calls` with `jackonnx_video_generate`, model `cerspense-zeroscope_v2_576w-pytorch`, `128x72`, `frames=2`, `steps=1`, `seed=14` succeeded through CUDA.
 - MP4 smoke artifact: `Artifacts/JackONNX/job_1fa3e3d48cd0457cb8028da7bca103e0/video_job_1fa3e3d48cd0457cb8028da7bca103e0.mp4`.
 - Verified the MP4 with OpenCV: opened successfully, 2 frames, 8 FPS, `128x72`.
@@ -50,6 +50,6 @@ Replace the JackONNX video scaffold with a real local video generation path so L
 - Refreshed the in-app browser at `https://socketjack.com/proxy/TitanX/`; the TitanX page loaded and showed the older pre-fix failed video message in chat history.
 - Browser automation could not type a replacement prompt because the Codex browser virtual clipboard hook is unavailable.
 - Local Chat UI stream route `POST http://127.0.0.1:11436/api/chat-stream` with `service=video_generation`, model `cerspense-zeroscope_v2_576w-pytorch`, `128x72`, `frames=2`, `steps=1`, `seed=19` succeeded.
-- Chat UI session artifact: `SocketJack/JackLLMChat/SessionFiles/codex-video-chat-smoke-20260519/GeneratedMedia/video_job_fd142fc06d6646f9b5d623d0800f4590_artifact_05a353b57f324383b9752a5a952356c0.mp4`.
+- Chat UI session artifact: `SocketJack/heirowLLMChat/SessionFiles/codex-video-chat-smoke-20260519/GeneratedMedia/video_job_fd142fc06d6646f9b5d623d0800f4590_artifact_05a353b57f324383b9752a5a952356c0.mp4`.
 - Verified the session MP4 with OpenCV: opened successfully, 2 frames, 8 FPS, `128x72`.
 - Direct public HTTP `POST https://socketjack.com/proxy/TitanX/api/chat-stream` timed out before a response and did not create the requested proxy smoke session artifact locally. This looks separate from the LlmRuntime video implementation, because the local Chat UI route succeeds and the public health/page requests still load.

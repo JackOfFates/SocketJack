@@ -11,7 +11,7 @@ Public Class HttpServerTest
     Implements ITest
 
     Private ServerPort As Integer = 11434, ChatServerPort As Integer = 11436, LocalLmStudioProxyPort As Integer = 11435
-    Public WithEvents Server As New SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort)
+    Public WithEvents Server As New SocketJack.Net.HeirowLlm("localhost", LocalLmStudioProxyPort, ServerPort, ChatServerPort)
     'Public WithEvents Server As HttpServer
     Private _broadcast As BroadcastServer
     Private _statsTimer As DispatcherTimer
@@ -24,7 +24,7 @@ Public Class HttpServerTest
         InitializeComponent()
 
         ' Add any initialization after the InitializeComponent() call.
-        Server = New SocketJack.Net.LmVsProxy("localhost", LocalLmStudioProxyPort, ServerPort)
+        Server = New SocketJack.Net.HeirowLlm("localhost", LocalLmStudioProxyPort, ServerPort)
         Server.PromptTimeout = TimeSpan.FromMinutes(30)
         AddHandler Server.OutputLog, AddressOf OnServerLog
         NIC.ForwardPort(ServerPort).ConfigureAwait(True)
@@ -384,7 +384,7 @@ Public Class HttpServerTest
         Catch : End Try
     End Sub
 
-    Private Sub OnServerLog(sender As Object, e As LmVs.OutputLogEventArgs)
+    Private Sub OnServerLog(sender As Object, e As HeirowLlm.OutputLogEventArgs)
         Log(e.Message)
     End Sub
 

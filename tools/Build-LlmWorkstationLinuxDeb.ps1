@@ -8,7 +8,7 @@ param(
     [int]$RemotePort = 25,
     [string]$RemoteUser = "wintergrasped",
     [string]$RemoteHostKey = "SHA256:qVC8NKNzNX7Zbm9Ce/3zLIYO/Kh8Pa8UiXGk1My4jZU",
-    [string]$RemoteStagingRoot = "/stor2/JackLLMDebBuild",
+    [string]$RemoteStagingRoot = "/stor2/heirowLLMDebBuild",
     [string]$RemotePasswordEnvVar = "SABLE_SSH_PASSWORD"
 )
 
@@ -27,12 +27,12 @@ if ([string]::IsNullOrWhiteSpace($OutputFileName)) {
     $OutputFileName = "LlmWorkstation_Linux64.deb"
     $OutputPath = Join-Path $OutputDir $OutputFileName
 }
-$NativeProject = Join-Path $RepoRoot "JackLLM.Workstation\JackLLM.Workstation.csproj"
-$WpfProject = Join-Path $RepoRoot "JackLLM\JackLLM.csproj"
-$LinuxPackageScript = Join-Path $RepoRoot "tools\linux\package-jackllm-workstation-deb.sh"
-$LinuxCudaScript = Join-Path $RepoRoot "tools\linux\install-jackllm-cuda-pytorch.sh"
-$NativePublishDir = Join-Path $RepoRoot "JackLLM.Workstation\bin\$Configuration\net8.0\linux-x64\publish"
-$WpfPublishDir = Join-Path $RepoRoot "JackLLM\bin\$Configuration\net8.0-windows7.0\win-x64\publish"
+$NativeProject = Join-Path $RepoRoot "heirowLLM.Workstation\heirowLLM.Workstation.csproj"
+$WpfProject = Join-Path $RepoRoot "heirowLLM\heirowLLM.csproj"
+$LinuxPackageScript = Join-Path $RepoRoot "tools\linux\package-heirowllm-workstation-deb.sh"
+$LinuxCudaScript = Join-Path $RepoRoot "tools\linux\install-heirowllm-cuda-pytorch.sh"
+$NativePublishDir = Join-Path $RepoRoot "heirowLLM.Workstation\bin\$Configuration\net8.0\linux-x64\publish"
+$WpfPublishDir = Join-Path $RepoRoot "heirowLLM\bin\$Configuration\net8.0-windows7.0\win-x64\publish"
 $ArtifactsRoot = Join-Path $RepoRoot "artifacts\linux-installer"
 $LocalStagingRoot = Join-Path $ArtifactsRoot "deb-input"
 $ArchivePath = Join-Path $ArtifactsRoot "deb-input.tar.gz"
@@ -184,7 +184,7 @@ function Invoke-WslDebPackager {
 
     $repoForWsl = (wsl.exe wslpath -a $RepoRoot).Trim()
     $outputForWsl = (wsl.exe wslpath -a $OutputDir).Trim()
-    $scriptForWsl = "$repoForWsl/tools/linux/package-jackllm-workstation-deb.sh"
+    $scriptForWsl = "$repoForWsl/tools/linux/package-heirowllm-workstation-deb.sh"
     Invoke-External -FilePath "wsl.exe" -Arguments @(
         "bash",
         $scriptForWsl,
@@ -198,7 +198,7 @@ function Invoke-WslDebPackager {
 }
 
 function Invoke-WindowsDebPackager {
-    $windowsPackager = Join-Path $RepoRoot "tools\Package-JackLLMWorkstationLinuxWindows.ps1"
+    $windowsPackager = Join-Path $RepoRoot "tools\Package-heirowLLMWorkstationLinuxWindows.ps1"
     if (-not (Test-Path -LiteralPath $windowsPackager)) {
         return $false
     }
@@ -246,8 +246,8 @@ function Invoke-RemoteDebPackager {
     Write-Host "==> Staging publish outputs for remote Debian packaging"
     Sync-Directory -Source $NativePublishDir -Destination (Join-Path $LocalStagingRoot "native")
     Sync-Directory -Source $WpfPublishDir -Destination (Join-Path $LocalStagingRoot "wpf")
-    Copy-Item -LiteralPath $LinuxPackageScript -Destination (Join-Path $LocalStagingRoot "tools\linux\package-jackllm-workstation-deb.sh") -Force
-    Copy-Item -LiteralPath $LinuxCudaScript -Destination (Join-Path $LocalStagingRoot "tools\linux\install-jackllm-cuda-pytorch.sh") -Force
+    Copy-Item -LiteralPath $LinuxPackageScript -Destination (Join-Path $LocalStagingRoot "tools\linux\package-heirowllm-workstation-deb.sh") -Force
+    Copy-Item -LiteralPath $LinuxCudaScript -Destination (Join-Path $LocalStagingRoot "tools\linux\install-heirowllm-cuda-pytorch.sh") -Force
 
     if (Test-Path -LiteralPath $ArchivePath) {
         Assert-UnderDirectory -Path $ArchivePath -Parent $ArtifactsRoot
@@ -274,8 +274,8 @@ esac
 rm -rf "`$stage/extracted"
 mkdir -p "`$stage/extracted"
 tar -xzf $(Quote-Bash $remoteArchive) -C "`$stage/extracted"
-chmod +x "`$stage/extracted/tools/linux/package-jackllm-workstation-deb.sh" "`$stage/extracted/tools/linux/install-jackllm-cuda-pytorch.sh"
-bash "`$stage/extracted/tools/linux/package-jackllm-workstation-deb.sh" \
+chmod +x "`$stage/extracted/tools/linux/package-heirowllm-workstation-deb.sh" "`$stage/extracted/tools/linux/install-heirowllm-cuda-pytorch.sh"
+bash "`$stage/extracted/tools/linux/package-heirowllm-workstation-deb.sh" \
   --version $(Quote-Bash $Version) \
   --output "`$stage/out" \
   --native-publish "`$stage/extracted/native" \
@@ -306,7 +306,7 @@ if (-not $SkipPublish) {
         "--self-contained", "true",
         "--nologo",
         "-v:minimal"
-    ) -Description "Publishing JackLLM.Workstation for linux-x64"
+    ) -Description "Publishing heirowLLM.Workstation for linux-x64"
 
     Invoke-External -FilePath "dotnet" -Arguments @(
         "publish",
@@ -316,13 +316,13 @@ if (-not $SkipPublish) {
         "--self-contained", "true",
         "--nologo",
         "-v:minimal"
-    ) -Description "Publishing JackLLM WPF for Wine"
+    ) -Description "Publishing heirowLLM WPF for Wine"
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $NativePublishDir "JackLLM.Workstation"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $NativePublishDir "heirowLLM.Workstation"))) {
     throw "Native Linux publish output missing: $NativePublishDir"
 }
-if (-not (Test-Path -LiteralPath (Join-Path $WpfPublishDir "JackLLM.exe"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $WpfPublishDir "heirowLLM.exe"))) {
     throw "WPF Wine publish output missing: $WpfPublishDir"
 }
 

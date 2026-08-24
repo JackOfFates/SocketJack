@@ -212,11 +212,14 @@ public sealed class LlamaSharpBackend : ILlmBackend
             while (!contextOverflowed)
             {
                 string text;
+                long inferenceStarted = Stopwatch.GetTimestamp();
+                TimeSpan inferenceComputeTime;
                 try
                 {
                     if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
                         break;
                     text = enumerator.Current;
+                    inferenceComputeTime = Stopwatch.GetElapsedTime(inferenceStarted);
                 }
                 catch (ContextOverflowException)
                 {
@@ -235,6 +238,13 @@ public sealed class LlamaSharpBackend : ILlmBackend
                     output.Append(decision.Text);
                     yield return new LlmChatToken(decision.Text);
                 }
+
+                TimeSpan throttleDelay = CalculateGpuDutyCycleDelay(
+                    inferenceComputeTime,
+                    LoadConfig.MaxGpuLoadPercent,
+                    GetEffectiveGpuLayerCount(LoadConfig) != 0);
+                if (throttleDelay > TimeSpan.Zero)
+                    await Task.Delay(throttleDelay, cancellationToken).ConfigureAwait(false);
 
                 if (decision.ShouldStop)
                 {
@@ -650,8 +660,65 @@ public sealed class LlamaSharpBackend : ILlmBackend
     private IReadOnlyList<LlmChatMessage> BuildInferenceMessages(IReadOnlyList<LlmChatMessage> messages)
     {
         messages ??= [];
-        return messages;
+        return IsGemma4ModelPath(ModelPath)
+            ? NormalizeGemma4SystemMessages(messages)
+            : messages;
     }
+
+    internal static bool IsGemma4ModelPath(string? modelPath)
+    {
+        string fileName = Path.GetFileNameWithoutExtension(modelPath ?? "");
+        return fileName.Contains("gemma-4", StringComparison.OrdinalIgnoreCase) ||
+               fileName.Contains("gemma4", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static IReadOnlyList<LlmChatMessage> NormalizeGemma4SystemMessages(IReadOnlyList<LlmChatMessage>? messages)
+    {
+        if (messages == null || messages.Count == 0)
+            return [];
+
+        var normalized = new List<LlmChatMessage>(messages.Count);
+        var pendingSystemInstructions = new List<string>();
+
+        foreach (LlmChatMessage message in messages)
+        {
+            if (string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrWhiteSpace(message.Content))
+                    pendingSystemInstructions.Add(message.Content.Trim());
+                continue;
+            }
+
+            if (pendingSystemInstructions.Count == 0)
+            {
+                normalized.Add(message);
+                continue;
+            }
+
+            string systemBlock = BuildGemma4SystemBlock(pendingSystemInstructions);
+            pendingSystemInstructions.Clear();
+            if (string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                string content = string.IsNullOrWhiteSpace(message.Content)
+                    ? systemBlock
+                    : systemBlock + "\n\nUser request:\n" + message.Content;
+                normalized.Add(message with { Content = content });
+            }
+            else
+            {
+                normalized.Add(new LlmChatMessage("user", systemBlock));
+                normalized.Add(message);
+            }
+        }
+
+        if (pendingSystemInstructions.Count > 0)
+            normalized.Add(new LlmChatMessage("user", BuildGemma4SystemBlock(pendingSystemInstructions)));
+
+        return normalized;
+    }
+
+    private static string BuildGemma4SystemBlock(IEnumerable<string> instructions) =>
+        "System instructions:\n" + string.Join("\n\n", instructions);
 
     internal bool ShouldSuppressReasoningByDefault()
     {
@@ -671,17 +738,33 @@ public sealed class LlamaSharpBackend : ILlmBackend
     private static int GetEffectiveGpuLayerCount(LlmLoadConfig loadConfig) =>
         LlmBackendAutoSelector.Resolve(loadConfig.Backend) == LlmBackendKind.Cpu ? 0 : loadConfig.GpuLayerCount;
 
+    internal static TimeSpan CalculateGpuDutyCycleDelay(TimeSpan computeTime, int maxGpuLoadPercent, bool gpuEnabled)
+    {
+        int target = Math.Clamp(maxGpuLoadPercent, 0, 100);
+        if (!gpuEnabled || target >= 100 || computeTime <= TimeSpan.Zero)
+            return TimeSpan.Zero;
+
+        // Zero percent is represented by a very low duty cycle because an already-loaded
+        // GPU model cannot move its remaining layers to CPU between tokens. A new load with
+        // zero GPU layers remains the true CPU-only option.
+        target = Math.Max(1, target);
+        double delayMilliseconds = computeTime.TotalMilliseconds * (100d - target) / target;
+        return TimeSpan.FromMilliseconds(Math.Clamp(delayMilliseconds, 0d, 30_000d));
+    }
+
     internal static bool ShouldUseGpuForMultimodal(LlmLoadConfig loadConfig) =>
         GetEffectiveGpuLayerCount(loadConfig) != 0;
 
     internal static int ResolveMultimodalImageMaxTokens(uint contextLength, int imageCount = 1)
     {
         int boundedContext = (int)Math.Min(int.MaxValue, Math.Max(512u, contextLength));
-        // Keep the visual input to at most half of the context. A single image
-        // gets enough visual tokens for UI text and layout; multiple images
-        // divide the same budget instead of overflowing the prompt window.
+        // Keep visual input to at most one eighth of the context. Workstation
+        // requests carry security/capability system prompts in the same window;
+        // even a quarter-context image can crowd out the action loop and saturate
+        // 12 GB vision hosts (notably with the supported 2K local context).
+        // Multiple images divide the same visual budget.
         int safeImageCount = Math.Max(1, imageCount);
-        return Math.Clamp(boundedContext / 2 / safeImageCount, 256, 2048);
+        return Math.Clamp(boundedContext / 8 / safeImageCount, 256, 2048);
     }
 
     internal static LlamaSharpTensorParallelSettings ResolveTensorParallelSettings(LlmLoadConfig loadConfig)

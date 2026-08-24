@@ -1,4 +1,4 @@
-﻿# JackONNX Progress
+# JackONNX Progress
 
 This file tracks total JackONNX project creation progress. Update it whenever a project, feature, integration, or milestone materially changes.
 
@@ -57,7 +57,7 @@ This file tracks total JackONNX project creation progress. Update it whenever a 
 1. Select local model layouts for image/audio/video execution.
 2. Implement model-specific ONNX graph orchestration against those local layouts.
 3. Done: added CUDA and DirectML hardware/provider integration tests that execute tiny ONNX inference when the matching native runtime is available and self-skip otherwise.
-4. Done: wired the JackLLM to start embedded LlmRuntime with JackONNX built-in tools registered and display LlmRuntime plus JackONNX capability status in Services, pipeline, and tray diagnostics.
+4. Done: wired the heirowLLM to start embedded LlmRuntime with JackONNX built-in tools registered and display LlmRuntime plus JackONNX capability status in Services, pipeline, and tray diagnostics.
 
 ## Deferred Local-Model Execution
 
@@ -74,7 +74,7 @@ Passed: 9, Failed: 0, Skipped: 2
 dotnet run --project .\JackONNX\JackONNX.csproj -p:OutputType=Exe -p:StartupObject=JackONNX.Cli.JackOnnxCli -- validate --manifest=.\JackONNX\Samples\Manifests\sd15-example.jackonnx.json
 valid: true
 
-dotnet build .\JackLLM\JackLLM.csproj
+dotnet build .\heirowLLM\heirowLLM.csproj
 Build succeeded.
 ```
 

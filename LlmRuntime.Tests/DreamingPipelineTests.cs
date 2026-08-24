@@ -1,5 +1,5 @@
 using System.Text.Json;
-using LmVs;
+using heirowLLM;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.Net;
 
@@ -61,12 +61,40 @@ public sealed class DreamingPipelineTests
             Assert.AreEqual(2, status.ProcessedMessages);
             Assert.AreEqual("agent", status.ResolvedService);
             Assert.AreEqual("completed", journal.ChecksAndBalancesStatus);
-            Assert.AreEqual("selected-hero-model", journal.ChecksAndBalancesModel);
+            Assert.AreEqual("dream-model", journal.ChecksAndBalancesModel);
             Assert.AreEqual("agent", journal.DreamService);
             Assert.AreEqual(2, alignment.Score);
             Assert.AreEqual(journal.Id, alignment.ChecksAndBalancesDreamId);
             Assert.AreEqual(16, alignment.CharacterTraits.Count);
             Assert.AreEqual(0, proxy.GetDreamSourceDiagnostics("owner-a").ProcessedMessages, "Successful alignment must commit the source checkpoint.");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public async Task ApplicationDreamModelOverrideControlsDreamAndChecksAndBalances()
+    {
+        string root = TempRoot();
+        try
+        {
+            using var proxy = CreateProxy(root);
+            proxy.SetDreamExecutionModelDiagnostics("low-resource-4b");
+            proxy.SaveDreamSessionForDiagnostics("owner-a", "[{\"role\":\"user\",\"content\":\"I prefer compact models.\"}]", "large-chat-model");
+            DreamSettingsSnapshot settings = proxy.GetDreamSettingsDiagnostics("owner-a");
+            settings.Enabled = true;
+            settings.Model = "owner-model";
+            proxy.SaveDreamSettingsDiagnostics("owner-a", settings);
+            proxy.DreamReflectionOverrideForDiagnostics = _ => "{\"summary\":\"Preference reviewed.\",\"candidates\":[]}";
+            proxy.AlignmentAssessmentOverrideForDiagnostics = _ => new AlignmentAssessmentSnapshot
+            {
+                Category = "neutral", Confidence = .98, Delta = 0
+            };
+
+            await proxy.RunDreamNowDiagnosticsAsync("owner-a");
+
+            DreamJournalSnapshot journal = proxy.GetDreamJournalDiagnostics("owner-a").First();
+            Assert.AreEqual("low-resource-4b", journal.DreamModel);
+            Assert.AreEqual("low-resource-4b", journal.ChecksAndBalancesModel);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -144,10 +172,10 @@ public sealed class DreamingPipelineTests
     [TestMethod]
     public void ResourceSamplingSubtractsWorkstationPrivateMemoryFromOutsidePressure()
     {
-        double percent = LmVsProxy.CalculateOutsideDreamRamPercent(16UL << 30, 15UL << 30, 6UL << 30, 93.75);
+        double percent = HeirowLlm.CalculateOutsideDreamRamPercent(16UL << 30, 15UL << 30, 6UL << 30, 93.75);
 
         Assert.AreEqual(56.25, percent, 0.01);
-        Assert.AreEqual(75, LmVsProxy.CalculateOutsideDreamRamPercent(0, 0, 0, 75), 0.01);
+        Assert.AreEqual(75, HeirowLlm.CalculateOutsideDreamRamPercent(0, 0, 0, 75), 0.01);
     }
 
     [TestMethod]
@@ -155,8 +183,8 @@ public sealed class DreamingPipelineTests
     {
         using JsonDocument document = JsonDocument.Parse("""{"category":["neutral"],"reason":["First sentence.","Second sentence."]}""");
 
-        Assert.AreEqual("neutral", LmVsProxy.ReadAlignmentTextProperty(document.RootElement, "category", "fallback"));
-        Assert.AreEqual("First sentence. Second sentence.", LmVsProxy.ReadAlignmentTextProperty(document.RootElement, "reason", "fallback", joinArray: true));
+        Assert.AreEqual("neutral", HeirowLlm.ReadAlignmentTextProperty(document.RootElement, "category", "fallback"));
+        Assert.AreEqual("First sentence. Second sentence.", HeirowLlm.ReadAlignmentTextProperty(document.RootElement, "reason", "fallback", joinArray: true));
     }
 
     [TestMethod]
@@ -164,7 +192,7 @@ public sealed class DreamingPipelineTests
     {
         string source = "<completed-dream>\nReflection: useful reflection\nCandidates: useful candidate\nSource transcript:\n" + new string('x', 5000) + "\nfinal evidence</completed-dream>";
 
-        string bounded = LmVsProxy.BuildBoundedAlignmentDreamEvidence(source);
+        string bounded = HeirowLlm.BuildBoundedAlignmentDreamEvidence(source);
 
         Assert.IsTrue(bounded.Length <= 2400);
         StringAssert.Contains(bounded, "Reflection: useful reflection");
@@ -179,9 +207,9 @@ public sealed class DreamingPipelineTests
     [DataRow(42.0, 1.0)]
     public void AlignmentConfidenceAcceptsDecimalOrTenPointScale(double input, double expected)
     {
-        Assert.AreEqual(expected, LmVsProxy.NormalizeAlignmentConfidence(input), 0.001);
+        Assert.AreEqual(expected, HeirowLlm.NormalizeAlignmentConfidence(input), 0.001);
     }
 
-    private static string TempRoot() => Path.Combine(Path.GetTempPath(), "jackllm-dream-pipeline-tests", Guid.NewGuid().ToString("N"));
-    private static LmVsProxy CreateProxy(string root) => new("127.0.0.1", 1234, 21434, 21436, new LmVsProxyStorageOptions { ChatDataRoot = root });
+    private static string TempRoot() => Path.Combine(Path.GetTempPath(), "heirowllm-dream-pipeline-tests", Guid.NewGuid().ToString("N"));
+    private static HeirowLlm CreateProxy(string root) => new("127.0.0.1", 1234, 21434, 21436, new HeirowLlmStorageOptions { ChatDataRoot = root });
 }

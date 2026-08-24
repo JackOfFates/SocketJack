@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <OutputType Condition="'$(BuildDirectMlRunnerExe)' == 'true'">Exe</OutputType>
@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\tools\linux\install-jackllm-cuda-pytorch.sh" Link="install\linux\install-jackllm-cuda-pytorch.sh" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="..\tools\linux\install-heirowllm-cuda-pytorch.sh" Link="install\linux\install-heirowllm-cuda-pytorch.sh" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>

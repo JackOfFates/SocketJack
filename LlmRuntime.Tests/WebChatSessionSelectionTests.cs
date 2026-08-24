@@ -1,5 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using LmVs;
+using heirowLLM;
 using SocketJack;
 using SocketJack.Net;
 using System.Reflection;
@@ -12,7 +12,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void SessionSelectionRendersContentBeforeOptionalUiHydration()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
         int loadSession = html.IndexOf("async function loadSession(id)", StringComparison.Ordinal);
         int messagesHydrated = html.IndexOf("data.session.messages", loadSession, StringComparison.Ordinal);
         int firstRender = html.IndexOf("renderConversation();", messagesHydrated, StringComparison.Ordinal);
@@ -29,7 +29,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void SessionFileExplorerRejectsResponsesForPreviouslySelectedSession()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
         int explorerStart = html.IndexOf("async function loadSolutionExplorerInternal(requestContext)", StringComparison.Ordinal);
         int explorerEnd = html.IndexOf("function compactProjectWorkflowPath", explorerStart, StringComparison.Ordinal);
         string explorer = html.Substring(explorerStart, explorerEnd - explorerStart);
@@ -44,7 +44,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void ImageUploadCompletesBeforeVisionPromptCanBeSent()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "image.uploading = false;");
         StringAssert.Contains(html, "onUploadComplete: uploadedFile =>");
@@ -65,9 +65,9 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void ProjectFilesCanBeDraggedIntoChatAndImagesRenderThumbnails()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
-        StringAssert.Contains(html, "const solutionExplorerDragMime = 'application/x-jackllm-project-file';");
+        StringAssert.Contains(html, "const solutionExplorerDragMime = 'application/x-heirowllm-project-file';");
         StringAssert.Contains(html, "row.draggable = true;");
         StringAssert.Contains(html, "referenceSolutionEntryInChat(projectFileEntry)");
         StringAssert.Contains(html, "getSolutionImageThumbnailData(entry)");
@@ -81,7 +81,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void SessionTokenMeterSeparatesHistoryFromRuntimeContextWindow()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "function runtimeModelContextInfo(modelId)");
         StringAssert.Contains(html, "if (runtimeContext.known) return 0;");
@@ -97,7 +97,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void SessionStartupUsesBoundedPagesInsteadOfLoadingEveryChat()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "const chatSessionPageSize = 60;");
         StringAssert.Contains(html, "&skip=0");
@@ -110,7 +110,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void ExplorerListSelectionUsesCheckboxesInsteadOfToggleSwitches()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "Pill switches are reserved for toggle settings, never list selection.");
         StringAssert.Contains(html, ":not(.session-select-checkbox):not(.solution-select-checkbox)");
@@ -123,7 +123,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void ProjectExplorerPollingDoesNotReplaceFocusedControls()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
         int loadActiveSessions = html.IndexOf("async function loadActiveSessions()", StringComparison.Ordinal);
         int focusGuard = html.IndexOf("function sessionListContainsFocus()", loadActiveSessions, StringComparison.Ordinal);
         string activeSessionRefresh = html.Substring(loadActiveSessions, focusGuard - loadActiveSessions);
@@ -141,9 +141,24 @@ public sealed class WebChatSessionSelectionTests
     }
 
     [TestMethod]
+    public void ProjectSelectionSurvivesStaleLoadsAndOpenSessionMoves()
+    {
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
+
+        StringAssert.Contains(html, "const requestId = ++chatProjectsLoadRequestId;");
+        StringAssert.Contains(html, "if (requestId !== chatProjectsLoadRequestId) return data;");
+        int applyAction = html.IndexOf("function applySessionActionResult(session)", StringComparison.Ordinal);
+        int optimisticPatch = html.IndexOf("function optimisticSessionPatch", applyAction, StringComparison.Ordinal);
+        string actionResult = html.Substring(applyAction, optimisticPatch - applyAction);
+        StringAssert.Contains(actionResult, "session.id === currentSessionId && session.projectId");
+        StringAssert.Contains(actionResult, "currentProjectId = String(session.projectId || 'unsorted');");
+        StringAssert.Contains(actionResult, "selectedProjectId = currentProjectId;");
+    }
+
+    [TestMethod]
     public void ProjectToolbarUsesColoredAccessibleSymbols()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "id=\"refreshSessions\" class=\"ghost panel-refresh project-toolbar-refresh\"");
         StringAssert.Contains(html, "aria-label=\"Refresh projects\">&#x21BB;</button>");
@@ -159,7 +174,7 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void ChangedFilesOfferOpenAndLocalRevealActions()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "createFileChangeActionButton('Open', 'Open ' + file.name + ' in the Web Chat file panel')");
         StringAssert.Contains(html, "createFileChangeActionButton('Show on disk', 'Show ' + file.name + ' in File Explorer')");
@@ -172,33 +187,36 @@ public sealed class WebChatSessionSelectionTests
     [TestMethod]
     public void LongAgentRunsShowPerPromptTokensAndSafeActivity()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "tokens this prompt</span>");
         StringAssert.Contains(html, "parts.promptTokensUsed");
         StringAssert.Contains(html, "const activityLine = 'Activity: ' + activityStatus;");
         StringAssert.Contains(html, "streamState.activityReasoning");
+        StringAssert.Contains(html, "Activity: Inferring user goal to LLM language...");
+        StringAssert.Contains(html, "if (normalized.name === 'goal_checkpoint' || status === 'completed') return '';");
+        StringAssert.Contains(html, "prefix = 'Tool failed: ';");
     }
 
     [TestMethod]
     public void ChatPayloadWriteKeySurvivesLoginAndProxyRestart()
     {
-        string dataRoot = Path.Combine(Path.GetTempPath(), "jackllm-chat-key-test-" + Guid.NewGuid().ToString("N"));
+        string dataRoot = Path.Combine(Path.GetTempPath(), "heirowllm-chat-key-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dataRoot);
         try
         {
-            MethodInfo writeKey = typeof(LmVsProxy).GetMethod(
+            MethodInfo writeKey = typeof(HeirowLlm).GetMethod(
                 "GetChatOwnerEncryptionSecretForWrite",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
             string first;
-            using (var proxy = new LmVsProxy("127.0.0.1", 1234, 28434, 28436, dataRoot))
+            using (var proxy = new HeirowLlm("127.0.0.1", 1234, 28434, 28436, dataRoot))
             {
                 proxy.RememberChatSessionEncryptionSecret("webauth:jack", "temporary-login-password");
                 first = (string)writeKey.Invoke(proxy, new object[] { "webauth:jack" })!;
                 Assert.AreNotEqual("temporary-login-password", first);
             }
 
-            using (var proxy = new LmVsProxy("127.0.0.1", 1234, 28434, 28436, dataRoot))
+            using (var proxy = new HeirowLlm("127.0.0.1", 1234, 28434, 28436, dataRoot))
             {
                 string afterRestart = (string)writeKey.Invoke(proxy, new object[] { "webauth:jack" })!;
                 Assert.AreEqual(first, afterRestart,

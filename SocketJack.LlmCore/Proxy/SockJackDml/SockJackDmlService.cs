@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -535,7 +535,7 @@ namespace SocketJack.Net
                 SuccessCriteria = new List<string> { "Impact known", "Owner assigned", "Evidence sealed", "Action proposals approved or rejected", "Retrospective export generated" },
                 Steps = new List<MagicMissionPackStep>
                 {
-                    new MagicMissionPackStep { Id = "triage", Name = "Capture impact and scope", Phase = "Phase 1", Capability = "SockJackDml Mission Control", RequiresApproval = false },
+                    new MagicMissionPackStep { Id = "triage", Name = "Capture impact and scope", Phase = "Phase 1", Capability = "heirowDml Mission Control", RequiresApproval = false },
                     new MagicMissionPackStep { Id = "evidence", Name = "Seal telemetry and chat evidence", Phase = "Phase 2", Capability = "Evidence Vault", RequiresApproval = false },
                     new MagicMissionPackStep { Id = "proposal", Name = "Draft operator fix proposal", Phase = "Phase 3", Capability = "Live AI Operator", RequiresApproval = true },
                     new MagicMissionPackStep { Id = "assist", Name = "Open time-boxed remote assist", Phase = "Phase 4", Capability = "Zero-Trust Remote Assist", RequiresApproval = true },
@@ -558,7 +558,7 @@ namespace SocketJack.Net
                 Steps = new List<MagicMissionPackStep>
                 {
                     new MagicMissionPackStep { Id = "capability", Name = "Score active runtime and peer fallback", Phase = "Phase 1", Capability = "Capability Router", RequiresApproval = false },
-                    new MagicMissionPackStep { Id = "gates", Name = "Record launch gates", Phase = "Phase 2", Capability = "SockJackDml Mission Control", RequiresApproval = true },
+                    new MagicMissionPackStep { Id = "gates", Name = "Record launch gates", Phase = "Phase 2", Capability = "heirowDml Mission Control", RequiresApproval = true },
                     new MagicMissionPackStep { Id = "rollback", Name = "Prepare rollback packet", Phase = "Phase 3", Capability = "Evidence Vault", RequiresApproval = true },
                     new MagicMissionPackStep { Id = "captions", Name = "Generate team status captions", Phase = "Phase 4", Capability = "Realtime Accessibility Layer", RequiresApproval = false }
                 }
@@ -614,13 +614,13 @@ namespace SocketJack.Net
                 Purpose = "Convert screen, voice, OCR, captions, summaries, and translations into mission timeline artifacts.",
                 UserValue = "Keeps teams in sync across ability, device, language, and attention limits.",
                 ApprovalPolicy = "Generated text is marked as processed context and can be reviewed before evidence export.",
-                Dependencies = new List<string> { "Realtime Accessibility Layer", "Evidence Vault", "SockJackDml Mission Control" },
+                Dependencies = new List<string> { "Realtime Accessibility Layer", "Evidence Vault", "heirowDml Mission Control" },
                 SuccessCriteria = new List<string> { "Caption/summary generated", "Mission event linked", "Evidence export possible" },
                 Steps = new List<MagicMissionPackStep>
                 {
                     new MagicMissionPackStep { Id = "input", Name = "Capture accessibility input", Phase = "Phase 1", Capability = "Realtime Accessibility Layer", RequiresApproval = false },
                     new MagicMissionPackStep { Id = "process", Name = "Generate caption/summary/translation", Phase = "Phase 3", Capability = "Realtime Accessibility Layer", RequiresApproval = false },
-                    new MagicMissionPackStep { Id = "link", Name = "Link output to mission timeline", Phase = "Phase 4", Capability = "SockJackDml Mission Control", RequiresApproval = false }
+                    new MagicMissionPackStep { Id = "link", Name = "Link output to mission timeline", Phase = "Phase 4", Capability = "heirowDml Mission Control", RequiresApproval = false }
                 }
             };
         }

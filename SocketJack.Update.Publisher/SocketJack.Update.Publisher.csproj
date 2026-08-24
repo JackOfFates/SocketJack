@@ -9,22 +9,22 @@
     <Product>SocketJack Update Publisher</Product>
     <BuildInstallerOnPublisherBuild Condition="'$(BuildInstallerOnPublisherBuild)' == ''">true</BuildInstallerOnPublisherBuild>
     <InstallerBuildPlatform Condition="'$(InstallerBuildPlatform)' == ''">x64</InstallerBuildPlatform>
-    <JackLLMBootstrapPublishDir Condition="'$(JackLLMBootstrapPublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\JackLLMBridgeInstaller\publish\</JackLLMBootstrapPublishDir>
+    <heirowLLMBootstrapPublishDir Condition="'$(heirowLLMBootstrapPublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\heirowLLMBridgeInstaller\publish\</heirowLLMBootstrapPublishDir>
   </PropertyGroup>
 
-  <Target Name="BuildJackLLMInstaller"
+  <Target Name="BuildheirowLLMInstaller"
           BeforeTargets="PrepareForBuild"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(BuildInstallerOnPublisherBuild)' == 'true'">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\JackLLMInstaller\JackLLMInstaller.wixproj"
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\heirowLLMInstaller\heirowLLMInstaller.wixproj"
              Targets="Build"
              Properties="Configuration=$(Configuration);Platform=$(InstallerBuildPlatform);ErrorOnDuplicatePublishOutputFiles=false" />
   </Target>
 
-  <Target Name="BuildJackLLMBootstrapInstaller"
+  <Target Name="BuildheirowLLMBootstrapInstaller"
           BeforeTargets="PrepareForBuild"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(BuildInstallerOnPublisherBuild)' == 'true'">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\JackLLMBridgeInstaller\JackLLMBridgeInstaller.csproj"
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\heirowLLMBridgeInstaller\heirowLLMBridgeInstaller.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishSingleFile=true;PublishReadyToRun=false;PublishDir=$(JackLLMBootstrapPublishDir)" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishSingleFile=true;PublishReadyToRun=false;PublishDir=$(heirowLLMBootstrapPublishDir)" />
   </Target>
 </Project>

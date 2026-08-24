@@ -236,6 +236,36 @@ public sealed class LlmRuntimeHostEndpointTests
     }
 
     [TestMethod]
+    public void ContextCompression_PreservesTaskContinuityAcrossLongToolLoop()
+    {
+        const string task = "Repair the checkout calculation and prove SENTINEL-CONTEXT-4729 in the served Release UI.";
+        string priorConversation =
+            "[Prior conversation context]\n" +
+            "This is an application-generated condensed transcript of earlier turns.\n" +
+            "[Current task continuity]\nMost recent earlier user request: " + task + "\n[End current task continuity]\n" +
+            string.Join("\n", Enumerable.Range(0, 20).Select(index =>
+                "- Assistant #" + index + ": " + new string((char)('a' + index % 20), 500)));
+
+        var messages = new List<LlmChatMessage>
+        {
+            new("system", "Follow the application safety and tool instructions." + new string('s', 5000)),
+            new("system", priorConversation),
+            new("user", "try again")
+        };
+        for (int index = 0; index < 32; index++)
+        {
+            messages.Add(new LlmChatMessage(index % 2 == 0 ? "tool" : "system",
+                "[HeirowLlm tool result digest] round " + index + " " + new string('t', 900)));
+        }
+
+        var request = new LlmChatRequest { MaxTokens = 2048, Messages = messages };
+        LlmRuntimeHost.ApplyContextCompressionForInference(request, contextLength: 8192);
+
+        Assert.IsTrue(request.Messages.Any(message => message.Content.Contains("SENTINEL-CONTEXT-4729", StringComparison.Ordinal)));
+        Assert.AreEqual("try again", request.Messages.Last(message => message.Role == "user").Content);
+    }
+
+    [TestMethod]
     public async Task OpenAiModelsEndpoint_ReturnsList()
     {
         string root = LlmModelRegistryTests.CreateTempDirectory();

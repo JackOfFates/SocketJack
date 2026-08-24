@@ -2,12 +2,12 @@
 
 Date: 2026-05-17  
 Target: `http://127.0.0.1:11436/`  
-Process: `JackLLM.exe` from `C:\Users\Vin\Documents\GitHub\SocketJack\JackLLM\bin\Debug\net8.0-windows7.0\JackLLM.exe`  
+Process: `heirowLLM.exe` from `C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLM\bin\Debug\net8.0-windows7.0\heirowLLM.exe`
 Browser: Codex in-app browser, portrait viewport during UI pass
 
 ## Summary
 
-RuntimeLLM / JackLLM Chat loads and most non-destructive API-backed surfaces respond. The main shell, heartbeat, auth/account, hardware, usage, model lists, session list, solution explorer data, marketplace server list, Copilot duplicator status, payouts, and chat service discovery all returned successfully.
+RuntimeLLM / heirowLLM Chat loads and most non-destructive API-backed surfaces respond. The main shell, heartbeat, auth/account, hardware, usage, model lists, session list, solution explorer data, marketplace server list, Copilot duplicator status, payouts, and chat service discovery all returned successfully.
 
 The highest-impact UI issue is the portrait drawer overlay: the transparent portrait backdrop sits above the actual drawer panels in hit testing, so the user sees panels but the backdrop can intercept clicks. This explains the observed behavior where panels appear to be behind the transparent background.
 
@@ -17,21 +17,21 @@ The highest-impact runtime issues are chat/agent/image mode reliability: plain c
 
 Updated: 2026-05-17 15:30:20 -05:00
 
-- Portrait drawer stacking is fixed in `html/JackLLMWebChat.html` and verified against the rebuilt JackLLM server. Controls, Sessions, Files, and Share all opened above the backdrop; `elementFromPoint()` inside each drawer returned the drawer or a child, not `#portraitDrawerBackdrop`.
+- Portrait drawer stacking is fixed in `html/heirowLLMWebChat.html` and verified against the rebuilt heirowLLM server. Controls, Sessions, Files, and Share all opened above the backdrop; `elementFromPoint()` inside each drawer returned the drawer or a child, not `#portraitDrawerBackdrop`.
 - Chat mode dock switching is fixed and verified from browser clicks. Chat, Agent, Companion, media/image generation, and Chat-return clicks all updated `serviceSelect.value`, body mode class, and pressed button state correctly.
 - Free-session sign-in warning is fixed and verified. It now sits above the composer, spans the center content width, and does not overlap the prompt, Send button, messages, or workspace.
 - Live tool-call visibility has been implemented in code and is pending browser/runtime verification. `/api/chat-stream` now emits safe `toolCall` events for agent proxy tools and media generation, and the Web Chat UI renders them both inline on assistant messages and in a session activity panel.
 - Session file display has been updated in code and is pending browser verification. Created file changes stay distinct, new session files are marked with a green `+`, and long paths now preserve the filename side by truncating the leading path.
 - Browser verification loaded a saved `Codex live tool UI verification` session through the real Web Chat renderer. It showed the global Live activity panel, inline assistant tool rows, completed and failed statuses, expandable safe details, green `+` created-file badge, and filename-preserving leading path truncation with no console errors.
 - Live agent/model verification remains blocked by current agent behavior: two Agent prompts did not emit tool calls. The first answered from filesystem context without calling a tool, and the second stalled at `Receiving response... 79%` until stopped. This is tracked under the existing Agent stream reliability issue.
-- Rebuilt and restarted JackLLM from `C:\Users\Vin\Documents\GitHub\SocketJack\JackLLM`; latest build passed with 0 errors and 2 nullable-context warnings from existing project warning areas.
-- Mode switching reversion is fixed in `html/JackLLMWebChat.html` and verified on 2026-05-17 15:17:44 -05:00 after closing JackLLM, rebuilding, restarting, and reloading the in-app browser. Agent stayed selected after 20 seconds, Companion stayed selected after 7 seconds, Chat stayed selected after 7 seconds, and no console errors were reported.
+- Rebuilt and restarted heirowLLM from `C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLM`; latest build passed with 0 errors and 2 nullable-context warnings from existing project warning areas.
+- Mode switching reversion is fixed in `html/heirowLLMWebChat.html` and verified on 2026-05-17 15:17:44 -05:00 after closing heirowLLM, rebuilding, restarting, and reloading the in-app browser. Agent stayed selected after 20 seconds, Companion stayed selected after 7 seconds, Chat stayed selected after 7 seconds, and no console errors were reported.
 - Agent filesystem access is now restricted to current session files, remote session clones, and explicitly accessible directories. Implicit solution-root access was removed, drive/share roots such as `C:\` are rejected for accessible-directory approval, root-level permission prompts are suppressed, and slash-root paths like `\file.txt` are treated as session-relative instead of resolving to `C:\file.txt`.
-- Rebuilt and restarted JackLLM after the filesystem boundary fix. Build passed with 0 errors and the same 2 nullable-context warnings. Direct SockJackDml/VS-tool smoke verified `\codex-root-boundary-smoke-*.txt` writes into the current session file store, while explicit `C:\codex-root-boundary-abs-*.txt` is blocked and no `C:\` file is created.
+- Rebuilt and restarted heirowLLM after the filesystem boundary fix. Build passed with 0 errors and the same 2 nullable-context warnings. Direct SockJackDml/VS-tool smoke verified `\codex-root-boundary-smoke-*.txt` writes into the current session file store, while explicit `C:\codex-root-boundary-abs-*.txt` is blocked and no `C:\` file is created.
 - Video model smoke/download guidance now targets `cerspense/zeroscope_v2_576w` instead of broad popularity picks or LTX-2-family bases. Hugging Face reports 7.9 GB VRAM for 30 frames at 576x320, and the LlmRuntime repository scan reports a 7.89 GiB complete-model bundle, which fits the 12 GB TITAN X test target with headroom.
-- Rebuilt and restarted JackLLM after the video-model pin. Build passed with 0 warnings and 0 errors; `/health` returned `ok: true`. Focused scanner test `IdealModelScanner_GroupsHubSuggestionsByCategory` passed.
-- Direct shell-started video download was stopped by closing JackLLM because LlmRuntime currently has no download-cancel endpoint. The partial bundle remains resumable under `CompleteModels\cerspense\zeroscope_v2_576w\main`.
-- Rewired the JackLLM-hosted `/Workstation` browser control page away from Companion. It now uses JackLLM-native WPF remote-control endpoints at `/api/workstation/state`, `/api/workstation/screen.json`, `/api/workstation/input`, `/api/workstation/permissions`, and `/api/workstation/emergency-stop`; those endpoints are loopback-only and use the Workstation app's registered `SocketJack.WPF` provider.
+- Rebuilt and restarted heirowLLM after the video-model pin. Build passed with 0 warnings and 0 errors; `/health` returned `ok: true`. Focused scanner test `IdealModelScanner_GroupsHubSuggestionsByCategory` passed.
+- Direct shell-started video download was stopped by closing heirowLLM because LlmRuntime currently has no download-cancel endpoint. The partial bundle remains resumable under `CompleteModels\cerspense\zeroscope_v2_576w\main`.
+- Rewired the heirowLLM-hosted `/Workstation` browser control page away from Companion. It now uses heirowLLM-native WPF remote-control endpoints at `/api/workstation/state`, `/api/workstation/screen.json`, `/api/workstation/input`, `/api/workstation/permissions`, and `/api/workstation/emergency-stop`; those endpoints are loopback-only and use the Workstation app's registered `SocketJack.WPF` provider.
 - The earlier Companion `/Workspace` flicker reduction remains as copied source material, but `/Workstation` no longer depends on a Companion process, port `8091`, or any `/api/workstation/companion/*` proxy route.
 - Web Chat model/mode gating is fixed in code. Agent mode is disabled for models that do not advertise tool support, media mode only exposes the selected model's supported image/video/audio generation types, and stale unsupported selections fall back to Chat before sending.
 
@@ -39,7 +39,7 @@ Updated: 2026-05-17 15:30:20 -05:00
 
 | Feature Area | Result | Evidence / Notes |
 | --- | --- | --- |
-| Page shell | Pass | `/` returned `200`, title `JackLLM Chat`, page mounted in the in-app browser. |
+| Page shell | Pass | `/` returned `200`, title `heirowLLM Chat`, page mounted in the in-app browser. |
 | Host heartbeat | Pass | `/health` returned `ok: true`; UI showed heartbeat live for `TitanX - Vin`. |
 | Auth/session | Pass | `/api/web-auth/session` returned authenticated localhost user state. |
 | Account/costs | Pass | `/api/account` and `/api/costs` returned `ok: true`. |
@@ -58,7 +58,7 @@ Updated: 2026-05-17 15:30:20 -05:00
 | Mode switch persistence | Pass/Fixed | User-selected Chat, Agent, and Companion modes no longer snap back after model/service refresh; verified after stopped-app rebuild and restart. |
 | Model capability mode gating | Pass/Implemented | Agent is now model-tool gated, and image/video/audio modes are selected and enabled only when the selected model advertises that media generation capability. |
 | Agent filesystem boundary | Pass/Verified | Backend file/tool roots now exclude implicit solution roots and reject drive/share root access. Rebuilt smoke verified slash-root paths land in current session files and explicit `C:\` writes are blocked with no root file created. |
-| Workstation browser control | In Progress | `/Workstation` was changed to JackLLM-native WPF remote-control endpoints instead of Companion proxy endpoints. Build/browser verification is next. |
+| Workstation browser control | In Progress | `/Workstation` was changed to heirowLLM-native WPF remote-control endpoints instead of Companion proxy endpoints. Build/browser verification is next. |
 | Plain chat stream | Fail | Smoke prompt `Reply with exactly OK` saved a long unrelated analysis; `max_tokens: 8` did not constrain output. |
 | Agent stream | Fail | Agent smoke session saved an empty assistant message; earlier stream emitted usage/progress without assistant content. |
 | Image generation stream | Fail | Image prompt failed with bundled Python Diffusers/Torch import error. |
@@ -72,7 +72,7 @@ Updated: 2026-05-17 15:30:20 -05:00
 | Remote admin / LLM client | Expected gated | `/api/llm-client/status` returned `403`; remote admin control hidden/disabled. |
 | Terminal approvals | Expected gated | `/api/terminal-approvals` returned `403`; terminal approval panel hidden. |
 | Trust / observability dashboards | Expected gated | `/api/trust-abuse` and `/api/observability` returned `403`. |
-| Marketplace / Copilot duplicator | Pass | `/api/jackllm/servers` and `/api/copilot-duplicator` returned `ok: true`. |
+| Marketplace / Copilot duplicator | Pass | `/api/heirowllm/servers` and `/api/copilot-duplicator` returned `ok: true`. |
 | Payouts | Pass | `/api/payouts?...` returned payout policy and summary data. |
 | Token purchase products | Fail/Incomplete | `/api/socketjack/token-products` returned `404`; token purchase UI exists but is hidden/disabled in current state. |
 
@@ -173,7 +173,7 @@ Fix:
 - Rejected drive/share roots when adding or approving accessible directories.
 - Treated leading-slash local paths as session-relative paths instead of drive-root paths.
 - Default SockJackDml progress files now land in current session files.
-- Verified after rebuilding: `\codex-root-boundary-smoke-*.txt` wrote under `JackLLMChat\SessionFiles\codex-boundary-smoke`, and `C:\codex-root-boundary-abs-*.txt` was blocked with no file created in `C:\`.
+- Verified after rebuilding: `\codex-root-boundary-smoke-*.txt` wrote under `heirowLLMChat\SessionFiles\codex-boundary-smoke`, and `C:\codex-root-boundary-abs-*.txt` was blocked with no file created in `C:\`.
 
 ### 4. Plain Chat Ignores Exact Prompt And Tiny Max Token Cap
 
@@ -361,18 +361,18 @@ Fix:
 ### 15. Workstation Control Needed One Browser Window
 
 Severity: Medium  
-Area: JackLLM Workstation control, MCP visibility, remote desktop UI  
+Area: heirowLLM Workstation control, MCP visibility, remote desktop UI
 Status: Implemented, pending browser verification
 
 Observed:
 
-- Codex could read JackLLM Workstation state through MCP, but mutation/control still had to happen through separate HTTP calls, shell commands, or the WPF window.
+- Codex could read heirowLLM Workstation state through MCP, but mutation/control still had to happen through separate HTTP calls, shell commands, or the WPF window.
 - The first `/Workstation` draft proxied Companion `/Workspace` APIs, which required an extra process and port `8091`.
 
 Fix:
 
-- Added `/Workstation` to JackLLM Web Chat server.
-- Replaced the Companion proxy routes with JackLLM-native `/api/workstation/*` routes backed by the existing `SocketJack.WPF` remote-control provider.
+- Added `/Workstation` to heirowLLM Web Chat server.
+- Replaced the Companion proxy routes with heirowLLM-native `/api/workstation/*` routes backed by the existing `SocketJack.WPF` remote-control provider.
 - Restricted the native Workstation control endpoints to loopback clients.
 - Added a browser UI with a stable remote frame, fake pointer overlay with `pointer-events: none`, MCP-style live activity log, and UI buttons to scan/start the 12 GB-friendly video model download.
 - Kept the copied Companion frame-stability idea, but `/Workstation` no longer calls Companion or depends on a Companion process.
@@ -397,7 +397,7 @@ Fix:
 | New-file green plus indicators | 95% | `[###################.]` | Verified assistant file-change green `+` for a stored `created` file. Remaining: verify a real Agent-created session file once Agent tool-call emission is reliable. |
 | Path-left filename-right truncation | 95% | `[###################.]` | Verified long path display keeps `new-tool-call-proof.txt` visible while truncating the leading parent path. Remaining: portrait-width spot check after live-agent file creation. |
 | 12 GB-friendly video smoke model | 100% | `[####################]` | Pinned video ideal-model guidance to `cerspense/zeroscope_v2_576w`; verified Hugging Face VRAM note and LlmRuntime scan size. Remaining video execution work stays under the video pipeline implementation issue. |
-| Unified Workstation control page | 90% | `[##################..]` | Implemented `/Workstation` with JackLLM-native loopback `/api/workstation/*` endpoints, fake cursor overlay, activity feed, UI-driven model scan/download, and stable-frame remote rendering. Remaining: rebuild/restart and in-browser verification. |
+| Unified Workstation control page | 90% | `[##################..]` | Implemented `/Workstation` with heirowLLM-native loopback `/api/workstation/*` endpoints, fake cursor overlay, activity feed, UI-driven model scan/download, and stable-frame remote rendering. Remaining: rebuild/restart and in-browser verification. |
 
 ## Recommended Fix Order
 

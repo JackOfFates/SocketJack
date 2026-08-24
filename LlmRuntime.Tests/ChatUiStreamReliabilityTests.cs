@@ -39,8 +39,8 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void PlainChatPrompt_BlocksUnrelatedCodeAndFtpContextBleed()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod(
             "BuildPlainChatModeSystemHint",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
@@ -56,8 +56,8 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void PlainChatReasoning_IsVisibleUnlessNoThinkWasRequested()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod(
             "ShouldSuppressChatUiReasoningForRequest",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
@@ -69,17 +69,17 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void NoVisibleAnswerDiagnostic_TriggersAnswerOnlyRecovery()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
         const string diagnostic = "The model used the response budget without producing visible assistant text. Retry with a higher `max_tokens` value or choose a non-reasoning model.";
 
-        MethodInfo? shouldContinue = typeof(LmVsProxy).GetMethod(
+        MethodInfo? shouldContinue = typeof(HeirowLlm).GetMethod(
             "ShouldAutoContinueChatUiCompletion",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(shouldContinue);
         object?[] continuationArgs = { "stop", diagnostic, "", 0, -1, "ip:127.0.0.1", null, null };
         Assert.IsTrue((bool)(shouldContinue.Invoke(proxy, continuationArgs) ?? false));
 
-        MethodInfo? buildRequest = typeof(LmVsProxy).GetMethod(
+        MethodInfo? buildRequest = typeof(HeirowLlm).GetMethod(
             "BuildChatUiAutoContinuationRequest",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(buildRequest);
@@ -99,7 +99,7 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void WebChatPlainMode_DoesNotDiscardReasoningEvents()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "const suppressReasoning = noThinkRequested;");
         Assert.IsFalse(html.Contains("noThinkRequested || !selectedService()", StringComparison.Ordinal));
@@ -108,7 +108,7 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void WebChatSessionUx_UsesComposerSteeringAndKeepsEnterAsNormalSend()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "sessionMoveBackdrop");
         StringAssert.Contains(html, "sessionDeletePhrase.value !== 'DELETE ALL'");
@@ -125,7 +125,11 @@ public sealed class ChatUiStreamReliabilityTests
         Assert.IsFalse(html.Contains("queued-message-steer", StringComparison.Ordinal));
         Assert.IsFalse(html.Contains("if (canSteerNow)", StringComparison.Ordinal));
         Assert.IsFalse(html.Contains("Steering is available only during a JackHammer run.", StringComparison.Ordinal));
-        StringAssert.Contains(html, "JackHammer steps");
+        StringAssert.Contains(html, "jackhammer-run-progress");
+        StringAssert.Contains(html, "'Step ' + (index + 1) + '/' + visibleSteps.length");
+        StringAssert.Contains(html, "jackhammer-step-summary");
+        StringAssert.Contains(html, "stepSummary.textContent = step.summary");
+        Assert.IsFalse(html.Contains("const symbol = step.status", StringComparison.Ordinal), "heirowForge steps should use structured state styling instead of raw text symbols.");
         StringAssert.Contains(html, "jackhammerPlanStepsFromCheckpoints");
         StringAssert.Contains(html, "Errors / Diagnosis");
         StringAssert.Contains(html, ">File</button>");
@@ -139,7 +143,7 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void WebChatStreamingMarkdown_RendersRichContentAndPinsOnlyPast95Percent()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "return list.scrollTop >= maxScroll * 0.95;");
         StringAssert.Contains(html, "const keepPinned = shouldScroll && isMessagesNearEnd();");
@@ -151,7 +155,7 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void WebChatStoppedResponse_OffersContinuationThroughTheNextPrompt()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "assistant-continuation-prompt");
         StringAssert.Contains(html, "showAssistantContinuationPrompt(streamState.parts");
@@ -165,7 +169,7 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void WebChatFollowUpPrompt_QueuesAfterLateSteeringAndSerializesSessionSaves()
     {
-        string html = HtmlPageResources.GetHtml("JackLLMWebChat.html");
+        string html = HtmlPageResources.GetHtml("heirowLLMWebChat.html");
 
         StringAssert.Contains(html, "error.code === 'stream_closed' || error.code === 'stream_not_ready'");
         StringAssert.Contains(html, "your direction was queued as the next prompt");
@@ -180,8 +184,8 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void SplitThinkTags_MovesEndOfThoughtPrefixToReasoning()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod("SplitThinkTags", BindingFlags.Instance | BindingFlags.NonPublic);
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod("SplitThinkTags", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
 
         object completion = method.Invoke(proxy, new object[] { "provided above.\n</end_of_thought>\nFinal answer", "", false })!;
@@ -196,16 +200,16 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void SplitThinkTags_MovesPostResponseSelfCheckToReasoning()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod("SplitThinkTags", BindingFlags.Instance | BindingFlags.NonPublic);
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod("SplitThinkTags", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
-        const string raw = "What would work best for you?\n\n- JackLLM\n\n[End of response]\n\nThis concludes my answer. The user asked a conversational question.\n\nVerification: Response is conversational and friendly.";
+        const string raw = "What would work best for you?\n\n- heirowLLM\n\n[End of response]\n\nThis concludes my answer. The user asked a conversational question.\n\nVerification: Response is conversational and friendly.";
 
         object completion = method.Invoke(proxy, new object[] { raw, "", false })!;
         string content = (string)(completion.GetType().GetProperty("Content")?.GetValue(completion) ?? "");
         string reasoning = (string)(completion.GetType().GetProperty("Reasoning")?.GetValue(completion) ?? "");
 
-        Assert.AreEqual("What would work best for you?\n\n- JackLLM", content.Replace("\r\n", "\n"));
+        Assert.AreEqual("What would work best for you?\n\n- heirowLLM", content.Replace("\r\n", "\n"));
         StringAssert.Contains(reasoning, "This concludes my answer.");
         StringAssert.Contains(reasoning, "Verification: Response is conversational and friendly.");
         Assert.IsFalse(content.Contains("End of response", StringComparison.OrdinalIgnoreCase));
@@ -214,8 +218,8 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void NormalStop_NeverCreatesAnAutomaticContinuationTurn()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod(
             "ShouldAutoContinueChatUiCompletion",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
@@ -228,8 +232,8 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void ExplicitOutputLimit_StillCreatesAnAutomaticContinuationTurn()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod(
             "ShouldAutoContinueChatUiCompletion",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
@@ -241,8 +245,8 @@ public sealed class ChatUiStreamReliabilityTests
     [TestMethod]
     public void AutoContinuationRequest_AppendsPartialAssistantThenUserInstruction()
     {
-        using var proxy = new LmVsProxy("localhost", 11435, 18080, 18081);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+        using var proxy = new HeirowLlm("localhost", 11435, 18080, 18081);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod(
             "BuildChatUiAutoContinuationRequest",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
@@ -262,7 +266,7 @@ public sealed class ChatUiStreamReliabilityTests
 
     private static string ExtractNovel(string existing, string incoming)
     {
-        MethodInfo? method = typeof(LmVsProxy).GetMethod(
+        MethodInfo? method = typeof(HeirowLlm).GetMethod(
             "ExtractNovelChatUiStreamDelta",
             BindingFlags.NonPublic | BindingFlags.Static);
         Assert.IsNotNull(method);

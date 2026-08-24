@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
-using LmVs;
+using heirowLLM;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.Net;
 using SocketJack.Net.Services;
@@ -41,6 +41,42 @@ public sealed class AgentToolSmokeTests
     }
 
     [TestMethod]
+    public async Task TerminalServiceTracksMonitorsAndStopsLongRunningProcess()
+    {
+        string root = CreateTemporaryDirectory("tracked-terminal");
+        const string owner = "tracked-process-owner";
+        try
+        {
+            using var service = new TerminalService();
+            TerminalTrackedProcessSnapshot started = await service.StartTrackedAsync(new TerminalCommandRequest
+            {
+                Command = "Write-Output 'HEIROW_PROCESS_READY'; Start-Sleep -Seconds 30",
+                Summary = "tracked smoke process",
+                Shell = "powershell",
+                WorkingDirectory = root,
+                AllowedWorkingDirectories = [root]
+            }, owner);
+
+            Assert.IsTrue(started.ProcessId > 0);
+            Assert.IsTrue(started.Running);
+            Assert.AreEqual(1, service.ListTrackedProcesses(owner).Count);
+            TerminalTrackedProcessSnapshot status = service.GetTrackedProcess(owner, started.ProcessId)!;
+            Assert.IsNotNull(status);
+            Assert.IsTrue(status.Running);
+
+            TerminalTrackedProcessSnapshot stopped = await service.StopTrackedProcessAsync(owner, started.ProcessId);
+            Assert.IsNotNull(stopped);
+            Assert.IsFalse(stopped.Running);
+            StringAssert.Contains(stopped.Output, "HEIROW_PROCESS_READY");
+            Assert.IsNull(service.GetTrackedProcess("different-owner", started.ProcessId));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void VsFileToolsCompleteAReadWriteEditCopyRenameSearchDeleteRoundTrip()
     {
         string root = CreateTemporaryDirectory("files");
@@ -54,9 +90,9 @@ public sealed class AgentToolSmokeTests
 
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", 1234, 28434, 28436, dataRoot);
+            using var proxy = new HeirowLlm("127.0.0.1", 1234, 28434, 28436, dataRoot);
             proxy.SaveChatWorkspaceRootDiagnostics(owner, session, "", "attached", "workspace", workspace, "read-write");
-            MethodInfo execute = typeof(LmVsProxy).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo execute = typeof(HeirowLlm).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
             string Run(string tool, object arguments) => (string)execute.Invoke(proxy,
                 [tool, JsonSerializer.Serialize(arguments), owner, session])!;
@@ -89,8 +125,8 @@ public sealed class AgentToolSmokeTests
         const string session = "agent-sandbox-smoke-session";
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", 1234, 28444, 28446, dataRoot);
-            MethodInfo execute = typeof(LmVsProxy).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var proxy = new HeirowLlm("127.0.0.1", 1234, 28444, 28446, dataRoot);
+            MethodInfo execute = typeof(HeirowLlm).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
             string Run(string tool, object arguments) => (string)execute.Invoke(proxy,
                 [tool, JsonSerializer.Serialize(arguments), owner, session])!;
 
@@ -114,10 +150,10 @@ public sealed class AgentToolSmokeTests
         const string session = "agent-sandbox-change-session";
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", 1234, 28454, 28456, dataRoot);
-            MethodInfo execute = typeof(LmVsProxy).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            MethodInfo begin = typeof(LmVsProxy).GetMethod("BeginChatFileUndoScope", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            MethodInfo build = typeof(LmVsProxy).GetMethod("BuildChatFileChangeStreamEntries", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var proxy = new HeirowLlm("127.0.0.1", 1234, 28454, 28456, dataRoot);
+            MethodInfo execute = typeof(HeirowLlm).GetMethod("ExecuteProxyVsTool", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo begin = typeof(HeirowLlm).GetMethod("BeginChatFileUndoScope", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo build = typeof(HeirowLlm).GetMethod("BuildChatFileChangeStreamEntries", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
             object scope = begin.Invoke(proxy, [owner, session, "vs_write_file"])!;
             string result;
@@ -163,8 +199,8 @@ public sealed class AgentToolSmokeTests
 
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", 1234, 28434, 28436, root);
-            MethodInfo execute = typeof(LmVsProxy).GetMethod("ExecuteBrowserSkillToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var proxy = new HeirowLlm("127.0.0.1", 1234, 28434, 28436, root);
+            MethodInfo execute = typeof(HeirowLlm).GetMethod("ExecuteBrowserSkillToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
             string open = await (Task<string>)execute.Invoke(proxy,
                 ["browser_open", JsonSerializer.Serialize(new { url }), "browser-smoke-owner", "browser-smoke-session"])!;
             await server;
@@ -189,7 +225,7 @@ public sealed class AgentToolSmokeTests
     [TestMethod]
     public void ChangedFileLineStatsCountAdditionsAndDeletions()
     {
-        MethodInfo calculate = typeof(LmVsProxy).GetMethod(
+        MethodInfo calculate = typeof(HeirowLlm).GetMethod(
             "CalculateChatFileLineChanges",
             BindingFlags.Static | BindingFlags.NonPublic)!;
         byte[] before = Encoding.UTF8.GetBytes("alpha\nbeta\ngamma\n");
@@ -204,7 +240,7 @@ public sealed class AgentToolSmokeTests
 
     private static string CreateTemporaryDirectory(string suffix)
     {
-        string path = Path.Combine(Path.GetTempPath(), "jackllm-agent-tool-smoke-" + suffix + "-" + Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(Path.GetTempPath(), "heirowllm-agent-tool-smoke-" + suffix + "-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
     }

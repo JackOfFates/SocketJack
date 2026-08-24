@@ -1,4 +1,4 @@
-﻿# SocketJack Companion Tool Progress
+# SocketJack Companion Tool Progress
 
 Last updated: 2026-05-11
 
@@ -16,16 +16,16 @@ Progress: `[##################################################] 100%`
 | Web process control UI | 100% | `/Workspace` Processes tab now includes hover-only Kill buttons, start path/arguments fields, and a built-in browser for drives, folders, and files. |
 | WPF process control UI | 100% | WPF Processes tab now has hover-only row Kill buttons, start path/arguments inputs, and an embedded file browser that can select launch targets. |
 | Build blockers repaired | 100% | Updated stale `runtimeStatus.Reachable` usage to `Connected` and linked `SockJackDmlService.cs` into `SocketJack.WPF.csproj` so companion builds compile against current SocketJack sources. |
-| Verification | 100% | JackLLMCompanion and JackLLM builds pass; live API smoke returned process/window/browser JSON, successfully started a hidden short-lived PowerShell process, and verified protected PID kill is rejected with HTTP 400. |
+| Verification | 100% | heirowLLMCompanion and heirowLLM builds pass; live API smoke returned process/window/browser JSON, successfully started a hidden short-lived PowerShell process, and verified protected PID kill is rejected with HTTP 400. |
 
 ### Process Control Activity Log
 
 | Time | Change | Files | Progress Delta | Verification |
 |---|---|---|---|---|
-| 2026-05-11 | Added process start/kill service methods and bounded filesystem browser DTOs. | `JackLLMCompanion/CompanionProcessService.cs` | Service mutation actions and custom file browser 0% -> 100% | Covered by companion build and API smoke. |
-| 2026-05-11 | Added process-control HTTP routes and expanded `/Workspace` with hover-only Kill controls plus start-process browser UI. | `JackLLMCompanion/CompanionHttpHost.cs` | Companion HTTP APIs and web UI 0% -> 100% | API smoke on `http://127.0.0.1` passed for process list, window list, browser, start, and guarded kill. |
-| 2026-05-11 | Added WPF hover-only Kill row action and embedded process-start browser controls. | `JackLLMCompanion/MainWindow.xaml`; `JackLLMCompanion/MainWindow.xaml.cs` | WPF process control UI 0% -> 100% | `dotnet build JackLLMCompanion.csproj` passed. |
-| 2026-05-11 | Fixed upstream build compatibility issues exposed by companion verification. | `SocketJack.LlmCore/Proxy/JackLLM.cs`; `SocketJack.Windows/SocketJack.WPF.csproj` | Build blockers repaired 0% -> 100% | JackLLMCompanion and JackLLM builds passed with 0 warnings/errors. |
+| 2026-05-11 | Added process start/kill service methods and bounded filesystem browser DTOs. | `heirowLLMCompanion/CompanionProcessService.cs` | Service mutation actions and custom file browser 0% -> 100% | Covered by companion build and API smoke. |
+| 2026-05-11 | Added process-control HTTP routes and expanded `/Workspace` with hover-only Kill controls plus start-process browser UI. | `heirowLLMCompanion/CompanionHttpHost.cs` | Companion HTTP APIs and web UI 0% -> 100% | API smoke on `http://127.0.0.1` passed for process list, window list, browser, start, and guarded kill. |
+| 2026-05-11 | Added WPF hover-only Kill row action and embedded process-start browser controls. | `heirowLLMCompanion/MainWindow.xaml`; `heirowLLMCompanion/MainWindow.xaml.cs` | WPF process control UI 0% -> 100% | `dotnet build heirowLLMCompanion.csproj` passed. |
+| 2026-05-11 | Fixed upstream build compatibility issues exposed by companion verification. | `SocketJack.LlmCore/Proxy/heirowLLM.cs`; `SocketJack.Windows/SocketJack.WPF.csproj` | Build blockers repaired 0% -> 100% | heirowLLMCompanion and heirowLLM builds passed with 0 warnings/errors. |
 
 ## Current Expansion: Running Processes And Windows Tool Service
 
@@ -43,22 +43,22 @@ Progress: `[##################################################] 100%`
 | Companion HTTP APIs | 100% | Added `/api/companion/processes` and `/api/companion/windows` with query, windowed-only, take/limit, include-system, and sort options. |
 | WPF Processes tab | 100% | Added a sortable/filterable WPF Processes tab with refresh, auto-refresh, window-only toggle, resource columns, admin state, and Open File Location. |
 | Agent/tool integration | 100% | Added read-only `list_running_processes` and `list_open_windows` runner tools with bounded compact output. |
-| Safety and verification | 100% | Initial inventory shipped read-only except Open File Location; the follow-up process-control installment now adds explicit guarded start/kill actions. JackLLMCompanion and JackLLM builds pass and API smoke tests return process/window rows. |
+| Safety and verification | 100% | Initial inventory shipped read-only except Open File Location; the follow-up process-control installment now adds explicit guarded start/kill actions. heirowLLMCompanion and heirowLLM builds pass and API smoke tests return process/window rows. |
 
 ### Implementation Plan
 
 | Task | Status | Files / Scope | Notes |
 |---|---|---|---|
-| Add companion process service | Complete | `JackLLMCompanion/CompanionProcessService.cs` | New service owns process/window snapshots, metric sampling cache, Win32 interop, and safe DTOs. |
-| Reuse/extend window interop | Complete | `JackLLMCompanion/CompanionProcessService.cs` | Added `EnumWindows`, `IsWindowVisible`, title/class reads, and PID joins without changing foreground-capture behavior. |
-| Add DTOs | Complete | `JackLLMCompanion/CompanionProcessService.cs` | Includes PID, process name, main window title, window count/titles, executable path, CPU %, GPU %, RAM %, RAM GB, total RAM GB, admin/elevated state, and metric availability flags. |
-| Add HTTP routes | Complete | `JackLLMCompanion/CompanionHttpHost.cs` | Added JSON endpoints with query options like `windowedOnly`, `query`, `take`, `sort`, and `includeSystem`. |
-| Add WPF tab | Complete | `JackLLMCompanion/MainWindow.xaml`; `JackLLMCompanion/MainWindow.xaml.cs` | Added `Processes` tab beside Remote Desktop and File Sharing; rows bind to an observable collection. |
-| Add Open File Location button | Complete | `JackLLMCompanion/MainWindow.xaml.cs` | Uses Explorer `/select,` only when an executable path is available and exists; shows a status message otherwise. |
-| Add web workspace panel | Complete | `JackLLMCompanion/CompanionHttpHost.cs` | Added `/Workspace` Processes tab backed by the local API; browser view displays paths but does not launch Explorer. |
-| Add runner tool context | Complete | `JackLLMCompanion/CompanionLlmRunner.cs` | Added read-only `list_running_processes` and `list_open_windows` tools with bounded output. |
+| Add companion process service | Complete | `heirowLLMCompanion/CompanionProcessService.cs` | New service owns process/window snapshots, metric sampling cache, Win32 interop, and safe DTOs. |
+| Reuse/extend window interop | Complete | `heirowLLMCompanion/CompanionProcessService.cs` | Added `EnumWindows`, `IsWindowVisible`, title/class reads, and PID joins without changing foreground-capture behavior. |
+| Add DTOs | Complete | `heirowLLMCompanion/CompanionProcessService.cs` | Includes PID, process name, main window title, window count/titles, executable path, CPU %, GPU %, RAM %, RAM GB, total RAM GB, admin/elevated state, and metric availability flags. |
+| Add HTTP routes | Complete | `heirowLLMCompanion/CompanionHttpHost.cs` | Added JSON endpoints with query options like `windowedOnly`, `query`, `take`, `sort`, and `includeSystem`. |
+| Add WPF tab | Complete | `heirowLLMCompanion/MainWindow.xaml`; `heirowLLMCompanion/MainWindow.xaml.cs` | Added `Processes` tab beside Remote Desktop and File Sharing; rows bind to an observable collection. |
+| Add Open File Location button | Complete | `heirowLLMCompanion/MainWindow.xaml.cs` | Uses Explorer `/select,` only when an executable path is available and exists; shows a status message otherwise. |
+| Add web workspace panel | Complete | `heirowLLMCompanion/CompanionHttpHost.cs` | Added `/Workspace` Processes tab backed by the local API; browser view displays paths but does not launch Explorer. |
+| Add runner tool context | Complete | `heirowLLMCompanion/CompanionLlmRunner.cs` | Added read-only `list_running_processes` and `list_open_windows` tools with bounded output. |
 | Add audit/progress updates | Complete | `progress.md` | Updated this section after implementation with milestone percent and verification details. |
-| Verify builds | Complete | `JackLLMCompanion.csproj`; `JackLLM.csproj` | Both builds pass; hidden companion API smoke passed. |
+| Verify builds | Complete | `heirowLLMCompanion.csproj`; `heirowLLM.csproj` | Both builds pass; hidden companion API smoke passed. |
 
 ### Design Constraints
 
@@ -75,11 +75,11 @@ Progress: `[##################################################] 100%`
 | Time | Change | Files | Progress Delta | Verification |
 |---|---|---|---|---|
 | 2026-05-11 | Created active plan for the Running Processes and Windows Tool Service after auditing the companion WPF/HTTP/window-capture structure. | `progress.md` | Existing capability audit 0% -> 100%; overall 0% -> 10% | Manual repository inspection. |
-| 2026-05-11 | Added `CompanionProcessService` with DTOs, all-process enumeration, guarded file/admin/RAM reads, CPU sample cache, visible-window enumeration, and best-effort GPU counter support. | `JackLLMCompanion/CompanionProcessService.cs` | Process service, all-process inventory, window inventory, metrics 0% -> 100%; overall 10% -> 60% | `dotnet build JackLLMCompanion/JackLLMCompanion.csproj` pending at this point. |
-| 2026-05-11 | Wired companion process/window snapshots into local HTTP APIs and `/Workspace` Processes view. | `JackLLMCompanion/CompanionHttpHost.cs` | Companion HTTP APIs 0% -> 100%; overall 60% -> 75% | API smoke pending at this point. |
-| 2026-05-11 | Added WPF Processes tab with filter, windowed-only toggle, auto-refresh, sortable process table, and Explorer Open File Location action. | `JackLLMCompanion/MainWindow.xaml`; `JackLLMCompanion/MainWindow.xaml.cs` | WPF Processes tab 0% -> 100%; overall 75% -> 90% | WPF build pending at this point. |
-| 2026-05-11 | Added runner access to bounded read-only process/window tools and included visible-window context in JACK's observation prompt. | `JackLLMCompanion/CompanionLlmRunner.cs` | Agent/tool integration 0% -> 100%; overall 90% -> 96% | Build pending at this point. |
-| 2026-05-11 | Verified builds and route smoke; `/api/companion/processes` returned 5/352 rows and `/api/companion/windows` returned 5/14 rows on `http://127.0.0.1:8091`. | `JackLLMCompanion/*`; `progress.md` | Safety and verification 0% -> 100%; overall 96% -> 100% | `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\JackLLMCompanion\JackLLMCompanion.csproj`; `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\JackLLM\JackLLM.csproj`; hidden companion API smoke passed. |
+| 2026-05-11 | Added `CompanionProcessService` with DTOs, all-process enumeration, guarded file/admin/RAM reads, CPU sample cache, visible-window enumeration, and best-effort GPU counter support. | `heirowLLMCompanion/CompanionProcessService.cs` | Process service, all-process inventory, window inventory, metrics 0% -> 100%; overall 10% -> 60% | `dotnet build heirowLLMCompanion/heirowLLMCompanion.csproj` pending at this point. |
+| 2026-05-11 | Wired companion process/window snapshots into local HTTP APIs and `/Workspace` Processes view. | `heirowLLMCompanion/CompanionHttpHost.cs` | Companion HTTP APIs 0% -> 100%; overall 60% -> 75% | API smoke pending at this point. |
+| 2026-05-11 | Added WPF Processes tab with filter, windowed-only toggle, auto-refresh, sortable process table, and Explorer Open File Location action. | `heirowLLMCompanion/MainWindow.xaml`; `heirowLLMCompanion/MainWindow.xaml.cs` | WPF Processes tab 0% -> 100%; overall 75% -> 90% | WPF build pending at this point. |
+| 2026-05-11 | Added runner access to bounded read-only process/window tools and included visible-window context in JACK's observation prompt. | `heirowLLMCompanion/CompanionLlmRunner.cs` | Agent/tool integration 0% -> 100%; overall 90% -> 96% | Build pending at this point. |
+| 2026-05-11 | Verified builds and route smoke; `/api/companion/processes` returned 5/352 rows and `/api/companion/windows` returned 5/14 rows on `http://127.0.0.1:8091`. | `heirowLLMCompanion/*`; `progress.md` | Safety and verification 0% -> 100%; overall 96% -> 100% | `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLMCompanion\heirowLLMCompanion.csproj`; `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLM\heirowLLM.csproj`; hidden companion API smoke passed. |
 
 ## Current Expansion: Companion Self-Training Skills
 
@@ -97,23 +97,23 @@ Progress: `[##################################################] 100%`
 | WPF Training UI | 100% | Desktop Training tab includes settings, manual training, cancel, run status, draft review, and replay folder opener. |
 | Web Training UI | 100% | `/Workspace` Training tab includes settings, training runs, draft review, and replay frame links. |
 | Training/replay APIs | 100% | Training state/start/cancel/settings, skill review, replay index, and replay frame routes are implemented and build cleanly. |
-| Tests/verification | 100% | `JackLLMCompanion` and `JackLLM` builds pass with 0 warnings/errors. |
+| Tests/verification | 100% | `heirowLLMCompanion` and `heirowLLM` builds pass with 0 warnings/errors. |
 
 ### Implementation Activity Log
 
 | Time | Change | Files | Progress Delta | Verification |
 |---|---|---|---|---|
 | 2026-05-11 | Created active self-training progress ledger and activity log. | `progress.md` | Progress reporting ledger 0% -> 100% | Manual document inspection. |
-| 2026-05-11 | Added Companion training persistence model and repository operations for settings, runs, evidence, skill drafts, review, and enabled-skill ranking. | `JackLLMCompanion/CompanionRepository.cs` | Training database tables 0% -> 70%; skill review/activation 0% -> 20%; skill matcher and runner integration 0% -> 20% | Pending build verification. |
-| 2026-05-11 | Added background self-training service with evidence-pack generation, minimized replay keyframe storage, sensitivity tagging/redaction, model draft generation, and cancellation. | `JackLLMCompanion/CompanionTrainingService.cs` | Recording evidence capture 0% -> 55%; minimized replay capture 0% -> 55%; evidence redaction/sensitivity tagging 0% -> 70%; training pipeline service 0% -> 65%; skill draft generation 0% -> 50% | Pending build verification. |
-| 2026-05-11 | Wired self-training into recording start/stop and environment telemetry, then exposed training state/start/cancel/settings, skill review, and replay frame APIs. | `JackLLMCompanion/MainWindow.xaml.cs`; `JackLLMCompanion/CompanionHttpHost.cs`; `JackLLMCompanion/CompanionRepository.cs` | Recording evidence capture 55% -> 80%; minimized replay capture 55% -> 75%; training pipeline service 65% -> 85%; training/replay APIs 0% -> 70% | Pending build verification. |
-| 2026-05-11 | Added `/Workspace` Training tab with training settings, manual start/cancel, run status, draft skill review, and replay frame links. | `JackLLMCompanion/CompanionHttpHost.cs` | Web Training UI 0% -> 75%; training/replay APIs 70% -> 85%; skill review/activation 20% -> 55% | Pending build verification. |
-| 2026-05-11 | Added WPF Training tab and code-behind for settings, training start/cancel, draft approve/enable/reject, run summaries, and replay folder opening. | `JackLLMCompanion/MainWindow.xaml`; `JackLLMCompanion/MainWindow.xaml.cs` | WPF Training UI 0% -> 75%; skill review/activation 55% -> 80% | Pending build verification. |
-| 2026-05-11 | Connected reviewed enabled skills to the LLM runner prompt through context ranking; draft/rejected skills are excluded. | `JackLLMCompanion/CompanionLlmRunner.cs`; `JackLLMCompanion/CompanionRepository.cs` | Skill matcher and runner integration 20% -> 80% | Pending build verification. |
-| 2026-05-11 | Verified the self-training implementation with Companion and JackLLM builds, then marked all planned self-training feature rows complete. | `JackLLMCompanion/*`; `progress.md` | All self-training rows -> 100%; tests/verification 0% -> 100% | `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\JackLLMCompanion\JackLLMCompanion.csproj`; `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\JackLLM\JackLLM.csproj` both passed with 0 warnings/errors. |
+| 2026-05-11 | Added Companion training persistence model and repository operations for settings, runs, evidence, skill drafts, review, and enabled-skill ranking. | `heirowLLMCompanion/CompanionRepository.cs` | Training database tables 0% -> 70%; skill review/activation 0% -> 20%; skill matcher and runner integration 0% -> 20% | Pending build verification. |
+| 2026-05-11 | Added background self-training service with evidence-pack generation, minimized replay keyframe storage, sensitivity tagging/redaction, model draft generation, and cancellation. | `heirowLLMCompanion/CompanionTrainingService.cs` | Recording evidence capture 0% -> 55%; minimized replay capture 0% -> 55%; evidence redaction/sensitivity tagging 0% -> 70%; training pipeline service 0% -> 65%; skill draft generation 0% -> 50% | Pending build verification. |
+| 2026-05-11 | Wired self-training into recording start/stop and environment telemetry, then exposed training state/start/cancel/settings, skill review, and replay frame APIs. | `heirowLLMCompanion/MainWindow.xaml.cs`; `heirowLLMCompanion/CompanionHttpHost.cs`; `heirowLLMCompanion/CompanionRepository.cs` | Recording evidence capture 55% -> 80%; minimized replay capture 55% -> 75%; training pipeline service 65% -> 85%; training/replay APIs 0% -> 70% | Pending build verification. |
+| 2026-05-11 | Added `/Workspace` Training tab with training settings, manual start/cancel, run status, draft skill review, and replay frame links. | `heirowLLMCompanion/CompanionHttpHost.cs` | Web Training UI 0% -> 75%; training/replay APIs 70% -> 85%; skill review/activation 20% -> 55% | Pending build verification. |
+| 2026-05-11 | Added WPF Training tab and code-behind for settings, training start/cancel, draft approve/enable/reject, run summaries, and replay folder opening. | `heirowLLMCompanion/MainWindow.xaml`; `heirowLLMCompanion/MainWindow.xaml.cs` | WPF Training UI 0% -> 75%; skill review/activation 55% -> 80% | Pending build verification. |
+| 2026-05-11 | Connected reviewed enabled skills to the LLM runner prompt through context ranking; draft/rejected skills are excluded. | `heirowLLMCompanion/CompanionLlmRunner.cs`; `heirowLLMCompanion/CompanionRepository.cs` | Skill matcher and runner integration 20% -> 80% | Pending build verification. |
+| 2026-05-11 | Verified the self-training implementation with Companion and heirowLLM builds, then marked all planned self-training feature rows complete. | `heirowLLMCompanion/*`; `progress.md` | All self-training rows -> 100%; tests/verification 0% -> 100% | `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLMCompanion\heirowLLMCompanion.csproj`; `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLM\heirowLLM.csproj` both passed with 0 warnings/errors. |
 | 2026-05-11 | Mirrored the new self-training APIs and database tables into the canonical HTTP Server and Database Tables inventories. | `progress.md` | Documentation inventory consistency complete. | Manual document inspection. |
-| 2026-05-11 | Created a detailed Companion user guide covering setup, safety, WPF tabs, web tabs, recordings, self-training, learned skills, file sharing, remote desktop, APIs, storage, build, and troubleshooting. | `JackLLMCompanion/README.md`; `progress.md` | Documentation coverage expanded. | Documentation-only change; build not required. |
-| 2026-05-11 | Replaced Companion model-name text entry with WPF/web model dropdowns populated from the local JackLLM model list, with fallback to local runtime `/v1/models` endpoints. | `JackLLMCompanion/CompanionModelCatalog.cs`; `JackLLMCompanion/CompanionHttpHost.cs`; `JackLLMCompanion/MainWindow.xaml`; `JackLLMCompanion/MainWindow.xaml.cs`; `JackLLMCompanion/README.md` | LLM model selection UX improved. | `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\JackLLMCompanion\JackLLMCompanion.csproj` and `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\JackLLM\JackLLM.csproj` passed with 0 warnings/errors. |
+| 2026-05-11 | Created a detailed Companion user guide covering setup, safety, WPF tabs, web tabs, recordings, self-training, learned skills, file sharing, remote desktop, APIs, storage, build, and troubleshooting. | `heirowLLMCompanion/README.md`; `progress.md` | Documentation coverage expanded. | Documentation-only change; build not required. |
+| 2026-05-11 | Replaced Companion model-name text entry with WPF/web model dropdowns populated from the local heirowLLM model list, with fallback to local runtime `/v1/models` endpoints. | `heirowLLMCompanion/CompanionModelCatalog.cs`; `heirowLLMCompanion/CompanionHttpHost.cs`; `heirowLLMCompanion/MainWindow.xaml`; `heirowLLMCompanion/MainWindow.xaml.cs`; `heirowLLMCompanion/README.md` | LLM model selection UX improved. | `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLMCompanion\heirowLLMCompanion.csproj` and `dotnet build C:\Users\Vin\Documents\GitHub\SocketJack\heirowLLM\heirowLLM.csproj` passed with 0 warnings/errors. |
 
 ## Current Expansion: ONNX Model Browser And Conversion
 
@@ -126,14 +126,14 @@ Progress: `[##################################################] 100%`
 | Conversion job foundation | 100% | Added queued `ModelConversionService`, source bundle downloads, Optimum/Transformers/custom exporter attempts, status/cancel tracking, conversion reports, manifests, and WPF job status updates. |
 | Verification | 100% | `dotnet build .\SocketJack.sln --no-restore --nologo -v:minimal` succeeds with 0 errors; `LlmRuntime.Tests` passes 53/53; `JackONNX.Tests` passes 7/9 with 2 provider tests self-skipped when native runtimes are unavailable. |
 
-This file tracks implementation progress for `JackLLMCompanion`, the SocketJack Companion Tool service for JackLLM.
+This file tracks implementation progress for `heirowLLMCompanion`, the SocketJack Companion Tool service for heirowLLM.
 
 ## Overall
 
 | Feature set | Progress | Notes |
 |---|---:|---|
 | Project scaffold | 100% | New sibling WPF project added to `SocketJack.sln`. |
-| JackLLM service integration | 100% | `companion` is advertised by the JackLLM service catalog and appears in web/WPF service pickers. |
+| heirowLLM service integration | 100% | `companion` is advertised by the heirowLLM service catalog and appears in web/WPF service pickers. |
 | Companion HTTP server | 100% | SocketJack `HttpServer` starts on port `80` with fallback to `8091`; smoke verified on `http://localhost`. |
 | SocketJack database persistence | 100% | Companion state persists through SocketJack `DataServer` tables in local app data. |
 | WPF tray/background shell | 100% | Hidden startup, tray menu, open workspace/files, Companion launch/status, and exit flow exist. |
@@ -143,25 +143,25 @@ This file tracks implementation progress for `JackLLMCompanion`, the SocketJack 
 | JACK test template | 100% | Default JACK name, hobbies/interests, prompt text, AI name, and AI interests actions exist. |
 | Permissions UI/audit logging | 100% | WPF and HTTP permission saves are audited; per-action approvals are represented by capability gates. |
 | Workspace live JavaScript updates | 100% | `/Workspace`, `/file`, remote-control preview, and JSON API state update dynamically. |
-| Tests/verification | 100% | Companion and JackLLM builds pass; routes, permission blocking, approved screen capture, and recording smoke verified. |
+| Tests/verification | 100% | Companion and heirowLLM builds pass; routes, permission blocking, approved screen capture, and recording smoke verified. |
 
 ## Current Expansion: LLM Remote Desktop And File Sharing
 
 | Feature set | Progress | Notes |
 |---|---:|---|
-| Detailed web UI plan | 100% | Added `JackLLMCompanion/WEB_UI_PLAN.md` covering tabs, remote desktop, LLM runner, file sharing, safety, APIs, and acceptance criteria. |
+| Detailed web UI plan | 100% | Added `heirowLLMCompanion/WEB_UI_PLAN.md` covering tabs, remote desktop, LLM runner, file sharing, safety, APIs, and acceptance criteria. |
 | WPF emergency stop | 100% | Added WPF Emergency Stop button and global `Ctrl+Esc` hotkey path that disables Live Input, stops queued LLM tasks, and stops active recording. |
 | Web emergency stop | 100% | Added `/api/companion/emergency-stop` and a visible `/Workspace` Emergency Stop button. |
 | WPF LLM Control UI | 100% | Added LLM Control tab with goal/mode task queue and stop control. |
 | Web LLM Control UI | 100% | Added `/Workspace` LLM Control tab backed by `CompanionLlmTasks`. |
-| LLM model runner | 100% | Background runner now claims queued tasks, observes the desktop, calls the configured OpenAI-compatible JackLLM/LM Studio endpoint, exposes a structured desktop-action tool schema, packs JACK/session/action memory into each turn, repairs malformed model output with a retry pass, executes one gated action at a time, records progress, and supports cancellation. |
+| LLM model runner | 100% | Background runner now claims queued tasks, observes the desktop, calls the configured OpenAI-compatible heirowLLM/LM Studio endpoint, exposes a structured desktop-action tool schema, packs JACK/session/action memory into each turn, repairs malformed model output with a retry pass, executes one gated action at a time, records progress, and supports cancellation. |
 | WPF Remote Desktop UI | 100% | Added capture/live view, click center, click preview, Escape, type text, and gated input controls. |
 | Web Remote Desktop UI | 100% | Added live frame polling, click-to-control, keyboard/text controls, and safety messaging. |
 | Remote desktop streaming | 100% | Added `/api/companion/desktop/stream` chunked NDJSON frame stream, `/api/companion/desktop/ws` WebSocket stream, `/api/companion/desktop/transport` discovery, cursor echo metadata, and adaptive PNG/JPEG capture quality for the web live view. |
 | WPF File Sharing UI | 100% | Added file/folder choose, drag/drop share, refresh controls, and approval prompts that copy files into the Companion share after Use Files approval. |
 | Web File Sharing UI | 100% | Added upload/download, folder upload, drag/drop, local path registration, and approval retry flows in `/Workspace`. |
 | File sharing backend | 100% | Shared file table, upload/download/copy, WPF and web drag/drop, folder upload/share, local path registration, session indexing, Use Files gate, and explicit per-file approval for sensitive paths or executable/script-like files are implemented. |
-| Tests/verification | 100% | `JackLLMCompanion` builds pass with 0 warnings/errors and `dotnet build .\SocketJack.sln --no-restore --nologo -v:minimal` passes with 0 warnings/errors after clearing a stale local `SocketJack.Update.Publisher` debug process lock; smoke coverage tracks workspace tabs, runner status API, LLM task queue/progress, emergency stop, gated screen capture/stream/upload, approved screen capture/stream/download, and file approval paths. |
+| Tests/verification | 100% | `heirowLLMCompanion` builds pass with 0 warnings/errors and `dotnet build .\SocketJack.sln --no-restore --nologo -v:minimal` passes with 0 warnings/errors after clearing a stale local `SocketJack.Update.Publisher` debug process lock; smoke coverage tracks workspace tabs, runner status API, LLM task queue/progress, emergency stop, gated screen capture/stream/upload, approved screen capture/stream/download, and file approval paths. |
 
 ## Runner Execution Progress
 
@@ -206,7 +206,7 @@ This file tracks implementation progress for `JackLLMCompanion`, the SocketJack 
 | `POST /api/companion/llm/runner/stop` | 100% | Stops the background LLM desktop runner and current task. |
 | `POST /api/companion/llm/task` | 100% | Queues a desktop task for the runner. |
 | `POST /api/companion/llm/stop` | 100% | Stops queued/running desktop tasks. |
-| `GET /api/companion/llm/models` | 100% | Returns local JackLLM/runtime model ids for Companion runner dropdowns. |
+| `GET /api/companion/llm/models` | 100% | Returns local heirowLLM/runtime model ids for Companion runner dropdowns. |
 | `GET /api/companion/training/state` | 100% | Returns self-training settings, runs, evidence, draft skills, and skill executions. |
 | `POST /api/companion/training/start` | 100% | Starts a background self-training run from a recording session. |
 | `POST /api/companion/training/cancel` | 100% | Cancels the active self-training run. |
@@ -237,10 +237,10 @@ This file tracks implementation progress for `JackLLMCompanion`, the SocketJack 
 
 ## Completed Verification
 
-- `dotnet build .\JackLLMCompanion\JackLLMCompanion.csproj`
-- `dotnet build .\JackLLMCompanion\JackLLMCompanion.csproj --no-restore --nologo -v:minimal` passed with 0 warnings/errors.
+- `dotnet build .\heirowLLMCompanion\heirowLLMCompanion.csproj`
+- `dotnet build .\heirowLLMCompanion\heirowLLMCompanion.csproj --no-restore --nologo -v:minimal` passed with 0 warnings/errors.
 - `dotnet build .\SocketJack.sln --no-restore --nologo -v:minimal` passed with 0 warnings/errors after stopping stale local PID 10516 that was locking `SocketJack.Update.Publisher.exe`.
-- `dotnet build .\JackLLM\JackLLM.csproj`
+- `dotnet build .\heirowLLM\heirowLLM.csproj`
 - Smoke verified `/Workspace`, `/file`, `/api/workspace`, `/api/files`.
 - Smoke verified screen capture is blocked by default and succeeds only after enabling Live Input.
 - Smoke verified recording start/stop persists a work session.

@@ -37,7 +37,7 @@ export class WorkstationClient {
   ) {}
 
   get endpoint(): string {
-    const configured = vscode.workspace.getConfiguration('jackllm').get<string>('endpoint', 'http://127.0.0.1:11436');
+    const configured = vscode.workspace.getConfiguration('heirowllm').get<string>('endpoint', 'http://127.0.0.1:11436');
     return configured.trim().replace(/\/+$/, '');
   }
 
@@ -55,7 +55,7 @@ export class WorkstationClient {
       for (const model of extractModels(runtimeModels)) mergeModel(merged, model);
       for (const model of extractModels(apiModels)) mergeModel(merged, model);
 
-      const config = vscode.workspace.getConfiguration('jackllm');
+      const config = vscode.workspace.getConfiguration('heirowllm');
       const defaultContext = config.get<number>('defaultContextTokens', 32768);
       const defaultOutput = config.get<number>('defaultOutputTokens', 8192);
       return [...merged.values()]
@@ -107,7 +107,7 @@ export class WorkstationClient {
     onToolCall: (id: string, name: string, input: object) => void,
     token: vscode.CancellationToken
   ): Promise<void> {
-    const timeoutSeconds = vscode.workspace.getConfiguration('jackllm').get<number>('requestTimeoutSeconds', 600);
+    const timeoutSeconds = vscode.workspace.getConfiguration('heirowllm').get<number>('requestTimeoutSeconds', 600);
     const controller = this.createAbortController(token, timeoutSeconds * 1000);
     const url = `${this.endpoint}/v1/chat/completions`;
     try {
@@ -132,19 +132,19 @@ export class WorkstationClient {
       if (token.isCancellationRequested) return;
       const message = error instanceof Error ? error.message : String(error);
       this.output.appendLine(`[chat] ${message}`);
-      throw new Error(`JackLLM Workstation request failed at ${url}: ${message}`);
+      throw new Error(`heirowLLM Workstation request failed at ${url}: ${message}`);
     } finally {
       controller.dispose();
     }
   }
 
   async setApiKey(value: string | undefined): Promise<void> {
-    if (value) await this.secrets.store('jackllm.apiKey', value);
-    else await this.secrets.delete('jackllm.apiKey');
+    if (value) await this.secrets.store('heirowllm.apiKey', value);
+    else await this.secrets.delete('heirowllm.apiKey');
   }
 
   async hasApiKey(): Promise<boolean> {
-    return Boolean(await this.secrets.get('jackllm.apiKey'));
+    return Boolean(await this.secrets.get('heirowllm.apiKey'));
   }
 
   private async tryGetJson(path: string, signal: AbortSignal): Promise<unknown> {
@@ -164,7 +164,7 @@ export class WorkstationClient {
 
   private async headers(): Promise<Record<string, string>> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
-    const apiKey = await this.secrets.get('jackllm.apiKey');
+    const apiKey = await this.secrets.get('heirowllm.apiKey');
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     return headers;
   }
@@ -294,6 +294,6 @@ function emitToolCalls(target: Map<number, { id: string; name: string; arguments
       try { input = JSON.parse(call.arguments) as object; }
       catch { input = { rawArguments: call.arguments }; }
     }
-    emit(call.id || `jackllm-tool-${index}`, call.name, input);
+    emit(call.id || `heirowllm-tool-${index}`, call.name, input);
   }
 }

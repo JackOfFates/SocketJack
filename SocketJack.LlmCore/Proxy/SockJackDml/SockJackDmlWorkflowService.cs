@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -339,7 +339,7 @@ namespace SocketJack.Net
                     ProgressFileName = record == null
                         ? SanitizeProgressFileName(FirstNonEmpty(request.ProjectOrSessionName, request.ProjectName, request.SessionName, plan == null ? "" : plan.ProjectOrSessionName, "Session"), FirstNonEmpty(request.FeatureName, request.Feature, plan == null ? "" : plan.FeatureName, "Feature"))
                         : record.ProgressFileName,
-                    Error = record == null ? "No matching SockJackDml progress document was found." : "",
+                    Error = record == null ? "No matching heirowDml progress document was found." : "",
                     UpdatedUtc = DateTimeOffset.UtcNow.ToString("O")
                 };
             }
@@ -1174,7 +1174,7 @@ namespace SocketJack.Net
             {
                 new MagicPlanStep { Id = "step_1", Title = "Orient in the existing system", Detail = "Inspect the relevant services, routes, schemas, and tests before editing.", Status = "pending" },
                 new MagicPlanStep { Id = "step_2", Title = "Implement " + feature, Detail = "Make bounded code changes that follow existing local patterns.", Status = "pending" },
-                new MagicPlanStep { Id = "step_3", Title = "Create or update the progress tracker", Detail = "Keep the human-readable progress markdown and durable SockJackDml state in sync.", Status = "pending" },
+                new MagicPlanStep { Id = "step_3", Title = "Create or update the progress tracker", Detail = "Keep the human-readable progress markdown and durable heirowDml state in sync.", Status = "pending" },
                 new MagicPlanStep { Id = "step_4", Title = "Verify and record results", Detail = "Run focused builds or tests and capture verification notes.", Status = "pending" }
             };
         }

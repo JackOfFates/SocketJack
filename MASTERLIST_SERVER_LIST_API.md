@@ -7,7 +7,7 @@ This fixes the "No SocketJack.Com server is available with the required chat/vis
 The canonical endpoint remains:
 
 ```text
-GET /api/lmvsproxy/servers
+GET /api/heirowllm/servers
 ```
 
 Two aliases now return the same payload for AI chat integrations that should not depend on the older LM/VS proxy name:
@@ -17,7 +17,7 @@ GET /api/socketjack-com/servers
 GET /api/socketjack/ai-servers
 ```
 
-All three endpoints support `OPTIONS` for browser preflight. The standalone `SocketJack-MagicMasterList` service exposes the aliases on both its API listener and website listener. The embedded JackLLM chat server exposes the same aliases through `SocketJack.LlmCore.Proxy.JackLLM`.
+All three endpoints support `OPTIONS` for browser preflight. The standalone `SocketJack-MagicMasterList` service exposes the aliases on both its API listener and website listener. The embedded heirowLLM chat server exposes the same aliases through `SocketJack.LlmCore.Proxy.heirowLLM`.
 
 Registered shell servers can also request browser presentation video conversion:
 
@@ -60,7 +60,7 @@ Public responses are sanitized before they leave the master list. Browser-facing
 
 ## Registration Process
 
-1. A JackLLM host publishes to `POST /api/lmvsproxy/servers`.
+1. A heirowLLM host publishes to `POST /api/heirowllm/servers`.
 2. The master list normalizes the registration into a `RegisteredServer` record.
 3. Public list requests read the visible, non-hidden records with current health fields.
 4. AI chat clients call one of the GET endpoints above.

@@ -1,7 +1,7 @@
 {
-  "name": "jackllm-workstation",
-  "displayName": "JackLLM Workstation",
-  "description": "Use local JackLLM Workstation models in VS Code Chat and agent mode.",
+  "name": "heirowllm-workstation",
+  "displayName": "heirowLLM Workstation",
+  "description": "Use local heirowLLM Workstation models in VS Code Chat and agent mode.",
   "version": "0.1.0",
   "publisher": "SocketJack",
   "license": "MIT",
@@ -19,7 +19,7 @@
     "Machine Learning"
   ],
   "keywords": [
-    "jackllm",
+    "heirowllm",
     "socketjack",
     "local llm",
     "language model provider",
@@ -29,107 +29,107 @@
   "contributes": {
     "languageModelChatProviders": [
       {
-        "vendor": "jackllm",
-        "displayName": "JackLLM Workstation",
-        "managementCommand": "jackllm.manage"
+        "vendor": "heirowllm",
+        "displayName": "heirowLLM Workstation",
+        "managementCommand": "heirowllm.manage"
       }
     ],
     "commands": [
       {
-        "command": "jackllm.session.refresh",
+        "command": "heirowllm.session.refresh",
         "title": "Refresh Session Explorer",
-        "category": "JackLLM",
+        "category": "heirowLLM",
         "icon": "$(refresh)"
       },
       {
-        "command": "jackllm.session.ignoreSelected",
+        "command": "heirowllm.session.ignoreSelected",
         "title": "Ignore Selected Files",
-        "category": "JackLLM",
+        "category": "heirowLLM",
         "icon": "$(eye-closed)"
       },
       {
-        "command": "jackllm.session.unignoreSelected",
+        "command": "heirowllm.session.unignoreSelected",
         "title": "Unignore Selected Files",
-        "category": "JackLLM"
+        "category": "heirowLLM"
       },
       {
-        "command": "jackllm.session.ignoreFileTypes",
+        "command": "heirowllm.session.ignoreFileTypes",
         "title": "Ignore File Types (*.ext)",
-        "category": "JackLLM"
+        "category": "heirowLLM"
       },
       {
-        "command": "jackllm.session.ignoreRegex",
+        "command": "heirowllm.session.ignoreRegex",
         "title": "Ignore Files Matching Regex",
-        "category": "JackLLM",
+        "category": "heirowLLM",
         "icon": "$(regex)"
       },
       {
-        "command": "jackllm.manage",
-        "title": "JackLLM: Manage Workstation Provider",
-        "category": "JackLLM"
+        "command": "heirowllm.manage",
+        "title": "heirowLLM: Manage Workstation Provider",
+        "category": "heirowLLM"
       },
       {
-        "command": "jackllm.refreshModels",
-        "title": "JackLLM: Refresh Models",
-        "category": "JackLLM",
+        "command": "heirowllm.refreshModels",
+        "title": "heirowLLM: Refresh Models",
+        "category": "heirowLLM",
         "icon": "$(refresh)"
       },
       {
-        "command": "jackllm.setApiKey",
-        "title": "JackLLM: Set API Key",
-        "category": "JackLLM"
+        "command": "heirowllm.setApiKey",
+        "title": "heirowLLM: Set API Key",
+        "category": "heirowLLM"
       },
       {
-        "command": "jackllm.openWorkstation",
-        "title": "JackLLM: Open Workstation Web UI",
-        "category": "JackLLM"
+        "command": "heirowllm.openWorkstation",
+        "title": "heirowLLM: Open Workstation Web UI",
+        "category": "heirowLLM"
       },
       {
-        "command": "jackllm.showStatus",
-        "title": "JackLLM: Show Connection Status",
-        "category": "JackLLM"
+        "command": "heirowllm.showStatus",
+        "title": "heirowLLM: Show Connection Status",
+        "category": "heirowLLM"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "jackllm",
-          "title": "JackLLM",
+          "id": "heirowllm",
+          "title": "heirowLLM",
           "icon": "assets/socketjack.png"
         }
       ]
     },
     "views": {
-      "jackllm": [
+      "heirowllm": [
         {
-          "id": "jackllm.sessionExplorer",
+          "id": "heirowllm.sessionExplorer",
           "name": "Session Explorer"
         }
       ]
     },
     "menus": {
       "view/title": [
-        { "command": "jackllm.session.refresh", "when": "view == jackllm.sessionExplorer", "group": "navigation" },
-        { "command": "jackllm.session.ignoreSelected", "when": "view == jackllm.sessionExplorer", "group": "navigation" },
-        { "command": "jackllm.session.ignoreRegex", "when": "view == jackllm.sessionExplorer", "group": "navigation" }
+        { "command": "heirowllm.session.refresh", "when": "view == heirowllm.sessionExplorer", "group": "navigation" },
+        { "command": "heirowllm.session.ignoreSelected", "when": "view == heirowllm.sessionExplorer", "group": "navigation" },
+        { "command": "heirowllm.session.ignoreRegex", "when": "view == heirowllm.sessionExplorer", "group": "navigation" }
       ],
       "view/item/context": [
-        { "command": "jackllm.session.ignoreSelected", "when": "view == jackllm.sessionExplorer", "group": "inline" },
-        { "command": "jackllm.session.unignoreSelected", "when": "view == jackllm.sessionExplorer && viewItem == jackllmSessionIgnoredItem", "group": "jackllm@1" },
-        { "command": "jackllm.session.ignoreFileTypes", "when": "view == jackllm.sessionExplorer", "group": "jackllm@2" },
-        { "command": "jackllm.session.ignoreRegex", "when": "view == jackllm.sessionExplorer", "group": "jackllm@3" }
+        { "command": "heirowllm.session.ignoreSelected", "when": "view == heirowllm.sessionExplorer", "group": "inline" },
+        { "command": "heirowllm.session.unignoreSelected", "when": "view == heirowllm.sessionExplorer && viewItem == heirowllmSessionIgnoredItem", "group": "heirowllm@1" },
+        { "command": "heirowllm.session.ignoreFileTypes", "when": "view == heirowllm.sessionExplorer", "group": "heirowllm@2" },
+        { "command": "heirowllm.session.ignoreRegex", "when": "view == heirowllm.sessionExplorer", "group": "heirowllm@3" }
       ]
     },
     "configuration": {
-      "title": "JackLLM Workstation",
+      "title": "heirowLLM Workstation",
       "properties": {
-        "jackllm.endpoint": {
+        "heirowllm.endpoint": {
           "type": "string",
           "default": "http://127.0.0.1:11436",
           "scope": "application",
-          "description": "JackLLM Workstation HTTP endpoint. The extension uses its /api/models and /v1/chat/completions routes."
+          "description": "heirowLLM Workstation HTTP endpoint. The extension uses its /api/models and /v1/chat/completions routes."
         },
-        "jackllm.requestTimeoutSeconds": {
+        "heirowllm.requestTimeoutSeconds": {
           "type": "number",
           "default": 600,
           "minimum": 10,
@@ -137,14 +137,14 @@
           "scope": "application",
           "description": "Maximum duration of a model chat request."
         },
-        "jackllm.defaultContextTokens": {
+        "heirowllm.defaultContextTokens": {
           "type": "number",
           "default": 32768,
           "minimum": 1024,
           "scope": "application",
           "description": "Fallback context size when Workstation does not report one for a model."
         },
-        "jackllm.defaultOutputTokens": {
+        "heirowllm.defaultOutputTokens": {
           "type": "number",
           "default": 8192,
           "minimum": 256,

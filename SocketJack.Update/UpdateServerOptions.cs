@@ -323,12 +323,12 @@ public sealed class UpdateServerOptions {
 
     internal static IEnumerable<UpdateChannel> DefaultChannels() {
         yield return new UpdateChannel {
-            Id = "jackllm",
-            DisplayName = "JackLLM",
-            UpdateDirectory = @"C:\JackLLM\Update",
+            Id = "heirowllm",
+            DisplayName = "heirowLLM",
+            UpdateDirectory = @"C:\heirowLLM\Update",
             PublicPath = "/Update",
-            ManagedProcessName = "JackLLM",
-            ManagedExecutablePath = "JackLLM.exe",
+            ManagedProcessName = "heirowLLM",
+            ManagedExecutablePath = "heirowLLM.exe",
             AutoStartAfterUpdate = false
         };
         yield return new UpdateChannel {

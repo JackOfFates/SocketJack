@@ -114,9 +114,9 @@ This is expected with the final rules because the live server inventory currentl
 ### Server Inventory Observed
 
 Sable:
-- server id: `lmvs-shell-410c6a730b24f473`
+- server id: `heirowllm-shell-410c6a730b24f473`
 - runtime status: `Disconnected`
-- last status: `Shell proxy online - JackLLM reverse agent connected`
+- last status: `Shell proxy online - heirowLLM reverse agent connected`
 - model runtime connected flags: false
 - models observed:
   - `ali-vilab-text-to-video-ms-1.7b-pytorch`, video generation, loaded/enabled, benchmark numbers all `0`
@@ -124,9 +124,9 @@ Sable:
   - `crynux-network-stable-diffusion-v1-5-pytorch`, image generation, enabled, benchmark numbers all `0`
 
 TitanX:
-- server id: `lmvs-shell-05d29369622672e5`
+- server id: `heirowllm-shell-05d29369622672e5`
 - runtime status: `Disconnected`
-- last status: `Shell proxy online - JackLLM reverse agent connected`
+- last status: `Shell proxy online - heirowLLM reverse agent connected`
 - model runtime connected flags: false
 - models observed:
   - `Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF`, text/tools/vision, loaded/enabled, benchmark numbers all `0`

@@ -20,9 +20,9 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Keep Net\Services opt-in until the legacy search service pair is refactored; only latency-safe chat services are source-included for SocketJack. -->
-    <Compile Remove="JackLLM.Android\**" />
+    <Compile Remove="heirowLLM.Android\**" />
     <Compile Remove="Net\Services\**\*.cs" />
-    <EmbeddedResource Remove="JackLLM.Android\**" />
+    <EmbeddedResource Remove="heirowLLM.Android\**" />
     <Compile Include="Net\Services\PromptIntellisense.cs" />
     <Compile Include="Net\Services\ReflectionService.cs" />
     <Compile Include="Net\Services\GitService.cs" />
@@ -50,13 +50,13 @@
     <Description>High-performance, fully managed .NET networking library for TCP, UDP, and WebSocket communication. Features built-in peer-to-peer with NAT traversal, pluggable System.Text.Json serialization, SslStream TLS encryption, GZip/Deflate compression, and bandwidth throttling. Targets .NET Standard 2.1.</Description>
     <IsPackable>True</IsPackable>
     <Company>JackOfFates</Company>
-    <Version>2026.10</Version>
+    <Version>2026.11</Version>
     <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
     <BuildPackage>true</BuildPackage>
     <NeutralLanguage>en-001</NeutralLanguage>
     <IncludeSymbols>False</IncludeSymbols>
     <ImportedNamespaces>System.Text.Json=False,System.Text.Json.Serialization=False,Microsoft.VisualBasic=True,System=True,System.Collections=True,System.Collections.Generic=True,System.Diagnostics=True,System.Linq=True,System.Xml.Linq=True,System.Threading.Tasks=True,SocketJack=True</ImportedNamespaces>
-    <PackageReleaseNotes>2026.10 packages the current embedded JackLLM Workstation UI and Builder resource.</PackageReleaseNotes>
+    <PackageReleaseNotes>2026.11 adds generated TypeScript clients for mapped HTTP routes and whitelisted WebSocket messages.</PackageReleaseNotes>
     <PackageProjectUrl>https://www.nuget.org/packages/SocketJack/</PackageProjectUrl>
     <PackageIcon>SocketJackIcon.png</PackageIcon>
     <PackageReadmeFile>Readme.md</PackageReadmeFile>
@@ -604,7 +604,7 @@
       <None Remove="html\*.png" />
       <None Remove="html\*.ico" />
       <None Remove="html\*.webmanifest" />
-      <None Remove="JackLLM.Android\**" />
+      <None Remove="heirowLLM.Android\**" />
       <EmbeddedResource Include="html\*.html">
         <LogicalName>SocketJack.Html.%(Filename)%(Extension)</LogicalName>
       </EmbeddedResource>

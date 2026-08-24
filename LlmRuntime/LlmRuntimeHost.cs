@@ -13,9 +13,9 @@ namespace LlmRuntime;
 
 public sealed class LlmRuntimeHost : IDisposable
 {
-    private const string ModelsLocationEnvironmentVariable = "JACKLLM_MODELS_LOCATION";
-    private const string ModelRootEnvironmentVariable = "JACKLLM_MODEL_ROOT";
-    private const string CompleteModelRootEnvironmentVariable = "JACKLLM_COMPLETE_MODEL_ROOT";
+    private const string ModelsLocationEnvironmentVariable = "HEIROWLLM_MODELS_LOCATION";
+    private const string ModelRootEnvironmentVariable = "HEIROWLLM_MODEL_ROOT";
+    private const string CompleteModelRootEnvironmentVariable = "HEIROWLLM_COMPLETE_MODEL_ROOT";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -2789,7 +2789,7 @@ public sealed class LlmRuntimeHost : IDisposable
 
     private string HandleModelRoutingStatus()
     {
-        int minimumExamples = int.TryParse(Environment.GetEnvironmentVariable("JACKLLM_ROUTER_MIN_TRAINING_EXAMPLES"), out int configured) ? Math.Clamp(configured, 100, 100000) : 500;
+        int minimumExamples = int.TryParse(Environment.GetEnvironmentVariable("HEIROWLLM_ROUTER_MIN_TRAINING_EXAMPLES"), out int configured) ? Math.Clamp(configured, 100, 100000) : 500;
         int examples = _modelRoutingFeedback.CountValidated();
         string modelPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "LlmRuntime", "model-router.int8.onnx");
         bool classifierPresent = File.Exists(modelPath);
@@ -2990,7 +2990,13 @@ public sealed class LlmRuntimeHost : IDisposable
         int targetChars = Math.Max(400, targetPromptTokens * 4);
         int perMessageLimit = Math.Max(240, targetChars / Math.Max(1, messages.Count));
         var tightened = messages
-            .Select(message => new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, perMessageLimit, message.Role + " message"), message.StructuredContent, message.HasImageContent))
+            .Select(message =>
+            {
+                int messageLimit = ContainsCurrentTaskContinuity(message.Content)
+                    ? Math.Max(perMessageLimit, Math.Min(2400, Math.Max(600, targetChars / 5)))
+                    : perMessageLimit;
+                return new LlmChatMessage(message.Role, CompressTextMiddle(message.Content, messageLimit, message.Role + " message"), message.StructuredContent, message.HasImageContent);
+            })
             .ToList();
 
         if (EstimatePromptTokens(tightened) <= targetPromptTokens)
@@ -3012,8 +3018,13 @@ public sealed class LlmRuntimeHost : IDisposable
     private static string BuildContextCompressionSummary(IReadOnlyList<LlmChatMessage> messages, int maxChars)
     {
         var builder = new StringBuilder();
+        string taskContinuity = ExtractCurrentTaskContinuity(messages);
+        if (!string.IsNullOrWhiteSpace(taskContinuity))
+        {
+            builder.AppendLine(taskContinuity);
+        }
         builder.AppendLine("[Compressed conversation context]");
-        builder.AppendLine("Older context was compacted by JackLLM before inference to stay within the model context window. Use this only for continuity; the latest user message remains authoritative.");
+        builder.AppendLine("Older context was compacted by heirowLLM before inference to stay within the model context window. Use this only for continuity; the latest user message remains authoritative.");
 
         int takeHead = Math.Min(2, messages.Count);
         int takeTail = Math.Min(6, Math.Max(0, messages.Count - takeHead));
@@ -3026,6 +3037,33 @@ public sealed class LlmRuntimeHost : IDisposable
             AppendCompressedMessageLine(builder, messages[i], i + 1);
 
         return CompressTextMiddle(builder.ToString().Trim(), maxChars, "compressed context");
+    }
+
+    private static bool ContainsCurrentTaskContinuity(string? text) =>
+        !string.IsNullOrWhiteSpace(text) &&
+        text.IndexOf("[Current task continuity]", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static string ExtractCurrentTaskContinuity(IReadOnlyList<LlmChatMessage> messages)
+    {
+        const string startMarker = "[Current task continuity]";
+        const string endMarker = "[End current task continuity]";
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            string content = messages[i]?.Content ?? "";
+            int start = content.LastIndexOf(startMarker, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+                continue;
+
+            int end = content.IndexOf(endMarker, start + startMarker.Length, StringComparison.OrdinalIgnoreCase);
+            if (end < 0)
+                end = Math.Min(content.Length, start + 1800);
+            else
+                end += endMarker.Length;
+
+            return CompressTextMiddle(content.Substring(start, end - start).Trim(), 1800, "task continuity");
+        }
+
+        return "";
     }
 
     private static void AppendCompressedMessageLine(StringBuilder builder, LlmChatMessage message, int index)
@@ -5391,7 +5429,7 @@ public sealed class LlmRuntimeHost : IDisposable
 
         return new
         {
-            schema = "lmvsproxy.chat-session.compat.v1",
+            schema = "heirowllm.chat-session.compat.v1",
             source = "LlmRuntime",
             id = request.SessionId ?? "",
             sessionId = request.SessionId ?? "",

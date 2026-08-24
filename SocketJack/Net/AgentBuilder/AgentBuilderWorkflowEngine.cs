@@ -269,6 +269,9 @@ namespace SocketJack.Net.AgentBuilder {
             if (!workflow.Nodes.Any(node => IsReturnNodeType(node.Type)))
                 AddWarning(result, "return_node_missing", "Workflow has no Return or Output Schema node.");
 
+            foreach (AgentBuilderWorkflowValidationIssue issue in AgentBuilderApplicationValidator.Validate(workflow.Application))
+                result.Errors.Add(issue);
+
             result.Ok = result.Errors.Count == 0;
             return result;
         }
@@ -848,8 +851,8 @@ namespace SocketJack.Net.AgentBuilder {
             "web-auth",
             "socketjack",
             "auto",
-            "lmvsproxy",
-            "jackllm",
+            "heirowllm",
+            "heirowllm",
             "issues",
             "shell",
             "socketjack-com",

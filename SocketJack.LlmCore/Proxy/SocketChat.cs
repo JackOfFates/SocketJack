@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace SocketJack.Net;
 
-public partial class LmVsProxy
+public partial class HeirowLlm
 {
     private readonly object _socketChatLock = new object();
     private SocketChatManagedDatabase _socketChatDatabase;

@@ -57,7 +57,7 @@ public sealed class RemoteVllmManagerTests
     [TestMethod]
     public void Registry_ExposesRemoteProfileAsLoadableDSparkModel()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-remote-vllm-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-remote-vllm-" + Guid.NewGuid().ToString("N"));
         string complete = Path.Combine(root, "complete");
         try
         {

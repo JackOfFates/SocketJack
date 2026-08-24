@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 namespace SocketJack.Net
 {
-    public partial class LmVsProxy
+    public partial class HeirowLlm
     {
 private class ServerHardwarePercentMetric
         {

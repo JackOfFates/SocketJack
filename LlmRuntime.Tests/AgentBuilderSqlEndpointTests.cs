@@ -4,7 +4,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
-using LmVs;
+using heirowLLM;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.Net;
 using NetHttpClient = System.Net.Http.HttpClient;
@@ -19,10 +19,10 @@ public sealed class AgentBuilderSqlEndpointTests
     [TestMethod]
     public async Task AgentBuilderAndSqlViewsAreRegisteredAndPermissionGated()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-feature-views-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-feature-views-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", NextPort(), NextPort(), NextPort(), root)
+            using var proxy = new HeirowLlm("127.0.0.1", NextPort(), NextPort(), NextPort(), root)
             {
                 PublicAccessEnabled = false
             };
@@ -73,10 +73,10 @@ public sealed class AgentBuilderSqlEndpointTests
         }
     }
 
-    private static async Task Authenticate(LmVsProxy proxy, NetHttpClient client)
+    private static async Task Authenticate(HeirowLlm proxy, NetHttpClient client)
     {
         const string password = "correct horse battery staple";
-        MethodInfo requestRegistration = typeof(LmVsProxy).GetMethod(
+        MethodInfo requestRegistration = typeof(HeirowLlm).GetMethod(
             "HandleWebAuthRegistrationRequest", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var request = new SocketJack.Net.HttpRequest
         {

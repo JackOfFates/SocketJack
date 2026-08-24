@@ -9,7 +9,7 @@ public sealed class WorkstationServiceEditorStabilityTests
     public void LiveMetrics_DoNotRebuildFocusedServiceEditors()
     {
         string root = FindRepositoryRoot();
-        string code = File.ReadAllText(Path.Combine(root, "JackLLM", "MainWindow.xaml.cs"));
+        string code = File.ReadAllText(Path.Combine(root, "heirowLLM", "MainWindow.xaml.cs"));
 
         int updateStart = code.IndexOf("private void UpdateServiceDetailsPanel", StringComparison.Ordinal);
         int updateEnd = code.IndexOf("private IReadOnlyList<ServiceMetricItem>", updateStart, StringComparison.Ordinal);

@@ -1,8 +1,8 @@
-﻿# Current Progress: JackLLM Web Chat UI Mode & Filesystem Context Refresh
+# Current Progress: heirowLLM Web Chat UI Mode & Filesystem Context Refresh
 
 Last updated: 2026-05-15
 
-Scope: finish requested updates to `html/JackLLMWebChat.html` for the JackLLM Workstation Web chat UI.
+Scope: finish requested updates to `html/heirowLLMWebChat.html` for the heirowLLM Workstation Web chat UI.
 
 ## Total Progress
 
@@ -28,10 +28,10 @@ Overall bar: `[####################------] 89%`
 
 ## What is done
 
-- `html/JackLLMWebChat.html`: mode strip styling moved to an overlay dock near the Send control with hover-slide behavior.
-- `html/JackLLMWebChat.html`: filesystem context defaulting now targets the session directory root automatically and does not require dropdown interaction.
-- `html/JackLLMWebChat.html`: media mode remains a single toggle button that cycles image/video/audio services by permission.
-- `html/JackLLMWebChat.html`: assistant-mode-only paths are no longer presented in chat mode controls.
+- `html/heirowLLMWebChat.html`: mode strip styling moved to an overlay dock near the Send control with hover-slide behavior.
+- `html/heirowLLMWebChat.html`: filesystem context defaulting now targets the session directory root automatically and does not require dropdown interaction.
+- `html/heirowLLMWebChat.html`: media mode remains a single toggle button that cycles image/video/audio services by permission.
+- `html/heirowLLMWebChat.html`: assistant-mode-only paths are no longer presented in chat mode controls.
 - `current_progress.md`: updated with concrete percentages and feature-level bars.
 
 ## What remains

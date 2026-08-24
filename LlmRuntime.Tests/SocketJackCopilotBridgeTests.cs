@@ -52,7 +52,7 @@ public sealed class SocketJackCopilotBridgeTests
             "--server-endpoint",
             "http://127.0.0.1:11436",
             "--server-id",
-            "local-jackllm-workstation",
+            "local-heirowllm-workstation",
             "--model",
             "local-model",
             "--listen-port",
@@ -1899,7 +1899,7 @@ public sealed class SocketJackCopilotBridgeTests
     [TestMethod]
     public void OpenAiAdapterBuildsFriendlyOfflineMessage()
     {
-        Assert.IsTrue(SocketJackOpenAiChatAdapter.LooksLikeOfflineServer(503, "JackLLM has not connected its reverse agent."));
+        Assert.IsTrue(SocketJackOpenAiChatAdapter.LooksLikeOfflineServer(503, "heirowLLM has not connected its reverse agent."));
         Assert.IsTrue(SocketJackOpenAiChatAdapter.LooksLikeOfflineServer(503, "The selected model endpoint returned HTTP 503 for v1/chat/completions."));
 
         string message = SocketJackOpenAiChatAdapter.BuildServerOfflineAssistantText("sable");

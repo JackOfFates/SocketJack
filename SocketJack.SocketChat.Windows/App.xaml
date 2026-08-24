@@ -10,6 +10,11 @@
         <SolidColorBrush x:Key="TextBrush" Color="#FFF7FBFF"/>
         <SolidColorBrush x:Key="MutedBrush" Color="#FFB8C5D6"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#FF55D8C0"/>
+        <Style TargetType="{x:Type Image}">
+            <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="UseLayoutRounding" Value="True"/>
+        </Style>
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="Background" Value="#CC263A50"/>

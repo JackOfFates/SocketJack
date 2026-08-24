@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using LmVs;
+using heirowLLM;
 namespace SocketJack.Net
 {
-    public partial class LmVsProxy
+    public partial class HeirowLlm
     {
 private sealed class DeveloperProjectWorkspaceRecord
         {
@@ -99,7 +99,7 @@ private sealed class ChatSessionListRowSnapshot
 
 private sealed class ChatSessionCompatibilityPayload
         {
-            public string schema { get; set; } = "lmvsproxy.chat-session.compat.v1";
+            public string schema { get; set; } = "heirowllm.chat-session.compat.v1";
             public string source { get; set; } = "SocketJack-MagicMasterList";
             public string id { get; set; } = "";
             public string sessionId { get; set; } = "";

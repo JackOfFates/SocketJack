@@ -63,7 +63,7 @@ internal static class OnnxRuntimeNativeProviderResolver
                 if (string.Equals(_selectedProvider, provider.ToString(), StringComparison.OrdinalIgnoreCase))
                     return true;
 
-                detail = "ONNX Runtime native provider is already selected for " + _selectedProvider + ". Restart JackLLM to switch to " + provider + ".";
+                detail = "ONNX Runtime native provider is already selected for " + _selectedProvider + ". Restart heirowLLM to switch to " + provider + ".";
                 return false;
             }
 
@@ -716,12 +716,12 @@ internal static class CudaNativeDependencyProbe
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrWhiteSpace(home))
         {
-            yield return Path.Combine(home, ".jackllm", "python");
-            yield return Path.Combine(home, ".jackllm", "venv");
-            yield return Path.Combine(home, ".local", "share", "JackLLM", "Python");
-            yield return Path.Combine(home, ".local", "share", "JackLLM", "venv");
-            yield return Path.Combine(home, ".cache", "jackllm", "python");
-            yield return Path.Combine(home, ".cache", "jackllm", "venv");
+            yield return Path.Combine(home, ".heirowllm", "python");
+            yield return Path.Combine(home, ".heirowllm", "venv");
+            yield return Path.Combine(home, ".local", "share", "heirowLLM", "Python");
+            yield return Path.Combine(home, ".local", "share", "heirowLLM", "venv");
+            yield return Path.Combine(home, ".cache", "heirowllm", "python");
+            yield return Path.Combine(home, ".cache", "heirowllm", "venv");
         }
     }
 

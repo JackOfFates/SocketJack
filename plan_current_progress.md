@@ -109,7 +109,7 @@ Frames are JSON text frames unless binary payloads become necessary later.
 ## Current Notes
 
 - Existing `/Auto` HTML, CSS, JS, routing, and session logic live primarily in `SocketJack-MagicMasterList/Program.cs`.
-- Keep changes compatible with existing `/auto/api`, `/auto/route`, `/api/web-auth/session`, `/api/lmvsproxy/servers`, and `/api/auto-sessions` style HTTP flows.
+- Keep changes compatible with existing `/auto/api`, `/auto/route`, `/api/web-auth/session`, `/api/heirowllm/servers`, and `/api/auto-sessions` style HTTP flows.
 - Do not remove HTTP routes; WebSocket is an accelerator and live-update layer.
 - 2026-05-26 implementation slice: `wss://socketjack.com/masterlist/ws` returns live server snapshots; `wss://socketjack.com/auto/ws` returns live Auto session snapshots.
 - Server-only LLM sessions are only included for authenticated Auto users and render as muted/greyed imported candidates.

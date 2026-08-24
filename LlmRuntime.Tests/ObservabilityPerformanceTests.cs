@@ -17,10 +17,10 @@ public sealed class ObservabilityPerformanceTests
     [TestCategory("Performance")]
     public async Task SeventyMegabyteDatabaseHasFastReadOnlyCachedObservability()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-observability-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-observability-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using LmVsProxy proxy = CreateProxy(root);
+            using HeirowLlm proxy = CreateProxy(root);
             using var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromMinutes(2) };
             client.DefaultRequestHeaders.ConnectionClose = true;
             CreateAdministrator(proxy);
@@ -36,7 +36,7 @@ public sealed class ObservabilityPerformanceTests
             largeContent = "";
             ForcePendingSave(proxy);
 
-            string databasePath = Path.Combine(root, "SocketJack", "JackLLMChat", "SocketJackDatabase.json");
+            string databasePath = Path.Combine(root, "SocketJack", "heirowLLMChat", "SocketJackDatabase.json");
             FileInfo database = new(databasePath);
             Assert.IsTrue(database.Exists);
             Assert.IsTrue(database.Length >= 60L * 1024 * 1024, $"Expected an approximately 70 MB fixture; actual size was {database.Length} bytes.");
@@ -49,7 +49,7 @@ public sealed class ObservabilityPerformanceTests
 
             DateTime writeBefore = File.GetLastWriteTimeUtc(databasePath);
             var elapsed = new List<long>(30);
-            MethodInfo cachedSnapshot = typeof(LmVsProxy).GetMethod(
+            MethodInfo cachedSnapshot = typeof(HeirowLlm).GetMethod(
                 "GetCachedObservabilityDiagnostics", BindingFlags.Instance | BindingFlags.NonPublic)!;
             for (int poll = 0; poll < 30; poll++)
             {
@@ -97,16 +97,16 @@ public sealed class ObservabilityPerformanceTests
     private static bool HasProperty(JsonElement root, params string[] names) =>
         names.Any(name => root.TryGetProperty(name, out _));
 
-    private static void ForcePendingSave(LmVsProxy proxy)
+    private static void ForcePendingSave(HeirowLlm proxy)
     {
-        FieldInfo field = typeof(LmVsProxy).GetField("_chatSessionData", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        FieldInfo field = typeof(HeirowLlm).GetField("_chatSessionData", BindingFlags.Instance | BindingFlags.NonPublic)!;
         object dataServer = field.GetValue(proxy)!;
         dataServer.GetType().GetMethod("SaveIfDirty", BindingFlags.Instance | BindingFlags.Public)!.Invoke(dataServer, null);
     }
 
-    private static void CreateAdministrator(LmVsProxy proxy)
+    private static void CreateAdministrator(HeirowLlm proxy)
     {
-        MethodInfo requestRegistration = typeof(LmVsProxy).GetMethod(
+        MethodInfo requestRegistration = typeof(HeirowLlm).GetMethod(
             "HandleWebAuthRegistrationRequest", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var request = new HttpRequest
         {
@@ -128,9 +128,9 @@ public sealed class ObservabilityPerformanceTests
         response.EnsureSuccessStatusCode();
     }
 
-    private static LmVsProxy CreateProxy(string root)
+    private static HeirowLlm CreateProxy(string root)
     {
-        var proxy = new LmVsProxy("127.0.0.1", NextPort(), NextPort(), NextPort(), root)
+        var proxy = new HeirowLlm("127.0.0.1", NextPort(), NextPort(), NextPort(), root)
         {
             PublicAccessEnabled = false,
             RequireWorkstationUserAuthentication = false

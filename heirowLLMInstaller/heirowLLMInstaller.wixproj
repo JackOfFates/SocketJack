@@ -1,0 +1,29 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputName>heirowLLM-Setup</OutputName>
+    <OutputType>Package</OutputType>
+    <IsPackable>false</IsPackable>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">26.8.4</ProductVersion>
+    <PayloadDir Condition="'$(PayloadDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\heirowLLM\publish</PayloadDir>
+    <PublisherCertificateSha256 Condition="'$(PublisherCertificateSha256)' == ''"></PublisherCertificateSha256>
+    <ManifestPublicKeyBase64 Condition="'$(ManifestPublicKeyBase64)' == ''"></ManifestPublicKeyBase64>
+    <PublishPayloadOnBuild Condition="'$(PublishPayloadOnBuild)' == ''">true</PublishPayloadOnBuild>
+    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir);PublisherCertificateSha256=$(PublisherCertificateSha256);ManifestPublicKeyBase64=$(ManifestPublicKeyBase64)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
+  </ItemGroup>
+  <Target Name="PublishheirowLLMPayload" BeforeTargets="BeforeBuild" Condition="'$(PublishPayloadOnBuild)' == 'true'">
+    <RemoveDir Directories="$(PayloadDir)" Condition="Exists('$(PayloadDir)')" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\heirowLLM\heirowLLM.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\heirowLLMUpdater\heirowLLMUpdater.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\heirowLLM.SecurityBroker\heirowLLM.SecurityBroker.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -o &quot;$(PayloadDir)&quot; /p:PublishSingleFile=false /p:ErrorOnDuplicatePublishOutputFiles=false" />
+  </Target>
+
+  <Target Name="ValidateOfficialSecurityConfiguration" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release'">
+    <Error Condition="'$(PublisherCertificateSha256)' == ''" Text="Release installers require PublisherCertificateSha256." />
+    <Error Condition="'$(ManifestPublicKeyBase64)' == ''" Text="Release installers require ManifestPublicKeyBase64." />
+  </Target>
+</Project>

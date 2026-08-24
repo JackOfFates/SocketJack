@@ -168,15 +168,15 @@ public sealed class AlignmentAssessmentTests
     [TestMethod]
     public void AlignmentPersistsInOwnerChatDataRoot()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-alignment-tests", Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-alignment-tests", Guid.NewGuid().ToString("N"));
         try
         {
-            using (var first = new LmVsProxy("127.0.0.1", 1234, 21434, 21436, root))
+            using (var first = new HeirowLlm("127.0.0.1", 1234, 21434, 21436, root))
             {
                 AlignmentAssessmentSnapshot assessment = first.AssessAlignmentTextForDiagnostics("I want to sabotage myself and make my life worse.");
                 first.ApplyAlignmentAssessmentForDiagnostics("persistent-owner", "persistent distinct request", assessment);
             }
-            using var second = new LmVsProxy("127.0.0.1", 1234, 21434, 21436, root);
+            using var second = new HeirowLlm("127.0.0.1", 1234, 21434, 21436, root);
             Assert.AreEqual(-2, second.GetAlignmentSnapshot("persistent-owner").Score);
             Assert.IsFalse(second.GetAlignmentSnapshot("persistent-owner").DreamsEnabled);
         }
@@ -231,13 +231,13 @@ public sealed class AlignmentAssessmentTests
     [TestMethod]
     public void LegacyAllMidpointCharacterSheetMigratesViceTraitsToOne()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-alignment-tests", Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-alignment-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         string traits = string.Join(",", new[] { "Nobility", "Humility", "Compassion", "Courage", "Honesty", "Mercy", "Generosity", "Discipline", "Responsibility", "Self-Respect", "Greed", "Cruelty", "Pride", "Deception", "Coercion", "Self-Sabotage" }.Select(name => JsonSerializer.Serialize(name) + ":5"));
         File.WriteAllText(Path.Combine(root, "alignment-state.json"), "{\"profiles\":[{\"ownerKey\":\"legacy-owner\",\"characterTraits\":{" + traits + "}}],\"events\":[]}");
         try
         {
-            using var proxy = new LmVsProxy("127.0.0.1", 1234, 21434, 21436, new LmVsProxyStorageOptions { ChatDataRoot = root });
+            using var proxy = new HeirowLlm("127.0.0.1", 1234, 21434, 21436, new HeirowLlmStorageOptions { ChatDataRoot = root });
 
             AlignmentSnapshot snapshot = proxy.GetAlignmentSnapshot("legacy-owner");
 
@@ -249,6 +249,6 @@ public sealed class AlignmentAssessmentTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
-    private static LmVsProxy CreateProxy() => new("127.0.0.1", 1234, 21434, 21436,
-        Path.Combine(Path.GetTempPath(), "jackllm-alignment-tests", Guid.NewGuid().ToString("N")));
+    private static HeirowLlm CreateProxy() => new("127.0.0.1", 1234, 21434, 21436,
+        Path.Combine(Path.GetTempPath(), "heirowllm-alignment-tests", Guid.NewGuid().ToString("N")));
 }

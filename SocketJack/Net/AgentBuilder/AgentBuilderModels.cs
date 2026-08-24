@@ -5,6 +5,8 @@ using System.Text.RegularExpressions;
 namespace SocketJack.Net.AgentBuilder {
 
     public sealed class AgentBuilderWorkflow {
+        public int SchemaVersion { get; set; } = 2;
+        public int Revision { get; set; } = 1;
         public string Id { get; set; } = "";
         public string OwnerUserName { get; set; } = "";
         public string Name { get; set; } = "";
@@ -15,6 +17,10 @@ namespace SocketJack.Net.AgentBuilder {
         public List<AgentBuilderNode> Nodes { get; set; } = new List<AgentBuilderNode>();
         public List<AgentBuilderEdge> Edges { get; set; } = new List<AgentBuilderEdge>();
         public Dictionary<string, string> Variables { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public string PresetId { get; set; } = "";
+        public int PresetVersion { get; set; }
+        public string BasePresetHash { get; set; } = "";
+        public AgentBuilderApplicationDefinition Application { get; set; } = new AgentBuilderApplicationDefinition();
         public string CreatedUtc { get; set; } = "";
         public string UpdatedUtc { get; set; } = "";
 
@@ -26,6 +32,10 @@ namespace SocketJack.Net.AgentBuilder {
             Nodes ??= new List<AgentBuilderNode>();
             Edges ??= new List<AgentBuilderEdge>();
             Variables ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            SchemaVersion = Math.Max(2, SchemaVersion);
+            Revision = Math.Max(1, Revision);
+            Application ??= new AgentBuilderApplicationDefinition();
+            Application.Normalize();
             foreach (AgentBuilderNode node in Nodes)
                 node.Normalize();
             foreach (AgentBuilderEdge edge in Edges)

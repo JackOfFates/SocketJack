@@ -23,7 +23,7 @@ Planning files:
 |---|---|
 | `SandboxFeatureSetPlan.md` | Architecture and phased implementation plan for the reusable sandbox library surface. |
 | `SandboxOptionsMatrix.md` | Full option range for filesystem, registry, memory loading, persistence, quota, audit, and compatibility behavior. |
-| `JackLLMMigrationPlan.md` | Migration plan for JackLLM, SocketJack.com master list sessions, and Companion file storage/serving. |
+| `heirowLLMMigrationPlan.md` | Migration plan for heirowLLM, SocketJack.com master list sessions, and Companion file storage/serving. |
 
 ## Direction
 
@@ -31,7 +31,7 @@ Build the sandbox as a library-level contract first, then wire applications into
 
 1. `SocketJack.Sandbox` owns virtual filesystem, virtual registry, storage, limits, session identity, and audit events.
 2. SocketJack-owned services use `ISandboxFileSystem`, `ISandboxRegistry`, and `ISandboxFileStore` instead of direct `System.IO` or registry calls.
-3. WPF and web projects opt into the same session and storage model so JackLLM, SocketJack.com, and Companion stop inventing separate file/session stores.
+3. WPF and web projects opt into the same session and storage model so heirowLLM, SocketJack.com, and Companion stop inventing separate file/session stores.
 4. Full process-level sandboxing is a later layer over the same model, using a broker/native boundary when managed adapters are not enough.
 
 ## Current Status

@@ -1,6 +1,6 @@
 # LlmRuntime
 
-Hostable local GGUF runtime for SocketJack. The first production path is replacing LM Studio inside JackLLM while preserving LM Studio/OpenAI-compatible endpoints for existing clients.
+Hostable local GGUF runtime for SocketJack. The first production path is replacing LM Studio inside heirowLLM while preserving LM Studio/OpenAI-compatible endpoints for existing clients.
 
 This README is the home for the LLM-specific SocketJack work: GGUF model loading, LM Studio/OpenAI-compatible APIs, DirectML runner integration, tool calling, local agent workflows, Visual Studio integration surfaces, and model-download UX. The root SocketJack README intentionally stays focused on the networking library.
 
@@ -47,15 +47,15 @@ runtime.Stop();
 - Code intelligence APIs under `/api/v1/code-intelligence` for symbol/call/dependency/ownership graphs, refactor and migration plans, missing-test exploration, profiling plans, architecture review, documentation sync, local privacy status, model evaluation harness planning, and context budget optimization.
 - Production-readiness APIs under `/api/v1/production` for onboarding, diagnostics, telemetry-free local analytics, accessibility status, installer/update readiness, regression-suite metadata, and golden-path demo steps.
 
-## SocketJack And JackLLM Integration
+## SocketJack And heirowLLM Integration
 
 `LlmRuntime` is designed to be hosted beside SocketJack without adding a reverse reference from `SocketJack` back to `LlmRuntime`.
 
 Integration points implemented so far:
 
 - `LlmRuntimeHost` serves LM Studio/OpenAI-compatible endpoints over SocketJack `HttpServer`.
-- `LlmRuntimeModelRuntimeAdapter` lets JackLLM route provider-neutral model calls to the embedded runtime.
-- `JackLLM` can expose a provider dropdown for LM Studio fallback/debug mode versus embedded LlmRuntime mode.
+- `LlmRuntimeModelRuntimeAdapter` lets heirowLLM route provider-neutral model calls to the embedded runtime.
+- `heirowLLM` can expose a provider dropdown for LM Studio fallback/debug mode versus embedded LlmRuntime mode.
 - Model payloads default to `cwd\Models`.
 - Tool definitions default to `cwd\Tools`.
 - The WPF companion project provides model download and tool-definition UI without adding WPF dependencies to the core runtime.

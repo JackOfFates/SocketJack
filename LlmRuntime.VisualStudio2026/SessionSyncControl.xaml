@@ -314,7 +314,7 @@
                        FontSize="18"
                        FontWeight="SemiBold"
                        Margin="0,0,0,10" />
-            <TextBlock Text="Start JackLLM Workstation at 127.0.0.1:11436 to create and sync Visual Studio session files locally."
+            <TextBlock Text="Start heirowLLM Workstation at 127.0.0.1:11436 to create and sync Visual Studio session files locally."
                        TextWrapping="Wrap"
                        Margin="0,0,0,12" />
             <TextBlock Text="Workstation user name" />
@@ -331,7 +331,7 @@
             <CheckBox Content="Remember this Workstation sign-in"
                       Margin="0,0,0,10"
                       IsChecked="{Binding RememberSignIn, Mode=TwoWay}" />
-            <Button Content="Sign in to JackLLM Workstation"
+            <Button Content="Sign in to heirowLLM Workstation"
                     MinWidth="190"
                     HorizontalAlignment="Left"
                     Style="{StaticResource {x:Static styles:VsResourceKeys.ButtonStyleKey}}"

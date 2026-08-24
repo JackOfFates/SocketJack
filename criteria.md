@@ -6,8 +6,8 @@ Close the roadmap acceptance gaps with evidence, not optimism. Each criterion sh
 
 ## 1. Remove LM Studio As A Runtime Requirement
 
-- Update `JackLLM` README/status text so Embedded LlmRuntime is the primary path.
-- Audit `JackLLM` log/error strings that still say "LM Studio" when they mean "local model runtime."
+- Update `heirowLLM` README/status text so Embedded LlmRuntime is the primary path.
+- Audit `heirowLLM` log/error strings that still say "LM Studio" when they mean "local model runtime."
 - Add startup smoke test: GUI/proxy starts with embedded runtime selected and no LM Studio process/server running.
 - Acceptance target: SocketJack starts, lists local models, loads one, and serves `/v1/chat/completions` without LM Studio installed.
 
@@ -20,10 +20,10 @@ Close the roadmap acceptance gaps with evidence, not optimism. Each criterion sh
 - Add tests with fake backend returning tool calls.
 - Acceptance target: local GGUF-compatible chat can request a tool and receive tool result context.
 
-## 3. Add JackLLM Approval Flow For Proprietary Tools
+## 3. Add heirowLLM Approval Flow For Proprietary Tools
 
 - Change `ExecuteLlmRuntimeToolAsync` to detect approval-required denial.
-- Create pending LlmRuntime tool approval records in `JackLLM`.
+- Create pending LlmRuntime tool approval records in `heirowLLM`.
 - Surface pending proprietary tool approvals in GUI next to terminal/filesystem approvals.
 - On approve, rerun `/api/v1/tools/calls` with `approved=true`.
 - Acceptance target: an `AskEveryTime` proprietary tool can be called from chat, approved in GUI, executed, and fed back to model.

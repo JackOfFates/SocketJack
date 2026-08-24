@@ -365,9 +365,9 @@ namespace SocketJack.Com
 
         private async Task<SocketJackComResult> ChatWithServerAsync(SocketJackComServer server, SocketJackComRequest request, CancellationToken cancellationToken)
         {
-            string jackLlmEndpoint = NormalizeBaseUrl(server.Endpoint);
-            string loadedModel = jackLlmEndpoint.Length > 0
-                ? await ResolveFirstLoadedModeModelAsync(jackLlmEndpoint, SocketJackComFeatures.Chat, cancellationToken).ConfigureAwait(false)
+            string heirowLLMEndpoint = NormalizeBaseUrl(server.Endpoint);
+            string loadedModel = heirowLLMEndpoint.Length > 0
+                ? await ResolveFirstLoadedModeModelAsync(heirowLLMEndpoint, SocketJackComFeatures.Chat, cancellationToken).ConfigureAwait(false)
                 : "";
             string model = FirstNonEmpty(loadedModel, request.Model, FirstModeModel(server, SocketJackComFeatures.Chat), server.SelectedModel, _options.DefaultModel, FirstModel(server.AvailableModels), "local-model");
             string endpoint = NormalizeBaseUrl(server.OpenAiBaseUrl);
@@ -1038,9 +1038,9 @@ namespace SocketJack.Com
             AddCsv(_options.MasterListUrls, Environment.GetEnvironmentVariable("SOCKETJACK_COM_MASTER_LIST"));
             AddCsv(_options.DirectEndpoints, Environment.GetEnvironmentVariable("SOCKETJACK_COM_ENDPOINTS"));
 
-            AddIfMissing(_options.MasterListUrls, "https://socketjack.com/api/lmvsproxy/servers");
+            AddIfMissing(_options.MasterListUrls, "https://socketjack.com/api/heirowllm/servers");
             AddIfMissing(_options.MasterListUrls, "https://socketjack.com/api/socketjack-com/servers");
-            AddIfMissing(_options.MasterListUrls, "https://JackCast.Live/api/lmvsproxy/servers");
+            AddIfMissing(_options.MasterListUrls, "https://JackCast.Live/api/heirowllm/servers");
             AddIfMissing(_options.MasterListUrls, "https://JackCast.Live/api/socketjack-com/servers");
 
             string model = Environment.GetEnvironmentVariable("SOCKETJACK_COM_MODEL");

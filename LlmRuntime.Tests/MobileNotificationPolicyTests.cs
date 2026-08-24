@@ -1,4 +1,4 @@
-using JackLLM.Mobile.Services;
+using heirowLLM.Mobile.Services;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LlmRuntime.Tests;
@@ -33,7 +33,7 @@ public sealed class MobileNotificationPolicyTests
         int unread = MobileNotificationText.IncrementUnread(0);
 
         Assert.AreEqual(1, unread);
-        Assert.AreEqual("JackLLM has 1 new notifications.", MobileNotificationText.FormatUnread(unread));
+        Assert.AreEqual("heirowLLM has 1 new notifications.", MobileNotificationText.FormatUnread(unread));
         Assert.AreEqual(2, MobileNotificationText.IncrementUnread(unread));
     }
 }

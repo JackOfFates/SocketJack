@@ -75,7 +75,7 @@ internal static class LlamaSharpBackendSelector
         if (!loaded)
         {
             throw new LlmRuntimeException(
-                "LLamaSharp was configured for " + Format(backend) + ", but the loaded native modules do not include " + requiredModule + " from the " + requiredDirectory + " backend. Restart JackLLM and verify the GPU backend assets are loadable.",
+                "LLamaSharp was configured for " + Format(backend) + ", but the loaded native modules do not include " + requiredModule + " from the " + requiredDirectory + " backend. Restart heirowLLM and verify the GPU backend assets are loadable.",
                 "backend_error",
                 "gpu_backend_not_loaded");
         }

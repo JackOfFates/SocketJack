@@ -13,7 +13,7 @@ The authenticated tools-mode smoke prompt completed successfully.
 - Page: `https://socketjack.com/Auto`
 - Mode: `tools`
 - Origin: `hybrid`
-- Server parameter: `lmvs-shell-05d29369622672e5`
+- Server parameter: `heirowllm-shell-05d29369622672e5`
 - Selected server during run: `TitanX`
 - Selected model during run: `Qwen3.5-2B-Claude-4.6-Opus-Reasoning-Distilled-GGUF`
 - Authenticated user: `JACK`

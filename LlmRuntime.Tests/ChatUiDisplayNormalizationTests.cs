@@ -66,8 +66,8 @@ public sealed class ChatUiDisplayNormalizationTests
 
     private static string CleanVisibleContent(string content)
     {
-        using var proxy = new LmVsProxy("127.0.0.1", 11434, 11435);
-        MethodInfo? method = typeof(LmVsProxy).GetMethod("CleanAssistantVisibleContent", BindingFlags.Instance | BindingFlags.NonPublic);
+        using var proxy = new HeirowLlm("127.0.0.1", 11434, 11435);
+        MethodInfo? method = typeof(HeirowLlm).GetMethod("CleanAssistantVisibleContent", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.IsNotNull(method, "CleanAssistantVisibleContent was not found.");
         return (string)method!.Invoke(proxy, new object[] { content })!;
     }

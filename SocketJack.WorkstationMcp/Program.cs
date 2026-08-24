@@ -116,7 +116,7 @@ internal static class Program
             transport = "http",
             endpoint = "/mcp",
             listen = "http://127.0.0.1:" + options.HttpPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            jackLLM = options.JackLlmBaseUri.ToString(),
+            heirowLLM = options.HeirowLlmBaseUri.ToString(),
             codexExeRunning = CodexProcessGuard.IsCodexExeRunning()
         }));
 
@@ -141,7 +141,7 @@ internal static class Program
         services.AddSingleton(options);
         services.AddHttpClient<WorkstationGateway>(client =>
         {
-            client.BaseAddress = options.JackLlmBaseUri;
+            client.BaseAddress = options.HeirowLlmBaseUri;
             client.Timeout = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("SocketJack.WorkstationMcp/1.0");
         });

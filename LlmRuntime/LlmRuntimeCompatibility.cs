@@ -14,7 +14,7 @@ public sealed class LlmRuntimeCompatibilityService
     public const string DefaultLinuxPytorchCudaIndexUrl = "https://download.pytorch.org/whl/cu124";
     public const string DefaultWindowsLegacyCudaPytorchIndexUrl = "https://download.pytorch.org/whl/cu118";
     public const string LinuxCudaPytorchInstallEndpoint = "/api/v1/runtime/compatibility/install-linux-cuda-pytorch";
-    public const string LinuxCudaPytorchInstallScriptRelativePath = "install/linux/install-jackllm-cuda-pytorch.sh";
+    public const string LinuxCudaPytorchInstallScriptRelativePath = "install/linux/install-heirowllm-cuda-pytorch.sh";
     public const string WindowsLegacyCudaPythonVersion = "3.11.9";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -107,7 +107,7 @@ public sealed class LlmRuntimeCompatibilityService
                     Endpoint = LinuxCudaPytorchInstallEndpoint,
                     Command = linuxInstallCommand,
                     Enabled = true,
-                    Detail = "Runs the bundled Linux installer. It installs available NVIDIA runtime packages through apt when root/passwordless sudo is available, then installs CUDA-enabled PyTorch into the JackLLM Python environment."
+                    Detail = "Runs the bundled Linux installer. It installs available NVIDIA runtime packages through apt when root/passwordless sudo is available, then installs CUDA-enabled PyTorch into the heirowLLM Python environment."
                 });
             }
             else
@@ -148,7 +148,7 @@ public sealed class LlmRuntimeCompatibilityService
                 Enabled = config.AllowPytorchRepair && (recommendation != null || legacyCudaRepairAvailable),
                 Detail = recommendation == null
                     ? legacyCudaRepairAvailable
-                        ? "Install JackLLM's Python " + WindowsLegacyCudaPythonVersion + " legacy CUDA runtime with torch 2.1/cu118 for this GPU."
+                        ? "Install heirowLLM's Python " + WindowsLegacyCudaPythonVersion + " legacy CUDA runtime with torch 2.1/cu118 for this GPU."
                         : "No compatible PyTorch CUDA wheel could be selected for this Python/GPU combination."
                     : "Install torch " + recommendation.PytorchVersion + " from " + recommendation.IndexUrl + "."
             });
@@ -505,11 +505,11 @@ public sealed class LlmRuntimeCompatibilityService
 
     public static string ResolveLinuxCudaPytorchInstallScriptPath()
     {
-        string primary = Path.Combine(AppContext.BaseDirectory, "install", "linux", "install-jackllm-cuda-pytorch.sh");
+        string primary = Path.Combine(AppContext.BaseDirectory, "install", "linux", "install-heirowllm-cuda-pytorch.sh");
         if (File.Exists(primary))
             return primary;
 
-        string tools = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "tools", "linux", "install-jackllm-cuda-pytorch.sh"));
+        string tools = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "tools", "linux", "install-heirowllm-cuda-pytorch.sh"));
         if (File.Exists(tools))
             return tools;
 
@@ -565,7 +565,7 @@ public sealed class LlmRuntimeCompatibilityService
             }
         }
 
-        string dataRoot = Environment.GetEnvironmentVariable("JACKLLM_DATA_ROOT") ?? "";
+        string dataRoot = Environment.GetEnvironmentVariable("HEIROWLLM_DATA_ROOT") ?? "";
         if (!string.IsNullOrWhiteSpace(dataRoot))
         {
             try
@@ -706,6 +706,8 @@ public sealed class LlmRuntimeCompatibilityService
     {
         if (!string.IsNullOrWhiteSpace(requested))
             return requested.Trim();
+        if (!string.IsNullOrWhiteSpace(_options.PythonExecutable))
+            return _options.PythonExecutable.Trim();
         string fromEnvironment = Environment.GetEnvironmentVariable("JACKONNX_PYTHON") ?? "";
         if (!string.IsNullOrWhiteSpace(fromEnvironment))
             return fromEnvironment.Trim();
@@ -719,13 +721,30 @@ public sealed class LlmRuntimeCompatibilityService
             }
         }
 
-        string dataRoot = Environment.GetEnvironmentVariable("JACKLLM_DATA_ROOT") ?? "";
+        string dataRoot = Environment.GetEnvironmentVariable("HEIROWLLM_DATA_ROOT") ?? "";
         if (!string.IsNullOrWhiteSpace(dataRoot))
         {
             foreach (string candidate in EnumeratePythonExecutablesUnderRoot(Path.Combine(dataRoot.Trim(), "Python")))
             {
                 if (File.Exists(candidate))
                     return candidate;
+            }
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!string.IsNullOrWhiteSpace(localAppData))
+            {
+                string managedRoot = Path.Combine(localAppData, "SocketJack", "heirowLLM");
+                foreach (string root in new[] { Path.Combine(managedRoot, "PythonCudaLegacy"), Path.Combine(managedRoot, "Python") })
+                {
+                    foreach (string candidate in EnumeratePythonExecutablesUnderRoot(root))
+                    {
+                        if (File.Exists(candidate))
+                            return candidate;
+                    }
+                }
             }
         }
 
@@ -791,9 +810,9 @@ public sealed class LlmRuntimeCompatibilityService
         if (!python.HasTorch)
             return recommendation == null
                 ? legacyCudaRepairAvailable
-                    ? "Python is available, but this GPU/Python pair needs JackLLM's legacy CUDA Python runtime. Use Repair PyTorch to install Python " + WindowsLegacyCudaPythonVersion + " with CUDA-enabled torch 2.1/cu118."
-                    : "Python is available, but PyTorch is not installed in JackLLM's image-generation Python environment. CUDA was detected, but JackLLM could not automatically select a matching PyTorch CUDA wheel for this Python/GPU pair."
-                : "Python is available, but PyTorch is not installed in JackLLM's image-generation Python environment. Use Repair PyTorch to install CUDA-enabled PyTorch.";
+                    ? "Python is available, but this GPU/Python pair needs heirowLLM's legacy CUDA Python runtime. Use Repair PyTorch to install Python " + WindowsLegacyCudaPythonVersion + " with CUDA-enabled torch 2.1/cu118."
+                    : "Python is available, but PyTorch is not installed in heirowLLM's image-generation Python environment. CUDA was detected, but heirowLLM could not automatically select a matching PyTorch CUDA wheel for this Python/GPU pair."
+                : "Python is available, but PyTorch is not installed in heirowLLM's image-generation Python environment. Use Repair PyTorch to install CUDA-enabled PyTorch.";
         if (string.IsNullOrWhiteSpace(python.TorchCudaVersion))
             return "Python has a CPU-only PyTorch build. Use Repair PyTorch to install a compatible CUDA wheel.";
         if (!python.TorchCudaAvailable)
@@ -1782,7 +1801,7 @@ print(json.dumps(payload))
         foreach (string root in new[]
                  {
                      Environment.GetEnvironmentVariable("JACKONNX_PYTHON_HOME") ?? "",
-                     Path.Combine(Environment.GetEnvironmentVariable("JACKLLM_DATA_ROOT") ?? "", "Python"),
+                     Path.Combine(Environment.GetEnvironmentVariable("HEIROWLLM_DATA_ROOT") ?? "", "Python"),
                      Path.Combine(AppContext.BaseDirectory, "Python"),
                      Path.Combine(AppContext.BaseDirectory, ".venv"),
                      Path.Combine(AppContext.BaseDirectory, "venv"),
@@ -1798,12 +1817,12 @@ print(json.dumps(payload))
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrWhiteSpace(home))
         {
-            yield return Path.Combine(home, ".jackllm", "python");
-            yield return Path.Combine(home, ".jackllm", "venv");
-            yield return Path.Combine(home, ".local", "share", "JackLLM", "Python");
-            yield return Path.Combine(home, ".local", "share", "JackLLM", "venv");
-            yield return Path.Combine(home, ".cache", "jackllm", "python");
-            yield return Path.Combine(home, ".cache", "jackllm", "venv");
+            yield return Path.Combine(home, ".heirowllm", "python");
+            yield return Path.Combine(home, ".heirowllm", "venv");
+            yield return Path.Combine(home, ".local", "share", "heirowLLM", "Python");
+            yield return Path.Combine(home, ".local", "share", "heirowLLM", "venv");
+            yield return Path.Combine(home, ".cache", "heirowllm", "python");
+            yield return Path.Combine(home, ".cache", "heirowllm", "venv");
         }
     }
 

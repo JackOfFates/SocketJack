@@ -1,6 +1,6 @@
 # SocketJack Examples
 
-These examples are kept out of the main README so the overview stays quick to scan. The snippets cover the core transport APIs, HTTP hosting, WebSockets, mutable protocol routing, WPF sharing, JackLLM, file transfer, embedded data, and payments.
+These examples are kept out of the main README so the overview stays quick to scan. The snippets cover the core transport APIs, HTTP hosting, WebSockets, mutable protocol routing, WPF sharing, heirowLLM, file transfer, embedded data, and payments.
 
 ## Install
 
@@ -550,12 +550,12 @@ http.Http.Map("GET", "/", (connection, request, ct) => "<h1>SocketJack data serv
 http.Listen();
 ```
 
-## JackLLM Quick Start
+## heirowLLM Quick Start
 
 ```cs
 using SocketJack.Net;
 
-var proxy = new JackLLM("localhost", lmStudioPort: 1234, proxyPort: 11434);
+var proxy = new heirowLLM("localhost", lmStudioPort: 1234, proxyPort: 11434);
 proxy.Start();
 
 if (!proxy.ChatServer.IsListening)
@@ -567,12 +567,12 @@ Console.WriteLine("Copilot bridge: http://localhost:11434/v1/chat/completions");
 Console.WriteLine("Web console:    " + proxy.ChatServerUrl);
 ```
 
-## JackLLM Server Browser Profile
+## heirowLLM Server Browser Profile
 
 ```cs
 using SocketJack.Net;
 
-var profile = new JackLLMServerProfile
+var profile = new heirowLLMServerProfile
 {
     ServerName = "Local RTX workstation",
     PublicHost = "example.com",
@@ -590,12 +590,12 @@ var profile = new JackLLMServerProfile
 proxy.ConfigureServerBrowserProfile(profile);
 ```
 
-## JackLLM Remote Model Selection
+## heirowLLM Remote Model Selection
 
 ```cs
 using SocketJack.Net;
 
-proxy.ConfigureRemoteModelServerSelection(new JackLLMRemoteModelServerSelection
+proxy.ConfigureRemoteModelServerSelection(new heirowLLMRemoteModelServerSelection
 {
     Enabled = true,
     ServerId = "server-123",
@@ -606,7 +606,7 @@ proxy.ConfigureRemoteModelServerSelection(new JackLLMRemoteModelServerSelection
 });
 ```
 
-## JackLLM Remote Session Clones
+## heirowLLM Remote Session Clones
 
 ```cs
 proxy.RemoteSessionFileCloneChanged += (sender, args) =>

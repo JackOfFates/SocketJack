@@ -6,13 +6,13 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
-using LmVs;
+using heirowLLM;
 using SocketJack.Net.Database;
 using SocketJack.Sandbox;
 
 namespace SocketJack.Net
 {
-    public partial class LmVsProxy
+    public partial class HeirowLlm
     {
         private const string WorkspaceRolePrimary = "primary";
         private const string WorkspaceRoleAttached = "attached";
@@ -21,14 +21,21 @@ namespace SocketJack.Net
         private const string WorkspaceAccessReadWrite = "read-write";
         private static readonly TimeSpan WorkspaceRegexTimeout = TimeSpan.FromMilliseconds(250);
 
+        private void SaveChatWorkspaceDataAndInvalidateCaches()
+        {
+            InvalidateChatSessionDerivedCaches();
+            _chatSessionData.ScheduleSave();
+            _chatSessionData.SaveIfDirty();
+        }
+
         private Table GetChatWorkspaceRootsTable()
         {
             SocketJack.Net.Database.Database db = _chatSessionData.Databases.GetOrAdd(
                 "SocketJack",
                 _ => new SocketJack.Net.Database.Database("SocketJack"));
             Table table = db.Tables.GetOrAdd(
-                "LmVsProxyWorkspaceRoots",
-                _ => new Table("LmVsProxyWorkspaceRoots"));
+                "HeirowLlmWorkspaceRoots",
+                _ => new Table("HeirowLlmWorkspaceRoots"));
             if (table.Columns == null)
                 table.Columns = new List<Column>();
             EnsureColumn(table, 0, "Id", 96);
@@ -54,8 +61,8 @@ namespace SocketJack.Net
                 "SocketJack",
                 _ => new SocketJack.Net.Database.Database("SocketJack"));
             Table table = db.Tables.GetOrAdd(
-                "LmVsProxyWorkspaceIgnoreRules",
-                _ => new Table("LmVsProxyWorkspaceIgnoreRules"));
+                "HeirowLlmWorkspaceIgnoreRules",
+                _ => new Table("HeirowLlmWorkspaceIgnoreRules"));
             if (table.Columns == null)
                 table.Columns = new List<Column>();
             EnsureColumn(table, 0, "Id", 96);
@@ -215,7 +222,7 @@ namespace SocketJack.Net
                     changed = true;
                 }
                 if (changed)
-                    SaveChatSessionDataAndInvalidateCaches();
+                    SaveChatWorkspaceDataAndInvalidateCaches();
             }
         }
 
@@ -246,7 +253,7 @@ namespace SocketJack.Net
                     object[] row = NormalizeChatWorkspaceIgnoreRuleRow(source);
                     return removedIds.Contains(GetRowValue(row, 3));
                 });
-                SaveChatSessionDataAndInvalidateCaches();
+                SaveChatWorkspaceDataAndInvalidateCaches();
             }
         }
 
@@ -272,6 +279,17 @@ namespace SocketJack.Net
                     snapshot.IsInherited = string.IsNullOrWhiteSpace(rowSessionId);
                     roots.Add(snapshot);
                 }
+            }
+            ChatWorkspaceRootSnapshot projectPrimary = BuildChatProjectPrimaryWorkspaceRoot(ownerKey, sessionId);
+            if (projectPrimary != null)
+            {
+                // A project's primary directory is authoritative for every chat in that
+                // project. Retain legacy session roots in storage so removing the project
+                // root is reversible, but do not let one chat override its siblings.
+                roots.RemoveAll(root =>
+                    string.Equals(root.Role, WorkspaceRolePrimary, StringComparison.OrdinalIgnoreCase) ||
+                    PathsEqual(root.Path, projectPrimary.Path));
+                roots.Insert(0, projectPrimary);
             }
             bool hasPrimary = roots.Any(root =>
                 string.Equals(root.Role, WorkspaceRolePrimary, StringComparison.OrdinalIgnoreCase) &&
@@ -301,6 +319,39 @@ namespace SocketJack.Net
                 return order != 0 ? order : string.Compare(left.DisplayName, right.DisplayName, StringComparison.OrdinalIgnoreCase);
             });
             return roots;
+        }
+
+        private ChatWorkspaceRootSnapshot BuildChatProjectPrimaryWorkspaceRoot(string ownerKey, string sessionId)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId))
+                return null;
+            string projectId = GetChatSessionProjectId(sessionId);
+            if (string.IsNullOrWhiteSpace(projectId) ||
+                string.Equals(projectId, ChatProjectUnsortedId, StringComparison.OrdinalIgnoreCase))
+                return null;
+            ChatProjectRecord project = FindChatProject(ownerKey, projectId, includeArchived: true);
+            if (project == null || string.IsNullOrWhiteSpace(project.WorkspaceRoot))
+                return null;
+            string path = NormalizeChatProjectWorkspaceRoot(project.WorkspaceRoot);
+            if (string.IsNullOrWhiteSpace(path))
+                return null;
+            return new ChatWorkspaceRootSnapshot
+            {
+                Id = "projectroot_" + ComputeStableShortHash(project.Id),
+                OwnerKey = ownerKey,
+                SessionId = sessionId,
+                Role = WorkspaceRolePrimary,
+                DisplayName = string.IsNullOrWhiteSpace(project.Name) ? "Project" : project.Name,
+                Path = path,
+                AccessMode = WorkspaceAccessReadWrite,
+                Exists = Directory.Exists(path),
+                IsSandbox = false,
+                IsInherited = true,
+                IsProjectInherited = true,
+                ParentId = project.Id,
+                CreatedUtc = project.CreatedUtc,
+                UpdatedUtc = project.UpdatedUtc
+            };
         }
 
         private static int WorkspaceRoleOrder(string role)
@@ -352,6 +403,9 @@ namespace SocketJack.Net
                 throw new InvalidOperationException(pathError);
             displayName = NormalizeWorkspaceDisplayName(displayName, normalizedPath);
             accessMode = role == WorkspaceRoleGlobal ? WorkspaceAccessReadOnly : NormalizeWorkspaceAccessMode(accessMode);
+            if (role == WorkspaceRolePrimary && TrySaveChatProjectPrimaryWorkspaceRoot(
+                ownerKey, sessionId, rootId, displayName, normalizedPath, out ChatWorkspaceRootSnapshot projectRoot))
+                return projectRoot;
             string now = DateTimeOffset.UtcNow.ToString("O");
             lock (_chatSessionLock)
             {
@@ -366,6 +420,14 @@ namespace SocketJack.Net
                         string.Equals(GetRowValue(candidate, 0), rootId, StringComparison.OrdinalIgnoreCase))
                     {
                         existingIndex = i;
+                        break;
+                    }
+                    if (string.IsNullOrWhiteSpace(rootId) &&
+                        string.Equals(GetRowValue(candidate, 2), sessionId, StringComparison.Ordinal) &&
+                        PathsEqual(GetRowValue(candidate, 5), normalizedPath))
+                    {
+                        existingIndex = i;
+                        rootId = GetRowValue(candidate, 0);
                         break;
                     }
                 }
@@ -410,7 +472,7 @@ namespace SocketJack.Net
                     table.Rows[existingIndex] = row;
                 else
                     table.Rows.Add(row);
-                SaveChatSessionDataAndInvalidateCaches();
+                SaveChatWorkspaceDataAndInvalidateCaches();
                 return ChatWorkspaceRootFromRow(row);
             }
         }
@@ -419,6 +481,9 @@ namespace SocketJack.Net
         {
             ownerKey = NormalizeChatFilesystemOwnerKey(ownerKey);
             sessionId = NormalizeOptionalDeveloperProjectSessionId(sessionId);
+            if (!string.IsNullOrWhiteSpace(rootId) &&
+                rootId.StartsWith("projectroot_", StringComparison.OrdinalIgnoreCase))
+                return ClearChatProjectPrimaryWorkspaceRoot(ownerKey, sessionId, rootId);
             if (string.IsNullOrWhiteSpace(rootId) || rootId.StartsWith("sandbox_", StringComparison.OrdinalIgnoreCase))
                 return false;
             lock (_chatSessionLock)
@@ -441,7 +506,7 @@ namespace SocketJack.Net
                     return ChatOwnerKeysMatch(ownerKey, GetRowValue(row, 1)) &&
                            string.Equals(GetRowValue(row, 3), rootId, StringComparison.OrdinalIgnoreCase);
                 });
-                SaveChatSessionDataAndInvalidateCaches();
+                SaveChatWorkspaceDataAndInvalidateCaches();
                 return true;
             }
         }
@@ -454,7 +519,7 @@ namespace SocketJack.Net
         {
             ChatWorkspaceRootSnapshot root = GetChatWorkspaceRootsDiagnostics(ownerKey, sessionId)
                 .FirstOrDefault(item => string.Equals(item.Id, rootId, StringComparison.OrdinalIgnoreCase));
-            if (root == null || root.IsSandbox || root.IsInherited)
+            if (root == null || root.IsSandbox || (root.IsInherited && !root.IsProjectInherited))
                 throw new InvalidOperationException("Only session-owned workspace folders can be moved on disk.");
             string source = Path.GetFullPath(root.Path);
             string destination = Path.GetFullPath(destinationPath ?? "");
@@ -474,6 +539,14 @@ namespace SocketJack.Net
             Directory.Move(source, destination);
             try
             {
+                if (root.IsProjectInherited)
+                {
+                    if (!TrySaveChatProjectPrimaryWorkspaceRoot(
+                        ownerKey, sessionId, root.Id, root.DisplayName, destination,
+                        out ChatWorkspaceRootSnapshot movedProjectRoot))
+                        throw new InvalidOperationException("Project primary directory is unavailable.");
+                    return movedProjectRoot;
+                }
                 return SaveChatWorkspaceRootDiagnostics(
                     ownerKey, sessionId, root.Id, root.Role, root.DisplayName,
                     destination, root.AccessMode, root.ParentId);
@@ -591,7 +664,7 @@ namespace SocketJack.Net
                     table.Rows[existingIndex] = row;
                 else
                     table.Rows.Add(row);
-                SaveChatSessionDataAndInvalidateCaches();
+                SaveChatWorkspaceDataAndInvalidateCaches();
                 return ChatWorkspaceIgnoreRuleFromRow(row);
             }
         }
@@ -612,7 +685,7 @@ namespace SocketJack.Net
                             string.Equals(GetRowValue(row, 2), sessionId, StringComparison.Ordinal));
                 });
                 if (removed > 0)
-                    SaveChatSessionDataAndInvalidateCaches();
+                    SaveChatWorkspaceDataAndInvalidateCaches();
                 return removed > 0;
             }
         }
@@ -870,7 +943,8 @@ namespace SocketJack.Net
                 fallbackSandbox = roots.Any(root => root.IsSandbox),
                 primary = roots.Where(root => root.Role == WorkspaceRolePrimary).Select(BuildChatWorkspaceRootPayload).FirstOrDefault(),
                 sessionDirectories = roots.Where(root => !root.IsInherited).Select(BuildChatWorkspaceRootPayload).ToList(),
-                globalDirectories = roots.Where(root => root.IsInherited).Select(BuildChatWorkspaceRootPayload).ToList(),
+                projectDirectories = roots.Where(root => root.IsProjectInherited).Select(BuildChatWorkspaceRootPayload).ToList(),
+                globalDirectories = roots.Where(root => root.IsInherited && !root.IsProjectInherited).Select(BuildChatWorkspaceRootPayload).ToList(),
                 effectiveRoots = rootPayloads,
                 ignoreRules = GetChatWorkspaceIgnoreRulesDiagnostics(ownerKey, sessionId).Select(BuildChatWorkspaceIgnoreRulePayload).ToList()
             };
@@ -892,6 +966,7 @@ namespace SocketJack.Net
                 exists = root.Exists || root.IsSandbox,
                 isSandbox = root.IsSandbox,
                 isInherited = root.IsInherited,
+                isProjectInherited = root.IsProjectInherited,
                 parentId = root.ParentId,
                 createdUtc = root.CreatedUtc,
                 updatedUtc = root.UpdatedUtc
@@ -1313,7 +1388,7 @@ namespace SocketJack.Net
                            (string.Equals(GetRowValue(row, 2), sessionId, StringComparison.Ordinal) ||
                             rootIds.Contains(GetRowValue(row, 3)));
                 });
-                SaveChatSessionDataAndInvalidateCaches();
+                SaveChatWorkspaceDataAndInvalidateCaches();
             }
         }
     }

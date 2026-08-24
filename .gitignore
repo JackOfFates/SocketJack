@@ -404,20 +404,20 @@ log_sess*.txt
 **/[Tt]ools/**/*.exe
 **/[Tt]ools/**/*.dll
 /.vsix-bridge-backups/
-/build-check/JackLLM
+/build-check/heirowLLM
 /SocketJack/local_after_patch_probe2.txt containing exactly this single line
 /SocketJack/local_after_patch_probe.txt containing exactly this single line
-/tools/Deploy-JackLLMWorkstationSable.ps1
-/tools/Package-JackLLMWorkstationLinuxWindows.ps1
+/tools/Deploy-heirowLLMWorkstationSable.ps1
+/tools/Package-heirowLLMWorkstationLinuxWindows.ps1
 /SocketJack-MagicMasterList/SocketJack-MagicMasterList.csproj
 /SocketJack-MagicMasterList/Program.AgentBuilder.cs
 /SocketJack-MagicMasterList/Program.cs
 /SocketJack-MagicMasterList/html/Builder.html
 /SocketJack-MagicMasterList/html/favicon.ico
-/SocketJack-MagicMasterList/html/JackLLMWorkstationMainApplication.png
-/SocketJack-MagicMasterList/html/JackLLMWorkstationMetadata.png
-/SocketJack-MagicMasterList/html/JackLLMWorkstationMetadataCandidate.png
-/SocketJack-MagicMasterList/html/JackLLMWorkstationModelsTab.png
+/SocketJack-MagicMasterList/html/heirowLLMWorkstationMainApplication.png
+/SocketJack-MagicMasterList/html/heirowLLMWorkstationMetadata.png
+/SocketJack-MagicMasterList/html/heirowLLMWorkstationMetadataCandidate.png
+/SocketJack-MagicMasterList/html/heirowLLMWorkstationModelsTab.png
 /SocketJack-MagicMasterList/html/SocketJackAutoMetadata.png
 /SocketJack-MagicMasterList/html/SocketJackHttpServerDefaultIndex.html
 /SocketJack-MagicMasterList/html/SocketJackLandingMetadataCandidate.png
@@ -440,7 +440,7 @@ log_sess*.txt
 !/SocketJack-MagicMasterList/Html/Builder.html
 *.py
 /LlmRuntime.VisualStudio2026/Build/RestrictVsixManifestToAmd64.ps1
-/build-check/JackLLM-model-move/install/linux/install-jackllm-cuda-pytorch.sh
+/build-check/heirowLLM-model-move/install/linux/install-heirowllm-cuda-pytorch.sh
 /build-check
-/tools/Publish-JackLLMUpdate.ps1
+/tools/Publish-heirowLLMUpdate.ps1
 /SocketJack.Update/Fix-DeployedChannels.ps1

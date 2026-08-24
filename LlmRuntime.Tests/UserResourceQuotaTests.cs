@@ -9,7 +9,7 @@ public sealed class UserResourceQuotaTests
     public void Proxy_PersistsAndEnforcesPerUserStorageBandwidthAndTokenPeriods()
     {
         string root = FindRepositoryRoot();
-        string proxy = File.ReadAllText(Path.Combine(root, "SocketJack.LlmCore", "Proxy", "JackLLM.cs"));
+        string proxy = File.ReadAllText(Path.Combine(root, "SocketJack.LlmCore", "Proxy", "heirowLLM.cs"));
 
         StringAssert.Contains(proxy, "UserResourceQuotasTableName");
         StringAssert.Contains(proxy, "SaveUserResourceQuotaDiagnostics");
@@ -22,14 +22,31 @@ public sealed class UserResourceQuotaTests
         StringAssert.Contains(proxy, "Daily token cap reached");
         StringAssert.Contains(proxy, "Token percentage limit reached");
         StringAssert.Contains(proxy, "Math.Min(ownerStorageLimit, serverStorageLimit)");
+        StringAssert.Contains(proxy, "DefaultStorageLimitBytes = 10737418240L");
+        StringAssert.Contains(proxy, "referencedWorkspaceBytes = 0L");
+    }
+
+    [TestMethod]
+    public void StorageMeter_ExcludesReferencedWorkspaceTreesAndExplainsProtectedCopies()
+    {
+        string root = FindRepositoryRoot();
+        string proxy = File.ReadAllText(Path.Combine(root, "SocketJack.LlmCore", "Proxy", "heirowLLM.cs"));
+        string versions = File.ReadAllText(Path.Combine(root, "SocketJack.LlmCore", "Proxy", "heirowLLM.VersionControl.cs"));
+        string html = File.ReadAllText(Path.Combine(root, "SocketJack", "html", "heirowLLMWebChat.html"));
+
+        Assert.IsFalse(proxy.Contains("AddChatWorkspaceStorageUsage", StringComparison.Ordinal));
+        StringAssert.Contains(versions, "includeReferencedWorkspaceRoots: false");
+        StringAssert.Contains(html, "referenced workspace files and folders use 0 B");
+        StringAssert.Contains(html, "const hasFreshStorageMetrics = solutionExplorerStorage");
+        StringAssert.Contains(html, "loadSolutionExplorer(true)");
     }
 
     [TestMethod]
     public void ServerManagement_ProvidesAdminQuotaEditorAndAccessibleRgbMeters()
     {
         string root = FindRepositoryRoot();
-        string xaml = File.ReadAllText(Path.Combine(root, "JackLLM", "MainWindow.xaml"));
-        string code = File.ReadAllText(Path.Combine(root, "JackLLM", "MainWindow.xaml.cs"));
+        string xaml = File.ReadAllText(Path.Combine(root, "heirowLLM", "MainWindow.xaml"));
+        string code = File.ReadAllText(Path.Combine(root, "heirowLLM", "MainWindow.xaml.cs"));
 
         StringAssert.Contains(xaml, "SocketJack Resource Limits");
         StringAssert.Contains(xaml, "UserQuotaStorageMbTextBox");
@@ -42,14 +59,16 @@ public sealed class UserResourceQuotaTests
         StringAssert.Contains(code, "AutomationProperties.SetHelpText");
         StringAssert.Contains(code, "Existing usage counters are preserved");
         StringAssert.Contains(code, "network ↓");
+        StringAssert.Contains(code, "DefaultHostStorageLimitMegabytes = 10240");
+        StringAssert.Contains(xaml, "Value=\"10240\"");
     }
 
     [TestMethod]
     public void WorkstationTopBar_SeparatesWindowsStyleMenusFromCompactResourceChips()
     {
         string root = FindRepositoryRoot();
-        string xaml = File.ReadAllText(Path.Combine(root, "JackLLM", "MainWindow.xaml"));
-        string code = File.ReadAllText(Path.Combine(root, "JackLLM", "MainWindow.xaml.cs"));
+        string xaml = File.ReadAllText(Path.Combine(root, "heirowLLM", "MainWindow.xaml"));
+        string code = File.ReadAllText(Path.Combine(root, "heirowLLM", "MainWindow.xaml.cs"));
 
         StringAssert.Contains(xaml, "Header=\"File\"");
         StringAssert.Contains(xaml, "Header=\"Edit\"");
@@ -69,13 +88,13 @@ public sealed class UserResourceQuotaTests
     public void StartupDiagnosis_NeverDownloadsOrStartsTheLegacyRemoteRepairUpdater()
     {
         string root = FindRepositoryRoot();
-        string diagnosis = File.ReadAllText(Path.Combine(root, "JackLLM", "RepairInstallationWindow.cs"));
-        string project = File.ReadAllText(Path.Combine(root, "JackLLM", "JackLLM.csproj"));
+        string diagnosis = File.ReadAllText(Path.Combine(root, "heirowLLM", "RepairInstallationWindow.cs"));
+        string project = File.ReadAllText(Path.Combine(root, "heirowLLM", "heirowLLM.csproj"));
 
         StringAssert.Contains(diagnosis, "Startup Diagnosis");
         StringAssert.Contains(diagnosis, "No network repair or remote update was attempted");
         Assert.IsFalse(diagnosis.Contains("socketjack.com", StringComparison.OrdinalIgnoreCase));
-        Assert.IsFalse(diagnosis.Contains("JackLLMUpdater.exe", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(diagnosis.Contains("heirowLLMUpdater.exe", StringComparison.OrdinalIgnoreCase));
         StringAssert.Contains(project, "'$(BundleOfficialSecurityBroker)' != 'false'");
     }
 
@@ -83,8 +102,8 @@ public sealed class UserResourceQuotaTests
     public void LocalReleaseSecurityBroker_FollowsItsWorkstationAndReusesAHealthyExistingBroker()
     {
         string root = FindRepositoryRoot();
-        string startup = File.ReadAllText(Path.Combine(root, "JackLLM", "StartupLoadingWindow.xaml.cs"));
-        string broker = File.ReadAllText(Path.Combine(root, "JackLLM.SecurityBroker", "Program.cs"));
+        string startup = File.ReadAllText(Path.Combine(root, "heirowLLM", "StartupLoadingWindow.xaml.cs"));
+        string broker = File.ReadAllText(Path.Combine(root, "heirowLLM.SecurityBroker", "Program.cs"));
 
         StringAssert.Contains(startup, "--parent-pid");
         StringAssert.Contains(startup, "existingResponse.BrokerCompatibility");

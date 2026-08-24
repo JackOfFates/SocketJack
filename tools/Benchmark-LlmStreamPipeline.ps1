@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$Endpoint,
 
-    [ValidateSet("OpenAiSse", "JackLlmNdjson")]
+    [ValidateSet("OpenAiSse", "HeirowLlmNdjson")]
     [string]$Format = "OpenAiSse",
 
     [string]$Model = "",
@@ -120,7 +120,7 @@ function Read-OpenAiFrame {
     }
 }
 
-function Read-JackLlmFrame {
+function Read-HeirowLlmFrame {
     param([string]$Line)
 
     $trimmed = $Line.Trim()
@@ -219,7 +219,7 @@ function Invoke-StreamingRun {
                     continue
                 }
 
-                $frame = if ($Format -eq "OpenAiSse") { Read-OpenAiFrame $line } else { Read-JackLlmFrame $line }
+                $frame = if ($Format -eq "OpenAiSse") { Read-OpenAiFrame $line } else { Read-HeirowLlmFrame $line }
                 if ($frame.Type -eq "blank") {
                     continue
                 }
@@ -257,8 +257,8 @@ function Invoke-StreamingRun {
             }
         }
 
-        if (-not $contentDone -and $lineBuffer.Trim().Length -gt 0 -and $Format -eq "JackLlmNdjson") {
-            $frame = Read-JackLlmFrame $lineBuffer
+        if (-not $contentDone -and $lineBuffer.Trim().Length -gt 0 -and $Format -eq "HeirowLlmNdjson") {
+            $frame = Read-HeirowLlmFrame $lineBuffer
             if ($frame.Type -ne "blank") {
                 $frames++
                 if ($frame.Done) { $doneFrames++ }

@@ -12,7 +12,7 @@ public sealed class SocketJackWorkstationTools
         ReadOnly = true,
         Idempotent = true,
         OpenWorld = false)]
-    [Description("Use this to get a compact live summary of the local JackLLM Workstation state through the loopback SocketJack HTTP server.")]
+    [Description("Use this to get a compact live summary of the local heirowLLM Workstation state through the loopback SocketJack HTTP server.")]
     public Task<string> GetWorkstationSummaryAsync(
         WorkstationGateway gateway,
         CancellationToken cancellationToken)
@@ -26,7 +26,7 @@ public sealed class SocketJackWorkstationTools
         ReadOnly = true,
         Idempotent = true,
         OpenWorld = false)]
-    [Description("Use this to call a known read-only JackLLM Workstation endpoint. Optional query must be a query string only, not a full URL.")]
+    [Description("Use this to call a known read-only heirowLLM Workstation endpoint. Optional query must be a query string only, not a full URL.")]
     public Task<string> GetKnownEndpointAsync(
         WorkstationGateway gateway,
         [Description("The known workstation endpoint to read.")] WorkstationEndpoint endpoint,
@@ -42,7 +42,7 @@ public sealed class SocketJackWorkstationTools
         ReadOnly = true,
         Idempotent = true,
         OpenWorld = false)]
-    [Description("Use this to GET another loopback JackLLM /api/ path when no named endpoint fits. The path must be relative and start with /api/ or be exactly /health.")]
+    [Description("Use this to GET another loopback heirowLLM /api/ path when no named endpoint fits. The path must be relative and start with /api/ or be exactly /health.")]
     public Task<string> GetPathAsync(
         WorkstationGateway gateway,
         [Description("Relative path only, for example '/api/chat-active-sessions'. Absolute URLs are rejected.")] string path,
@@ -58,7 +58,7 @@ public sealed class SocketJackWorkstationTools
         Destructive = false,
         Idempotent = true,
         OpenWorld = false)]
-    [Description("Use this to request cancellation of one active JackLLM chat or image stream by streamId through /api/chat-stream/stop.")]
+    [Description("Use this to request cancellation of one active heirowLLM chat or image stream by streamId through /api/chat-stream/stop.")]
     public Task<string> StopStreamAsync(
         WorkstationGateway gateway,
         [Description("The active streamId reported by socketjack_get_endpoint ActiveStreams.")] string streamId,

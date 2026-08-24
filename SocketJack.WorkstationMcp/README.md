@@ -1,6 +1,6 @@
 # SocketJack.WorkstationMcp
 
-Local MCP bridge for JackLLM Workstation / SocketJack HTTP APIs.
+Local MCP bridge for heirowLLM Workstation / SocketJack HTTP APIs.
 
 ## Stdio transport
 
@@ -23,7 +23,7 @@ HTTP mode:
 - listens only on `http://127.0.0.1:<port>/mcp`
 - refuses to start unless `codex.exe` is running
 - stops itself after `codex.exe` exits
-- proxies only to loopback JackLLM URLs
+- proxies only to loopback heirowLLM URLs
 
 Health probe:
 

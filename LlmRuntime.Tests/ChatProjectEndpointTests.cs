@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Reflection;
-using LmVs;
+using heirowLLM;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.Net;
 using NetHttpClient = System.Net.Http.HttpClient;
@@ -17,11 +17,11 @@ public sealed class ChatProjectEndpointTests
     [TestMethod]
     public async Task ProjectsGroupPinMoveArchiveAndPersistSessions()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-chat-projects-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-chat-projects-" + Guid.NewGuid().ToString("N"));
         try
         {
             string projectId;
-            using (LmVsProxy proxy = CreateProxy(root))
+            using (HeirowLlm proxy = CreateProxy(root))
             using (var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) })
             {
                 using JsonDocument created = await Post(client, "/api/chat-project", new { action = "create", name = "SocketJack" });
@@ -40,6 +40,22 @@ public sealed class ChatProjectEndpointTests
                 Assert.IsTrue(list[0].GetProperty("pinned").GetBoolean());
                 Assert.AreEqual("SocketJack", list[0].GetProperty("projectName").GetString());
 
+                await Post(client, "/api/chat-session", new
+                {
+                    id = "session_b",
+                    title = "Second task updated",
+                    projectId = "unsorted",
+                    messages = new[] { new { role = "user", content = "updated after the move" } }
+                });
+
+                using (HeirowLlm immediateReload = CreateProxy(root))
+                using (var immediateClient = new NetHttpClient { BaseAddress = new Uri(immediateReload.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) })
+                using (JsonDocument immediateSessions = await Get(immediateClient, "/api/chat-sessions?projectId=" + Uri.EscapeDataString(projectId) + "&take=all"))
+                {
+                    Assert.AreEqual(2, immediateSessions.RootElement.GetProperty("sessions").GetArrayLength(),
+                        "A user project move must be durable before the live Workstation process exits.");
+                }
+
                 await Post(client, "/api/chat-project", new { action = "pin", projectId });
                 await Post(client, "/api/chat-project", new { action = "archive", projectId });
                 using JsonDocument visible = await Get(client, "/api/chat-projects");
@@ -48,7 +64,7 @@ public sealed class ChatProjectEndpointTests
                 Assert.IsTrue(archived.RootElement.GetProperty("projects").EnumerateArray().Any(item => item.GetProperty("id").GetString() == projectId && item.GetProperty("archived").GetBoolean()));
             }
 
-            using (LmVsProxy reloaded = CreateProxy(root))
+            using (HeirowLlm reloaded = CreateProxy(root))
             using (var client = new NetHttpClient { BaseAddress = new Uri(reloaded.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) })
             {
                 using JsonDocument sessions = await Get(client, "/api/chat-sessions?projectId=" + Uri.EscapeDataString(projectId) + "&take=all");
@@ -61,23 +77,29 @@ public sealed class ChatProjectEndpointTests
     [TestMethod]
     public async Task ProjectFilesAreSharedDeleteableAndRevertibleThroughVersions()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-project-files-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-project-files-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using LmVsProxy proxy = CreateProxy(root);
+            using HeirowLlm proxy = CreateProxy(root);
             using var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) };
             using JsonDocument created = await Post(client, "/api/chat-project", new { action = "create", name = "Shared Files" });
             string projectId = created.RootElement.GetProperty("project").GetProperty("id").GetString()!;
             await Post(client, "/api/chat-session", new { id = "session_a", title = "A", projectId, messages = Array.Empty<object>() });
             await Post(client, "/api/chat-session", new { id = "session_b", title = "B", projectId, messages = Array.Empty<object>() });
 
-            MethodInfo getFilesRoot = typeof(LmVsProxy).GetMethod("GetChatSessionFilesDirectory", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo getFilesRoot = typeof(HeirowLlm).GetMethod("GetChatSessionFilesDirectory", BindingFlags.Instance | BindingFlags.NonPublic)!;
             string filesRoot = (string)getFilesRoot.Invoke(proxy, new object[] { "session_a" })!;
-            MethodInfo storeFile = typeof(LmVsProxy).GetMethod("StoreChatUploadedSessionFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo storeFile = typeof(HeirowLlm).GetMethod("StoreChatUploadedSessionFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
             storeFile.Invoke(proxy, new object[] { "session_a", "unauthenticated", filesRoot, "note.txt", "", "text/plain", Encoding.UTF8.GetBytes("hello") });
 
             JsonElement sharedFile = await GetOnlyProjectFile(client, "session_b");
             Assert.AreEqual("note.txt", sharedFile.GetProperty("name").GetString(), "Generated file_ ids must stay hidden from Project Files display names.");
+            using (JsonDocument siblingSession = await Get(client, "/api/chat-session?id=session_b"))
+            {
+                JsonElement siblingFiles = siblingSession.RootElement.GetProperty("session").GetProperty("files");
+                Assert.AreEqual(1, siblingFiles.GetArrayLength(), "Project file registrations must be shared with sibling chats, not only the explorer tree.");
+                Assert.AreEqual("note.txt", siblingFiles[0].GetProperty("name").GetString());
+            }
 
             await Post(client, "/api/project-file-versions", new { action = "create", sessionId = "session_b", name = "Working copy" });
             string virtualPath = sharedFile.GetProperty("path").GetString()!;
@@ -116,14 +138,195 @@ public sealed class ChatProjectEndpointTests
     }
 
     [TestMethod]
+    public async Task MovingSessionsIntoProjectMergesFilesAndKeepsSiblingSandboxesCurrent()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-project-file-sync-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using HeirowLlm proxy = CreateProxy(root);
+            using var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) };
+            await Post(client, "/api/chat-session", new { id = "legacy_a", title = "A", messages = Array.Empty<object>() });
+            await Post(client, "/api/chat-session", new { id = "legacy_b", title = "B", messages = Array.Empty<object>() });
+
+            MethodInfo getFilesRoot = typeof(HeirowLlm).GetMethod("GetChatSessionFilesDirectory", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo storeFile = typeof(HeirowLlm).GetMethod("StoreChatUploadedSessionFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            string legacyRootA = (string)getFilesRoot.Invoke(proxy, new object[] { "legacy_a" })!;
+            string legacyRootB = (string)getFilesRoot.Invoke(proxy, new object[] { "legacy_b" })!;
+            storeFile.Invoke(proxy, new object[] { "legacy_a", "unauthenticated", legacyRootA, "alpha.txt", "", "text/plain", Encoding.UTF8.GetBytes("alpha-old") });
+            storeFile.Invoke(proxy, new object[] { "legacy_b", "unauthenticated", legacyRootB, "beta.txt", "", "text/plain", Encoding.UTF8.GetBytes("beta") });
+
+            using JsonDocument created = await Post(client, "/api/chat-project", new { action = "create", name = "Merged Files" });
+            string projectId = created.RootElement.GetProperty("project").GetProperty("id").GetString()!;
+            await Post(client, "/api/chat-session-action", new { id = "legacy_a", action = "assign-project", projectId });
+            await Post(client, "/api/chat-session-action", new { id = "legacy_b", action = "assign-project", projectId });
+
+            string projectRootA = (string)getFilesRoot.Invoke(proxy, new object[] { "legacy_a" })!;
+            string projectRootB = (string)getFilesRoot.Invoke(proxy, new object[] { "legacy_b" })!;
+            Assert.AreEqual(Path.GetFullPath(projectRootA), Path.GetFullPath(projectRootB));
+            string alphaPath = Directory.EnumerateFiles(projectRootA, "*alpha.txt", SearchOption.AllDirectories).Single();
+            Assert.AreEqual(1, Directory.EnumerateFiles(projectRootA, "*beta.txt", SearchOption.AllDirectories).Count());
+
+            MethodInfo readSandboxText = typeof(HeirowLlm).GetMethod("TryReadChatSessionSandboxTextFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            object[] initialRead = { "legacy_b", "unauthenticated", alphaPath, null! };
+            Assert.IsTrue((bool)readSandboxText.Invoke(proxy, initialRead)!);
+            Assert.AreEqual("alpha-old", initialRead[3]);
+
+            MethodInfo writeSandboxBytes = typeof(HeirowLlm).GetMethod("WriteChatSessionFileBytesToSandbox", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            object[] writeArguments = { "legacy_a", "unauthenticated", alphaPath, Encoding.UTF8.GetBytes("alpha-new"), "test-shared-project-write", null! };
+            writeSandboxBytes.Invoke(proxy, writeArguments);
+            MethodInfo registerTracked = typeof(HeirowLlm).GetMethod("RegisterChatSessionFileIfTracked", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            registerTracked.Invoke(proxy, new object[] { "legacy_a", "unauthenticated", alphaPath, "generated" });
+
+            object[] siblingRead = { "legacy_b", "unauthenticated", alphaPath, null! };
+            Assert.IsTrue((bool)readSandboxText.Invoke(proxy, siblingRead)!);
+            Assert.AreEqual("alpha-new", siblingRead[3], "A sibling chat must never retain stale project-file bytes in its sandbox.");
+
+            await Post(client, "/api/chat-session", new { id = "legacy_c", title = "C", projectId, messages = Array.Empty<object>() });
+            using JsonDocument newSibling = await Get(client, "/api/chat-session?id=legacy_c");
+            JsonElement files = newSibling.RootElement.GetProperty("session").GetProperty("files");
+            CollectionAssert.AreEquivalent(
+                new[] { "alpha.txt", "beta.txt" },
+                files.EnumerateArray().Select(file => file.GetProperty("name").GetString()).ToArray(),
+                "A session added later must inherit the complete project file set without duplicate registrations.");
+
+            using JsonDocument projectSessions = await Get(client, "/api/chat-sessions?projectId=" + Uri.EscapeDataString(projectId) + "&take=all");
+            Assert.IsTrue(projectSessions.RootElement.GetProperty("sessions").EnumerateArray().All(session => session.GetProperty("fileCount").GetInt32() == 2),
+                "Every chat card in a project must report the same shared project-file count.");
+
+            string alphaVirtualPath = files.EnumerateArray().Single(file => file.GetProperty("name").GetString() == "alpha.txt").GetProperty("path").GetString()!;
+            using NetHttpResponseMessage deleted = await client.DeleteAsync(
+                "/api/chat-file?sessionId=legacy_a&kind=session&path=" + Uri.EscapeDataString(alphaVirtualPath));
+            deleted.EnsureSuccessStatusCode();
+            object[] deletedSiblingRead = { "legacy_b", "unauthenticated", alphaPath, null! };
+            Assert.IsFalse((bool)readSandboxText.Invoke(proxy, deletedSiblingRead)!, "Deleting a project file must evict it from every sibling sandbox.");
+
+            using JsonDocument afterDelete = await Get(client, "/api/chat-session?id=legacy_c");
+            CollectionAssert.AreEqual(
+                new[] { "beta.txt" },
+                afterDelete.RootElement.GetProperty("session").GetProperty("files").EnumerateArray().Select(file => file.GetProperty("name").GetString()).ToArray());
+
+            foreach (string sessionId in new[] { "legacy_a", "legacy_b", "legacy_c" })
+                await Post(client, "/api/chat-session", new { action = "delete", id = sessionId });
+            await Post(client, "/api/chat-session", new { id = "legacy_d", title = "D", projectId, messages = Array.Empty<object>() });
+            using JsonDocument restoredProject = await Get(client, "/api/chat-session?id=legacy_d");
+            CollectionAssert.AreEqual(
+                new[] { "beta.txt" },
+                restoredProject.RootElement.GetProperty("session").GetProperty("files").EnumerateArray().Select(file => file.GetProperty("name").GetString()).ToArray(),
+                "Project Files must remain project-owned even when every previous chat has been deleted.");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public async Task ProjectPrimaryDirectoryIsInheritedRelinkedAndRemovedForEverySession()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-project-primary-" + Guid.NewGuid().ToString("N"));
+        string firstWorkspace = Path.Combine(root, "first-workspace");
+        string secondWorkspace = Path.Combine(root, "second-workspace");
+        Directory.CreateDirectory(firstWorkspace);
+        Directory.CreateDirectory(secondWorkspace);
+        try
+        {
+            using HeirowLlm proxy = CreateProxy(root);
+            using var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) };
+            using JsonDocument created = await Post(client, "/api/chat-project", new { action = "create", name = "Inherited Workspace" });
+            string projectId = created.RootElement.GetProperty("project").GetProperty("id").GetString()!;
+            await Post(client, "/api/chat-session", new { id = "primary_a", title = "A", projectId, messages = Array.Empty<object>() });
+            await Post(client, "/api/chat-session", new { id = "primary_b", title = "B", projectId, messages = Array.Empty<object>() });
+
+            ChatWorkspaceRootSnapshot saved = proxy.SaveChatWorkspaceRootDiagnostics(
+                "unauthenticated", "primary_a", "", "primary", "First", firstWorkspace, "read-write");
+            Assert.IsTrue(saved.IsProjectInherited);
+            Assert.AreEqual(projectId, saved.ParentId);
+
+            ChatWorkspaceRootSnapshot inheritedByB = proxy.GetChatWorkspaceRootsDiagnostics("unauthenticated", "primary_b")
+                .Single(item => item.Role == "primary");
+            Assert.IsTrue(inheritedByB.IsProjectInherited);
+            Assert.AreEqual(Path.GetFullPath(firstWorkspace), Path.GetFullPath(inheritedByB.Path));
+            using (JsonDocument workspaces = await Get(client, "/api/chat-workspaces?sessionId=primary_b"))
+            {
+                JsonElement primary = workspaces.RootElement.GetProperty("primary");
+                Assert.IsTrue(primary.GetProperty("isProjectInherited").GetBoolean());
+                Assert.AreEqual(Path.GetFullPath(firstWorkspace), Path.GetFullPath(primary.GetProperty("path").GetString()!));
+            }
+
+            proxy.SaveChatWorkspaceRootDiagnostics(
+                "unauthenticated", "primary_b", inheritedByB.Id, "primary", "Second", secondWorkspace, "read-write");
+            ChatWorkspaceRootSnapshot relinkedForA = proxy.GetChatWorkspaceRootsDiagnostics("unauthenticated", "primary_a")
+                .Single(item => item.Role == "primary");
+            Assert.AreEqual(Path.GetFullPath(secondWorkspace), Path.GetFullPath(relinkedForA.Path));
+
+            Assert.IsTrue(proxy.RemoveChatWorkspaceRootDiagnostics("unauthenticated", "primary_a", relinkedForA.Id));
+            ChatWorkspaceRootSnapshot fallbackForB = proxy.GetChatWorkspaceRootsDiagnostics("unauthenticated", "primary_b")
+                .Single(item => item.Role == "primary");
+            Assert.IsTrue(fallbackForB.IsSandbox);
+            using JsonDocument projects = await Get(client, "/api/chat-projects?includeArchived=true");
+            JsonElement project = projects.RootElement.GetProperty("projects").EnumerateArray()
+                .Single(item => item.GetProperty("id").GetString() == projectId);
+            Assert.AreEqual("", project.GetProperty("workspaceRoot").GetString());
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public async Task ProjectVersionControlListsProblemFilesAndRollsBackOnlyTheSelectedFile()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-project-problems-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using HeirowLlm proxy = CreateProxy(root);
+            using var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) };
+            using JsonDocument created = await Post(client, "/api/chat-project", new { action = "create", name = "Problem Areas" });
+            string projectId = created.RootElement.GetProperty("project").GetProperty("id").GetString()!;
+            await Post(client, "/api/chat-session", new { id = "problem_a", title = "A", projectId, messages = Array.Empty<object>() });
+            await Post(client, "/api/chat-session", new { id = "problem_b", title = "B", projectId, messages = Array.Empty<object>() });
+
+            MethodInfo getFilesRoot = typeof(HeirowLlm).GetMethod("GetChatSessionFilesDirectory", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            string projectFiles = (string)getFilesRoot.Invoke(proxy, new object[] { "problem_a" })!;
+            Directory.CreateDirectory(projectFiles);
+            string first = Path.Combine(projectFiles, "first.txt");
+            string second = Path.Combine(projectFiles, "second.txt");
+            File.WriteAllText(first, "before\n");
+
+            MethodInfo begin = typeof(HeirowLlm).GetMethod("BeginAutomaticVersionControlRun", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            MethodInfo complete = typeof(HeirowLlm).GetMethod("CompleteAutomaticVersionControlRun", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            begin.Invoke(proxy, new object[] { "problem_prompt", "unauthenticated", "problem_a" });
+            File.WriteAllText(first, "after\n");
+            File.WriteAllText(second, "created\n");
+            string versionId = (string)complete.Invoke(proxy, new object[] { "problem_prompt", "Completed" })!;
+            Assert.IsTrue(versionId.StartsWith("version_", StringComparison.Ordinal));
+
+            using JsonDocument history = await Get(client, "/api/project-version-control?sessionId=problem_b&scope=project&take=25&skip=0");
+            JsonElement version = history.RootElement.GetProperty("versions").EnumerateArray()
+                .Single(item => item.GetProperty("id").GetString() == versionId);
+            JsonElement[] changes = version.GetProperty("changes").EnumerateArray().ToArray();
+            Assert.AreEqual(2, changes.Length);
+            CollectionAssert.AreEquivalent(new[] { "first.txt", "second.txt" }, changes.Select(item => item.GetProperty("relativePath").GetString()).ToArray());
+            string firstKey = changes.Single(item => item.GetProperty("relativePath").GetString() == "first.txt").GetProperty("key").GetString()!;
+
+            await Post(client, "/api/project-version-control", new
+            {
+                action = "restore",
+                sessionId = "problem_b",
+                versionId,
+                scope = "project",
+                selectedPaths = new[] { firstKey }
+            });
+            Assert.AreEqual("before\n", File.ReadAllText(first));
+            Assert.AreEqual("created\n", File.ReadAllText(second), "A one-file rollback must not rewind sibling project files.");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public async Task WorkspaceExplorerWritesAndDeletesOnlyInsideReadWriteRoots()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-workspace-explorer-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-workspace-explorer-" + Guid.NewGuid().ToString("N"));
         string attachedRoot = Path.Combine(root, "attached");
         Directory.CreateDirectory(attachedRoot);
         try
         {
-            using LmVsProxy proxy = CreateProxy(root);
+            using HeirowLlm proxy = CreateProxy(root);
             using var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) };
             await Post(client, "/api/chat-session", new { id = "workspace_session", title = "Workspace", messages = Array.Empty<object>() });
             ChatWorkspaceRootSnapshot attached = proxy.SaveChatWorkspaceRootDiagnostics(
@@ -143,7 +346,7 @@ public sealed class ChatProjectEndpointTests
             deleted.EnsureSuccessStatusCode();
             Assert.IsFalse(File.Exists(writableFile));
 
-            MethodInfo resolveUpload = typeof(LmVsProxy).GetMethod(
+            MethodInfo resolveUpload = typeof(HeirowLlm).GetMethod(
                 "TryResolveChatUploadDirectory", BindingFlags.Instance | BindingFlags.NonPublic)!;
             object[] writableArgs = { "unauthenticated", "workspace_session", attachedRoot, "workspace", null!, null! };
             Assert.IsTrue((bool)resolveUpload.Invoke(proxy, writableArgs)!);
@@ -168,14 +371,14 @@ public sealed class ChatProjectEndpointTests
     [TestMethod]
     public async Task VersionControlGroupsResponseChangesRestoresSafelyAndPersistsSettings()
     {
-        string root = Path.Combine(Path.GetTempPath(), "jackllm-version-control-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "heirowllm-version-control-" + Guid.NewGuid().ToString("N"));
         string writableRoot = Path.Combine(root, "writable");
         string readOnlyRoot = Path.Combine(root, "readonly");
         Directory.CreateDirectory(writableRoot);
         Directory.CreateDirectory(readOnlyRoot);
         try
         {
-            using (LmVsProxy proxy = CreateProxy(root))
+            using (HeirowLlm proxy = CreateProxy(root))
             using (var client = new NetHttpClient { BaseAddress = new Uri(proxy.ChatServerUrl), Timeout = TimeSpan.FromSeconds(15) })
             {
                 await Post(client, "/api/chat-session", new { id = "version_session", title = "Protected", messages = Array.Empty<object>() });
@@ -197,35 +400,38 @@ public sealed class ChatProjectEndpointTests
 	            using JsonDocument apiDefaults = await Get(client, "/api/project-version-control?sessionId=version_session&scope=session&take=25&skip=0");
 	            Assert.IsTrue(apiDefaults.RootElement.GetProperty("settings").GetProperty("effectiveAutomaticEnabled").GetBoolean());
 	            Assert.IsTrue(apiDefaults.RootElement.GetProperty("protectedRoots").EnumerateArray().Any(path => string.Equals(Path.GetFullPath(path.GetString()!), Path.GetFullPath(writableRoot), StringComparison.OrdinalIgnoreCase)));
-	            Assert.IsFalse(apiDefaults.RootElement.GetProperty("protectedRoots").EnumerateArray().Any(path => string.Equals(Path.GetFullPath(path.GetString()!), Path.GetFullPath(readOnlyRoot), StringComparison.OrdinalIgnoreCase)));
+                Assert.IsFalse(apiDefaults.RootElement.GetProperty("protectedRoots").EnumerateArray().Any(path => string.Equals(Path.GetFullPath(path.GetString()!), Path.GetFullPath(readOnlyRoot), StringComparison.OrdinalIgnoreCase)));
+	            using JsonDocument manualBaseline = await Post(client, "/api/project-version-control", new { action = "create-restore-point", sessionId = "version_session", name = "Referenced tree baseline", scope = "session" });
+	            string baselineVersionId = manualBaseline.RootElement.GetProperty("versions").EnumerateArray()
+	                .Single(version => version.GetProperty("name").GetString() == "Referenced tree baseline").GetProperty("id").GetString()!;
 
-                MethodInfo begin = typeof(LmVsProxy).GetMethod("BeginAutomaticVersionControlRun", BindingFlags.Instance | BindingFlags.NonPublic)!;
-                MethodInfo complete = typeof(LmVsProxy).GetMethod("CompleteAutomaticVersionControlRun", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                MethodInfo begin = typeof(HeirowLlm).GetMethod("BeginAutomaticVersionControlRun", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                MethodInfo complete = typeof(HeirowLlm).GetMethod("CompleteAutomaticVersionControlRun", BindingFlags.Instance | BindingFlags.NonPublic)!;
                 begin.Invoke(proxy, new object[] { "prompt_test", "unauthenticated", "version_session" });
                 File.WriteAllText(writableFile, "after");
                 File.WriteAllText(secondFile, "created");
                 File.WriteAllText(ignoredGitFile, "after");
                 string versionId = (string)complete.Invoke(proxy, new object[] { "prompt_test", "Completed" })!;
-                Assert.IsTrue(versionId.StartsWith("version_", StringComparison.Ordinal));
+                Assert.AreEqual("", versionId, "Automatic versions must not duplicate files from referenced roots.");
 
                 ProjectVersionControlDiagnosticsSnapshot history = proxy.GetProjectVersionControlDiagnostics("unauthenticated", "version_session");
-                Assert.AreEqual(1, history.Versions.Count(version => version.Type == "automatic"));
-                ProjectVersionControlVersionSnapshot automatic = history.Versions.Single(version => version.Id == versionId);
-                Assert.AreEqual(2, automatic.AffectedFileCount, ".git metadata must not be included in the response restore point.");
-                Assert.AreEqual("1.0.1", automatic.SemanticVersion);
-                Assert.AreEqual(2, automatic.Additions);
-                Assert.AreEqual(1, automatic.Deletions);
+                Assert.AreEqual(0, history.Versions.Count(version => version.Type == "automatic"));
+                ProjectVersionControlVersionSnapshot baseline = history.Versions.Single(version => version.Id == baselineVersionId);
+                Assert.AreEqual("manual", baseline.Type);
+                Assert.AreEqual("1.0.1", baseline.SemanticVersion);
+                Assert.AreEqual(0, baseline.AffectedFileCount, "A manual baseline has no changes until it is compared for restore.");
+                Assert.AreEqual(Encoding.UTF8.GetByteCount("before"), baseline.StorageBytes, ".git metadata must not be included in manual restore points.");
 
-                ProjectVersionControlRestoreSnapshot restored = proxy.RestoreProjectVersionControlDiagnostics("unauthenticated", "version_session", versionId);
+                ProjectVersionControlRestoreSnapshot restored = proxy.RestoreProjectVersionControlDiagnostics("unauthenticated", "version_session", baselineVersionId);
                 Assert.AreEqual("before", File.ReadAllText(writableFile));
                 Assert.IsFalse(File.Exists(secondFile));
                 Assert.AreEqual("after", File.ReadAllText(ignoredGitFile));
                 Assert.AreEqual(2, restored.RestoredFileCount);
 
                 File.WriteAllText(writableFile, "newer work");
-                ProjectVersionControlRestoreSnapshot conflict = proxy.RestoreProjectVersionControlDiagnostics("unauthenticated", "version_session", versionId);
-                Assert.AreEqual("newer work", File.ReadAllText(writableFile));
-                Assert.IsTrue(conflict.Conflicts.Contains(writableFile));
+                ProjectVersionControlRestoreSnapshot repeatedRestore = proxy.RestoreProjectVersionControlDiagnostics("unauthenticated", "version_session", baselineVersionId);
+                Assert.AreEqual("before", File.ReadAllText(writableFile), "Manual baselines intentionally restore the selected snapshot again.");
+                Assert.AreEqual(1, repeatedRestore.RestoredFileCount);
 
                 begin.Invoke(proxy, new object[] { "prompt_no_change", "unauthenticated", "version_session" });
                 Assert.AreEqual("", (string)complete.Invoke(proxy, new object[] { "prompt_no_change", "Completed" })!);
@@ -245,7 +451,7 @@ public sealed class ChatProjectEndpointTests
 	            Assert.IsFalse(saved.RootElement.GetProperty("settings").GetProperty("effectiveAutomaticEnabled").GetBoolean());
             }
 
-            using (LmVsProxy reloaded = CreateProxy(root))
+            using (HeirowLlm reloaded = CreateProxy(root))
             {
                 ProjectVersionControlDiagnosticsSnapshot persisted = reloaded.GetProjectVersionControlDiagnostics("unauthenticated", "version_session");
                 Assert.IsFalse(persisted.ProjectAutomaticEnabled);
@@ -257,9 +463,9 @@ public sealed class ChatProjectEndpointTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
-    private static LmVsProxy CreateProxy(string root)
+    private static HeirowLlm CreateProxy(string root)
     {
-        var proxy = new LmVsProxy("127.0.0.1", NextPort(), NextPort(), NextPort(), root)
+        var proxy = new HeirowLlm("127.0.0.1", NextPort(), NextPort(), NextPort(), root)
         {
             PublicAccessEnabled = false,
             RequireWorkstationUserAuthentication = false

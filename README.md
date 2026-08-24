@@ -26,8 +26,8 @@ SocketJack 2026 is the current platform line. The core packages use year-based v
 
 | Surface | Version | Target / format | Notes |
 |---|---:|---|---|
-| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.9` | `.NET Standard 2.1` | Core networking, protocol hosting, P2P, SQL/data, streaming, HTTP, and WebSockets. |
-| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.5` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF capture, remote input, and GUI remoting. |
+| [`SocketJack`](https://www.nuget.org/packages/SocketJack) | `2026.11` | `.NET Standard 2.1` | Core networking, protocol hosting, P2P, SQL/data, streaming, HTTP, and WebSockets. |
+| [`SocketJack.WPF`](https://www.nuget.org/packages/SocketJack.WPF) | `2026.7` | `net8.0-windows7.0`, `net10.0-windows7.0` | WPF capture, remote input, and GUI remoting. |
 | `SocketJack.Unity` | `1.1.0.1` | `.NET Standard 2.1` | Legacy Unity-facing package surface. |
 | `SocketJack.WebSocketServer` | `1.1.0.1` | `.NET Standard 2.1` | Legacy WebSocket server package surface. |
 

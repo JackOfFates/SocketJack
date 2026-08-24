@@ -1,4 +1,4 @@
-﻿# SockJackDml SocketJack.com Feature Plan
+# SockJackDml SocketJack.com Feature Plan
 
 Last updated: 2026-05-11
 
@@ -11,8 +11,8 @@ SockJackDml is the SocketJack.com mission-control layer over chat, model routing
 | Surface | Implementation |
 | --- | --- |
 | Website route | `/sockjackdml`, `/sockjackdml/missions`, `/sockjackdml/packs`, `/sockjackdml/operator`, `/sockjackdml/assist`, `/sockjackdml/capabilities`, `/sockjackdml/evidence`, and `/sockjackdml/accessibility` all route to `html/SockJackDml.html`. |
-| Main chat entry | `html/JackLLMWebChat.html` exposes an `Magic` header action that opens `/sockjackdml`. |
-| Backend host | `SocketJack.LlmCore/Proxy/JackLLM.cs` registers SockJackDml pages and JSON APIs on the existing SocketJack chat HTTP server. |
+| Main chat entry | `html/heirowLLMWebChat.html` exposes an `Magic` header action that opens `/sockjackdml`. |
+| Backend host | `SocketJack.LlmCore/Proxy/heirowLLM.cs` registers SockJackDml pages and JSON APIs on the existing SocketJack chat HTTP server. |
 | Durable storage | `SocketJack.LlmCore/Proxy/SockJackDml/SockJackDmlService.cs` stores mission records, timeline events, consent sessions, evidence packets, and accessibility outputs under the chat session root. |
 | Service catalog | `/api/chat-services` advertises `sockjack_dml` as a selectable mission-control service when Agent access is enabled. |
 | Existing SocketJack context | Capability routing reads SocketJack permissions, model runtime health, server profile, peer selection, and Copilot duplicator status. |

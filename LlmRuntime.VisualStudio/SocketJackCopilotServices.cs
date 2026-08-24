@@ -557,8 +557,8 @@ public static class SocketJackLocalWorkstationDiscovery
         string hardware = string.IsNullOrWhiteSpace(provider) ? "local workstation" : provider + " on local workstation";
         var candidate = new SocketJackServerCandidate
         {
-            Id = "local-jackllm-workstation",
-            DisplayName = "Local JackLLM Workstation",
+            Id = "local-heirowllm-workstation",
+            DisplayName = "Local heirowLLM Workstation",
             Endpoint = endpoint,
             OpenAiBaseUrl = endpoint.TrimEnd('/'),
             Online = true,
@@ -699,7 +699,7 @@ public sealed class SocketJackMasterListClient
         }
 
         throw new InvalidOperationException(
-            "JackLLM Workstation is not available at " + SocketJackLocalWorkstationDiscovery.DefaultEndpoint + ".");
+            "heirowLLM Workstation is not available at " + SocketJackLocalWorkstationDiscovery.DefaultEndpoint + ".");
     }
 
     public static IReadOnlyList<SocketJackServerCandidate> ParseServers(string json)
@@ -1763,7 +1763,7 @@ public sealed class SocketJackEndpointAccessProber
             }
         }
 
-        return new SocketJackEndpointAccessResult(false, "SocketJack fallback route did not expose a usable JackLLM API.", "");
+        return new SocketJackEndpointAccessResult(false, "SocketJack fallback route did not expose a usable heirowLLM API.", "");
     }
 
     private static async Task<string> ReadResponsePreviewAsync(HttpResponseMessage response, CancellationToken cancellationToken)

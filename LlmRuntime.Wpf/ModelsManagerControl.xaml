@@ -1069,8 +1069,8 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel Margin="0,0,6,0">
-                                                <TextBlock Text="Max GPU load %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Maximum usable GPU compute load for this model placement. Per-GPU values are edited in the GPU tab." />
-                                                <TextBox x:Name="MaxGpuLoadPercentBox" Text="100" TextChanged="LoadSetting_Changed" ToolTip="Maximum usable GPU compute load for this model placement. Per-GPU values are edited in the GPU tab." />
+                                                <TextBlock Text="Max GPU load %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Target average GPU compute duty cycle. Values below 100 throttle GGUF inference between generated tokens; brief kernel bursts can still peak above the target." />
+                                                <TextBox x:Name="MaxGpuLoadPercentBox" Text="100" TextChanged="LoadSetting_Changed" ToolTip="Target average GPU compute duty cycle. Values below 100 throttle GGUF inference between generated tokens; brief kernel bursts can still peak above the target. Per-GPU values are edited in the GPU tab." />
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" Margin="6,0,0,0">
                                                 <TextBlock Text="Max VRAM %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Maximum usable VRAM for this model placement. Per-GPU values are edited in the GPU tab." />
@@ -1504,8 +1504,8 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Margin="0,0,5,0">
-                                    <TextBlock Text="GPU %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
-                                    <TextBox x:Name="GlobalMaxGpuLoadPercentBox" Text="100" />
+                                    <TextBlock Text="GPU %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" ToolTip="Target average GPU compute duty cycle for GGUF inference." />
+                                    <TextBox x:Name="GlobalMaxGpuLoadPercentBox" Text="100" ToolTip="Values below 100 throttle GGUF inference between generated tokens; brief kernel bursts can still peak above the target." />
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Margin="5,0,0,0">
                                     <TextBlock Text="VRAM %" Foreground="{StaticResource ManagerSubtleTextBrush}" FontSize="11" />
@@ -1636,7 +1636,7 @@
                                             TickFrequency="1"
                                             IsSnapToTickEnabled="True"
                                             Value="{Binding MaxGpuLoadPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                            ToolTip="Maximum compute utilization this GPU should accept before the scheduler avoids placing more work here." />
+                                            ToolTip="Target average GGUF inference compute duty cycle for this GPU. Brief kernel bursts can still peak above the target." />
                                 </StackPanel>
 
                                 <StackPanel Grid.Row="0" Grid.Column="3" Margin="0,0,12,0">

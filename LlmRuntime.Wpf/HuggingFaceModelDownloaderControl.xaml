@@ -23,6 +23,40 @@
             <Setter Property="Foreground" Value="{StaticResource BrowserTextBrush}" />
             <Setter Property="BorderBrush" Value="#3B4654" />
             <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonChrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#283544" />
+                                <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#526276" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#151D26" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonChrome" Property="Background" Value="#121820" />
+                                <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#28313C" />
+                                <Setter Property="Foreground" Value="#657182" />
+                                <Setter Property="Opacity" Value="0.72" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style x:Key="BrowserNavButtonStyle" TargetType="Button">
@@ -372,6 +406,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
@@ -413,8 +448,51 @@
                                    AutomationProperties.Name="Local model health" />
                     </StackPanel>
 
+                    <StackPanel Grid.Row="3">
+                    <Border Margin="0,0,0,8"
+                            Padding="10"
+                            Background="#151D28"
+                            BorderBrush="#3D5067"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                        <StackPanel>
+                            <TextBlock Text="heirowSong local music model" FontWeight="SemiBold" />
+                            <TextBlock Text="ACE-Step 1.5 pinned bundle · 11.64 GiB · MIT · local/private"
+                                       Foreground="{StaticResource BrowserSubtleTextBrush}"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       Margin="0,3,0,8" />
+                            <Button x:Name="InstallHeirowSongButton"
+                                    Click="InstallHeirowSongButton_Click"
+                                    Content="Install heirowSong"
+                                    AutomationProperties.Name="Install heirowSong model bundle"
+                                    AutomationProperties.HelpText="Validate and queue the pinned ACE-Step 1.5 repositories required by heirowSong." />
+                        </StackPanel>
+                    </Border>
+                    <Border Margin="0,0,0,10"
+                            Padding="10"
+                            Background="#151D28"
+                            BorderBrush="#3D5067"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                        <StackPanel>
+                            <TextBlock Text="PictureBank local AI tools" FontWeight="SemiBold" />
+                            <TextBlock Text="Pinned SD 1.5 generation/inpainting, SAM selection, and BiRefNet-lite background removal · local/private"
+                                       Foreground="{StaticResource BrowserSubtleTextBrush}"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       Margin="0,3,0,8" />
+                            <Button x:Name="InstallPictureBankAiButton"
+                                    Click="InstallPictureBankAiButton_Click"
+                                    Content="Install PictureBank AI"
+                                    AutomationProperties.Name="Install PictureBank AI model bundle"
+                                    AutomationProperties.HelpText="Validate pinned Hugging Face revisions and queue the reviewed safetensors required by PictureBank." />
+                        </StackPanel>
+                    </Border>
+                    </StackPanel>
+
                     <ListBox x:Name="DownloadQueueListBox"
-                             Grid.Row="3"
+                             Grid.Row="4"
                              AutomationProperties.Name="Download queue"
                              ItemTemplate="{StaticResource DownloadQueueItemTemplate}"
                              Background="#0E141B"
@@ -423,7 +501,7 @@
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ScrollViewer.VerticalScrollBarVisibility="Auto" />
 
-                    <StackPanel Grid.Row="4" Margin="0,10,0,0">
+                    <StackPanel Grid.Row="5" Margin="0,10,0,0">
                         <UniformGrid Columns="2">
                             <Button x:Name="PauseButton" Margin="0,0,6,6" Click="PauseButton_Click" Content="Pause" IsEnabled="False" AutomationProperties.Name="Pause download" />
                             <Button x:Name="ResumeButton" Margin="0,0,0,6" Click="ResumeButton_Click" Content="Resume" IsEnabled="False" AutomationProperties.Name="Resume download" />

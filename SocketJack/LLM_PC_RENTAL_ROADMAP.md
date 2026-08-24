@@ -9,12 +9,12 @@ This roadmap is intended to drive source-code and project-file changes.
 ## Top Priority: Visual Studio Copilot Remote Model Duplicator
 
 - [x] **Copilot Port Duplicator on `11433`**: create a dedicated local duplicator listener that Visual Studio Copilot can target as if it were talking to a local LM Studio/OpenAI-compatible endpoint.
-- [x] **Remote Model Routing Through JackLLM**: route Copilot requests through the selected remote server so chat completions and OpenAI-compatible paths behave like a local LM Studio model.
+- [x] **Remote Model Routing Through heirowLLM**: route Copilot requests through the selected remote server so chat completions and OpenAI-compatible paths behave like a local LM Studio model.
 - [x] **Remote Session File Cloner**: when Copilot requests a remote file path for read/write/replace/rename work, clone the remote file locally first; delete actions intentionally do not download the file.
 - [x] **Session Root Swap**: map remote file roots into the current working directory at `Sessions/<session name>/...`, preserving the remote path beneath that session folder.
 - [x] **Cancellable File Mirror UI**: add a WPF Copilot Files tab with live clone rows, cancel controls, hash/status tracking, folder open actions, and right-click commands.
 - [x] **Filesystem Watch + Hash Tracking**: watch the local mirror root, update clone status dynamically when files change/delete, and track SHA-256 hashes.
-- [x] **Browser Servers Dashboard**: expose server-list browsing/filtering in the JackLLM browser UI backed by the SocketJack server list API.
+- [x] **Browser Servers Dashboard**: expose server-list browsing/filtering in the heirowLLM browser UI backed by the SocketJack server list API.
 - [x] **WPF Servers Tab Filtering**: mirror the browser Servers experience in the WPF GUI with filters for hardware/GPU/VRAM, title, owner username, and external IP.
 - [x] **WPF Copilot Server Picker**: select a server in the WPF Servers tab and route `localhost:11433` through that peer as the active Copilot duplicator target.
 - [x] **Advanced WPF Server Filters**: add dedicated filters for available models, availability, and price/payment status.
@@ -57,7 +57,7 @@ This roadmap is intended to drive source-code and project-file changes.
 - [x] Weekly direct-deposit payout preference, weekly period preview, admin weekly payout batch creation, and connected-account weekly payout schedule configuration.
 - [x] Direct-deposit payout records now transfer payable host balances to connected Stripe accounts and track transfer metadata.
 - [x] Instant payout requests now deduct a fixed `$1.00` standard fee plus configured applicable tax, store the delivery-fee ledger fields, and call connected-account instant payout creation with optional debit-card/external-account destination.
-- [x] JackLLM browser Payouts UI lets hosts choose weekly direct deposit, direct deposit, or instant debit-card payout and shows method, fee, transfer/payout ids, and final payout amount.
+- [x] heirowLLM browser Payouts UI lets hosts choose weekly direct deposit, direct deposit, or instant debit-card payout and shows method, fee, transfer/payout ids, and final payout amount.
 - [x] Reverse TCP forwarding and public IP resolution primitives.
 - [x] GPU TDP detection heuristics and cost settings for electricity/storage estimates.
 - [x] Visual Studio Copilot duplicator listener on `localhost:11433`.
@@ -82,7 +82,7 @@ This roadmap is intended to drive source-code and project-file changes.
 - [x] WPF Trust & Abuse admin tab for reviewing cases, opening disputes/reputation/verification/abuse records, and applying admin interventions.
 - [x] Browser Trust & Abuse dashboard for administrators with summary metrics, filters, case creation, intervention actions, and server-card reputation/verification pills.
 - [x] SQL Admin panel under `/sql` with DataServer-backed login, object explorer, query editor/results grid, table/column/row inspection, and browser templates in `html/SqlLogin.html` and `html/SqlPanel.html`.
-- [x] JackLLM SQL Admin control API at `/api/chat-sql-admin/status` and `/api/chat-sql-admin/control` for enabling the panel, switching mutable-vs-standalone database serving, starting/stopping/restarting the endpoint, and exposing connection metadata.
+- [x] heirowLLM SQL Admin control API at `/api/chat-sql-admin/status` and `/api/chat-sql-admin/control` for enabling the panel, switching mutable-vs-standalone database serving, starting/stopping/restarting the endpoint, and exposing connection metadata.
 - [x] TDS-style database endpoint registration through the shared mutable chat server or a standalone DataServer port.
 - [x] SQL Admin Table Designer for create/drop/rename table, save schema, add/remove/update columns, insert/update/delete rows, and paged viewport reads.
 - [x] SQL Admin API Creator for saved dynamic endpoints, mapped-route metadata, response formats, simple query steps, and generated route registration.
@@ -102,7 +102,7 @@ This roadmap is intended to drive source-code and project-file changes.
 - [x] Prometheus-style export now includes security, marketplace, and developer-workflow scores.
 - [x] Marketplace monitoring now includes active Copilot lease state and compute-metering totals for token-linked GPU/CPU/RAM/system/I/O usage.
 - [x] Browser Observability admin tab with live health score, request/failure/latency/token/session/trust/payment/security/marketplace/workflow metrics, route counters, recent events, refresh, and Prometheus launch action.
-- [x] Developer Project Workspace API at `/api/developer-project-workflow` backed by `SocketJack.JackLLMProjectWorkspaces`.
+- [x] Developer Project Workspace API at `/api/developer-project-workflow` backed by `SocketJack.heirowLLMProjectWorkspaces`.
 - [x] Browser Project Workspace panel in the Solution Explorer that shows the linked workspace root, mirror state, Copilot upstream target, and session clone counts.
 - [x] One-click session mirror provisioning that creates/links `Sessions/<session name>/...` as the active project root and authorizes it for file access.
 - [x] Project workflow root linking with admin/approved-root guardrails so arbitrary local roots are not exposed silently.
@@ -111,8 +111,8 @@ This roadmap is intended to drive source-code and project-file changes.
 - [x] Developer project workflow monitoring reports workspace existence/accessibility, remote-server usage, filesystem-context scope, mirror clone health, changed mirrors, readiness score, and readiness tier in the browser project panel.
 - [x] Codex-style Git service is auto-enabled when the Git CLI is installed and runnable, with dependency detection, cached availability, repo-root validation, status/diff/log/show/branch/remote inspection, explicit path staging, unstage, commit, branch switch/create, fetch, pull, and push tools.
 - [x] Codex-style Git file services provide changed-file lists, tracked-file lists, single-file diffs, file-at-ref reads, file history, blame, and repository grep without routing through arbitrary terminal commands.
-- [x] Git tool mutations use the JackLLM approval queue, block destructive reset/clean/checkout-file/restore-file operations, and stay inside authorized session, solution, or filesystem roots.
-- [x] Agent Mode Filesystem Context dropdown in the JackLLM browser UI with `None`, `All`, and checked multi-root selection for accessible project/session roots.
+- [x] Git tool mutations use the heirowLLM approval queue, block destructive reset/clean/checkout-file/restore-file operations, and stay inside authorized session, solution, or filesystem roots.
+- [x] Agent Mode Filesystem Context dropdown in the heirowLLM browser UI with `None`, `All`, and checked multi-root selection for accessible project/session roots.
 - [x] Agent filesystem-context backend injects a bounded file manifest into Agent Mode system prompts only when enabled, with guardrails telling the model not to reveal filenames until asked or tool-confirmed.
 - [x] SQL Admin query-risk classifier blocks destructive or sensitive SQL until the browser panel confirms execution.
 - [x] SQL Admin recent audit API and browser Audit drawer record query attempts, status, target database, client IP, row counts, SQL hashes, and preview text.
@@ -142,7 +142,7 @@ This roadmap is intended to drive source-code and project-file changes.
 
 ## Highest-Impact Additions
 
-- [x] **Visual Studio Copilot Remote Model Duplicator**: make `localhost:11433` act as the Copilot-facing local endpoint while JackLLM routes requests to the selected remote peer/server.
+- [x] **Visual Studio Copilot Remote Model Duplicator**: make `localhost:11433` act as the Copilot-facing local endpoint while heirowLLM routes requests to the selected remote peer/server.
 - [x] **Remote Session File Mirror**: clone requested remote files into `Sessions/<session name>/...`, keep hashes/status current, and let WPF users cancel active downloads.
 - [x] **WPF Server Picker For Duplicator**: add a WPF server picker/filter surface that directly controls the selected remote model target for `localhost:11433`.
 - [x] **Peer Lease Broker**: create a real lease lifecycle: discover host, request capacity, quote price, reserve slot, start session, renew heartbeat, end session, settle usage.
@@ -153,14 +153,14 @@ This roadmap is intended to drive source-code and project-file changes.
 - [x] **Lease-Aware Remote Model Router**: route requests between local LM Studio and a rented OpenAI-compatible peer based on selected server, active lease state, payment status, and local-model illusion policy.
 - [x] **Loaded Assembly IntelliSense**: local proxy/browser console completions now search all loadable runtime assembly types and namespaces for reflection-driven development.
 - [x] **Job Queue And Reservations**: queue long generations/builds, schedule future rentals, support max spend, auto-stop, and timeout policies.
-- [x] **Trust And Abuse Layer**: reputation, host verification, renter identity, content/command abuse controls, dispute records, and admin intervention for the JackLLM, master/server-list surface, and browser admin UI.
+- [x] **Trust And Abuse Layer**: reputation, host verification, renter identity, content/command abuse controls, dispute records, and admin intervention for the heirowLLM, master/server-list surface, and browser admin UI.
 - [x] **SocketJack Payment Settlement**: Checkout completion handling, local token crediting, usage-based host finance records, connected-account transfer settlement, weekly payout scheduling, direct-deposit payout records, instant debit-card payout requests, platform fee fields, refunds/disputes status handling, and browser payout controls inside the SocketJack library payment surface.
 - [x] **Production Payout Reconciliation**: listen for connected-account `payout.created`, `payout.updated`, `payout.paid`, and `payout.failed` events, reconcile Stripe transfer/payout metadata, and surface failed external-account remediation in the admin trust/payment tools.
 - [x] **Fleet Observability**: Prometheus-style metrics and an admin dashboard now cover latency, tokens, active prompt/session health, hardware/GPU/RAM/network/I/O snapshots, failure rate, payment counts, trust workload, and route health.
 - [x] **Developer Project Workspace Layer**: persist and display a session-linked project root with mirror provisioning, clone telemetry, Copilot target context, and guarded local-root linking.
 - [x] **Developer SDK UX**: SocketJack library APIs for rent/run/sync/stop flows, plus VS/GUIs consuming those APIs around active rented hardware.
 - [x] **Codex-Style Git Workflow For LLM Agents**: auto-detect installed/runnable Git, expose first-class `git_*` command and file-service tools instead of raw shell commands, validate repository roots, require explicit path staging, route mutating Git work through GUI approvals, and include Git dependency status in the Agent service catalog.
-- [x] **Agent Mode Filesystem Context Selector**: add a `Filesystem Context` dropdown near the existing JackLLM web-server Agent Mode controls with `None` selected by default, `All`, then each accessible root folder displayed visually as `..\RootName`; choosing `None` sends no filesystem data to the LLM, choosing `All` injects accessible filesystem context while instructing the model not to acknowledge filenames until a file/search tool is used, and choosing one or more specific roots shows checkmarks beside selected directories and scopes system-prompt inference to those roots.
+- [x] **Agent Mode Filesystem Context Selector**: add a `Filesystem Context` dropdown near the existing heirowLLM web-server Agent Mode controls with `None` selected by default, `All`, then each accessible root folder displayed visually as `..\RootName`; choosing `None` sends no filesystem data to the LLM, choosing `All` injects accessible filesystem context while instructing the model not to acknowledge filenames until a file/search tool is used, and choosing one or more specific roots shows checkmarks beside selected directories and scopes system-prompt inference to those roots.
 - [x] **SQL Admin Safety Mode Metadata**: expose marketplace safety-mode policy in SQL Admin status so GUI/web surfaces can default rented sessions to read-only, require WebAuth admin elevation for mutable actions, and keep destructive-query/audit guardrails visible.
 - [x] **SQL Admin SA Bootstrap Enforcement**: require local-only `sa` password setup whenever the default `sa` login is blank, and keep showing the setup dialog until the account is secured.
 - [x] **SQL Admin Programmatic Admin Seeding**: allow code to seed SQL Admin credentials on database construction with `new Database(name, sqlAdminUsername, sqlAdminPassword)`.
@@ -180,7 +180,7 @@ SQL Admin is currently **100% complete** as a developer/admin tool and **100% co
 ### What Works Today
 
 - [x] `/sql` browser panel with DataServer authentication, cached HTML templates, object explorer, query editor, and result rendering.
-- [x] JackLLM control menu for SQL Admin status, enable/disable, mutable shared-server mode, standalone DataServer mode, port selection, and open-panel action.
+- [x] heirowLLM control menu for SQL Admin status, enable/disable, mutable shared-server mode, standalone DataServer mode, port selection, and open-panel action.
 - [x] Basic in-memory SQL fallback for common `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE TABLE`, `DROP TABLE`, `TRUNCATE TABLE`, `WHERE`, `ORDER BY`, and `TOP` flows.
 - [x] Table Designer for schema and row edits with paged viewport reads.
 - [x] API Creator that stores endpoint definitions in the database and registers dynamic HTTP routes.
@@ -215,21 +215,21 @@ All roadmap feature areas are now implemented to the planned 100% state. The nex
 
 ## Codex-Style Git Agent Workflow
 
-- [x] Auto-detect Git with `git --version`; enable the Git service and tool schemas only when the CLI is installed and runnable from JackLLM.
+- [x] Auto-detect Git with `git --version`; enable the Git service and tool schemas only when the CLI is installed and runnable from heirowLLM.
 - [x] Add dedicated `Net/Services/GitService.cs` so the LLM uses known Git operations instead of arbitrary shell text.
 - [x] Expose `git_dependency_check`, `git_status`, `git_diff`, `git_log`, `git_show`, `git_branch`, `git_remote`, `git_stage`, `git_unstage`, `git_commit`, `git_create_branch`, `git_switch_branch`, `git_fetch`, `git_pull`, and `git_push`.
 - [x] Expose Codex-like Git file services: `git_changed_files`, `git_tracked_files`, `git_file_diff`, `git_file_at_ref`, `git_file_history`, `git_file_blame`, and `git_grep`.
 - [x] Use Git file services for file diffs and baseline reads so the LLM can compare working-tree edits against `HEAD` without guessing from raw shell output.
 - [x] Validate repository roots against authorized session, solution, and approved filesystem roots before executing Git.
 - [x] Require explicit paths for staging/unstaging and block pathspecs outside the repository root.
-- [x] Send mutating or network Git operations through the JackLLM approval queue.
+- [x] Send mutating or network Git operations through the heirowLLM approval queue.
 - [x] Block destructive Git reset/clean/checkout-file/restore-file style operations from the LLM tool surface.
 - [x] Surface Git dependency status in the Agent service catalog and Agent system prompt so models naturally choose Git tools when available.
 
 ## References Checked
 
 - `Readme.md`
-- `SocketJack.LlmCore/Proxy/JackLLM.cs`
+- `SocketJack.LlmCore/Proxy/heirowLLM.cs`
 - `Net/NetworkBase.cs`
 - `Net/Payments/StripePaymentService.cs`
 - Official .NET support policy: <https://dotnet.microsoft.com/en-us/platform/support/policy>

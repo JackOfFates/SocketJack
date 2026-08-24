@@ -4,7 +4,7 @@ import { WorkstationClient } from './workstationClient';
 
 type ProviderModel = vscode.LanguageModelChatInformation & { id: string };
 
-export class JackLlmChatModelProvider implements vscode.LanguageModelChatProvider, vscode.Disposable {
+export class HeirowLlmChatModelProvider implements vscode.LanguageModelChatProvider, vscode.Disposable {
   private readonly changeEmitter = new vscode.EventEmitter<void>();
   private cachedModels: WorkstationModel[] = [];
 
@@ -24,9 +24,9 @@ export class JackLlmChatModelProvider implements vscode.LanguageModelChatProvide
     } catch (error) {
       if (!options.silent) {
         void vscode.window.showWarningMessage(
-          `JackLLM model discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+          `heirowLLM model discovery failed: ${error instanceof Error ? error.message : String(error)}`,
           'Open Settings'
-        ).then(choice => choice && vscode.commands.executeCommand('workbench.action.openSettings', 'jackllm.endpoint'));
+        ).then(choice => choice && vscode.commands.executeCommand('workbench.action.openSettings', 'heirowllm.endpoint'));
       }
       return this.cachedModels.map(toProviderModel);
     }
@@ -43,7 +43,7 @@ export class JackLlmChatModelProvider implements vscode.LanguageModelChatProvide
     const request: Record<string, unknown> = {
       model: model.id,
       messages: messages.flatMap(convertMessage),
-      max_tokens: known?.outputTokens ?? vscode.workspace.getConfiguration('jackllm').get<number>('defaultOutputTokens', 8192)
+      max_tokens: known?.outputTokens ?? vscode.workspace.getConfiguration('heirowllm').get<number>('defaultOutputTokens', 8192)
     };
 
     const tools = convertTools(options.tools);
@@ -86,7 +86,7 @@ function toProviderModel(model: WorkstationModel): vscode.LanguageModelChatInfor
     name: model.name,
     family: inferFamily(model.id),
     version: 'local',
-    tooltip: `JackLLM Workstation model ${model.id}`,
+    tooltip: `heirowLLM Workstation model ${model.id}`,
     detail,
     maxInputTokens: Math.max(1, model.contextTokens - model.outputTokens),
     maxOutputTokens: model.outputTokens,
@@ -102,7 +102,7 @@ function inferFamily(id: string): string {
   for (const family of ['qwen', 'llama', 'mistral', 'gemma', 'phi', 'deepseek', 'command-r']) {
     if (normalized.includes(family)) return family;
   }
-  return 'jackllm';
+  return 'heirowllm';
 }
 
 function convertMessage(message: vscode.LanguageModelChatRequestMessage): Record<string, unknown>[] {

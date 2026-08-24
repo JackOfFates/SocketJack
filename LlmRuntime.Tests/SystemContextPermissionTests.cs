@@ -1,5 +1,5 @@
 using System.Text.Json;
-using LmVs;
+using heirowLLM;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketJack.Net;
 
@@ -117,7 +117,7 @@ public sealed class SystemContextPermissionTests
         finally { if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, true); }
     }
 
-    private static async Task<SystemContextPermissionRequestSnapshot> WaitForPendingAsync(LmVsProxy proxy, string ownerKey, string sessionId)
+    private static async Task<SystemContextPermissionRequestSnapshot> WaitForPendingAsync(HeirowLlm proxy, string ownerKey, string sessionId)
     {
         for (int attempt = 0; attempt < 100; attempt++)
         {
@@ -129,6 +129,6 @@ public sealed class SystemContextPermissionTests
         throw new InvalidOperationException();
     }
 
-    private static string TempRoot() => Path.Combine(Path.GetTempPath(), "jackllm-system-context-" + Guid.NewGuid().ToString("N"));
-    private static LmVsProxy CreateProxy(string dataRoot) => new("127.0.0.1", 11434, 11435, 0, dataRoot);
+    private static string TempRoot() => Path.Combine(Path.GetTempPath(), "heirowllm-system-context-" + Guid.NewGuid().ToString("N"));
+    private static HeirowLlm CreateProxy(string dataRoot) => new("127.0.0.1", 11434, 11435, 0, dataRoot);
 }

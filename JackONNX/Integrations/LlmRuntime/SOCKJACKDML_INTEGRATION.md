@@ -1,11 +1,11 @@
-﻿# SockJackDml and JackONNX
+# SockJackDml and JackONNX
 
 SockJackDml is the no-fallback native DirectML path for LlmRuntime GGUF model loading and LLM inference work.
 
 JackONNX stays focused on ONNX media generation through ONNX Runtime providers. The connection point is LlmRuntime:
 
 ```text
-JackLLM
+heirowLLM
   -> LlmRuntime
       -> SockJackDml / DirectMlRunner for local LLM DirectML execution
       -> JackONNX for local ONNX image, audio, and video media execution

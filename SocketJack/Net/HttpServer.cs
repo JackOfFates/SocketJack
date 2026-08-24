@@ -95,7 +95,7 @@ namespace SocketJack.Net {
         public Action<byte[], int, int> OnChunk { get; set; }
         public Action OnEnd { get; set; }
     }
-    public class HttpServer : TcpServer {
+    public partial class HttpServer : TcpServer {
 
         // Internal cache for processed HTML/string with variable replacement
         private readonly ConcurrentDictionary<string, (string html, DateTime lastWrite)> _routeFileCache = new();
@@ -1242,7 +1242,7 @@ namespace SocketJack.Net {
                 if (prefix == "/") {
                     relativePath = path;
                 } else if (path.Equals(prefix, StringComparison.OrdinalIgnoreCase)) {
-                    // Exact match on prefix with no trailing path — try index files
+                    // Exact match on prefix with no trailing path ï¿½ try index files
                     relativePath = "/";
                 } else if (path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase)) {
                     relativePath = path.Substring(prefix.Length);
@@ -1587,6 +1587,10 @@ namespace SocketJack.Net {
                 case ".css":  return "text/css";
                 case ".js":
                 case ".mjs":  return "application/javascript";
+                case ".ts":
+                case ".mts":
+                case ".cts":
+                case ".tsx":  return "text/typescript";
                 case ".map":  return "application/json";
                 case ".json": return "application/json";
                 case ".xml":  return "application/xml";
@@ -2114,7 +2118,7 @@ namespace SocketJack.Net {
 
             try {
                 string directory = string.IsNullOrWhiteSpace(Options.HttpAccessLogDirectory)
-                    ? @"C:\LmVsProxy\Logs"
+                    ? Path.Combine(Path.GetTempPath(), "SocketJack", "Logs")
                     : Options.HttpAccessLogDirectory;
                 Directory.CreateDirectory(directory);
 
@@ -2366,7 +2370,7 @@ namespace SocketJack.Net {
                 && te.IndexOf("chunked", StringComparison.OrdinalIgnoreCase) >= 0) {
                 return false;
             }
-            // No Content-Length and not chunked — body is whatever was received.
+            // No Content-Length and not chunked ï¿½ body is whatever was received.
             return true;
         }
 
@@ -3000,7 +3004,7 @@ namespace SocketJack.Net {
                 }
 
                 // Check if we're already buffering an HTTP request for this connection.
-                // If so, skip protocol detection and HTTP validation — just accumulate data.
+                // If so, skip protocol detection and HTTP validation ï¿½ just accumulate data.
                 bool isBuffering = _requestBuffers.ContainsKey(e.Connection.ID);
 
                 if (!isBuffering) {
@@ -3136,7 +3140,7 @@ namespace SocketJack.Net {
                 if (TryProxyHostRequest(context, e.Connection, request))
                     goto WriteHttpResponse;
 
-                // Check for streaming routes first — these keep the connection open
+                // Check for streaming routes first ï¿½ these keep the connection open
                 var streamHandler = ResolveStreamRoute(request);
                 if (streamHandler != null) {
                     _activeStreamConnections.TryAdd(e.Connection.ID, 0);
@@ -3376,7 +3380,7 @@ WriteHttpResponse:
                 // network immediately rather than waiting for a full TCP segment.
                 try { e.Connection.Socket.NoDelay = true; } catch { }
 
-                // Capture the stream reference once — a background thread
+                // Capture the stream reference once ï¿½ a background thread
                 // can dispose the socket between property accesses.
                 var responseStream = e.Connection.Stream;
                 if (responseStream != null && !e.Connection.Closed && !e.Connection.Closing) {
@@ -3438,7 +3442,7 @@ WriteHttpResponse:
 CloseHttpConnection:
                 // Graceful HTTP close sequence:
                 // 1. Set linger so the OS waits for the send buffer to drain on Close().
-                // 2. Shut down the send direction first — this queues a FIN *after*
+                // 2. Shut down the send direction first ï¿½ this queues a FIN *after*
                 //    any remaining response bytes, preventing an RST.
                 // 3. Call Close() for resource cleanup.
                 try {
@@ -4214,7 +4218,7 @@ CloseHttpConnection:
                     }
                 }
             } else {
-                // Binary body — fall back to fixed-size chunks
+                // Binary body ï¿½ fall back to fixed-size chunks
                 int offset = 0;
                 while (offset < _BodyBytes.Length) {
                     int remaining = _BodyBytes.Length - offset;

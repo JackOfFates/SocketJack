@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using LmVs;
+using heirowLLM;
 namespace SocketJack.Net
 {
-    public partial class LmVsProxy
+    public partial class HeirowLlm
     {
 private sealed class ObservabilityRouteAccumulator
         {

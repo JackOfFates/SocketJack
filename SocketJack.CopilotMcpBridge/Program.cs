@@ -413,8 +413,8 @@ public sealed class CopilotBridgeOptions
         Options:
           --server-endpoint <url>  SocketJack server endpoint, for example https://socketjack.com/proxy/TitanX.
           --local-webchat-endpoint <url>
-                                    Local JackLLM web-chat endpoint for fast direct streams. Default: http://127.0.0.1:11436.
-          --disable-local-webchat  Do not prefer the local JackLLM endpoint before the configured SocketJack endpoint.
+                                    Local heirowLLM web-chat endpoint for fast direct streams. Default: http://127.0.0.1:11436.
+          --disable-local-webchat  Do not prefer the local heirowLLM endpoint before the configured SocketJack endpoint.
           --server-id <id>         MasterList server id.
           --server-name <name>     Human-readable server name.
           --model <id>             Selected model id.
@@ -7202,7 +7202,7 @@ public static class SocketJackOpenAiChatAdapter
             }
         }
 
-        return text.Contains("JackLLM has not connected", StringComparison.OrdinalIgnoreCase) ||
+        return text.Contains("heirowLLM has not connected", StringComparison.OrdinalIgnoreCase) ||
             text.Contains("server is offline", StringComparison.OrdinalIgnoreCase);
     }
 

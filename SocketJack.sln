@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.3.11222.16
@@ -31,17 +31,17 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.WPF", "SocketJac
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.WpfBasicGame", "SocketJack.WpfBasicGame\SocketJack.WpfBasicGame.csproj", "{02244906-0B64-4CF6-BF13-9D5504044092}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM", "JackLLM\JackLLM.csproj", "{6E560CB5-6800-4910-8C13-D0B6ECF175C6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLM", "heirowLLM\heirowLLM.csproj", "{6E560CB5-6800-4910-8C13-D0B6ECF175C6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Security", "JackLLM.Security\JackLLM.Security.csproj", "{D7A7A7F1-C52A-45D5-A208-0D6C94FE2B57}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLM.Security", "heirowLLM.Security\heirowLLM.Security.csproj", "{D7A7A7F1-C52A-45D5-A208-0D6C94FE2B57}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.SecurityBroker", "JackLLM.SecurityBroker\JackLLM.SecurityBroker.csproj", "{9387221A-B708-4D99-89A0-BB1506293F80}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLM.SecurityBroker", "heirowLLM.SecurityBroker\heirowLLM.SecurityBroker.csproj", "{9387221A-B708-4D99-89A0-BB1506293F80}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Security.Tests", "JackLLM.Security.Tests\JackLLM.Security.Tests.csproj", "{6A20EF9D-4184-4C17-82EC-5122BA2CF236}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLM.Security.Tests", "heirowLLM.Security.Tests\heirowLLM.Security.Tests.csproj", "{6A20EF9D-4184-4C17-82EC-5122BA2CF236}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack-MagicMasterList", "SocketJack-MagicMasterList\SocketJack-MagicMasterList.csproj", "{89D8B6DE-1C6A-44C2-BC1E-454C0BB2922A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLMUpdater", "JackLLMUpdater\JackLLMUpdater.csproj", "{1302D112-0CAF-40CA-8E79-3B1C927EC19C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLMUpdater", "heirowLLMUpdater\heirowLLMUpdater.csproj", "{1302D112-0CAF-40CA-8E79-3B1C927EC19C}"
 	ProjectSection(ProjectDependencies) = postProject
 		{89D8B6DE-1C6A-44C2-BC1E-454C0BB2922A} = {89D8B6DE-1C6A-44C2-BC1E-454C0BB2922A}
 		{8C6712CE-342D-462C-95C4-7AB0D54E2F55} = {8C6712CE-342D-462C-95C4-7AB0D54E2F55}
@@ -50,7 +50,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLMUpdater", "JackLLMUp
 		{D1775831-1554-4050-92E5-C994908C7A3D} = {D1775831-1554-4050-92E5-C994908C7A3D}
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLMBridgeInstaller", "JackLLMBridgeInstaller\JackLLMBridgeInstaller.csproj", "{A8997834-8C7D-44B4-9F1C-A67DDF7F7B70}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLMBridgeInstaller", "heirowLLMBridgeInstaller\heirowLLMBridgeInstaller.csproj", "{A8997834-8C7D-44B4-9F1C-A67DDF7F7B70}"
 	ProjectSection(ProjectDependencies) = postProject
 		{1302D112-0CAF-40CA-8E79-3B1C927EC19C} = {1302D112-0CAF-40CA-8E79-3B1C927EC19C}
 		{6E560CB5-6800-4910-8C13-D0B6ECF175C6} = {6E560CB5-6800-4910-8C13-D0B6ECF175C6}
@@ -62,7 +62,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLMBridgeInstaller", "J
 		{D1775831-1554-4050-92E5-C994908C7A3D} = {D1775831-1554-4050-92E5-C994908C7A3D}
 	EndProjectSection
 EndProject
-Project("{930C7802-8A8C-48F9-8165-68863BCCD9DD}") = "JackLLMInstaller", "JackLLMInstaller\JackLLMInstaller.wixproj", "{B60A557F-C37F-43CC-A408-43C179580277}"
+Project("{930C7802-8A8C-48F9-8165-68863BCCD9DD}") = "heirowLLMInstaller", "heirowLLMInstaller\heirowLLMInstaller.wixproj", "{B60A557F-C37F-43CC-A408-43C179580277}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LlmRuntime", "LlmRuntime\LlmRuntime.csproj", "{8C6712CE-342D-462C-95C4-7AB0D54E2F55}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -107,9 +107,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "JackONNX Projects", "JackON
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "LlmRuntime Projects", "LlmRuntime Projects", "{DADB95ED-2761-48FF-BD70-EBED4BF85F17}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "JackLLM Projects", "JackLLM Projects", "{A6C25422-C503-4D12-A1BF-B2CA6A7747CC}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "heirowLLM Projects", "heirowLLM Projects", "{A6C25422-C503-4D12-A1BF-B2CA6A7747CC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Mobile", "JackLLM.Android\JackLLM.Android.csproj", "{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLM.Mobile", "heirowLLM.Android\heirowLLM.Android.csproj", "{89C02029-AC5C-5045-26B5-06CCAC7B7E6C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.WorkstationMcp", "SocketJack.WorkstationMcp\SocketJack.WorkstationMcp.csproj", "{348FF866-EA37-42A5-B3AE-A3E7A7878546}"
 EndProject
@@ -135,7 +135,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "LlmRuntime.VisualStudioCode
 		LlmRuntime.VisualStudioCode\src\workstationClient.ts = LlmRuntime.VisualStudioCode\src\workstationClient.ts
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JackLLM.Workstation", "JackLLM.Workstation\JackLLM.Workstation.csproj", "{3B25755B-5A0F-4B5E-A0D3-71B1E42FBCAC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "heirowLLM.Workstation", "heirowLLM.Workstation\heirowLLM.Workstation.csproj", "{3B25755B-5A0F-4B5E-A0D3-71B1E42FBCAC}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketJack.SocketChat", "SocketJack.SocketChat\SocketJack.SocketChat.csproj", "{901BDD57-FEF2-4F48-A772-F648B9B2C082}"
 EndProject

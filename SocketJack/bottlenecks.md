@@ -2,11 +2,11 @@
 
 Date: 2026-05-18
 
-Scope: `https://socketjack.com/proxy/TitanX/` to local JackLLM Workstation through the master-list reverse relay.
+Scope: `https://socketjack.com/proxy/TitanX/` to local heirowLLM Workstation through the master-list reverse relay.
 
 ## Summary
 
-The local JackLLM service was not the main latency source. The slow path was the public proxy relay. Before the WebSocket tunnel work, normal warmed API calls through the proxy were around 1.4-2.8 seconds, and repeated probes could spike into 5-14 seconds with intermittent 503s when the waiting reverse-agent pool drained or contained stale agents.
+The local heirowLLM service was not the main latency source. The slow path was the public proxy relay. Before the WebSocket tunnel work, normal warmed API calls through the proxy were around 1.4-2.8 seconds, and repeated probes could spike into 5-14 seconds with intermittent 503s when the waiting reverse-agent pool drained or contained stale agents.
 
 The biggest bottleneck is architectural: each small HTTP request consumes one preconnected reverse relay agent, signals it, waits for a ready ack, opens a fresh local TCP connection, bridges the request, closes it, and then waits for another agent to reconnect. Because the master also disables upstream keep-alive with `ConnectionClose = true`, even tiny health/session calls pay the full tunnel setup cost.
 
@@ -28,13 +28,13 @@ Recent proxy checks against `TitanX` showed this pattern:
 | WebSocket tunnel `/api/chat-sessions` after fix | HTTP 200 in roughly 0.41s with tunnel timing. |
 | Master tunnel state after final restart | `webSocketTunnelConnected=true`, `webSocketTunnelCount=1`, `waitingAgents=0`, `waitingPublicClients=0`. |
 
-Those numbers point away from local JackLLM request handling and toward relay pairing, tunnel setup, agent availability, and public network overhead.
+Those numbers point away from local heirowLLM request handling and toward relay pairing, tunnel setup, agent availability, and public network overhead.
 
 ## Ranked bottlenecks
 
 1. Per-request reverse-agent consumption
 
-   `SocketJack/Net/ReverseTcpDuplicator.cs` pairs one public request with one waiting agent. On signal, the agent opens a new local connection to JackLLM, writes a ready byte, bridges traffic, then exits that relay session. This makes small API calls expensive and makes page startup fan-out drain the agent pool quickly.
+   `SocketJack/Net/ReverseTcpDuplicator.cs` pairs one public request with one waiting agent. On signal, the agent opens a new local connection to heirowLLM, writes a ready byte, bridges traffic, then exits that relay session. This makes small API calls expensive and makes page startup fan-out drain the agent pool quickly.
 
 2. Keep-alive is disabled at the master proxy
 
@@ -66,7 +66,7 @@ Those numbers point away from local JackLLM request handling and toward relay pa
 
 9. Agent pool warmup and recovery lag
 
-   The relay pool can take tens of seconds to fully repopulate after restart or depletion. JackLLM's shell relay recovery loop also waits before restart decisions. That is safer than flapping, but it means cold starts and degraded pools are very visible to the browser.
+   The relay pool can take tens of seconds to fully repopulate after restart or depletion. heirowLLM's shell relay recovery loop also waits before restart decisions. That is safer than flapping, but it means cold starts and degraded pools are very visible to the browser.
 
 10. Public internet/TLS overhead is a real floor, not the spike source
 
@@ -80,7 +80,7 @@ Those numbers point away from local JackLLM request handling and toward relay pa
 
 2. Add a cheap health path that does not consume relay slots.
 
-   Heartbeat/status should ride a persistent control channel or master-side last-seen signal. The browser should not need to burn a full reverse relay agent to learn that JackLLM is alive.
+   Heartbeat/status should ride a persistent control channel or master-side last-seen signal. The browser should not need to burn a full reverse relay agent to learn that heirowLLM is alive.
 
 3. Split wait policy by request type.
 
@@ -106,9 +106,9 @@ Those numbers point away from local JackLLM request handling and toward relay pa
 
 - Stale owner-token hash: the existing relay kept an old `OwnerTokenHash`, so a newly restarted workstation could register the shell route but the WebSocket tunnel was rejected. Fix: authenticated shell registration now refreshes the relay token hash when the workstation supplies a current owner token.
 - Stale tunnel selection: after reconnects, the master could briefly hold more than one ready tunnel and select an older connection. Fix: tunnel routing now counts/selects only fresh heartbeating tunnels and prefers the most recently seen connection.
-- Async JSON lifetime bug: JackLLM received tunnel request envelopes, but cloned the `JsonElement` inside the scheduled task after the source `JsonDocument` had been disposed. Fix: clone the request element before dispatching async local loopback work.
+- Async JSON lifetime bug: heirowLLM received tunnel request envelopes, but cloned the `JsonElement` inside the scheduled task after the source `JsonDocument` had been disposed. Fix: clone the request element before dispatching async local loopback work.
 - Duplicate tunnel starts: workstation startup could overlap shell start calls and open more than one tunnel. Fix: added a shell-start guard so the final state settles at one WebSocket tunnel.
 
 ## What not to chase first
 
-Loader animation, progress gradient behavior, and local JackLLM handler performance are not the main latency bottlenecks. They can improve perceived polish, but the current measurements show the public proxy path is dominated by relay setup, agent availability, and retry/wait behavior.
+Loader animation, progress gradient behavior, and local heirowLLM handler performance are not the main latency bottlenecks. They can improve perceived polish, but the current measurements show the public proxy path is dominated by relay setup, agent availability, and retry/wait behavior.

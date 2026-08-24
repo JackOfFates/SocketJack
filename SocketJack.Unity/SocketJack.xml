@@ -3119,7 +3119,7 @@
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.HttpAccessLogDirectory">
             <summary>
-            Directory for daily HTTP access logs. Default is <c>C:\LmVsProxy\Logs</c>.
+            Directory for daily HTTP access logs. Defaults to <c>%TEMP%\SocketJack\Logs</c>.
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.HttpAccessLogDateFormat">
@@ -3511,7 +3511,7 @@
         </member>
         <member name="T:SocketJack.Net.Services.GitService">
             <summary>
-            Executes a narrow, Codex-style Git tool surface for LmVsProxy agent mode.
+            Executes a narrow, Codex-style Git tool surface for HeirowLlm agent mode.
             This service builds known git commands itself instead of accepting raw shell text.
             </summary>
         </member>
@@ -3709,7 +3709,7 @@
         </member>
         <member name="T:SocketJack.Net.Services.TerminalService">
             <summary>
-            Executes local terminal commands for LmVsProxy after the caller has passed
+            Executes local terminal commands for HeirowLlm after the caller has passed
             the GUI-owned permission gate.
             </summary>
         </member>

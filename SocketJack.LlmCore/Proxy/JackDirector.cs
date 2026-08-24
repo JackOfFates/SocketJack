@@ -190,7 +190,7 @@ public sealed class JackDirectorRenderTask
 
 internal sealed class JackDirectorService : IDisposable
 {
-    private readonly LmVsProxy _proxy;
+    private readonly HeirowLlm _proxy;
     private readonly string _root;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true, PropertyNameCaseInsensitive = true };
     private readonly ConcurrentDictionary<string, JackDirectorProject> _projects = new(StringComparer.OrdinalIgnoreCase);
@@ -207,7 +207,7 @@ internal sealed class JackDirectorService : IDisposable
     private System.Net.Sockets.UdpClient _lanBeacon;
     private const int LanDiscoveryPort = 11437;
 
-    public JackDirectorService(LmVsProxy proxy, string root)
+    public JackDirectorService(HeirowLlm proxy, string root)
     {
         _proxy = proxy;
         _root = Path.GetFullPath(root);
@@ -268,7 +268,7 @@ internal sealed class JackDirectorService : IDisposable
 
     public JackDirectorProject GetProject(string projectId, string ownerKey)
     {
-        if (!_projects.TryGetValue(SafeId(projectId, "project_"), out JackDirectorProject project)) throw new FileNotFoundException("JackDirector project was not found.");
+        if (!_projects.TryGetValue(SafeId(projectId, "project_"), out JackDirectorProject project)) throw new FileNotFoundException("heirowDirector project was not found.");
         if (!OwnerMatches(ownerKey, project.OwnerKey)) throw new UnauthorizedAccessException("Project belongs to another owner.");
         return project;
     }
@@ -283,7 +283,7 @@ internal sealed class JackDirectorService : IDisposable
     {
         JackDirectorProject project = GetProject(projectId, ownerKey);
         if (_runs.ContainsKey(project.Id)) throw new InvalidOperationException("This project is already rendering.");
-        if (_proxy.JackDirectorMediaExecutor == null) throw new InvalidOperationException("JackDirector media execution is unavailable. Select LlmRuntime and ensure JackONNX is ready.");
+        if (_proxy.JackDirectorMediaExecutor == null) throw new InvalidOperationException("heirowDirector media execution is unavailable. Select LlmRuntime and ensure heirowONNX is ready.");
         var cts = new CancellationTokenSource();
         if (!_runs.TryAdd(project.Id, cts)) throw new InvalidOperationException("This project is already rendering.");
         project.Status = keyframesOnly ? "rendering-keyframes" : "rendering";
@@ -500,13 +500,13 @@ internal sealed class JackDirectorService : IDisposable
         {
             foreach (string discovered in await DiscoverLanAsync(cancellationToken).ConfigureAwait(false))
                 try { added.Add(RedactWorker(AddCandidate(discovered, "lan", false))); } catch { }
-            if (added.Count == 0) warning = "No JackDirector LAN beacons answered. Manual URL pairing remains available.";
+            if (added.Count == 0) warning = "No heirowDirector LAN beacons answered. Manual URL pairing remains available.";
         }
         else if (source == "master-list")
         {
             try
             {
-                using HttpResponseMessage response = await _http.GetAsync("http://127.0.0.1:" + _proxy.ChatServerPort.ToString(CultureInfo.InvariantCulture) + "/api/jackllm/servers?fresh=1", cancellationToken).ConfigureAwait(false);
+                using HttpResponseMessage response = await _http.GetAsync("http://127.0.0.1:" + _proxy.ChatServerPort.ToString(CultureInfo.InvariantCulture) + "/api/heirowllm/servers?fresh=1", cancellationToken).ConfigureAwait(false);
                 string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode) throw new InvalidOperationException("HTTP " + (int)response.StatusCode);
                 using JsonDocument document = JsonDocument.Parse(body);
@@ -532,7 +532,7 @@ internal sealed class JackDirectorService : IDisposable
                     {
                         System.Net.Sockets.UdpReceiveResult packet = await _lanBeacon.ReceiveAsync().ConfigureAwait(false);
                         if (Encoding.UTF8.GetString(packet.Buffer) != "JACKDIRECTOR_DISCOVER_V1") continue;
-                        byte[] response = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { service = "JackDirector", url = BuildLanUrl() }));
+                        byte[] response = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { service = "heirowDirector", url = BuildLanUrl() }));
                         await _lanBeacon.SendAsync(response, response.Length, packet.RemoteEndPoint).ConfigureAwait(false);
                     }
                     catch (ObjectDisposedException) { break; }
@@ -593,7 +593,8 @@ internal sealed class JackDirectorService : IDisposable
     public PairRequest CreatePairRequest(string coordinatorName)
     {
         CleanupPairs();
-        var pair = new PairRequest { CoordinatorName = First(coordinatorName, "JackDirector"), Code = RandomNumberGenerator.GetInt32(100000, 999999).ToString(CultureInfo.InvariantCulture) };
+        if (_pairRequests.Count >= 64) throw new InvalidOperationException("Too many pending pairing requests. Wait for an existing request to expire.");
+        var pair = new PairRequest { CoordinatorName = First(coordinatorName, "heirowDirector"), Code = RandomNumberGenerator.GetInt32(100000, 999999).ToString(CultureInfo.InvariantCulture) };
         _pairRequests[pair.Id] = pair;
         return pair;
     }
@@ -651,7 +652,7 @@ internal sealed class JackDirectorService : IDisposable
 
     public JackDirectorWorkerJob SubmitWorkerJob(JackDirectorMediaRequest request, string kind)
     {
-        if (_proxy.JackDirectorMediaExecutor == null) throw new InvalidOperationException("JackONNX media execution is unavailable on this worker.");
+        if (_proxy.JackDirectorMediaExecutor == null) throw new InvalidOperationException("heirowONNX media execution is unavailable on this worker.");
         var job = new JackDirectorWorkerJob { Kind = kind == "image" ? "image" : "video", State = "queued" };
         var cts = new CancellationTokenSource();
         _workerJobs[job.Id] = job; _workerJobCancellations[job.Id] = cts;
@@ -869,7 +870,7 @@ internal sealed class JackDirectorService : IDisposable
     }
 }
 
-public partial class LmVsProxy
+public partial class HeirowLlm
 {
     private JackDirectorService _jackDirector;
     public IJackDirectorMediaExecutor JackDirectorMediaExecutor { get; set; }
@@ -878,6 +879,8 @@ public partial class LmVsProxy
     {
         _jackDirector ??= new JackDirectorService(this, Path.Combine(_chatSessionRoot, "JackDirector"));
         string html = HtmlPageResources.GetHtml("JackDirector.html");
+        server.Map("GET", "/heirowDirector", (_, request, _) => RenderChatServerHtml(html, null, request));
+        server.Map("GET", "/heirowDirector/", (_, request, _) => RenderChatServerHtml(html, null, request));
         server.Map("GET", "/JackDirector", (_, request, _) => RenderChatServerHtml(html, null, request));
         server.Map("GET", "/JackDirector/", (_, request, _) => RenderChatServerHtml(html, null, request));
         server.Map("GET", "/api/jackdirector/projects", (connection, request, _) => JackDirectorJson(() => _jackDirector.ListProjects(GetChatSessionOwnerKey(connection, request)), request));
@@ -894,7 +897,7 @@ public partial class LmVsProxy
         server.Map("POST", "/api/jackdirector/workers/pair", (_, request, token) => JackDirectorJson(() => { using JsonDocument d = JsonDocument.Parse(request.Body ?? "{}"); string workerId = JdString(d.RootElement, "workerId"); if (!string.IsNullOrWhiteSpace(JdString(d.RootElement, "requestId"))) return _jackDirector.CompleteRemotePairAsync(workerId, JdString(d.RootElement, "requestId"), JdString(d.RootElement, "code"), token).GetAwaiter().GetResult(); return _jackDirector.BeginRemotePairAsync(workerId, token).GetAwaiter().GetResult(); }, request));
         server.Map("POST", "/api/jackdirector/workers/approve", (_, request, token) => JackDirectorJson(() => { using JsonDocument d = JsonDocument.Parse(request.Body ?? "{}"); return _jackDirector.CompleteRemotePairAsync(JdString(d.RootElement, "workerId"), JdString(d.RootElement, "requestId"), JdString(d.RootElement, "code"), token).GetAwaiter().GetResult(); }, request));
         server.Map("POST", "/api/jackdirector/workers/remove", (_, request, _) => JackDirectorJson(() => { using JsonDocument d = JsonDocument.Parse(request.Body ?? "{}"); _jackDirector.RemoveWorker(JdString(d.RootElement, "workerId")); return new { ok = true }; }, request));
-        server.Map("GET", "/api/jackdirector/worker/capabilities", (_, request, token) => JackDirectorJson(() => new { ok = true, capabilities = JackDirectorMediaExecutor?.GetCapabilitiesAsync(token).GetAwaiter().GetResult() ?? new JackDirectorCapabilities() }, request));
+        server.Map("GET", "/api/jackdirector/worker/capabilities", (_, request, token) => JackDirectorJson(() => { RequireJackDirectorWorker(request); return new { ok = true, capabilities = JackDirectorMediaExecutor?.GetCapabilitiesAsync(token).GetAwaiter().GetResult() ?? new JackDirectorCapabilities() }; }, request));
         server.Map("POST", "/api/jackdirector/worker/pair/request", (_, request, _) => JackDirectorJson(() => { using JsonDocument d = JsonDocument.Parse(request.Body ?? "{}"); return new { ok = true, pairing = _jackDirector.CreatePairRequest(JdString(d.RootElement, "coordinatorName")) }; }, request));
         server.Map("GET", "/api/jackdirector/worker/pair/requests", (connection, request, _) => JackDirectorJson(() => { if (!IsLoopbackWorkstationClient(connection)) throw new UnauthorizedAccessException("Pairing codes are visible only on the worker's loopback UI."); return _jackDirector.ListPairRequests(); }, request));
         server.Map("POST", "/api/jackdirector/worker/pair/approve", (_, request, _) => JackDirectorJson(() => { using JsonDocument d = JsonDocument.Parse(request.Body ?? "{}"); return _jackDirector.ApprovePair(JdString(d.RootElement, "requestId"), JdString(d.RootElement, "code")); }, request));
@@ -937,7 +940,7 @@ public partial class LmVsProxy
         if (string.IsNullOrWhiteSpace(concept)) throw new ArgumentException("A production concept is required.");
         await LocalModelRuntime.EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
         string prompt = "Return only JSON with a shots array. Each shot must have title, prompt, negativePrompt, durationSeconds, continuityGroupId, and renderMode. Create " + count + " cinematic shots for: " + concept;
-        string payload = JsonSerializer.Serialize(new { model = FirstNonEmpty(JdString(input.RootElement, "model"), ChatModel), messages = new[] { new { role = "system", content = "You are JackDirector. Produce practical, visually continuous shot plans as strict JSON." }, new { role = "user", content = prompt } }, temperature = 0.5, stream = false });
+        string payload = JsonSerializer.Serialize(new { model = FirstNonEmpty(JdString(input.RootElement, "model"), ChatModel), messages = new[] { new { role = "system", content = "You are heirowDirector. Produce practical, visually continuous shot plans as strict JSON." }, new { role = "user", content = prompt } }, temperature = 0.5, stream = false });
         using HttpRequestMessage upstream = new(HttpMethod.Post, LocalModelRuntime.OpenAiBaseUrl.TrimEnd('/') + "/v1/chat/completions") { Content = new StringContent(payload, Encoding.UTF8, "application/json") };
         using HttpResponseMessage response = await _httpClient.SendAsync(upstream, cancellationToken).ConfigureAwait(false);
         string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);

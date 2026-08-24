@@ -1,4 +1,4 @@
-# JackLLM Workstation Linux LLM Corrections
+# heirowLLM Workstation Linux LLM Corrections
 
 Date: 2026-05-25
 
@@ -10,7 +10,7 @@ Server tested: sable (`wintergrasped@216.235.101.12`, SSH port 25)
 - Text GGUF models now report `chat_completion` in runtime service metadata, so model/mode discovery can identify normal chat models directly.
 - JackONNX LlmRuntime image/video tools now accept per-call `deviceId`, `cudaDevice`, `preferredProvider`, and `devicePolicy` fields.
 - JackONNX image/video Python runners now inspect free VRAM with `nvidia-smi`; when no CUDA device has enough free memory and CUDA is not strictly required, they fall back to CPU instead of hard-failing with CUDA OOM.
-- `Deploy-JackLLMWorkstationSable.ps1` now understands the packaged Linux install path and uses `jackllm-workstation` / `jackllm-workstation-stop` when installed. Its fallback native bridge also uses chat port `11436`.
+- `Deploy-heirowLLMWorkstationSable.ps1` now understands the packaged Linux install path and uses `heirowllm-workstation` / `heirowllm-workstation-stop` when installed. Its fallback native bridge also uses chat port `11436`.
 - Rebuilt and installed the Linux Debian package version `2026.0.0` on sable.
 
 ## Installed Package
@@ -18,10 +18,10 @@ Server tested: sable (`wintergrasped@216.235.101.12`, SSH port 25)
 - Local installer: `C:\Users\Vin\Documents\GitHub\SocketJack\artifacts\linux-installer\LlmWorkstation_Linux64.deb`
 - Size: `1,630,979,464` bytes
 - SHA256: `33615B0A1B65149860C3FFA841D07551DCE15AE5637266A0350F288F00A24DEA`
-- Remote build artifact: `/stor2/JackLLMDebBuild/llmworkstation-deb-20260525-120140/out/LlmWorkstation_Linux64.deb`
-- Installed package: `jackllm-workstation 2026.0.0`
-- Running native backend: `/opt/jackllm/workstation/native/JackLLM.Workstation`
-- Running WPF/Wine app: `/opt/jackllm/workstation/wpf/JackLLM.exe`
+- Remote build artifact: `/stor2/heirowLLMDebBuild/llmworkstation-deb-20260525-120140/out/LlmWorkstation_Linux64.deb`
+- Installed package: `heirowllm-workstation 2026.0.0`
+- Running native backend: `/opt/heirowllm/workstation/native/heirowLLM.Workstation`
+- Running WPF/Wine app: `/opt/heirowllm/workstation/wpf/heirowLLM.exe`
 
 ## Live Sable Runtime State
 
@@ -63,7 +63,7 @@ Result: `23 passed, 0 failed, 0 warnings`
 
 Image artifact produced:
 
-`/var/lib/jackllm/Artifacts/JackONNX/job_d64b8646f27c41ce808e9db7e528684b/image_job_d64b8646f27c41ce808e9db7e528684b.png`
+`/var/lib/heirowllm/Artifacts/JackONNX/job_d64b8646f27c41ce808e9db7e528684b/image_job_d64b8646f27c41ce808e9db7e528684b.png`
 
 ## Video Generation Note
 

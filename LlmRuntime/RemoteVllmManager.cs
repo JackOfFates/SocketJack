@@ -258,7 +258,7 @@ public sealed class RemoteVllmManager
         TokensPerSecond = tokensPerSecond
     };
 
-    private static string RuntimeDirectory(RemoteVllmProfile profile) => "$HOME/.local/state/jackllm/vllm-" + SafeId(profile.Id);
+    private static string RuntimeDirectory(RemoteVllmProfile profile) => "$HOME/.local/state/heirowllm/vllm-" + SafeId(profile.Id);
     internal static string ResolveEndpoint(RemoteVllmProfile profile) => !string.IsNullOrWhiteSpace(profile.OpenAiBaseUrl)
         ? profile.OpenAiBaseUrl.TrimEnd('/')
         : "http://" + profile.SshHost.Split('@').Last() + ":" + profile.ApiPort.ToString(CultureInfo.InvariantCulture);

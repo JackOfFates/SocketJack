@@ -73,6 +73,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     private bool _savedSettingsLoaded;
     private bool _viewReady;
     private bool _refreshingModels;
+    private bool _modelInventoryRefreshActive;
     private bool _suppressSelectionChanged;
     private bool _benchmarkControlsEnabled = true;
     private bool _refreshingGpuAssignments;
@@ -104,6 +105,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             ModelDownloaded?.Invoke(path);
             _ = RefreshModelsAsync();
         };
+        ModelBrowserControl.ModelInventoryChanged += () => _ = RefreshModelsAsync();
         ModelBrowserControl.ModelLoadRequested += path => _ = LoadModelAsync(path);
         ModelBrowserControl.StatusChanged += status =>
         {
@@ -198,6 +200,8 @@ public partial class ModelsManagerControl : UserControl, IDisposable
 
     public event Action<string>? ModelDownloaded;
 
+    public event Action<IReadOnlyList<string>>? AvailableChatModelsChanged;
+
     public event Action<string>? ChatServiceSuggested;
 
     public event Action<string>? StatusChanged;
@@ -224,6 +228,16 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         GpuTabItem.Visibility = Visibility.Visible;
         ManagerTabs.SelectedItem = GpuTabItem;
         Focus();
+    }
+
+    public Task<string> InstallHeirowSongAsync(CancellationToken cancellationToken = default)
+    {
+        return ModelBrowserControl.InstallHeirowSongAsync(cancellationToken);
+    }
+
+    public Task<string> InstallPictureBankAiAsync(CancellationToken cancellationToken = default)
+    {
+        return ModelBrowserControl.InstallPictureBankAiAsync(cancellationToken);
     }
 
     public void SetModelBenchmarks(IEnumerable<ModelManagerBenchmarkInfo> benchmarks, bool canBenchmark)
@@ -267,26 +281,40 @@ public partial class ModelsManagerControl : UserControl, IDisposable
 
     private async Task RefreshModelsAsync(string preferredSelectionKey = "")
     {
-        if (_disposed)
+        if (_disposed || _modelInventoryRefreshActive)
             return;
 
+        _modelInventoryRefreshActive = true;
         string selectionKey = FirstNonEmpty(preferredSelectionKey, GetSelectedModelKey(), _preferredSelectionKey);
+        string modelsDirectory = ModelsDirectory;
+        string completeModelsDirectory = CompleteModelsDirectory;
         SetStatus("Refreshing model inventory...");
         RefreshModelsButton.IsEnabled = false;
         try
         {
-            Directory.CreateDirectory(ModelsDirectory);
-            Directory.CreateDirectory(CompleteModelsDirectory);
-            LlmModelRegistry registry = GetRegistry();
-            IReadOnlyList<LlmModelInfo> localModels = registry.ListModels();
-            IReadOnlyDictionary<string, RuntimeModelSnapshot> runtimeModels = await TryFetchRuntimeModelsAsync().ConfigureAwait(true);
-            RuntimeHardwareSnapshot hardware = await TryFetchRuntimeHardwareSnapshotAsync().ConfigureAwait(true);
+            Task<IReadOnlyList<(LlmModelInfo Model, bool BaseModelAvailable)>> localInventoryTask = Task.Run<IReadOnlyList<(LlmModelInfo, bool)>>(() =>
+            {
+                Directory.CreateDirectory(modelsDirectory);
+                Directory.CreateDirectory(completeModelsDirectory);
+                LlmModelRegistry registry = GetRegistry();
+                return registry.ListModels()
+                    .Select(model => (model, registry.IsBaseModelAvailable(model)))
+                    .ToArray();
+            });
+            Task<IReadOnlyDictionary<string, RuntimeModelSnapshot>> runtimeInventoryTask = TryFetchRuntimeModelsAsync();
+            Task<RuntimeHardwareSnapshot> hardwareTask = TryFetchRuntimeHardwareSnapshotAsync();
+            Task<string> storageSummaryTask = Task.Run(() => BuildModelStorageSummary(modelsDirectory, completeModelsDirectory));
+
+            await Task.WhenAll(localInventoryTask, runtimeInventoryTask, hardwareTask, storageSummaryTask).ConfigureAwait(true);
+            IReadOnlyList<(LlmModelInfo Model, bool BaseModelAvailable)> localInventory = await localInventoryTask.ConfigureAwait(true);
+            IReadOnlyDictionary<string, RuntimeModelSnapshot> runtimeModels = await runtimeInventoryTask.ConfigureAwait(true);
+            RuntimeHardwareSnapshot hardware = await hardwareTask.ConfigureAwait(true);
 
             var merged = new Dictionary<string, ModelManagerModelItem>(StringComparer.OrdinalIgnoreCase);
-            foreach (LlmModelInfo model in localModels)
+            foreach ((LlmModelInfo model, bool baseModelAvailable) in localInventory)
             {
                 RuntimeModelSnapshot? runtime = TryFindRuntimeModel(runtimeModels, model);
-                var item = ModelManagerModelItem.FromLocalModel(model, runtime, registry.IsBaseModelAvailable(model));
+                var item = ModelManagerModelItem.FromLocalModel(model, runtime, baseModelAvailable);
                 item.HardwareWarning = hardware.BuildModelWarning(item);
                 merged[item.Key] = item;
             }
@@ -334,10 +362,12 @@ public partial class ModelsManagerControl : UserControl, IDisposable
             ApplyBenchmarksToModels();
             _modelView.Refresh();
             UpdateCounts();
-            UpdateModelStorageSummary();
+            ModelStorageText.Text = await storageSummaryTask.ConfigureAwait(true);
             RestoreSelection(selectionKey);
             UpdateEmptyState();
             RefreshGpuConfigurationItems(hardware);
+
+            AvailableChatModelsChanged?.Invoke(GetAvailableChatModelIds());
 
             int running = _models.Count(item => item.IsRunning);
             SetStatus("Model inventory refreshed: " + _models.Count.ToString("N0") + " model(s), " + running.ToString("N0") + " running.");
@@ -350,6 +380,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         }
         finally
         {
+            _modelInventoryRefreshActive = false;
             RefreshModelsButton.IsEnabled = true;
         }
     }
@@ -413,13 +444,13 @@ public partial class ModelsManagerControl : UserControl, IDisposable
         return result;
     }
 
-    private void UpdateModelStorageSummary()
+    private static string BuildModelStorageSummary(string modelsDirectory, string completeModelsDirectory)
     {
         try
         {
             var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             long usedBytes = 0;
-            foreach (string root in new[] { ModelsDirectory, CompleteModelsDirectory })
+            foreach (string root in new[] { modelsDirectory, completeModelsDirectory })
             {
                 if (!Directory.Exists(root))
                     continue;
@@ -431,18 +462,69 @@ public partial class ModelsManagerControl : UserControl, IDisposable
                 }
             }
 
-            string driveRoot = Path.GetPathRoot(Path.GetFullPath(ModelsDirectory)) ?? "";
+            string driveRoot = Path.GetPathRoot(Path.GetFullPath(modelsDirectory)) ?? "";
             DriveInfo drive = new(driveRoot);
-            ModelStorageText.Text = "Model storage: " + FormatBytes(usedBytes) + " used across " +
-                                    files.Count.ToString("N0") + " file(s)  •  " +
-                                    FormatBytes(drive.AvailableFreeSpace) + " available on " + drive.Name +
-                                    "  •  " + ModelsDirectory;
+            return "Model storage: " + FormatBytes(usedBytes) + " used across " +
+                   files.Count.ToString("N0") + " file(s)  •  " +
+                   FormatBytes(drive.AvailableFreeSpace) + " available on " + drive.Name +
+                   "  •  " + modelsDirectory;
         }
         catch (Exception ex)
         {
-            ModelStorageText.Text = "Model storage unavailable: " + ex.Message;
+            return "Model storage unavailable: " + ex.Message;
         }
     }
+
+    public IReadOnlyList<string> GetAvailableChatModelIds() =>
+        _models
+            .Where(item => item.RuntimeChatLoadable && (item.IsDownloaded || item.IsRunning))
+            .Select(item => item.LoadIdentifier)
+            .Where(model => !string.IsNullOrWhiteSpace(model))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(model => model, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    public bool IsModelConfiguredForFullGpuLayerOffload(string modelId)
+    {
+        string requested = NormalizeModelIdentifierForPlacement(modelId);
+        if (string.IsNullOrWhiteSpace(requested))
+            return false;
+
+        ModelManagerModelItem? model = _models.FirstOrDefault(item =>
+            ModelIdentifierMatchesPlacement(item.Key, requested) ||
+            ModelIdentifierMatchesPlacement(item.DisplayName, requested) ||
+            ModelIdentifierMatchesPlacement(item.LoadIdentifier, requested) ||
+            ModelIdentifierMatchesPlacement(Path.GetFileNameWithoutExtension(item.FilePath), requested));
+        if (model == null)
+            return false;
+
+        return model.LoadedInstances.Any(instance =>
+        {
+            ModelManagerLoadSettings? config = instance.Config;
+            if (config == null)
+                return false;
+            string backend = (config.Backend ?? "").Trim().ToLowerInvariant();
+            bool cuda = backend.Contains("cuda", StringComparison.OrdinalIgnoreCase);
+            bool allLayers = config.GpuLayerCount < 0 || config.GpuLayerCount == int.MaxValue;
+            return cuda && allLayers && !config.AllowBackendFallback;
+        });
+    }
+
+    private static bool ModelIdentifierMatchesPlacement(string? candidate, string requested)
+    {
+        string normalized = NormalizeModelIdentifierForPlacement(candidate);
+        return !string.IsNullOrWhiteSpace(normalized) &&
+               (string.Equals(normalized, requested, StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains(requested, StringComparison.OrdinalIgnoreCase) ||
+                requested.Contains(normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeModelIdentifierForPlacement(string? value) =>
+        (value ?? "")
+            .Trim()
+            .Replace('\\', '/')
+            .TrimEnd('/')
+            .ToLowerInvariant();
 
     private async Task<RuntimeHardwareSnapshot> TryFetchRuntimeHardwareSnapshotAsync()
     {
@@ -2188,7 +2270,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     }
 
     private static string SettingsPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "model-manager-settings.json");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "heirowLLM", "model-manager-settings.json");
 
     private void LoadSavedGpuSettings()
     {
@@ -2257,7 +2339,7 @@ public partial class ModelsManagerControl : UserControl, IDisposable
     }
 
     private static string GpuSettingsPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "model-manager-gpu-settings.json");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "heirowLLM", "model-manager-gpu-settings.json");
 
     private void SetStatus(string text)
     {

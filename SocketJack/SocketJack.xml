@@ -2110,6 +2110,13 @@
             <param name="rawRequest">The raw HTTP request string.</param>
             <returns>HttpRequest object with parsed data.</returns>
         </member>
+        <member name="M:SocketJack.Net.HttpServer.GenerateTypeScriptClient(SocketJack.Net.TypeScriptClientOptions)">
+            <summary>
+            Generates a dependency-free TypeScript client for the server's currently mapped HTTP routes.
+            Typed request bodies become TypeScript aliases, route variables are required method inputs,
+            and whitelisted SocketJack message classes are emitted as interfaces for WebSocket use.
+            </summary>
+        </member>
         <member name="P:SocketJack.Net.HttpRequest.Host">
             <summary>Raw Host header value, sanitized for control characters.</summary>
         </member>
@@ -3243,7 +3250,8 @@
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.HttpAccessLogDirectory">
             <summary>
-            Directory for daily HTTP access logs. Default is <c>C:\LmVsProxy\Logs</c>.
+            Directory for daily HTTP access logs. Defaults to a SocketJack folder
+            under the current user's temporary directory.
             </summary>
         </member>
         <member name="P:SocketJack.Net.NetworkOptions.HttpAccessLogDateFormat">
@@ -4509,6 +4517,21 @@
             Remove disconnected peers from all swarms.
             </summary>
         </member>
+        <member name="T:SocketJack.Net.TypeScriptClientOptions">
+            <summary>
+            Controls TypeScript client generation for <see cref="T:SocketJack.Net.HttpServer"/> routes and
+            SocketJack WebSocket message types.
+            </summary>
+        </member>
+        <member name="P:SocketJack.Net.TypeScriptClientOptions.ClassName">
+            <summary>Name of the generated client class.</summary>
+        </member>
+        <member name="P:SocketJack.Net.TypeScriptClientOptions.BaseUrl">
+            <summary>Default base URL passed to the generated client constructor.</summary>
+        </member>
+        <member name="P:SocketJack.Net.TypeScriptClientOptions.IncludeWebSocketTypes">
+            <summary>When true, emit interfaces for resolvable custom types in the server whitelist.</summary>
+        </member>
         <member name="T:SocketJack.Net.UdpClient">
             <summary>
             Multithreaded UDP Client.
@@ -5068,13 +5091,13 @@
         </member>
         <member name="T:SocketJack.Net.Services.GitService">
             <summary>
-            Executes a narrow, Codex-style Git tool surface for LmVsProxy agent mode.
+            Executes a narrow, Codex-style Git tool surface for HeirowLlm agent mode.
             This service builds known git commands itself instead of accepting raw shell text.
             </summary>
         </member>
         <member name="T:SocketJack.Net.Services.TerminalService">
             <summary>
-            Executes local terminal commands for LmVsProxy after the caller has passed
+            Executes local terminal commands for HeirowLlm after the caller has passed
             the GUI-owned permission gate.
             </summary>
         </member>

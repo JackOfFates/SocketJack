@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 namespace SocketJack.Net.Services;
 
 /// <summary>
-/// Executes a narrow, Codex-style Git tool surface for LmVsProxy agent mode.
+/// Executes a narrow, Codex-style Git tool surface for HeirowLlm agent mode.
 /// This service builds known git commands itself instead of accepting raw shell text.
 /// </summary>
 public sealed class GitService

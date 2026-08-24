@@ -5,17 +5,17 @@
 - Public docs routes: `/Documentation`, `/Doc`, `/Docs`, `/ReadMe`, `/Info`, `/Help`.
 - Troubleshooting route: `/issues`.
 - Documentation tree order: Get Started, Installation Guide, Migration Guide, APIs, All Source Members.
-- Product split: SocketJack Library and JackLLM Workstation.
+- Product split: SocketJack Library and heirowLLM Workstation.
 
 ## Completed
 
 - Reworked `SocketJack/html/Documentation.html` into a dark Microsoft Learn-style article layout.
-- Added a tree-view navigation split between SocketJack Library and JackLLM Workstation.
+- Added a tree-view navigation split between SocketJack Library and heirowLLM Workstation.
 - Added a Troubleshooting link that opens `/issues`.
 - Added source-member scanning from the SocketJack GitHub raw source list with embedded API fallback entries.
 - Added XML summaries for `HtmlPageResources` public methods used by the docs page.
 - Added public SocketJack.com documentation aliases in `SocketJack-MagicMasterList`.
-- Expanded the local JackLLM docs route aliases.
+- Expanded the local heirowLLM docs route aliases.
 - Added `/issues` Q&A and error-reporting page with `/auto/api` tools-mode chat.
 - Added issue chat session persistence and issue report storage.
 - Added JACK-only reported-issues admin API and Admin tab.

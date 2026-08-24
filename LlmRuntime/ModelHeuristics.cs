@@ -147,6 +147,12 @@ public static class ModelHeuristics
         AddTagIfAny(tags, "audio", lower, "audio", "audio-to-audio", "voice-conversion", "voice-clone", "speech", "whisper", "wav2vec", "bark", "musicgen");
         AddTagIfAny(tags, "video", lower, "text-to-video", "image-to-video", "video-to-video", "img2vid", "vid2vid", "t2v", "i2v", "v2v", "wan2", "wan-", "hunyuanvideo", "ltx-video", "ltxv", "mochi", "motifv", "highnoise", "lownoise");
         AddTagIfAny(tags, "tool-use", lower, "tool", "function", "agent", "hermes", "firefunction");
+        if ((lower.Contains("gemma-4", StringComparison.Ordinal) &&
+             (tags.Contains("instruct") || lower.Contains("-it", StringComparison.Ordinal))) ||
+            lower.Contains("qwythos", StringComparison.Ordinal) ||
+            lower.Contains("claude-mythos", StringComparison.Ordinal) ||
+            LooksLikeQwen35Model(full))
+            tags.Add("tool-use");
 
         if (metadata != null)
         {

@@ -1,6 +1,6 @@
-# JackLLM Workstation for VS Code
+# heirowLLM Workstation for VS Code
 
-Use the language models served by JackLLM Workstation directly in VS Code Chat and agent mode.
+Use the language models served by heirowLLM Workstation directly in VS Code Chat and agent mode.
 
 ## Features
 
@@ -13,23 +13,23 @@ Use the language models served by JackLLM Workstation directly in VS Code Chat a
 
 ## Use it
 
-1. Start JackLLM Workstation.
+1. Start heirowLLM Workstation.
 2. Install this extension and open VS Code Chat.
-3. Open the model picker, choose **Manage Models**, and enable **JackLLM Workstation** models.
-4. Select a JackLLM model and use Ask, Edit, or Agent mode normally.
+3. Open the model picker, choose **Manage Models**, and enable **heirowLLM Workstation** models.
+4. Select a heirowLLM model and use Ask, Edit, or Agent mode normally.
 
-Run **JackLLM: Manage Workstation Provider** from the Command Palette to check status, refresh models, change the endpoint, store an API key, or open the Workstation UI.
+Run **heirowLLM: Manage Workstation Provider** from the Command Palette to check status, refresh models, change the endpoint, store an API key, or open the Workstation UI.
 
 ## Requirements
 
 - VS Code 1.104 or newer.
-- JackLLM Workstation with `/api/models`, `/api/model-runtime/models`, and `/v1/chat/completions` available.
+- heirowLLM Workstation with `/api/models`, `/api/model-runtime/models`, and `/v1/chat/completions` available.
 
-The default local setup does not require an API key. For an authenticated endpoint, run **JackLLM: Set API Key**.
+The default local setup does not require an API key. For an authenticated endpoint, run **heirowLLM: Set API Key**.
 
 ## Settings
 
-- `jackllm.endpoint`: Workstation base URL.
-- `jackllm.requestTimeoutSeconds`: maximum chat request duration.
-- `jackllm.defaultContextTokens`: fallback context size.
-- `jackllm.defaultOutputTokens`: advertised and requested output limit.
+- `heirowllm.endpoint`: Workstation base URL.
+- `heirowllm.requestTimeoutSeconds`: maximum chat request duration.
+- `heirowllm.defaultContextTokens`: fallback context size.
+- `heirowllm.defaultOutputTokens`: advertised and requested output limit.

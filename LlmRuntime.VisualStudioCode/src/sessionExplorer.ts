@@ -16,22 +16,22 @@ export class SessionExplorer implements vscode.TreeDataProvider<SessionFileItem>
   readonly onDidChangeTreeData = this.changed.event;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.rules = this.context.workspaceState.get<IgnoreRules>('jackllm.sessionIgnoreRules', this.rules);
+    this.rules = this.context.workspaceState.get<IgnoreRules>('heirowllm.sessionIgnoreRules', this.rules);
   }
 
   register(): vscode.Disposable[] {
-    this.view = vscode.window.createTreeView('jackllm.sessionExplorer', {
+    this.view = vscode.window.createTreeView('heirowllm.sessionExplorer', {
       treeDataProvider: this,
       canSelectMany: true,
       showCollapseAll: true
     });
     const registrations = [
       this.view,
-      vscode.commands.registerCommand('jackllm.session.refresh', () => this.refresh()),
-      vscode.commands.registerCommand('jackllm.session.ignoreSelected', () => this.ignoreSelected()),
-      vscode.commands.registerCommand('jackllm.session.unignoreSelected', () => this.unignoreSelected()),
-      vscode.commands.registerCommand('jackllm.session.ignoreFileTypes', () => this.ignoreFileTypes()),
-      vscode.commands.registerCommand('jackllm.session.ignoreRegex', () => this.ignoreRegex()),
+      vscode.commands.registerCommand('heirowllm.session.refresh', () => this.refresh()),
+      vscode.commands.registerCommand('heirowllm.session.ignoreSelected', () => this.ignoreSelected()),
+      vscode.commands.registerCommand('heirowllm.session.unignoreSelected', () => this.unignoreSelected()),
+      vscode.commands.registerCommand('heirowllm.session.ignoreFileTypes', () => this.ignoreFileTypes()),
+      vscode.commands.registerCommand('heirowllm.session.ignoreRegex', () => this.ignoreRegex()),
       vscode.workspace.onDidCreateFiles(() => this.refresh()),
       vscode.workspace.onDidDeleteFiles(() => this.refresh()),
       vscode.workspace.onDidRenameFiles(() => this.refresh())
@@ -86,7 +86,7 @@ export class SessionExplorer implements vscode.TreeDataProvider<SessionFileItem>
     item.ignored = Boolean(rule);
     item.description = rule ? `Ignored (${rule})` : undefined;
     item.iconPath = new vscode.ThemeIcon(rule ? 'eye-closed' : item.isDirectory ? 'folder' : 'file');
-    item.contextValue = rule ? 'jackllmSessionIgnoredItem' : 'jackllmSessionItem';
+    item.contextValue = rule ? 'heirowllmSessionIgnoredItem' : 'heirowllmSessionItem';
   }
 
   private selectedFiles(): SessionFileItem[] {
@@ -95,14 +95,14 @@ export class SessionExplorer implements vscode.TreeDataProvider<SessionFileItem>
 
   private async ignoreSelected(): Promise<void> {
     const selected = this.selectedFiles();
-    if (!selected.length) return void vscode.window.showInformationMessage('Select one or more files in JackLLM Session Explorer first.');
+    if (!selected.length) return void vscode.window.showInformationMessage('Select one or more files in heirowLLM Session Explorer first.');
     this.rules.exact = unique([...this.rules.exact, ...selected.map(item => item.relativePath)]);
     await this.saveRules(`${selected.length} file${selected.length === 1 ? '' : 's'} ignored.`);
   }
 
   private async unignoreSelected(): Promise<void> {
     const selected = this.selectedFiles();
-    if (!selected.length) return void vscode.window.showInformationMessage('Select one or more files in JackLLM Session Explorer first.');
+    if (!selected.length) return void vscode.window.showInformationMessage('Select one or more files in heirowLLM Session Explorer first.');
     const paths = new Set(selected.map(item => item.relativePath.toLowerCase()));
     this.rules.exact = this.rules.exact.filter(value => !paths.has(value.toLowerCase()));
     await this.saveRules(`Exact ignore rules removed for ${selected.length} file${selected.length === 1 ? '' : 's'}.`);
@@ -112,7 +112,7 @@ export class SessionExplorer implements vscode.TreeDataProvider<SessionFileItem>
     const selectedExtensions = unique(this.selectedFiles().map(item => path.extname(item.relativePath).toLowerCase()).filter(Boolean));
     const picked = await vscode.window.showQuickPick(
       selectedExtensions.length ? selectedExtensions.map(ext => ({ label: `*${ext}`, ext })) : commonExtensions.map(ext => ({ label: `*${ext}`, ext })),
-      { title: 'Ignore file types in this JackLLM session', canPickMany: true, placeHolder: 'Select one or more *.ext rules' }
+      { title: 'Ignore file types in this heirowLLM session', canPickMany: true, placeHolder: 'Select one or more *.ext rules' }
     );
     if (!picked?.length) return;
     this.rules.globs = unique([...this.rules.globs, ...picked.map(item => `*${item.ext}`)]);
@@ -141,7 +141,7 @@ export class SessionExplorer implements vscode.TreeDataProvider<SessionFileItem>
   }
 
   private async saveRules(message: string): Promise<void> {
-    await this.context.workspaceState.update('jackllm.sessionIgnoreRules', this.rules);
+    await this.context.workspaceState.update('heirowllm.sessionIgnoreRules', this.rules);
     await this.refresh();
     void vscode.window.showInformationMessage(message);
   }
@@ -165,7 +165,7 @@ class SessionFileItem extends vscode.TreeItem {
     super(label, isDirectory ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
     this.tooltip = relativePath || resourceUri.fsPath;
     this.iconPath = new vscode.ThemeIcon(isDirectory ? 'folder' : 'file');
-    this.contextValue = 'jackllmSessionItem';
+    this.contextValue = 'heirowllmSessionItem';
     this.command = isDirectory ? undefined : { command: 'vscode.open', title: 'Open File', arguments: [resourceUri] };
     this.id = `${resourceUri.toString()}#${depth}`;
   }

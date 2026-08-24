@@ -146,11 +146,11 @@ static async Task PublishAsync(PublisherSession session, PublishJob job, int chu
                           ", older-skip " + olderSkipped.ToString(CultureInfo.InvariantCulture) +
                           ", stale-server " + deletedServerFiles.ToString(CultureInfo.InvariantCulture));
 
-    bool shouldPruneWorkstationPayload = IsJackLlmWorkstationChannel(job.Channel);
+    bool shouldPruneWorkstationPayload = IsHeirowLlmWorkstationChannel(job.Channel);
     const long maxWorkstationUploadBytes = 512L * 1024L * 1024L;
     if (shouldPruneWorkstationPayload && totalBytes > maxWorkstationUploadBytes && !allowLargeWorkstationPayload) {
         throw new InvalidOperationException(job.Channel + " would upload " + Terminal.Bytes(totalBytes) +
-            ". Refusing the large JackLLM Workstation payload; run the MasterList channel only, trim the JackLLM artifact, or pass --allow-large-workstation-payload intentionally.");
+            ". Refusing the large heirowLLM Workstation payload; run the MasterList channel only, trim the heirowLLM artifact, or pass --allow-large-workstation-payload intentionally.");
     }
 
     if (filesToUpload.Count == 0 && deletedServerFiles == 0 && !shouldPruneWorkstationPayload) {
@@ -353,9 +353,9 @@ static string NormalizePublishRelativePath(string path) {
     return (path ?? "").Trim().Replace('\\', '/').Trim('/');
 }
 
-static bool IsJackLlmWorkstationChannel(string channel) {
+static bool IsHeirowLlmWorkstationChannel(string channel) {
     string id = (channel ?? "").Trim().ToLowerInvariant();
-    return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
+    return id.Equals("heirowllm", StringComparison.OrdinalIgnoreCase);
 }
 
 static void AddJobChannelMetadata(Dictionary<string, object> body, PublishJob job) {
@@ -1222,7 +1222,7 @@ sealed class PublisherOptions {
                     options.ProtectNewerServerFiles = true;
                     break;
                 case "--allow-large-workstation-payload":
-                case "--allow-large-jackllm-payload":
+                case "--allow-large-heirowllm-payload":
                     options.AllowLargeWorkstationPayload = true;
                     break;
                 case "--all":
@@ -1317,13 +1317,13 @@ sealed class PublisherOptions {
             configuration = "Debug";
         return new List<PublishJob> {
             new() {
-                Channel = "jackllm",
-                DisplayName = "JackLLM",
-                SourceDirectory = Path.Combine(root, "artifacts", "JackLLM", "publish"),
+                Channel = "heirowllm",
+                DisplayName = "heirowLLM",
+                SourceDirectory = Path.Combine(root, "artifacts", "heirowLLM", "publish"),
                 PublicPath = "/Update",
-                ServerPath = @"C:\JackLLM\Update",
-                ManagedProcessName = "JackLLM",
-                ManagedExecutablePath = "JackLLM.exe",
+                ServerPath = @"C:\heirowLLM\Update",
+                ManagedProcessName = "heirowLLM",
+                ManagedExecutablePath = "heirowLLM.exe",
                 AutoStartAfterUpdate = false,
                 ExtraFiles = {
                     CreateMsiInstallerExtraFile(root, configuration),
@@ -1396,7 +1396,7 @@ sealed class PublisherOptions {
     }
 
     private static IEnumerable<ExtraPublishFile> DefaultExtraFiles(string root, PublishJob job) {
-        if (string.Equals(job.Channel, "jackllm", StringComparison.OrdinalIgnoreCase)) {
+        if (string.Equals(job.Channel, "heirowllm", StringComparison.OrdinalIgnoreCase)) {
             string configuration = GetJobConfiguration(job);
             yield return CreateMsiInstallerExtraFile(root, configuration);
             yield return CreateBootstrapInstallerExtraFile(root, configuration);
@@ -1428,8 +1428,8 @@ sealed class PublisherOptions {
 
     private static string FindMsiInstallerPath(string root, string configuration) {
         string[] candidates = {
-            Path.Combine(root, "JackLLMInstaller", "bin", "x64", configuration, "JackLLM-Setup.msi"),
-            Path.Combine(root, "JackLLMInstaller", "bin", configuration, "JackLLM-Setup.msi")
+            Path.Combine(root, "heirowLLMInstaller", "bin", "x64", configuration, "heirowLLM-Setup.msi"),
+            Path.Combine(root, "heirowLLMInstaller", "bin", configuration, "heirowLLM-Setup.msi")
         };
 
         return candidates
@@ -1442,9 +1442,9 @@ sealed class PublisherOptions {
 
     private static string FindBootstrapInstallerPath(string root, string configuration) {
         string[] candidates = {
-            Path.Combine(root, "artifacts", "JackLLMBridgeInstaller", "publish", "JackLLM-Setup.exe"),
-            Path.Combine(root, "JackLLMBridgeInstaller", "bin", configuration, "net8.0-windows7.0", "win-x64", "publish", "JackLLM-Setup.exe"),
-            Path.Combine(root, "JackLLMBridgeInstaller", "bin", configuration, "net8.0-windows7.0", "win-x64", "JackLLM-Setup.exe")
+            Path.Combine(root, "artifacts", "heirowLLMBridgeInstaller", "publish", "heirowLLM-Setup.exe"),
+            Path.Combine(root, "heirowLLMBridgeInstaller", "bin", configuration, "net8.0-windows7.0", "win-x64", "publish", "heirowLLM-Setup.exe"),
+            Path.Combine(root, "heirowLLMBridgeInstaller", "bin", configuration, "net8.0-windows7.0", "win-x64", "heirowLLM-Setup.exe")
         };
 
         foreach (string candidate in candidates) {
@@ -1459,7 +1459,7 @@ sealed class PublisherOptions {
         const string fileName = "LlmWorkstation_Linux64.deb";
         string[] candidates = {
             Path.Combine(root, "artifacts", "linux-installer", fileName),
-            Path.Combine(@"C:\JackLLM\Update", fileName)
+            Path.Combine(@"C:\heirowLLM\Update", fileName)
         };
 
         foreach (string candidate in candidates) {
@@ -1472,7 +1472,7 @@ sealed class PublisherOptions {
 
     private static string GetInstallerPath(string root, PublishJob job, string fileName) {
         string configuration = GetJobConfiguration(job);
-        return fileName.Equals("JackLLM-Setup.exe", StringComparison.OrdinalIgnoreCase)
+        return fileName.Equals("heirowLLM-Setup.exe", StringComparison.OrdinalIgnoreCase)
             ? CreateBootstrapInstallerExtraFile(root, configuration).FullPath
             : CreateMsiInstallerExtraFile(root, configuration).FullPath;
     }
@@ -1487,8 +1487,8 @@ sealed class PublisherOptions {
     private static bool IsBareInstallerFileName(string path) {
         return !path.Contains('\\') &&
             !path.Contains('/') &&
-            (string.Equals(path, "JackLLM-Setup.msi", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(path, "JackLLM-Setup.exe", StringComparison.OrdinalIgnoreCase));
+            (string.Equals(path, "heirowLLM-Setup.msi", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(path, "heirowLLM-Setup.exe", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetExtraOutputName(ExtraPublishFile extra) {
@@ -1519,7 +1519,7 @@ sealed class PublisherOptions {
 
     private static string NormalizeChannel(string value) {
         value = (value ?? "").Trim().ToLowerInvariant();
-        return string.IsNullOrWhiteSpace(value) ? "jackllm" : value;
+        return string.IsNullOrWhiteSpace(value) ? "heirowllm" : value;
     }
 
     private static bool TryParseByteCount(string value, out int bytes) {
@@ -1552,7 +1552,7 @@ sealed class PublisherOptions {
 }
 
 sealed class PublishJob {
-    public string Channel { get; set; } = "jackllm";
+    public string Channel { get; set; } = "heirowllm";
     public string DisplayName { get; set; } = "";
     public string SourceDirectory { get; set; } = "";
     public string PublicPath { get; set; } = "";
@@ -1729,7 +1729,7 @@ sealed class UpdateFile {
     }
 
     private static bool IsAllowed(string relativePath, string channel) {
-        if (IsJackLlmWorkstationChannel(channel) && IsBlockedJackLlmPayloadPath(relativePath))
+        if (IsHeirowLlmWorkstationChannel(channel) && IsBlockedHeirowLlmPayloadPath(relativePath))
             return false;
 
         string[] segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -1751,19 +1751,19 @@ sealed class UpdateFile {
                fileName.Equals("dataserver.json", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsJackLlmWorkstationChannel(string channel) {
+    private static bool IsHeirowLlmWorkstationChannel(string channel) {
         string id = (channel ?? "").Trim().ToLowerInvariant();
-        return id.Equals("jackllm", StringComparison.OrdinalIgnoreCase);
+        return id.Equals("heirowllm", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsBlockedJackLlmPayloadPath(string relativePath) {
+    private static bool IsBlockedHeirowLlmPayloadPath(string relativePath) {
         relativePath = (relativePath ?? "").Replace('\\', '/').Trim('/');
         string[] segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Any(IsJackLlmRuntimeDataSegment))
+        if (segments.Any(IsHeirowLlmRuntimeDataSegment))
             return true;
 
         string fileName = Path.GetFileName(relativePath);
-        if (IsJackLlmRuntimeDataFile(fileName))
+        if (IsHeirowLlmRuntimeDataFile(fileName))
             return true;
 
         return fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase) &&
@@ -1771,7 +1771,7 @@ sealed class UpdateFile {
                !fileName.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsJackLlmRuntimeDataSegment(string segment) {
+    private static bool IsHeirowLlmRuntimeDataSegment(string segment) {
         return segment.Equals("agents", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("artifacts", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("cache", StringComparison.OrdinalIgnoreCase) ||
@@ -1783,7 +1783,7 @@ sealed class UpdateFile {
                segment.Equals("database", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("databases", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("downloads", StringComparison.OrdinalIgnoreCase) ||
-               segment.Equals("jackllmchat", StringComparison.OrdinalIgnoreCase) ||
+               segment.Equals("heirowllmchat", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("log", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("logs", StringComparison.OrdinalIgnoreCase) ||
                segment.Equals("models", StringComparison.OrdinalIgnoreCase) ||
@@ -1804,7 +1804,7 @@ sealed class UpdateFile {
                segment.Equals("workspaces", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsJackLlmRuntimeDataFile(string fileName) {
+    private static bool IsHeirowLlmRuntimeDataFile(string fileName) {
         if (string.IsNullOrWhiteSpace(fileName))
             return true;
 
@@ -1813,7 +1813,7 @@ sealed class UpdateFile {
                fileName.Equals("appsettings.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("auth.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("dynamicUpdates.json", StringComparison.OrdinalIgnoreCase) ||
-               fileName.Equals("JackLLM.settings.json", StringComparison.OrdinalIgnoreCase) ||
+               fileName.Equals("heirowLLM.settings.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("lastUpdates.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("updater-config.json", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("updater-status.json", StringComparison.OrdinalIgnoreCase) ||

@@ -43,6 +43,8 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
     private double _activeProgressPercent = -1;
     private string _activeProgressDetail = "";
     private string _lastNavigatedUrl = HuggingFaceModelsUrl;
+    private bool _heirowSongInstallQueued;
+    private bool _pictureBankAiInstallQueued;
     private bool _disposed;
     private int _browserGeneration;
 
@@ -126,9 +128,24 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
     public string ModelsDirectory { get; set; }
 
-    public string CompleteModelsDirectory { get; set; }
+    private string _completeModelsDirectory = Path.Combine(Environment.CurrentDirectory, "CompleteModels");
+
+    public string CompleteModelsDirectory
+    {
+        get => _completeModelsDirectory;
+        set
+        {
+            _completeModelsDirectory = string.IsNullOrWhiteSpace(value)
+                ? Path.Combine(Environment.CurrentDirectory, "CompleteModels")
+                : value;
+            if (IsLoaded)
+                TryBeginOnUi(RefreshFeaturedBundleButtons);
+        }
+    }
 
     public event Action<string>? ModelDownloaded;
+
+    public event Action? ModelInventoryChanged;
 
     public event Action<string>? ModelLoadRequested;
 
@@ -202,6 +219,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
         Directory.CreateDirectory(ModelsDirectory);
         Directory.CreateDirectory(CompleteModelsDirectory);
+        RefreshFeaturedBundleButtons();
         EnsureDownloadServices();
         EnsureBrowserElement();
 
@@ -274,7 +292,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
 
     private static bool ShouldUseExternalBrowserMode()
     {
-        string forced = Environment.GetEnvironmentVariable("JACKLLM_EXTERNAL_BROWSER") ?? "";
+        string forced = Environment.GetEnvironmentVariable("HEIROWLLM_EXTERNAL_BROWSER") ?? "";
         if (forced.Equals("1", StringComparison.OrdinalIgnoreCase) ||
             forced.Equals("true", StringComparison.OrdinalIgnoreCase) ||
             forced.Equals("on", StringComparison.OrdinalIgnoreCase))
@@ -541,7 +559,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
         return """
 (() => {
   const payload = JSON.parse(__PAYLOAD__);
-  const stateKey = '__jackllmIdealModelsState';
+  const stateKey = '__heirowllmIdealModelsState';
   const previousState = window[stateKey];
   if (previousState && typeof previousState.cleanup === 'function') previousState.cleanup();
   const old = document.getElementById('llm-runtime-ideal-models-panel');
@@ -617,7 +635,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
           popup = cursor;
         if (position === 'fixed' || position === 'absolute') break;
       }
-      popup.setAttribute('data-jackllm-hidden-inference-promo', 'true');
+      popup.setAttribute('data-heirowllm-hidden-inference-promo', 'true');
       popup.remove();
       document.documentElement.style.removeProperty('overflow');
       document.body.style.removeProperty('overflow');
@@ -625,7 +643,8 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
   };
   suppressInferencePromotion();
   const inferenceObserver = new MutationObserver(suppressInferencePromotion);
-  inferenceObserver.observe(document.documentElement, { childList:true, subtree:true });
+  const inferenceRoot = document.documentElement || document.body;
+  if (inferenceRoot) inferenceObserver.observe(inferenceRoot, { childList:true, subtree:true });
 
   const card = (model) => {
     const tags = Array.isArray(model.tags) ? model.tags.slice(0, 4).filter(Boolean) : [];
@@ -753,7 +772,8 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
     panel.setAttribute('aria-hidden', hasFilterText ? 'true' : 'false');
   };
   const filterObserver = new MutationObserver(syncPanelWithModelFilter);
-  filterObserver.observe(main, { childList: true, subtree: true });
+  if (main && typeof main.nodeType === 'number')
+    filterObserver.observe(main, { childList: true, subtree: true });
   document.addEventListener('input', syncPanelWithModelFilter, true);
   document.addEventListener('change', syncPanelWithModelFilter, true);
   window[stateKey] = {
@@ -1195,12 +1215,18 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
             useCompleteModels,
             metadata ?? new Dictionary<string, string>(),
             bearerToken ?? "");
-        _downloadQueue.Add(item);
-        _lastDownloadItem = item;
-        _lastDownloadUrl = url;
-        _downloadPaused = false;
-        RefreshDownloadQueue();
-        TryStartNextDownload();
+        if (TryEnqueueDownload(item))
+        {
+            _lastDownloadUrl = url;
+            _downloadPaused = false;
+            RefreshDownloadQueue();
+            TryStartNextDownload();
+        }
+        else
+        {
+            TryStartNextDownload();
+            UpdateDownloadButtons();
+        }
     }
 
     private void StartBundleDownload(
@@ -1254,12 +1280,18 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
             true,
             metadata ?? new Dictionary<string, string>(),
             bearerToken ?? "");
-        _downloadQueue.Add(item);
-        _lastDownloadItem = item;
-        _lastDownloadUrl = "";
-        _downloadPaused = false;
-        RefreshDownloadQueue();
-        TryStartNextDownload();
+        if (TryEnqueueDownload(item))
+        {
+            _lastDownloadUrl = "";
+            _downloadPaused = false;
+            RefreshDownloadQueue();
+            TryStartNextDownload();
+        }
+        else
+        {
+            TryStartNextDownload();
+            UpdateDownloadButtons();
+        }
     }
 
     private void TryStartNextDownload()
@@ -1399,6 +1431,25 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
                 SetStatus($"Downloaded {System.IO.Path.GetFileName(path)}");
             }
 
+            if (completedDownload?.Metadata.TryGetValue("heirowSongBundleId", out string? heirowSongBundleId) == true &&
+                string.Equals(heirowSongBundleId, HeirowSongModelBundleCatalog.BundleId, StringComparison.OrdinalIgnoreCase))
+            {
+                if (HeirowSongModelBundleCatalog.TryFinalize(CompleteModelsDirectory, out string heirowSongManifest, out string bundleStatus))
+                {
+                    registeredPath = heirowSongManifest;
+                    _heirowSongInstallQueued = false;
+                    SetStatus("heirowSong ACE-Step 1.5 bundle passed byte-count and SHA-256 verification and is registered.");
+                }
+                else if (!bundleStatus.StartsWith("Waiting for", StringComparison.OrdinalIgnoreCase))
+                {
+                    SetStatus("heirowSong registration blocked: " + bundleStatus);
+                }
+            }
+
+            if (PictureBankAiBundleCatalog.IsInstalled(CompleteModelsDirectory))
+                _pictureBankAiInstallQueued = false;
+            RefreshFeaturedBundleButtons();
+
             UpdateHealthCard(registeredPath);
             ModelDownloaded?.Invoke(registeredPath);
             bool canAutoLoad = completedDownload != null && completedDownload.Format == ModelFileFormat.Gguf && !completedDownload.UseCompleteModels;
@@ -1406,7 +1457,7 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
                 ModelLoadRequested?.Invoke(path);
             _lastInjectedUrl = null;
             await InjectDownloadPanelForCurrentPageAsync();
-            TryStartNextDownload();
+            _ = AdvanceQueueAfterServiceSettlesAsync();
         }));
     }
 
@@ -1419,9 +1470,43 @@ public partial class HuggingFaceModelDownloaderControl : UserControl, IDisposabl
             _activeProgressDetail = "";
             UpdateDownloadButtons();
             SetStatus(message);
-            if (!message.StartsWith("Download paused", StringComparison.OrdinalIgnoreCase))
-                TryStartNextDownload();
+            if (message.StartsWith("Download paused", StringComparison.OrdinalIgnoreCase))
+                _ = UpdateDownloadButtonsAfterServiceSettlesAsync();
+            else
+                _ = AdvanceQueueAfterServiceSettlesAsync();
         });
+    }
+
+    private async Task UpdateDownloadButtonsAfterServiceSettlesAsync()
+    {
+        for (int attempt = 0; attempt < 100 && !_disposed; attempt++)
+        {
+            await Task.Delay(25).ConfigureAwait(false);
+            if (_downloadService?.IsDownloading == true || _completeModelDownloadService?.IsDownloading == true)
+                continue;
+
+            TryBeginOnUi(UpdateDownloadButtons);
+            return;
+        }
+    }
+
+    private async Task AdvanceQueueAfterServiceSettlesAsync()
+    {
+        for (int attempt = 0; attempt < 100 && !_disposed; attempt++)
+        {
+            await Task.Delay(25).ConfigureAwait(false);
+            if (_downloadService?.IsDownloading == true || _completeModelDownloadService?.IsDownloading == true)
+                continue;
+
+            TryBeginOnUi(() =>
+            {
+                TryStartNextDownload();
+                UpdateDownloadButtons();
+            });
+            return;
+        }
+
+        TryBeginOnUi(() => SetStatus("The next queued download is waiting for the current downloader to become idle."));
     }
 
     private async Task<HuggingFaceAuthContext> GetHuggingFaceAuthAsync()
@@ -1661,16 +1746,16 @@ exit 1
 
         foreach (string shellPath in new[] { "/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash" })
         {
-            yield return new ExternalBrowserCommand(shellPath, ["-lc", openerScript, "jackllm-open-url", url], false, true);
+            yield return new ExternalBrowserCommand(shellPath, ["-lc", openerScript, "heirowllm-open-url", url], false, true);
             if (wine)
-                yield return new ExternalBrowserCommand(ToWineUnixPath(shellPath), ["-lc", openerScript, "jackllm-open-url", url], false, true);
+                yield return new ExternalBrowserCommand(ToWineUnixPath(shellPath), ["-lc", openerScript, "heirowllm-open-url", url], false, true);
         }
     }
 
     private static bool IsWineRuntime()
     {
         return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WINEPREFIX")) ||
-               !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("JACKLLM_WINE_SAFE_WPF")) ||
+               !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HEIROWLLM_WINE_SAFE_WPF")) ||
                Directory.Exists("Z:\\usr\\bin");
     }
 
@@ -1769,6 +1854,248 @@ exit 1
     private async void QueueBestFromAddressButton_Click(object sender, RoutedEventArgs e)
     {
         await QueueBestDownloadFromAddressAsync().ConfigureAwait(true);
+    }
+
+    private async void InstallHeirowSongButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (HeirowSongModelBundleCatalog.IsInstalled(CompleteModelsDirectory))
+            await UninstallHeirowSongAsync().ConfigureAwait(true);
+        else
+            await InstallHeirowSongAsync().ConfigureAwait(true);
+    }
+
+    private async void InstallPictureBankAiButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PictureBankAiBundleCatalog.IsInstalled(CompleteModelsDirectory))
+            await UninstallPictureBankAiAsync().ConfigureAwait(true);
+        else
+            await InstallPictureBankAiAsync().ConfigureAwait(true);
+    }
+
+    private void RefreshFeaturedBundleButtons()
+    {
+        bool heirowSongInstalled = HeirowSongModelBundleCatalog.IsInstalled(CompleteModelsDirectory);
+        bool pictureBankInstalled = PictureBankAiBundleCatalog.IsInstalled(CompleteModelsDirectory);
+
+        if (heirowSongInstalled)
+            _heirowSongInstallQueued = false;
+        if (pictureBankInstalled)
+            _pictureBankAiInstallQueued = false;
+
+        InstallHeirowSongButton.Content = heirowSongInstalled
+            ? "Uninstall heirowSong"
+            : _heirowSongInstallQueued ? "heirowSong queued" : "Install heirowSong";
+        InstallHeirowSongButton.IsEnabled = !_heirowSongInstallQueued;
+        System.Windows.Automation.AutomationProperties.SetName(
+            InstallHeirowSongButton,
+            heirowSongInstalled ? "Uninstall heirowSong model bundle" : "Install heirowSong model bundle");
+
+        InstallPictureBankAiButton.Content = pictureBankInstalled
+            ? "Uninstall PictureBank AI"
+            : _pictureBankAiInstallQueued ? "PictureBank AI queued" : "Install PictureBank AI";
+        InstallPictureBankAiButton.IsEnabled = !_pictureBankAiInstallQueued;
+        System.Windows.Automation.AutomationProperties.SetName(
+            InstallPictureBankAiButton,
+            pictureBankInstalled ? "Uninstall PictureBank AI model bundle" : "Install PictureBank AI model bundle");
+    }
+
+    private async Task<string> UninstallHeirowSongAsync(CancellationToken cancellationToken = default)
+    {
+        Dispatcher.VerifyAccess();
+        if (!HeirowSongModelBundleCatalog.IsInstalled(CompleteModelsDirectory))
+        {
+            RefreshFeaturedBundleButtons();
+            return "heirowSong is not installed.";
+        }
+
+        MessageBoxResult confirmation = MessageBox.Show(
+            Window.GetWindow(this),
+            "Remove the installed heirowSong ACE-Step model bundle? The separately installed runtime pack will be kept.",
+            "Uninstall heirowSong",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirmation != MessageBoxResult.Yes)
+            return "heirowSong uninstall canceled.";
+
+        InstallHeirowSongButton.IsEnabled = false;
+        InstallHeirowSongButton.Content = "Uninstalling heirowSong…";
+        string target = ValidateFeaturedBundleRemovalTarget(
+            CompleteModelsDirectory,
+            HeirowSongModelBundleCatalog.BundleDirectory(CompleteModelsDirectory));
+        try
+        {
+            await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Directory.Exists(target))
+                    Directory.Delete(target, recursive: true);
+            }, cancellationToken).ConfigureAwait(true);
+
+            _heirowSongInstallQueued = false;
+            const string status = "heirowSong model bundle uninstalled. The separately installed runtime pack was kept.";
+            SetStatus(status);
+            ModelInventoryChanged?.Invoke();
+            return status;
+        }
+        finally
+        {
+            RefreshFeaturedBundleButtons();
+        }
+    }
+
+    private async Task<string> UninstallPictureBankAiAsync(CancellationToken cancellationToken = default)
+    {
+        Dispatcher.VerifyAccess();
+        if (!PictureBankAiBundleCatalog.IsInstalled(CompleteModelsDirectory))
+        {
+            RefreshFeaturedBundleButtons();
+            return "PictureBank AI is not installed.";
+        }
+
+        MessageBoxResult confirmation = MessageBox.Show(
+            Window.GetWindow(this),
+            "Remove all installed PictureBank AI model repositories?",
+            "Uninstall PictureBank AI",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirmation != MessageBoxResult.Yes)
+            return "PictureBank AI uninstall canceled.";
+
+        InstallPictureBankAiButton.IsEnabled = false;
+        InstallPictureBankAiButton.Content = "Uninstalling PictureBank AI…";
+        string target = ValidateFeaturedBundleRemovalTarget(
+            CompleteModelsDirectory,
+            PictureBankAiBundleCatalog.BundleDirectory(CompleteModelsDirectory));
+        try
+        {
+            await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Directory.Exists(target))
+                    Directory.Delete(target, recursive: true);
+            }, cancellationToken).ConfigureAwait(true);
+
+            _pictureBankAiInstallQueued = false;
+            const string status = "PictureBank AI model bundle uninstalled.";
+            SetStatus(status);
+            ModelInventoryChanged?.Invoke();
+            return status;
+        }
+        finally
+        {
+            RefreshFeaturedBundleButtons();
+        }
+    }
+
+    private static string ValidateFeaturedBundleRemovalTarget(string completeModelsRoot, string target)
+    {
+        string fullRoot = Path.GetFullPath(completeModelsRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string fullTarget = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!fullTarget.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fullTarget + Path.DirectorySeparatorChar, fullRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Refusing to remove a model bundle outside the configured CompleteModels directory.");
+        }
+
+        return fullTarget;
+    }
+
+    public async Task<string> InstallPictureBankAiAsync(CancellationToken cancellationToken = default)
+    {
+        Dispatcher.VerifyAccess();
+        if (_pictureBankAiInstallQueued) return "The pinned PictureBank AI payload is already queued in Downloads.";
+        _pictureBankAiInstallQueued = true; InstallPictureBankAiButton.IsEnabled = false;
+        try
+        {
+            EnsureDownloadServices(); SetStatus("Validating pinned PictureBank AI safetensors on Hugging Face...");
+            HuggingFaceAuthContext auth = await GetHuggingFaceAuthAsync().ConfigureAwait(true);
+            IReadOnlyList<PictureBankResolvedRepository> repositories = await PictureBankAiBundleCatalog.ResolveAsync(RepositoryScanner, auth.Cookies, auth.BearerToken, cancellationToken).ConfigureAwait(true);
+            cancellationToken.ThrowIfCancellationRequested(); long totalBytes = repositories.Sum(item => item.ExpectedBytes);
+            foreach (PictureBankResolvedRepository repository in repositories)
+            {
+                var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["pictureBankBundleId"] = PictureBankAiBundleCatalog.BundleId,
+                    ["expectedPartBytes"] = repository.ExpectedBytes.ToString(CultureInfo.InvariantCulture),
+                    ["license"] = repository.Pin.License,
+                    ["trustRemoteCode"] = "false",
+                    ["runtimePackRequired"] = "true"
+                };
+                StartBundleDownload(repository.Pin.Repository, repository.Pin.Revision, repository.SourcePaths, PictureBankAiBundleCatalog.TargetDirectory(repository.Pin.Repository), "image.editing", repository.ExpectedBytes, "", Array.Empty<string>(), "", metadata, auth.BearerToken);
+            }
+            InstallPictureBankAiButton.Content = "PictureBank AI queued";
+            string status = $"Queued {repositories.Count} pinned PictureBank AI repositories ({DownloadFormat.FormatBytes(totalBytes)} selected). No trust_remote_code content will run; signed rendering and Real-ESRGAN runtime packs remain separately verified.";
+            SetStatus(status); return status;
+        }
+        catch (Exception ex)
+        {
+            _pictureBankAiInstallQueued = false; InstallPictureBankAiButton.IsEnabled = true;
+            string status = "PictureBank AI install was not queued: " + ex.Message; SetStatus(status); throw new InvalidOperationException(status, ex);
+        }
+    }
+
+    public async Task<string> InstallHeirowSongAsync(CancellationToken cancellationToken = default)
+    {
+        Dispatcher.VerifyAccess();
+        if (HeirowSongModelBundleCatalog.TryFinalize(CompleteModelsDirectory, out string existingManifest, out _))
+        {
+            RefreshFeaturedBundleButtons();
+            string installedStatus = "heirowSong is already installed and verified: " + existingManifest;
+            SetStatus(installedStatus);
+            return installedStatus;
+        }
+
+        if (_heirowSongInstallQueued)
+            return "The verified heirowSong model payload is already queued in Downloads.";
+
+        _heirowSongInstallQueued = true;
+        InstallHeirowSongButton.IsEnabled = false;
+        try
+        {
+            EnsureDownloadServices();
+            SetStatus("Validating pinned ACE-Step 1.5 files on Hugging Face...");
+            HuggingFaceAuthContext auth = await GetHuggingFaceAuthAsync().ConfigureAwait(true);
+            IReadOnlyList<HeirowSongResolvedRepository> repositories = await HeirowSongModelBundleCatalog.ResolveAsync(RepositoryScanner, auth.Cookies, auth.BearerToken, cancellationToken).ConfigureAwait(true);
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (HeirowSongResolvedRepository repository in repositories)
+            {
+                var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["heirowSongBundleId"] = HeirowSongModelBundleCatalog.BundleId,
+                    ["expectedPartBytes"] = repository.Pin.ExpectedBytes.ToString(CultureInfo.InvariantCulture),
+                    ["license"] = "MIT",
+                    ["runtimeVersion"] = HeirowSongModelBundleCatalog.RuntimeVersion,
+                    ["runtimeCommit"] = HeirowSongModelBundleCatalog.RuntimeCommit,
+                    ["runtimePackRequired"] = "true"
+                };
+                StartBundleDownload(
+                    repository.Pin.Repository,
+                    repository.Pin.Revision,
+                    repository.SourcePaths,
+                    HeirowSongModelBundleCatalog.TargetDirectory(repository.Pin.Repository),
+                    "audio.generation",
+                    repository.Pin.ExpectedBytes,
+                    "",
+                    Array.Empty<string>(),
+                    "",
+                    metadata,
+                    auth.BearerToken);
+            }
+            InstallHeirowSongButton.Content = "heirowSong queued";
+            const string queuedStatus = "Queued the verified heirowSong model payload (11.64 GiB). The signed ACE-Step runtime pack is still required before generation.";
+            SetStatus(queuedStatus);
+            return queuedStatus;
+        }
+        catch (Exception ex)
+        {
+            _heirowSongInstallQueued = false;
+            string failedStatus = "heirowSong install was not queued: " + ex.Message;
+            SetStatus(failedStatus);
+            InstallHeirowSongButton.IsEnabled = true;
+            throw new InvalidOperationException(failedStatus, ex);
+        }
     }
 
     private async Task QueueBestDownloadFromAddressAsync()
@@ -1898,10 +2225,10 @@ exit 1
     }
 
     private static string BrowserStatePath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "huggingface-browser-url.txt");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "heirowLLM", "huggingface-browser-url.txt");
 
     private static string IdealModelThresholdsPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "JackLLM", "ideal-model-thresholds.json");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SocketJack", "heirowLLM", "ideal-model-thresholds.json");
 
     private static HuggingFaceIdealModelThresholds ReadIdealModelThresholds()
     {
@@ -2005,7 +2332,8 @@ exit 1
         _completeModelDownloadService?.Pause();
         _downloadPaused = true;
         PauseButton.IsEnabled = false;
-        ResumeButton.IsEnabled = !string.IsNullOrWhiteSpace(_lastDownloadUrl) || _lastDownloadItem != null;
+        ResumeButton.IsEnabled = false;
+        SetStatus("Pausing the active download...");
     }
 
     private void ResumeButton_Click(object sender, RoutedEventArgs e)
@@ -2013,9 +2341,11 @@ exit 1
         if (_lastDownloadItem != null)
         {
             _downloadPaused = false;
-            _downloadQueue.Add(_lastDownloadItem);
-            RefreshDownloadQueue();
-            TryStartNextDownload();
+            if (TryEnqueueDownload(_lastDownloadItem, updateLastItem: false))
+            {
+                RefreshDownloadQueue();
+                TryStartNextDownload();
+            }
         }
         else if (!string.IsNullOrWhiteSpace(_lastDownloadUrl))
         {
@@ -2029,9 +2359,11 @@ exit 1
         if (_lastDownloadItem != null)
         {
             _downloadPaused = false;
-            _downloadQueue.Add(_lastDownloadItem);
-            RefreshDownloadQueue();
-            TryStartNextDownload();
+            if (TryEnqueueDownload(_lastDownloadItem, updateLastItem: false))
+            {
+                RefreshDownloadQueue();
+                TryStartNextDownload();
+            }
         }
         else if (!string.IsNullOrWhiteSpace(_lastDownloadUrl))
         {
@@ -2058,6 +2390,7 @@ exit 1
 
     private void RefreshDownloadQueue()
     {
+        RemoveDuplicateQueuedDownloads();
         _downloadQueueItems.Clear();
         if (_activeDownload != null)
             _downloadQueueItems.Add(CreateDownloadQueueView(
@@ -2117,11 +2450,13 @@ exit 1
 
     private void UpdateDownloadButtons()
     {
-        bool downloading = _downloadService?.IsDownloading == true || _completeModelDownloadService?.IsDownloading == true || _activeDownload != null;
+        bool serviceDownloading = _downloadService?.IsDownloading == true || _completeModelDownloadService?.IsDownloading == true;
+        bool downloading = serviceDownloading || _activeDownload != null;
+        bool hasRestartTarget = !string.IsNullOrWhiteSpace(_lastDownloadUrl) || _lastDownloadItem != null;
         CancelButton.IsEnabled = downloading || _downloadQueue.Count > 0;
         PauseButton.IsEnabled = downloading && !_downloadPaused;
-        ResumeButton.IsEnabled = (!downloading || _downloadPaused) && (!string.IsNullOrWhiteSpace(_lastDownloadUrl) || _lastDownloadItem != null);
-        RetryButton.IsEnabled = !downloading && (!string.IsNullOrWhiteSpace(_lastDownloadUrl) || _lastDownloadItem != null);
+        ResumeButton.IsEnabled = _downloadPaused && !serviceDownloading && _activeDownload == null && hasRestartTarget;
+        RetryButton.IsEnabled = !_downloadPaused && !downloading && hasRestartTarget;
     }
 
     private void UpdateHealthCard(string modelPath)
@@ -2280,6 +2615,47 @@ exit 1
     }
 
     private static string CreateDownloadId() => "download-" + Guid.NewGuid().ToString("N");
+
+    private bool TryEnqueueDownload(DownloadQueueItem item, bool updateLastItem = true)
+    {
+        string identity = GetDownloadIdentity(item);
+        if ((_activeDownload != null && GetDownloadIdentity(_activeDownload).Equals(identity, StringComparison.OrdinalIgnoreCase)) ||
+            _downloadQueue.Any(queued => GetDownloadIdentity(queued).Equals(identity, StringComparison.OrdinalIgnoreCase)))
+        {
+            SetStatus("Already active or queued: " + item.FileName);
+            return false;
+        }
+
+        _downloadQueue.Add(item);
+        if (updateLastItem)
+            _lastDownloadItem = item;
+        return true;
+    }
+
+    private void RemoveDuplicateQueuedDownloads()
+    {
+        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (_activeDownload != null)
+            identities.Add(GetDownloadIdentity(_activeDownload));
+        _downloadQueue.RemoveAll(item => !identities.Add(GetDownloadIdentity(item)));
+    }
+
+    private string GetDownloadIdentity(DownloadQueueItem item)
+    {
+        if (item.Format == ModelFileFormat.Pytorch)
+        {
+            string sources = string.Join("|", item.SourcePaths
+                .Select(path => path.Replace('\\', '/').Trim())
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
+            return "bundle|" + item.Repo.Trim().Trim('/').ToLowerInvariant() + "|" +
+                   item.Revision.Trim().ToLowerInvariant() + "|" +
+                   item.TargetDirectoryName.Replace('\\', '/').Trim('/').ToLowerInvariant() + "|" + sources.ToLowerInvariant();
+        }
+
+        string root = item.UseCompleteModels ? CompleteModelsDirectory : ModelsDirectory;
+        return "file|" + Path.GetFullPath(Path.Combine(root, item.FileName));
+    }
 
     private sealed record DownloadQueueItem(
         string Id,
@@ -2492,7 +2868,7 @@ exit 1
     {
         try
         {
-            string nvidiaSmi = Environment.GetEnvironmentVariable("JACKLLM_NVIDIA_SMI") ??
+            string nvidiaSmi = Environment.GetEnvironmentVariable("HEIROWLLM_NVIDIA_SMI") ??
                                Environment.GetEnvironmentVariable("NVIDIA_SMI_PATH") ??
                                "nvidia-smi";
             using var process = new Process

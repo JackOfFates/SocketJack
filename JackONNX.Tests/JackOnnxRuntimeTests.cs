@@ -410,6 +410,57 @@ public sealed class JackOnnxRuntimeTests
     }
 
     [TestMethod]
+    public void PythonImageRunner_StoresManagedPythonInHeirowLlmApplicationData()
+    {
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+            localAppData = Path.GetTempPath();
+
+        string expectedRoot = Path.GetFullPath(Path.Combine(localAppData, "SocketJack", "heirowLLM"));
+        string bundledRoot = Path.GetFullPath(JackONNX.Image.JackOnnxPythonDiffusersImageRunner.DefaultBundledPythonDirectory);
+        string legacyRoot = Path.GetFullPath(JackONNX.Image.JackOnnxPythonDiffusersImageRunner.DefaultCudaLegacyPythonDirectory);
+
+        Assert.AreEqual(Path.Combine(expectedRoot, "Python"), bundledRoot);
+        Assert.AreEqual(Path.Combine(expectedRoot, "PythonCudaLegacy"), legacyRoot);
+        Assert.AreNotEqual(
+            Path.Combine(Path.GetFullPath(AppContext.BaseDirectory), "PythonCudaLegacy"),
+            legacyRoot,
+            "Managed Python must not be installed beside the application binaries.");
+
+        Type runnerType = typeof(JackONNX.Image.JackOnnxPythonDiffusersImageRunner);
+        Assert.IsNotNull(runnerType.GetMethod("EnsureBundledPythonExecutableAsync"));
+        Assert.IsNotNull(runnerType.GetMethod("EnsureCudaLegacyPythonExecutableAsync"));
+        Assert.IsNotNull(runnerType.GetMethod("EnsurePreferredImageGenerationPythonRuntimeAsync"));
+    }
+
+    [TestMethod]
+    public void PythonImageRunner_LegacyCudaRepairPinsCompatibleImagePackages()
+    {
+        var runnerType = typeof(JackONNX.Image.JackOnnxPythonDiffusersImageRunner);
+        Assert.AreEqual("0.31.0", ReadPrivateConstant(runnerType, "MinimumSchedulerDiffusersVersion"));
+        Assert.AreEqual("0.32.0", ReadPrivateConstant(runnerType, "MaximumSchedulerDiffusersVersionExclusive"));
+        Assert.AreEqual("4.37.0", ReadPrivateConstant(runnerType, "LegacyMaximumTransformersVersionExclusive"));
+        Assert.IsNotNull(runnerType.GetMethod(
+            "VerifyLegacyCudaImageRuntimeAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static));
+
+        var specifierMethod = runnerType.GetMethod(
+            "BuildPythonPackageSpecifier",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.IsNotNull(specifierMethod);
+        Assert.AreEqual(
+            "numpy<2.0.0",
+            specifierMethod.Invoke(null, new object[] { "numpy", "", "2.0.0" }));
+    }
+
+    private static string ReadPrivateConstant(Type type, string fieldName)
+    {
+        var field = type.GetField(fieldName, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.IsNotNull(field);
+        return field.GetRawConstantValue() as string ?? "";
+    }
+
+    [TestMethod]
     public async Task VideoPipeline_LoadsSyntheticDiffusersGgufManifest()
     {
         string artifactRoot = CreateTempDirectory();

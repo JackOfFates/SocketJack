@@ -18,5 +18,5 @@ public enum WorkstationEndpoint
     ChatPermissions,
     TerminalApprovals,
     CopilotDuplicator,
-    JackLlmServers
+    HeirowLlmServers
 }

@@ -8,7 +8,7 @@
     <AssemblyName>SocketJack.LlmCore</AssemblyName>
     <IsPackable>true</IsPackable>
     <PackageId>SocketJack.LlmCore</PackageId>
-    <Description>JackLLM proxy, web chat, model-runtime, remote-control, and payment extension layer for SocketJack.</Description>
+    <Description>heirowLLM proxy, web chat, model-runtime, remote-control, and payment extension layer for SocketJack.</Description>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="artifacts\**" />

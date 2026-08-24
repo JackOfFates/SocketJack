@@ -2,15 +2,15 @@
 
 Created: 2026-05-19
 
-This list captures useful improvements noticed while working on the proxy, Web Chat UI, JackLLM Workstation, LlmRuntime, model downloads, and agent/tool-call flows. Items are grouped by practical product value rather than by project folder.
+This list captures useful improvements noticed while working on the proxy, Web Chat UI, heirowLLM Workstation, LlmRuntime, model downloads, and agent/tool-call flows. Items are grouped by practical product value rather than by project folder.
 
 ## High-Value Near-Term Features
 
 ### 1. Workstation Health Doctor
 
-**Problem:** Many issues show up as symptoms in different places: proxy latency, tunnel disconnects, model runtime waiting, CPU fallback, bad tool-call formatting, missing model files, or stale JackLLM processes locking builds.
+**Problem:** Many issues show up as symptoms in different places: proxy latency, tunnel disconnects, model runtime waiting, CPU fallback, bad tool-call formatting, missing model files, or stale heirowLLM processes locking builds.
 
-**Feature:** Add a single "Health Doctor" panel in JackLLM Workstation that runs checks and gives pass/fail/action rows.
+**Feature:** Add a single "Health Doctor" panel in heirowLLM Workstation that runs checks and gives pass/fail/action rows.
 
 **Checks to include:**
 
@@ -22,9 +22,9 @@ This list captures useful improvements noticed while working on the proxy, Web C
 - Tool-call parser/provider conformance smoke.
 - Image generation capability and selected image backend.
 - Model/session/artifact folders writable.
-- Build lock detection for running `JackLLM.exe`, `VBCSCompiler`, and updater processes.
+- Build lock detection for running `heirowLLM.exe`, `VBCSCompiler`, and updater processes.
 
-**First implementation hook:** Add a diagnostics service in `JackLLM` that aggregates existing `/api/health`, runtime status, proxy status, model status, and filesystem checks into one `GET /api/workstation/doctor` endpoint.
+**First implementation hook:** Add a diagnostics service in `heirowLLM` that aggregates existing `/api/health`, runtime status, proxy status, model status, and filesystem checks into one `GET /api/workstation/doctor` endpoint.
 
 ### 2. Provider Conformance Tester For Tool Calls
 
@@ -67,7 +67,7 @@ This list captures useful improvements noticed while working on the proxy, Web C
 
 **Problem:** The first proxy page load and first API calls can still feel slow if the tunnel, local runtime, or browser assets are cold.
 
-**Feature:** Add an opt-in warmup routine when JackLLM registers a shell proxy.
+**Feature:** Add an opt-in warmup routine when heirowLLM registers a shell proxy.
 
 **Warmup calls:**
 
@@ -133,9 +133,9 @@ This list captures useful improvements noticed while working on the proxy, Web C
 
 ### 8. Build And Restart Orchestrator
 
-**Problem:** Live JackLLM processes lock build outputs. We have repeatedly had to stop the app, build, then restart.
+**Problem:** Live heirowLLM processes lock build outputs. We have repeatedly had to stop the app, build, then restart.
 
-**Feature:** Add a repo script that safely closes JackLLM, builds selected projects, restarts Workstation, and records what happened.
+**Feature:** Add a repo script that safely closes heirowLLM, builds selected projects, restarts Workstation, and records what happened.
 
 **Script modes:**
 
@@ -145,7 +145,7 @@ This list captures useful improvements noticed while working on the proxy, Web C
 - `webchat-only`
 - `runtime-only`
 
-**First implementation hook:** Add `tools/Restart-JackLLM.ps1` with lock detection, process stop, `dotnet build`, restart, and final PID/status output.
+**First implementation hook:** Add `tools/Restart-heirowLLM.ps1` with lock detection, process stop, `dotnet build`, restart, and final PID/status output.
 
 ### 9. Publisher Deployment Receipt
 

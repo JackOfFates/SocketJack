@@ -2,7 +2,7 @@
 
 ## Goals
 
-- Keep the JackLLM Workstation proxy loader honest: the large line always reports the overall proxy percentage, while a softer detail line shows the actual phase currently loading.
+- Keep the heirowLLM Workstation proxy loader honest: the large line always reports the overall proxy percentage, while a softer detail line shows the actual phase currently loading.
 - Make the loader progress gradient feel anchored to the full track instead of stretching and shrinking as the percentage changes.
 - Calm down the Workstation background motion so loading does not feel like a zoom-out.
 - Reduce false offline states through the proxy. A single slow heartbeat should look like reconnecting, not a full disconnect.
@@ -24,13 +24,13 @@
 - Added whole-proxy WebSocket tunnel transport:
   - Browser URLs remain normal `https://socketjack.com/proxy/{server}/...` HTTP URLs.
   - Master-list server now exposes `wss://socketjack.com/api/shell/proxies/{relayId}/tunnel`.
-  - JackLLM Workstation connects a persistent multiplexed tunnel by default and falls back to TCP relay if unavailable.
+  - heirowLLM Workstation connects a persistent multiplexed tunnel by default and falls back to TCP relay if unavailable.
   - Master forwards proxy HTTP requests over the WebSocket tunnel first, including headers, body, status, and response chunks.
-  - JackLLM serves tunnel requests through local loopback HTTP to `127.0.0.1:11436`, so existing handlers remain shared.
+  - heirowLLM serves tunnel requests through local loopback HTTP to `127.0.0.1:11436`, so existing handlers remain shared.
   - Master adds `Server-Timing` for tunnel requests: `sj-tunnel-wait`, `sj-ws-send`, `sj-local`, `sj-first-byte`, and `sj-total`.
   - Master refreshes relay owner-token hashes on authenticated shell registration, avoiding stale-token tunnel rejection after workstation restarts.
   - Master chooses the freshest heartbeating tunnel when multiple connections briefly overlap after reconnects.
-  - JackLLM guards shell startup against overlapping start calls and clones tunnel request JSON before dispatching async local work.
+  - heirowLLM guards shell startup against overlapping start calls and clones tunnel request JSON before dispatching async local work.
 
 ## Acceptance Target
 
@@ -41,7 +41,7 @@
 
 ## Verification Notes
 
-- Rebuilt JackLLM Workstation successfully after closing the running process first.
+- Rebuilt heirowLLM Workstation successfully after closing the running process first.
 - Local health reached HTTP 200 after startup.
 - Direct proxy checks after relay warmup:
   - `/proxy/TitanX/api/health`: HTTP 200 in 1356 ms.
@@ -53,7 +53,7 @@
   - detail line color was greyed: `rgba(203, 213, 225, 0.58)`.
   - progress track width variable remained fixed at `420px` while fill width changed by percentage.
 - Final Codex browser state:
-  - title: `JackLLM Chat`.
+  - title: `heirowLLM Chat`.
   - prompt visible: yes.
   - startup overlay gone: yes.
   - error banners: none.
@@ -66,14 +66,14 @@
 ## WebSocket Tunnel Verification
 
 - Master-list channel was built and published with `SocketJack.Update.Publisher --channel socketjack-magic-master-list`; the publisher verified server metadata after the expected restart disconnect.
-- JackLLM Workstation was closed before rebuild/restart.
+- heirowLLM Workstation was closed before rebuild/restart.
 - Master status settled at `webSocketTunnelConnected=true`, `webSocketTunnelCount=1`, and `waitingAgents=0`.
 - Public proxy health after the tunnel fix:
   - `/proxy/TitanX/api/health`: HTTP 200, `Server-Timing: sj-tunnel-wait;dur=89, sj-ws-send;dur=1, sj-local;dur=2, sj-first-byte;dur=93, sj-total;dur=93`.
   - Five warmed `/api/health` samples completed in roughly 0.35-0.39s from curl.
   - `/proxy/TitanX/api/chat-sessions`: HTTP 200 in roughly 0.41s with tunnel timing.
 - Codex browser final smoke:
-  - title: `JackLLM Chat`.
+  - title: `heirowLLM Chat`.
   - heartbeat visible as live for `TitanX - JACK`.
   - hardware line visible and live.
   - startup overlay disappeared after settle and chat content populated.

@@ -1,4 +1,4 @@
-using JackLLM.Mobile.Services;
+using heirowLLM.Mobile.Services;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LlmRuntime.Tests;

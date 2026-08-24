@@ -89,6 +89,67 @@ public class LlamaSharpBackendTests
     }
 
     [TestMethod]
+    public void NormalizeGemma4SystemMessages_MergesPreambleIntoFirstUserMessage()
+    {
+        IReadOnlyList<LlmChatMessage> normalized = LlamaSharpBackend.NormalizeGemma4SystemMessages(
+        [
+            new LlmChatMessage("system", "Use tools when needed."),
+            new LlmChatMessage("system", "Return compact JSON."),
+            new LlmChatMessage("user", "Check Chicago weather.")
+        ]);
+
+        Assert.AreEqual(1, normalized.Count);
+        Assert.AreEqual("user", normalized[0].Role);
+        StringAssert.Contains(normalized[0].Content, "Use tools when needed.");
+        StringAssert.Contains(normalized[0].Content, "Return compact JSON.");
+        StringAssert.Contains(normalized[0].Content, "User request:\nCheck Chicago weather.");
+    }
+
+    [TestMethod]
+    public void NormalizeGemma4SystemMessages_ConvertsTrailingRepairInstructionToUserTurn()
+    {
+        IReadOnlyList<LlmChatMessage> normalized = LlamaSharpBackend.NormalizeGemma4SystemMessages(
+        [
+            new LlmChatMessage("user", "Check Chicago weather."),
+            new LlmChatMessage("assistant", "I should call get_weather."),
+            new LlmChatMessage("system", "Return only valid tool JSON.")
+        ]);
+
+        Assert.AreEqual(3, normalized.Count);
+        Assert.AreEqual("user", normalized[2].Role);
+        StringAssert.Contains(normalized[2].Content, "Return only valid tool JSON.");
+        Assert.IsFalse(normalized.Any(message => string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
+    public void IsGemma4ModelPath_MatchesGemma4NamesOnly()
+    {
+        Assert.IsTrue(LlamaSharpBackend.IsGemma4ModelPath("C:\\Models\\gemma-4-12B-it-Q4_0.gguf"));
+        Assert.IsTrue(LlamaSharpBackend.IsGemma4ModelPath("C:\\Models\\gemma4-coding-Q8_0.gguf"));
+        Assert.IsFalse(LlamaSharpBackend.IsGemma4ModelPath("C:\\Models\\gemma-3-12B-it-Q4_0.gguf"));
+    }
+
+    [TestMethod]
+    public void CalculateGpuDutyCycleDelay_EnforcesConfiguredAverageComputeShare()
+    {
+        Assert.AreEqual(TimeSpan.FromMilliseconds(100),
+            LlamaSharpBackend.CalculateGpuDutyCycleDelay(TimeSpan.FromMilliseconds(100), 50, gpuEnabled: true));
+        Assert.AreEqual(TimeSpan.FromMilliseconds(300),
+            LlamaSharpBackend.CalculateGpuDutyCycleDelay(TimeSpan.FromMilliseconds(100), 25, gpuEnabled: true));
+        Assert.AreEqual(TimeSpan.Zero,
+            LlamaSharpBackend.CalculateGpuDutyCycleDelay(TimeSpan.FromMilliseconds(100), 100, gpuEnabled: true));
+        Assert.AreEqual(TimeSpan.Zero,
+            LlamaSharpBackend.CalculateGpuDutyCycleDelay(TimeSpan.FromMilliseconds(100), 50, gpuEnabled: false));
+    }
+
+    [TestMethod]
+    public void CalculateGpuDutyCycleDelay_BoundsVeryLowTargets()
+    {
+        Assert.AreEqual(TimeSpan.FromSeconds(30),
+            LlamaSharpBackend.CalculateGpuDutyCycleDelay(TimeSpan.FromSeconds(10), 0, gpuEnabled: true));
+    }
+
+    [TestMethod]
     public void ResolveMultimodalProjectorPath_FindsSiblingMmproj()
     {
         string root = LlmModelRegistryTests.CreateTempDirectory();
@@ -138,11 +199,12 @@ public class LlamaSharpBackendTests
     [TestMethod]
     public void ResolveMultimodalImageMaxTokens_LeavesRoomForPromptAndCompletion()
     {
-        Assert.AreEqual(1024, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(2048));
-        Assert.AreEqual(2048, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(4096));
-        Assert.AreEqual(2048, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(8192));
+        Assert.AreEqual(256, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(2048));
+        Assert.AreEqual(512, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(4096));
+        Assert.AreEqual(1024, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(8192));
+        Assert.AreEqual(2048, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(16384));
         Assert.AreEqual(256, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(256));
-        Assert.AreEqual(512, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(2048, 2));
+        Assert.AreEqual(256, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(2048, 2));
         Assert.AreEqual(256, LlamaSharpBackend.ResolveMultimodalImageMaxTokens(2048, 4));
     }
 }

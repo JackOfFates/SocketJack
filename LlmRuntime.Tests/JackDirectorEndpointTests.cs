@@ -104,8 +104,8 @@ public sealed class JackDirectorEndpointTests
         finally { TryDelete(root); }
     }
 
-    private static LmVsProxy CreateProxy(string root) { var proxy = new LmVsProxy("127.0.0.1", NextPort(), NextPort(), NextPort(), root) { PublicAccessEnabled = false }; Assert.IsTrue(proxy.ChatServer.Listen()); return proxy; }
-    private static NetHttpClient CreateClient(LmVsProxy proxy) => new(new NetHttpClientHandler { UseProxy = false })
+    private static HeirowLlm CreateProxy(string root) { var proxy = new HeirowLlm("127.0.0.1", NextPort(), NextPort(), NextPort(), root) { PublicAccessEnabled = false }; Assert.IsTrue(proxy.ChatServer.Listen()); return proxy; }
+    private static NetHttpClient CreateClient(HeirowLlm proxy) => new(new NetHttpClientHandler { UseProxy = false })
     {
         BaseAddress = new Uri($"http://127.0.0.1:{proxy.ChatServerPort}/"),
         Timeout = TimeSpan.FromSeconds(15)
@@ -113,11 +113,11 @@ public sealed class JackDirectorEndpointTests
     private static async Task<string> GetText(NetHttpClient client, string path) { using HttpResponseMessage response = await client.GetAsync(path); string body = await response.Content.ReadAsStringAsync(); if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"GET {path} failed with HTTP {(int)response.StatusCode}: {body}"); return body; }
     private static async Task<JsonDocument> Get(NetHttpClient client, string path) => JsonDocument.Parse(await client.GetStringAsync(path));
     private static async Task<JsonDocument> Post(NetHttpClient client, string path, object payload) { using HttpResponseMessage response = await client.PostAsync(path, Json(payload)); string body = await response.Content.ReadAsStringAsync(); if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"POST {path} failed with HTTP {(int)response.StatusCode}: {body}"); return JsonDocument.Parse(body); }
-    private static async Task Authenticate(LmVsProxy proxy, NetHttpClient client)
+    private static async Task Authenticate(HeirowLlm proxy, NetHttpClient client)
     {
         const string username = "jackdirector-admin";
         const string password = "correct horse battery staple";
-        MethodInfo requestRegistration = typeof(LmVsProxy).GetMethod(
+        MethodInfo requestRegistration = typeof(HeirowLlm).GetMethod(
             "HandleWebAuthRegistrationRequest", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var request = new HttpRequest
         {

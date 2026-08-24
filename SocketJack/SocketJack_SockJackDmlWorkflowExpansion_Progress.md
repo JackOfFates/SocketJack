@@ -1,4 +1,4 @@
-﻿# SocketJack - SockJackDmlWorkflowExpansion Progress
+# SocketJack - SockJackDmlWorkflowExpansion Progress
 
 - Plan: `SockJackDml Workflow Expansion Plan`
 - Status: Complete. Backend workflow tools, mirrored LlmRuntime definitions, GUI controls, endpoint/UI smoke coverage, and full verification are implemented and passing.
@@ -19,8 +19,8 @@ Implemented the follow-up workflow layer around the existing SockJackDml plan/pr
 | Strict action validation | complete | 100% | `sockjackdml_plan_execute` validates supported action types and required fields before mutation. Missing file paths/content/commands/operations and unsupported action types return structured errors and suggested repair fields. |
 | Preview packets | complete | 100% | `sockjackdml_plan_execute` returns and persists preview packets containing `filesToWrite`, `filesToEdit`, `commandsToRun`, `gitMutations`, `approvalRequired`, and `riskNotes`. |
 | Auto approval-gated cursor | complete | 100% | Execution records persist cursor state and action status. `auto_approval_gated` respects existing VS/file, Git, and terminal approval gates; pause/resume/cancel can stop and continue persisted executions. |
-| Proxy tool exposure | complete | 100% | JackLLM Agent mode advertises all seven SockJackDml workflow tools, routes calls locally, and de-dupes proxy-owned names from mirrored LlmRuntime schemas. |
-| LlmRuntime mirror | complete | 100% | Embedded LlmRuntime registers all seven HTTP-backed SockJackDml tool definitions against local JackLLM endpoints with conservative approval and permission flags. |
+| Proxy tool exposure | complete | 100% | heirowLLM Agent mode advertises all seven SockJackDml workflow tools, routes calls locally, and de-dupes proxy-owned names from mirrored LlmRuntime schemas. |
+| LlmRuntime mirror | complete | 100% | Embedded LlmRuntime registers all seven HTTP-backed SockJackDml tool definitions against local heirowLLM endpoints with conservative approval and permission flags. |
 | `/sockjackdml` Workflow tab | complete | 100% | Added a Workflow tab with summary stats, plan/progress/execution/evidence lists, latest blocker/next action, preview JSON, execution controls, and evidence link form. |
 | Web Chat controls | complete | 100% | Added Agent-mode SockJackDml workflow strip with status refresh, execution control action selector, and link to the full Workflow tab for the active chat session. |
 | WPF controls | complete | 100% | Added desktop buttons for opening Magic Workflow, refreshing workflow status, selecting an execution-control action, and applying it through the same local endpoints. |
@@ -45,12 +45,12 @@ Implemented the follow-up workflow layer around the existing SockJackDml plan/pr
 
 ## Progress Log
 - 2026-05-11 - implemented - Extended `SockJackDmlWorkflowService` with status, find, control, evidence link, validation, preview packet, and cursor persistence.
-- 2026-05-11 - implemented - Routed new workflow tools through JackLLM with Agent access checks and existing VS/Git/terminal permission gates intact.
+- 2026-05-11 - implemented - Routed new workflow tools through heirowLLM with Agent access checks and existing VS/Git/terminal permission gates intact.
 - 2026-05-11 - implemented - Added GET/POST workflow status plus POST progress find, execution control, and evidence link endpoints.
 - 2026-05-11 - implemented - Registered mirrored embedded LlmRuntime HTTP tool definitions for all seven SockJackDml tools.
 - 2026-05-11 - implemented - Added `/sockjackdml/workflow` UI, Web Chat Agent workflow controls, and WPF workflow status/control buttons.
 - 2026-05-11 - verified - `dotnet build SocketJack.csproj --no-restore --nologo -v:minimal` passed.
-- 2026-05-11 - verified - `dotnet build ..\JackLLM\JackLLM.csproj --no-restore --nologo -v:minimal` passed.
+- 2026-05-11 - verified - `dotnet build ..\heirowLLM\heirowLLM.csproj --no-restore --nologo -v:minimal` passed.
 - 2026-05-11 - verified - `dotnet build ..\LlmRuntime\LlmRuntime.csproj --no-restore --nologo -v:minimal` passed.
 - 2026-05-11 - verified - `dotnet test ..\LlmRuntime.Tests\LlmRuntime.Tests.csproj --no-restore --nologo -v:minimal` passed.
 - 2026-05-11 - verified - `dotnet test ..\SocketJack.Tests\SocketJack.Tests.csproj --no-restore --nologo -v:minimal --filter SockJackDmlWorkflowServiceTests` passed.
@@ -59,7 +59,7 @@ Implemented the follow-up workflow layer around the existing SockJackDml plan/pr
 - 2026-05-11 - verified - `dotnet test ..\SocketJack.Tests\SocketJack.Tests.csproj --no-restore --nologo -v:minimal --filter SockJackDmlWorkflow` passed with 7 tests.
 - 2026-05-11 - verified - `dotnet test ..\SocketJack.Tests\SocketJack.Tests.csproj --no-restore --nologo -v:minimal` passed with 64 tests.
 - 2026-05-11 - verified - Final `dotnet build SocketJack.csproj --no-restore --nologo -v:minimal` passed.
-- 2026-05-11 - verified - Final `dotnet build ..\JackLLM\JackLLM.csproj --no-restore --nologo -v:minimal` passed.
+- 2026-05-11 - verified - Final `dotnet build ..\heirowLLM\heirowLLM.csproj --no-restore --nologo -v:minimal` passed.
 - 2026-05-11 - verified - Final `dotnet build ..\LlmRuntime\LlmRuntime.csproj --no-restore --nologo -v:minimal` passed.
 - 2026-05-11 - verified - Final `dotnet test ..\LlmRuntime.Tests\LlmRuntime.Tests.csproj --no-restore --nologo -v:minimal` passed with 57 tests.
 
