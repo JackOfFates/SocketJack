@@ -1121,7 +1121,7 @@ sealed class PublisherSession : IDisposable {
 
 sealed class PublisherOptions {
     private const int DefaultArchiveChunkSize = 8 * 1024 * 1024;
-    public string ServerUrl { get; set; } = "https://socketjack.com/SecureAuthority/";
+    public string ServerUrl { get; set; } = "https://desktop-kssu21a.tail3b2157.ts.net/SecureAuthority/";
     public string UserName { get; set; } = "";
     public string Password { get; set; } = "";
     public int ChunkSize { get; set; } = DefaultArchiveChunkSize;
@@ -1240,7 +1240,7 @@ sealed class PublisherOptions {
     public static string NormalizeServerUrl(string value) {
         value = (value ?? "").Trim();
         if (string.IsNullOrWhiteSpace(value))
-            value = "https://socketjack.com/SecureAuthority/";
+            value = "https://desktop-kssu21a.tail3b2157.ts.net/SecureAuthority/";
 
         if (!value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
             !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -1257,7 +1257,7 @@ sealed class PublisherOptions {
             ? "/SecureAuthority/"
             : uri.AbsolutePath;
         if (!path.StartsWith("/SecureAuthority", StringComparison.OrdinalIgnoreCase) &&
-            uri.Host.Equals("socketjack.com", StringComparison.OrdinalIgnoreCase))
+            uri.Host.Equals("desktop-kssu21a.tail3b2157.ts.net", StringComparison.OrdinalIgnoreCase))
             path = "/SecureAuthority" + (path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path);
 
         var builder = new UriBuilder(uri) {
@@ -1271,8 +1271,7 @@ sealed class PublisherOptions {
     }
 
     private static bool IsPublicSocketJackAuthority(Uri uri) {
-        return uri.Host.Equals("socketjack.com", StringComparison.OrdinalIgnoreCase) ||
-               uri.Host.Equals("www.socketjack.com", StringComparison.OrdinalIgnoreCase);
+        return uri.Host.Equals("desktop-kssu21a.tail3b2157.ts.net", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsDefaultPortForScheme(string scheme, int port) {
@@ -1926,9 +1925,9 @@ static class TokenCache {
     private static string DescribeAuthConnectionFailure(string serverUrl, Exception exception) {
         string message = exception.Message;
         if (Uri.TryCreate(serverUrl, UriKind.Absolute, out Uri? selectedUri) &&
-            selectedUri.Host.Equals("socketjack.com", StringComparison.OrdinalIgnoreCase) &&
+            selectedUri.Host.Equals("desktop-kssu21a.tail3b2157.ts.net", StringComparison.OrdinalIgnoreCase) &&
             selectedUri.AbsolutePath.StartsWith("/SecureAuthority", StringComparison.OrdinalIgnoreCase)) {
-            message += " Public publishing through socketjack.com must use https://socketjack.com/SecureAuthority/. " +
+            message += " Public publishing through socketjack.com must use https://desktop-kssu21a.tail3b2157.ts.net/SecureAuthority/. " +
                        "Private publishing on the server host can use http://127.0.0.1:8500/SecureAuthority/.";
         }
 

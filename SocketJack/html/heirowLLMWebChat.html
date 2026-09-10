@@ -142,20 +142,6 @@ body.agent-mode {
     --adaptive-button-border: rgba(248, 113, 113, 0.40);
     --adaptive-button-shadow: rgba(127, 29, 29, 0.42);
 }
-body.companion-mode {
-    --bg: #10071c;
-    --adaptive-panel-a: rgba(26, 12, 44, 0.66);
-    --adaptive-panel-b: rgba(88, 28, 135, 0.66);
-    --adaptive-panel-c: rgba(236, 72, 153, 0.36);
-    --adaptive-panel-highlight: rgba(192, 132, 252, 0.18);
-    --adaptive-line: rgba(192, 132, 252, 0.30);
-    --adaptive-button-a: rgba(168, 85, 247, 0.94);
-    --adaptive-button-b: rgba(236, 72, 153, 0.82);
-    --adaptive-button-c: rgba(125, 211, 252, 0.70);
-    --adaptive-button-text: #fff7ff;
-    --adaptive-button-border: rgba(233, 213, 255, 0.36);
-    --adaptive-button-shadow: rgba(168, 85, 247, 0.24);
-}
 body.media-generation-mode {
     --bg: #151101;
     --adaptive-panel-a: rgba(32, 22, 5, 0.66);
@@ -336,37 +322,6 @@ body.agent-mode .glass-parallax::before {
             rgba(255,255,255,0.00) 25%,
             rgba(255,255,255,0.12) 42%,
             rgba(251,146,60,0.36) 50%,
-            rgba(255,255,255,0.18) 57%,
-            rgba(255,255,255,0.00) 74%,
-            transparent 100%);
-}
-body.companion-mode .bg-swirl {
-    background:
-        radial-gradient(circle at var(--gradient-x) var(--gradient-y), rgba(250, 245, 255, 0.20), transparent 12vmax),
-        radial-gradient(ellipse at calc(100% - var(--gradient-x)) calc(100% - var(--gradient-y)), rgba(168, 85, 247, 0.56), transparent 25vmax),
-        linear-gradient(var(--gradient-angle), rgba(12, 17, 23, 0.24), rgba(88, 28, 135, 0.44), rgba(126, 34, 206, 0.38), rgba(236, 72, 153, 0.26), rgba(125, 211, 252, 0.14), rgba(12, 17, 23, 0.26));
-}
-body.companion-mode .bg-swirl::before,
-body.companion-mode .bg-swirl::after {
-    background:
-        radial-gradient(ellipse at 18% 24%, rgba(109, 40, 217, 0.66), transparent 28vmax),
-        radial-gradient(ellipse at 78% 18%, rgba(192, 132, 252, 0.48), transparent 24vmax),
-        radial-gradient(ellipse at 74% 82%, rgba(236, 72, 153, 0.34), transparent 28vmax),
-        radial-gradient(ellipse at 22% 78%, rgba(125, 211, 252, 0.20), transparent 23vmax),
-        conic-gradient(from 20deg at 50% 50%, rgba(88, 28, 135, 0.36), rgba(147, 51, 234, 0.28), rgba(236, 72, 153, 0.20), rgba(125, 211, 252, 0.12), rgba(88, 28, 135, 0.36));
-}
-body.companion-mode .glass-parallax {
-    background:
-        radial-gradient(circle at var(--gradient-x) var(--gradient-y), rgba(233, 213, 255, 0.24), transparent 14rem),
-        repeating-linear-gradient(115deg, rgba(255,255,255,0.018) 0 1px, transparent 1px 18px);
-}
-body.companion-mode .glass-parallax::before {
-    background:
-        linear-gradient(105deg,
-            transparent 0%,
-            rgba(255,255,255,0.00) 25%,
-            rgba(255,255,255,0.12) 42%,
-            rgba(192,132,252,0.38) 50%,
             rgba(255,255,255,0.18) 57%,
             rgba(255,255,255,0.00) 74%,
             transparent 100%);
@@ -6539,6 +6494,34 @@ body.agent-mode .prompt-processing-control:focus-visible {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
+.tool-call-image-button {
+    display: grid;
+    width: min(100%, 760px);
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid rgba(125, 211, 252, 0.34);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.72);
+    color: #dbeafe;
+    cursor: pointer;
+    text-align: left;
+}
+.tool-call-image-button:hover,
+.tool-call-image-button:focus-visible {
+    border-color: rgba(34, 211, 238, 0.78);
+    box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.14);
+}
+.tool-call-image {
+    display: block;
+    width: 100%;
+    max-height: 420px;
+    object-fit: contain;
+    background: #020617;
+}
+.tool-call-image-caption {
+    padding: 6px 8px;
+    font: 700 0.66rem var(--ui-font);
+}
 .assistant-file-changes-head {
     display: flex;
     align-items: center;
@@ -7236,6 +7219,22 @@ body.agent-mode .artifact-source {
 .message.copyable-error {
     padding-right: 58px;
 }
+.message.user.copyable-message {
+    padding-right: 12px;
+    overflow: hidden;
+}
+.message-copy-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin: 10px -12px -10px;
+    padding: 6px 10px;
+    border-top: 1px solid rgba(226, 232, 240, 0.13);
+    background: rgba(15, 23, 42, 0.24);
+}
+.message-copy-bar .message-copy-button {
+    position: static;
+}
 .message-copy-button {
     position: absolute;
     top: 8px;
@@ -7261,6 +7260,48 @@ body.agent-mode .artifact-source {
 .message-copy-button.copied {
     border-color: rgba(52, 211, 153, 0.7);
     color: #bbf7d0;
+}
+.assistant-choice-panel {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid rgba(125, 211, 252, 0.26);
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.52);
+}
+.assistant-choice-title {
+    color: #dbeafe;
+    font: 800 0.76rem/1.2 var(--ui-font);
+}
+.assistant-choice-buttons { display: grid; gap: 6px; }
+.assistant-choice-button,
+.assistant-choice-custom-submit {
+    min-height: 34px;
+    padding: 7px 10px;
+    border: 1px solid rgba(125, 211, 252, 0.35);
+    border-radius: 9px;
+    color: #e0f2fe;
+    background: rgba(30, 41, 59, 0.72);
+    text-align: left;
+    cursor: pointer;
+}
+.assistant-choice-button:hover,
+.assistant-choice-button:focus-visible,
+.assistant-choice-custom-submit:hover,
+.assistant-choice-custom-submit:focus-visible {
+    border-color: rgba(125, 211, 252, 0.78);
+    background: rgba(14, 116, 144, 0.32);
+    outline: none;
+}
+.assistant-choice-custom { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.assistant-choice-custom input {
+    min-width: 0;
+    border: 1px solid rgba(148, 163, 184, 0.38);
+    border-radius: 9px;
+    padding: 8px 9px;
+    color: #f8fafc;
+    background: rgba(2, 6, 23, 0.68);
 }
 .assistant-continuation-prompt {
     display: flex;
@@ -14011,6 +14052,25 @@ body.shared-view .composer-attach-stack {
     width: 100%;
     min-width: 0;
 }
+.forge-reasoning-models {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid rgba(96, 165, 250, 0.22);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.46);
+}
+.forge-reasoning-models-title,
+.forge-reasoning-models-note {
+    grid-column: 1 / -1;
+}
+.forge-reasoning-models-title { color: #bfdbfe; font: 800 .7rem/1.2 var(--ui-font); }
+.forge-reasoning-models-note { color: #94a3b8; font: 600 .62rem/1.35 var(--ui-font); }
+.forge-reasoning-models label { display: grid; gap: 4px; min-width: 0; color: #cbd5e1; font: 750 .64rem/1 var(--ui-font); }
+.forge-reasoning-models select { width: 100%; min-width: 0; }
+@media(max-width:620px){.forge-reasoning-models{grid-template-columns:1fr}.forge-reasoning-models-title,.forge-reasoning-models-note{grid-column:1}}
 .jackhammer-toggle{position:relative;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:7px;width:100%;min-width:0;min-height:32px;height:100%;padding:4px 9px;border:1px solid #2563eb;border-radius:10px;background:rgba(37,99,235,.18);color:#bfdbfe;font:750 .68rem/1 var(--ui-font);white-space:nowrap;overflow:hidden;cursor:pointer}.jackhammer-toggle.is-off{border-color:#ef4444;background:rgba(127,29,29,.28);color:#fecaca}.jackhammer-toggle input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.jackhammer-switch{position:relative;display:inline-block;flex:0 0 30px;width:30px;min-width:30px;height:16px;border-radius:999px;background:#2563eb;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}.jackhammer-switch::after{content:"";position:absolute;top:2px;left:16px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left 140ms ease}.jackhammer-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.jackhammer-state{flex:0 0 auto}.jackhammer-toggle.is-off .jackhammer-switch{background:#dc2626}.jackhammer-toggle.is-off .jackhammer-switch::after{left:2px}.jackhammer-live-stack{position:absolute;left:12px;right:12px;bottom:calc(100% + 10px);z-index:5590;display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none}.jackhammer-live-item{max-width:min(720px,92%);padding:7px 12px;border:1px solid rgba(96,165,250,.45);border-radius:999px;background:rgba(8,18,36,.94);color:#dbeafe;box-shadow:0 10px 34px rgba(0,0,0,.35);font:700 .7rem/1.2 var(--ui-font);animation:jackhammer-status-float 4.8s ease forwards}@keyframes jackhammer-status-float{0%,65%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-42px)}}.jackhammer-run-card{margin:10px 0 2px;padding:10px 12px;border:1px solid rgba(96,165,250,.34);border-radius:12px;background:rgba(15,23,42,.62)}.jackhammer-run-card summary{cursor:pointer;color:#bfdbfe;font-weight:800}.jackhammer-run-meta{margin-top:7px;color:var(--muted);font-size:12px}.jackhammer-run-tree{margin:8px 0 0;padding-left:20px}.jackhammer-run-tree li{margin:4px 0;color:#dbeafe}.jackhammer-run-tree .failed{color:#fecaca}.jackhammer-run-files{margin-top:7px;color:#cbd5e1;font-size:12px}
 @media(prefers-reduced-motion:reduce){.generation-settings-panel,.jackhammer-live-item{animation:none!important}.jackhammer-live-item{opacity:1;transform:none}}
 .jackhammer-run-tree .completed{color:#a7f3d0}.jackhammer-run-tree .in-progress{color:#bfdbfe;font-weight:800}.jackhammer-run-tree .pending{color:#94a3b8}.jackhammer-run-tree .blocked{color:#fecaca}
@@ -15485,9 +15545,6 @@ body.browser-skill-mode {
 body.agent-mode .bg-swirl {
     background: radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.20), transparent 38%), var(--bg) !important;
 }
-body.companion-mode .bg-swirl {
-    background: radial-gradient(circle at 12% 0%, rgba(168, 85, 247, 0.18), transparent 38%), var(--bg) !important;
-}
 body.media-generation-mode .bg-swirl {
     background: radial-gradient(circle at 12% 0%, rgba(250, 204, 21, 0.16), transparent 38%), var(--bg) !important;
 }
@@ -16839,7 +16896,7 @@ body[data-header-layout-preset="wide"] .header-layout-block { flex-basis:100%; }
                                         <label class="permission-row"><input id="permFileAccess" type="checkbox">File context (read-only)</label>
                                         <label class="permission-row"><input id="permWindowsServices" type="checkbox">Windows services</label>
                                         <label class="permission-row"><input id="permEventViewer" type="checkbox">Event Viewer (Application/System)</label>
-                                        <label class="permission-row"><input id="permCompanionEnabled" type="checkbox">Companion mode</label>
+                                        <label class="permission-row"><input id="permCompanionEnabled" type="checkbox">Agent Companion tool</label>
                                         <label class="permission-row"><input id="permCompanionScreenView" type="checkbox">Companion: see screen</label>
                                         <label class="permission-row"><input id="permCompanionCursorControl" type="checkbox">Companion: move cursor</label>
                                         <label class="permission-row"><input id="permCompanionApplicationLaunch" type="checkbox">Companion: open applications</label>
@@ -16989,6 +17046,9 @@ body[data-header-layout-preset="wide"] .header-layout-block { flex-basis:100%; }
                         </button>
                         <button id="workspacePictureBankTab" class="workspace-tab" type="button" role="tab" data-workspace-view="picturebank" aria-controls="featureWorkspace" aria-selected="false" tabindex="-1" title="PictureBank">
                             <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><path d="m5 18 5-5 3 3 2-2 4 4"></path></svg><span>PictureBank</span>
+                        </button>
+                        <button id="workspaceStocksTab" class="workspace-tab" type="button" role="tab" data-workspace-view="stocks" aria-controls="featureWorkspace" aria-selected="false" tabindex="-1" title="heirowStocks">
+                            <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16M7 15l4-5 4 2 5-7M15 5h5v5"></path></svg><span>heirowStocks</span>
                         </button>
                         <button id="workspaceSqlTab" class="workspace-tab" type="button" role="tab" data-workspace-view="sql" aria-controls="featureWorkspace" aria-selected="false" tabindex="-1" title="SQL Manager" hidden>
                             <svg class="workspace-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"></path></svg><span>SQL Manager</span>
@@ -17426,8 +17486,17 @@ body[data-header-layout-preset="wide"] .header-layout-block { flex-basis:100%; }
                     <datalist id="reasoningLevelTicks"><option value="0" label="Minimal"></option><option value="1" label="Low"></option><option value="2" label="Medium"></option><option value="3" label="High"></option><option value="4" label="Auto"></option><option value="5" label="Ultra"></option></datalist>
                     <span class="param-hint" role="tooltip"><strong>Reasoning</strong><span>Auto adapts to each prompt. Minimal through High favor progressively stronger local models when Model is Auto. A manually selected model stays fixed.</span></span>
                 </label>
+                <section class="forge-reasoning-models" aria-label="heirowForge reasoning models">
+                    <strong class="forge-reasoning-models-title">heirowForge step models</strong>
+                    <label>Low<select id="heirowForgeLowModel" aria-label="heirowForge low reasoning model"><option value="">Use chat model</option></select></label>
+                    <label>Medium<select id="heirowForgeMediumModel" aria-label="heirowForge medium reasoning model"><option value="">Use chat model</option></select></label>
+                    <label>High<select id="heirowForgeHighModel" aria-label="heirowForge high reasoning model"><option value="">Use chat model</option></select></label>
+                    <span class="forge-reasoning-models-note">Used only for heirowForge steps. The main Model dropdown continues to control ordinary chat. Auto reasoning progresses through Low, Medium, and High during the run.</span>
+                </section>
                 <label class="param-field">Work cap <input id="jackhammerCustomBudget" type="number" min="1" max="200" step="1" placeholder="preset"><span class="param-hint" role="tooltip"><strong>heirowForge turn cap</strong><span>Optional per-device override from 1 to 200. Leave blank to use 2, 5, 10, 20, 40, or 100 turns from the selected reasoning level.</span></span></label>
                 <label class="retry-toggle" title="Use the global Reasoning setting for this session. Turn this off to choose a session-specific reasoning level."><input id="sessionReasoningInherit" type="checkbox" checked>Use global reasoning</label>
+                <label class="retry-toggle" title="Automatically grow the model context window when the current conversation will not fit. This is enabled by default and saved for this user in this browser."><input id="dynamicContextExpansion" type="checkbox" checked>Expand context automatically</label>
+                <label class="param-field">Context cap <input id="dynamicContextMaxTokens" type="number" min="8192" max="262144" step="1024" placeholder="model max"><span class="param-hint" role="tooltip"><strong>Dynamic context cap</strong><span>Optional per-user ceiling for automatic context expansion. Leave blank to use the model-advertised maximum.</span></span></label>
             </div>
         </div>
         <button id="send" type="submit">Send</button>
@@ -17740,7 +17809,7 @@ body[data-header-layout-preset="wide"] .header-layout-block { flex-basis:100%; }
             <label class="permission-row"><input id="adminPermFileAccess" type="checkbox">File Context (read-only)</label>
             <label class="permission-row"><input id="adminPermWindowsServices" type="checkbox">Windows Services</label>
             <label class="permission-row"><input id="adminPermEventViewer" type="checkbox">Event Viewer (Application/System)</label>
-            <label class="permission-row"><input id="adminPermCompanionEnabled" type="checkbox">Companion mode</label>
+            <label class="permission-row"><input id="adminPermCompanionEnabled" type="checkbox">Agent Companion tool</label>
             <label class="permission-row"><input id="adminPermCompanionScreenView" type="checkbox">Companion: see screen</label>
             <label class="permission-row"><input id="adminPermCompanionCursorControl" type="checkbox">Companion: move cursor</label>
             <label class="permission-row"><input id="adminPermCompanionApplicationLaunch" type="checkbox">Companion: open applications</label>
@@ -17897,6 +17966,8 @@ const personaPlexInstallStatus = document.getElementById('personaPlexInstallStat
 const ttsEnabled = document.getElementById('ttsEnabled');
 const ttsToggleLabel = document.getElementById('ttsToggleLabel');
 const retryPrompt = document.getElementById('retryPrompt');
+const dynamicContextExpansion = document.getElementById('dynamicContextExpansion');
+const dynamicContextMaxTokens = document.getElementById('dynamicContextMaxTokens');
 const resendPrompt = document.getElementById('resendPrompt');
 const contextToggle = document.getElementById('contextToggle');
 const contextExpander = document.getElementById('contextExpander');
@@ -17947,10 +18018,11 @@ const workspaceViewTabStrip = document.getElementById('workspaceViewTabStrip');
 const workspaceChatTab = document.getElementById('workspaceChatTab');
 const workspaceBuilderTab = document.getElementById('workspaceBuilderTab');
 const workspacePictureBankTab = document.getElementById('workspacePictureBankTab');
+const workspaceStocksTab = document.getElementById('workspaceStocksTab');
 const workspaceSqlTab = document.getElementById('workspaceSqlTab');
 const workspaceDirectorTab = document.getElementById('workspaceDirectorTab');
 const workspaceSongTab = document.getElementById('workspaceSongTab');
-const workspaceTabs = [workspaceChatTab, workspaceBuilderTab, workspacePictureBankTab, workspaceSqlTab, workspaceDirectorTab, workspaceSongTab].filter(Boolean);
+const workspaceTabs = [workspaceChatTab, workspaceBuilderTab, workspacePictureBankTab, workspaceStocksTab, workspaceSqlTab, workspaceDirectorTab, workspaceSongTab].filter(Boolean);
 const featureWorkspace = document.getElementById('featureWorkspace');
 const featureWorkspaceFrame = document.getElementById('featureWorkspaceFrame');
 const menuAdministrativeTools = document.getElementById('menuAdministrativeTools');
@@ -18092,6 +18164,9 @@ const generationSettingsToggle = document.getElementById('generationSettingsTogg
 const generationSettingsPanel = document.getElementById('generationSettingsPanel');
 const reasoningLevelInput = document.getElementById('reasoningLevelInput');
 const reasoningLevelOutput = document.getElementById('reasoningLevelOutput');
+const heirowForgeLowModel = document.getElementById('heirowForgeLowModel');
+const heirowForgeMediumModel = document.getElementById('heirowForgeMediumModel');
+const heirowForgeHighModel = document.getElementById('heirowForgeHighModel');
 const jackhammerCustomBudget = document.getElementById('jackhammerCustomBudget');
 const sessionReasoningInherit = document.getElementById('sessionReasoningInherit');
 const mobileComposerControlsAnchor = document.getElementById('mobileComposerControlsAnchor');
@@ -18788,7 +18863,7 @@ const welcomeMarkdown = `# heirowLLM Chat
 ## Quick start
 
 1. Pick a **Model** from the toolbar.
-2. Keep \`Chat\` mode on for normal chat, or switch to \`Agent\`, \`Companion\`, or a media mode for specialized workflows.
+2. Keep \`Chat\` mode on for normal chat, or switch to \`Agent\` for tools and permission-gated Companion desktop control, or choose a media mode.
 3. Type a prompt, attach files or images when available, then press **Send**.
 4. Your first message creates a saved session automatically.
 
@@ -18883,7 +18958,6 @@ function showJackhammerLiveStatus(text) {
 function chatModeButtonLabel(serviceId) {
     if (serviceId === 'agent') return 'Agent mode';
     if (serviceId === browserSkillServiceId) return 'Browser skill mode';
-    if (serviceId === 'companion') return 'Companion mode';
     if (serviceId === 'image_generation') return 'Image generation mode';
     if (serviceId === 'video_generation') return 'Video generation mode';
     if (serviceId === 'audio_generation') return 'Audio generation mode';
@@ -18892,7 +18966,6 @@ function chatModeButtonLabel(serviceId) {
 function chatModeVisualKeyForService(serviceId) {
     if (serviceId === 'agent') return 'agent';
     if (serviceId === browserSkillServiceId) return 'browser';
-    if (serviceId === 'companion') return 'companion';
     if (isMediaGenerationService(serviceId)) return 'media';
     return 'chat';
 }
@@ -18924,10 +18997,13 @@ function isChatModeServiceSelectable(serviceId) {
     return !permission || permissionEnabled(permission, !!service.enabled);
 }
 function serviceRequiresToolSupport(serviceId) {
-    return serviceId === 'agent' || serviceId === 'companion';
+    return serviceId === 'agent';
 }
 function serviceRequiresVisionSupport(serviceId) {
-    return serviceId === 'companion';
+    return false;
+}
+function normalizeSavedChatServiceId(serviceId) {
+    return serviceId === 'companion' ? 'agent' : serviceId;
 }
 function getAvailableMediaServiceIds() {
     return mediaServiceIds.filter(id => isChatModeServiceSelectable(id));
@@ -19271,7 +19347,7 @@ let intellisenseAbortController = null;
 const settingsKey = 'heirowllm.chat.settings.v1';
 const chatBrowserSettingsKey = 'heirowllm.chat.browserPanel.v1';
 const webUiLayoutSettingsKey = 'heirowllm.chat.layout.v2';
-const socketJackAuthOrigin = 'https://socketjack.com';
+const socketJackAuthOrigin = 'https://desktop-kssu21a.tail3b2157.ts.net';
 const workstationAuthScope = ((window.location.pathname.match(/^\/proxy\/[^/]+/i) || [window.location.origin])[0] || window.location.origin).toLowerCase();
 const workstationAuthKeySuffix = Array.from(workstationAuthScope).map(character => character.charCodeAt(0).toString(16)).join('');
 const socketJackTokenKey = 'heirowLLMWorkstationAccessToken.' + workstationAuthKeySuffix;
@@ -19291,7 +19367,7 @@ function socketJackAuthUrl(path) {
 
 function isSocketJackProxyPage() {
     const host = String(window.location.hostname || '').toLowerCase();
-    return (host === 'socketjack.com' || host.endsWith('.socketjack.com')) &&
+    return host === 'desktop-kssu21a.tail3b2157.ts.net' &&
         /^\/proxy\/[^/]+/i.test(window.location.pathname || '');
 }
 
@@ -19790,10 +19866,16 @@ function shouldUseWebChatWebSocketFetch(resource, options) {
             return false;
         if (path === '/api/chat-file-preview')
             return false;
+        if (path === '/api/chat-stream' || path === '/api/llm-client/chat-stream' ||
+            path === '/api/chat-stream/stop' || path === '/api/chat-stream/steer')
+            return false;
         if (shouldUseRootApiEndpoint(path))
             return false;
         const method = String((options && options.method) || (resource && resource.method) || 'GET').toUpperCase();
-        return method !== 'CONNECT' && method !== 'TRACE';
+        // A WebSocket failure does not prove a request was never dispatched. Replaying
+        // a mutation over native fetch can duplicate an Agent run while the first
+        // request is still consuming GPU and changing files.
+        return method === 'GET' || method === 'HEAD';
     } catch {
         return false;
     }
@@ -20970,6 +21052,7 @@ const workspaceViewDefinitions = {
     chat: { title: 'Chat', path: '' },
     builder: { title: 'Agent Builder', path: '/Builder' },
     picturebank: { title: 'PictureBank', path: '/PictureBank' },
+    stocks: { title: 'heirowStocks', path: '/Stocks' },
     sql: { title: 'SQL Manager', path: '/sql' },
     director: { title: 'heirowDirector', path: '/heirowDirector' },
     song: { title: 'heirowSong', path: '/heirowSong' }
@@ -21811,7 +21894,7 @@ function showTokenPurchaseCelebration(tokens) {
     if (!tokenPurchaseCelebration || amount <= 0) return;
     tokenPurchaseCelebration.innerHTML = '<strong></strong><span></span>';
     tokenPurchaseCelebration.querySelector('strong').textContent = '+' + formatInteger(amount) + ' tokens saved';
-    tokenPurchaseCelebration.querySelector('span').innerHTML = 'They are on your SocketJack account. <a href="https://socketjack.com/" target="_blank" rel="noopener">Check out the newest models on SocketJack.com</a>.';
+    tokenPurchaseCelebration.querySelector('span').innerHTML = 'They are on your SocketJack account. <a href="https://desktop-kssu21a.tail3b2157.ts.net/" target="_blank" rel="noopener">Check out the newest models on SocketJack.com</a>.';
     tokenPurchaseCelebration.classList.add('visible');
     window.clearTimeout(tokenPurchaseCelebrationTimer);
     tokenPurchaseCelebrationTimer = window.setTimeout(() => {
@@ -26273,6 +26356,7 @@ async function loadServerIdentity() {
         serverName: serverValue(profile, ['serverName', 'displayName', 'title', 'name']) || serverValue(data, ['serverName', 'displayName', 'title', 'name']) || '',
         ownerUserName: serverValue(profile, ['ownerUserName', 'ownerUsername', 'serverOwnerUserName', 'serverOwnerUsername']) || serverValue(data, ['ownerUserName', 'ownerUsername', 'serverOwnerUserName', 'serverOwnerUsername']) || ''
     };
+    applySavedDynamicContextSettings();
     updateRuntimeSummaries();
     return serverIdentityState;
 }
@@ -26403,6 +26487,32 @@ function readSavedSettings() {
     }
 }
 
+function dynamicContextUserSettingsKey() {
+    const owner = (serverIdentityState.ownerUserName || identityUserLabel() || 'local').trim().toLowerCase();
+    return settingsKey + '.dynamic-context.' + encodeURIComponent(owner || 'local');
+}
+
+function readSavedDynamicContextSettings() {
+    try {
+        return JSON.parse(localStorage.getItem(dynamicContextUserSettingsKey()) || '{}') || {};
+    } catch {
+        return {};
+    }
+}
+
+function applySavedDynamicContextSettings(fallback) {
+    const saved = readSavedDynamicContextSettings();
+    const source = Object.keys(saved).length ? saved : (fallback || {});
+    if (dynamicContextExpansion)
+        dynamicContextExpansion.checked = source.enabled === undefined
+            ? (source.dynamic_context_expansion === undefined ? true : !!source.dynamic_context_expansion)
+            : !!source.enabled;
+    if (dynamicContextMaxTokens) {
+        const value = source.maxTokens === undefined ? source.dynamic_context_max_tokens : source.maxTokens;
+        if (value !== undefined) dynamicContextMaxTokens.value = value;
+    }
+}
+
 function saveSettings() {
     const payload = {
         model: selectedModel(),
@@ -26411,8 +26521,11 @@ function saveSettings() {
         top_p: topPInput ? topPInput.value : '',
         max_tokens: maxTokensInput ? maxTokensInput.value : '',
         reasoning_level: reasoningLevelName(),
+        heirow_forge_models: selectedHeirowForgeReasoningModels(),
         jackhammer_custom_budget: jackhammerCustomBudget ? jackhammerCustomBudget.value : '',
         retry_until_success: retryUntilSuccessEnabled(),
+        dynamic_context_expansion: !dynamicContextExpansion || dynamicContextExpansion.checked,
+        dynamic_context_max_tokens: dynamicContextMaxTokens ? dynamicContextMaxTokens.value : '',
         tts_enabled: !!(ttsEnabled && ttsEnabled.checked),
         filesystem_context_explicit: !!filesystemContextExplicitlyConfigured,
         filesystem_context_mode: filesystemContextState.mode || 'none',
@@ -26420,6 +26533,10 @@ function saveSettings() {
     };
     try {
         localStorage.setItem(settingsKey, JSON.stringify(payload));
+        localStorage.setItem(dynamicContextUserSettingsKey(), JSON.stringify({
+            enabled: !dynamicContextExpansion || dynamicContextExpansion.checked,
+            maxTokens: dynamicContextMaxTokens ? dynamicContextMaxTokens.value : ''
+        }));
     } catch { }
 }
 
@@ -26433,9 +26550,11 @@ function applySavedSettings() {
     if (saved.top_p !== undefined && topPInput) topPInput.value = saved.top_p;
     if (saved.max_tokens !== undefined && maxTokensInput) maxTokensInput.value = saved.max_tokens;
     if (saved.reasoning_level !== undefined && reasoningLevelInput) reasoningLevelInput.value = String(Math.max(0, ['minimal','low','medium','high','auto','ultra'].indexOf(String(saved.reasoning_level).toLowerCase())));
+    syncHeirowForgeReasoningModelOptions(saved.heirow_forge_models || {});
     if (saved.jackhammer_custom_budget !== undefined && jackhammerCustomBudget) jackhammerCustomBudget.value = saved.jackhammer_custom_budget;
     updateReasoningLevelUi();
     if (retryPrompt) retryPrompt.checked = saved.retry_until_success === undefined ? true : !!saved.retry_until_success;
+    applySavedDynamicContextSettings(saved);
     if (ttsEnabled && saved.tts_enabled !== undefined) ttsEnabled.checked = !!saved.tts_enabled;
     applySavedFilesystemContext(saved);
 }
@@ -26447,12 +26566,19 @@ function generationSettings(browserSkillContext, modelOverride, mediaSource, jac
     settings.contextConsentUi = modelSupportsToolsById(normalizedModel);
     const contextBudget = configuredContextLengthForModel(normalizedModel);
     if (contextBudget > 0) settings.context_length = contextBudget;
+    settings.dynamic_context_expansion = !dynamicContextExpansion || dynamicContextExpansion.checked;
+    const dynamicContextCap = parseInt(dynamicContextMaxTokens && dynamicContextMaxTokens.value, 10);
+    if (!Number.isNaN(dynamicContextCap) && dynamicContextCap > 0)
+        settings.dynamic_context_max_tokens = dynamicContextCap;
     settings.interactionMode = interactionMode === 'plan'
         ? 'plan'
-        : (interactionMode === 'agent' || interactionMode === 'companion' ? interactionMode : 'chat');
+        : (interactionMode === 'agent' ? interactionMode : 'chat');
     settings.reasoningLevel = effectiveReasoningLevel();
     settings.sessionReasoningLevel = sessionReasoningInherit && sessionReasoningInherit.checked ? 'inherit' : effectiveReasoningLevel();
     settings.interactionMode = interactionMode === 'plan' ? 'plan' : (selectedService() || 'chat');
+    // Keep the user's three Forge drafting models available to Agent-owned
+    // staged work without turning heirowForge or its PC permissions on.
+    settings.heirowForgeModels = selectedHeirowForgeReasoningModels();
     const jackhammerForRequest = typeof jackhammerOverride === 'boolean' ? jackhammerOverride : isJackhammerEnabled();
     if (jackhammerForRequest) {
         settings.jackhammer = {
@@ -26502,6 +26628,37 @@ function markLmStudioIdle(detail) {
 }
 
 const reasoningLevelNames = ['minimal', 'low', 'medium', 'high', 'auto', 'ultra'];
+const heirowForgeReasoningModelSelects = { low: heirowForgeLowModel, medium: heirowForgeMediumModel, high: heirowForgeHighModel };
+function selectedHeirowForgeReasoningModels() {
+    const models = {};
+    Object.entries(heirowForgeReasoningModelSelects).forEach(([tier, select]) => { if (select && select.value) models[tier] = select.value; });
+    return models;
+}
+function heirowForgeModelOptionSupportsText(option) {
+    const text = [option && option.value, option && option.textContent, option && option.title].filter(Boolean).join(' ').toLowerCase();
+    return !/(ace[- ]?step|acestep|stable[- ]?diffusion|diffusion[- ]?inpainting|real[- ]?esrgan|birefnet|sam[- ]?vit|audio[-_ ]generation|image[-_ ]generation|video[-_ ]generation|(?:audio|image|video)[-_ ]gen\b|text[- ]to[- ]speech|speech[- ]to[- ]text|\bembedding\b|\breranker\b|\bmanifest(?:\.json)?\b)/i.test(text);
+}
+function syncHeirowForgeReasoningModelOptions(savedModels) {
+    const saved = savedModels && typeof savedModels === 'object' ? savedModels : {};
+    const sourceOptions = modelSelect ? Array.from(modelSelect.options).filter(option => option.value && option.value !== 'auto' && !isDefaultModelPlaceholder(option.value) && heirowForgeModelOptionSupportsText(option)) : [];
+    Object.entries(heirowForgeReasoningModelSelects).forEach(([tier, select]) => {
+        if (!select) return;
+        const wanted = select.value || String(saved[tier] || '');
+        select.textContent = '';
+        select.add(new Option('Use chat model', ''));
+        sourceOptions.forEach(source => {
+            const option = new Option(source.textContent || source.value, source.value);
+            option.disabled = !!source.disabled;
+            select.add(option);
+        });
+        if (wanted && !Array.from(select.options).some(option => option.value === wanted)) {
+            const missing = new Option(wanted + ' · unavailable', wanted);
+            missing.disabled = true;
+            select.add(missing);
+        }
+        if (Array.from(select.options).some(option => option.value === wanted)) select.value = wanted;
+    });
+}
 function reasoningLevelName() { return reasoningLevelNames[Math.max(0, Math.min(5, Number(reasoningLevelInput && reasoningLevelInput.value || 4)))] || 'auto'; }
 function sessionReasoningStorageKey() { return settingsKey + '.reasoning.' + (currentSessionId || 'new'); }
 function effectiveReasoningLevel() { return sessionReasoningInherit && sessionReasoningInherit.checked ? reasoningLevelName() : (localStorage.getItem(sessionReasoningStorageKey()) || reasoningLevelName()); }
@@ -26904,7 +27061,7 @@ function applyAgentVisualMode() {
     beginChatModeFade(chatModeVisualKeyForService(service));
     document.body.classList.toggle('agent-mode', service === 'agent');
     document.body.classList.toggle('browser-skill-mode', false);
-    document.body.classList.toggle('companion-mode', service === 'companion');
+    document.body.classList.remove('companion-mode');
     document.body.classList.toggle('media-generation-mode', isMediaGenerationService(service));
     updateImageAttachVisibility();
     updateMediaSourceAttachVisibility();
@@ -26917,11 +27074,6 @@ function applySelectedServicePermission() {
         updateServiceLabels();
         return false;
     }
-    if (service.id === 'companion') {
-        updateServiceLabels();
-        return false;
-    }
-
     const input = permissionInputForService(service.permission);
     if (!input || !(permissionCanEdit && canUseAdminTools())) {
         updateServiceLabels();
@@ -26941,7 +27093,6 @@ function ensureFallbackServiceOptions(preferredServiceId) {
     if (!serviceSelect || serviceSelect.options.length > 0) return;
     const fallbackServices = [
         { id: 'agent', name: 'Agent', kind: 'Agent', permission: 'agentAccess', enabled: true },
-        { id: 'companion', name: 'Companion', kind: 'Companion', permission: 'companionEnabled', enabled: false },
         { id: 'image_generation', name: 'Image Generation', kind: 'Generator', permission: '', enabled: true },
         { id: 'audio_generation', name: 'Audio Generation', kind: 'Generator', permission: '', enabled: true },
         { id: 'video_generation', name: 'Video Generation', kind: 'Generator', permission: '', enabled: true }
@@ -26968,7 +27119,7 @@ async function loadServices() {
     if (!serviceSelect) return;
     try {
         const saved = readSavedSettings();
-        const savedService = saved.service === undefined || saved.service === null ? defaultServiceId : saved.service;
+        const savedService = normalizeSavedChatServiceId(saved.service === undefined || saved.service === null ? defaultServiceId : saved.service);
         ensureFallbackServiceOptions(savedService);
         const response = await fetchWithTimeout('/api/chat-services', null, 8000);
         if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -26980,7 +27131,6 @@ async function loadServices() {
 
         chatServices = Array.isArray(data.services)
             ? data.services.filter(service => service && (service.id === 'agent' ||
-                service.id === 'companion' ||
                 service.id === 'image_generation' ||
                 service.id === 'audio_generation' ||
                 service.id === 'video_generation' ||
@@ -27014,7 +27164,8 @@ async function loadServices() {
         renderChatModeStrip();
         saveSettings();
     } catch (error) {
-        ensureFallbackServiceOptions((readSavedSettings().service === undefined || readSavedSettings().service === null) ? defaultServiceId : readSavedSettings().service);
+        const saved = readSavedSettings();
+        ensureFallbackServiceOptions(normalizeSavedChatServiceId((saved.service === undefined || saved.service === null) ? defaultServiceId : saved.service));
         addMessage('error', 'Could not load chat services: ' + (error && error.message ? error.message : String(error)));
     }
 }
@@ -28111,6 +28262,15 @@ function updateFilePreviewDownload(entry) {
 }
 
 function downloadSolutionFile(entry) {
+    if (entry && /^data:image\//i.test(coerceString(entry.dataUrl, ''))) {
+        const anchor = document.createElement('a');
+        anchor.href = entry.dataUrl;
+        anchor.download = entry.name || 'companion-capture.jpg';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        return;
+    }
     const url = buildSolutionExplorerDownloadUrl(entry);
     if (!url) return;
     const anchor = document.createElement('a');
@@ -29956,11 +30116,37 @@ function clearEmpty() {
 function isMessagesNearEnd() {
     const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
     if (maxScroll <= 4) return true;
-    return list.scrollTop >= maxScroll * 0.95;
+    return list.scrollTop >= maxScroll * 0.98;
 }
 
 function scrollMessagesToEndIf(shouldScroll) {
     if (shouldScroll) list.scrollTop = list.scrollHeight;
+}
+
+function captureMessagesScrollState() {
+    const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+    if (maxScroll <= 4)
+        return { nearTop: true, nearBottom: true, ratio: 1 };
+    const ratio = Math.max(0, Math.min(1, list.scrollTop / maxScroll));
+    return { nearTop: ratio <= 0.02, nearBottom: ratio >= 0.98, ratio };
+}
+
+function restoreMessagesScrollState(state) {
+    if (!state) return;
+    const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+    if (maxScroll <= 4) return;
+    if (state.nearBottom) {
+        list.scrollTop = maxScroll;
+        return;
+    }
+    if (state.nearTop) {
+        list.scrollTop = 0;
+        return;
+    }
+    const edgeGuard = Math.max(1, maxScroll * 0.001);
+    const middleTop = maxScroll * 0.02 + edgeGuard;
+    const middleBottom = maxScroll * 0.98 - edgeGuard;
+    list.scrollTop = Math.max(middleTop, Math.min(middleBottom, maxScroll * Number(state.ratio || 0.5)));
 }
 
 function markLiveChanged(element, minDelay) {
@@ -30009,12 +30195,15 @@ function selectMessageText(item) {
 function updateMessageCopyButton(item, enabled, content, title) {
     if (!item) return;
     let button = item.querySelector('.message-copy-button');
+    let bar = item.querySelector('.message-copy-bar');
+    const promptCopy = title === 'Copy prompt text';
     const text = normalizeDisplayText(content || '').trim();
     if (!enabled || !text) {
         item.classList.remove('copyable-message');
         item.classList.remove('copyable-error');
         delete item.dataset.copyText;
         if (button) button.remove();
+        if (bar) bar.remove();
         return;
     }
 
@@ -30040,12 +30229,103 @@ function updateMessageCopyButton(item, enabled, content, title) {
                 })
                 .catch(() => selectMessageText(item));
         });
-        item.appendChild(button);
+        if (promptCopy) {
+            bar = document.createElement('div');
+            bar.className = 'message-copy-bar';
+            bar.setAttribute('aria-label', 'Prompt actions');
+            bar.appendChild(button);
+            item.appendChild(bar);
+        } else {
+            item.appendChild(button);
+        }
+    } else if (promptCopy && !bar) {
+        bar = document.createElement('div');
+        bar.className = 'message-copy-bar';
+        bar.setAttribute('aria-label', 'Prompt actions');
+        button.replaceWith(bar);
+        bar.appendChild(button);
     }
 
     const label = title || 'Copy message text';
     button.title = label;
     button.setAttribute('aria-label', label);
+}
+
+function assistantChoiceOptions(content) {
+    const text = normalizeDisplayText(content || '').trim();
+    if (!text || !/(?:choose|select|confirm|which|option|approach|next step)/i.test(text)) return [];
+    const found = new Map();
+    for (const line of text.split(/\r?\n/)) {
+        const match = line.trim().match(/^(?:#{1,6}\s*)?(?:\*\*|__)?(?:option\s*)?(?<number>[1-9])(?:\s*[:.)-]\s*|\s+)(?<label>.+?)(?:\*\*|__)?$/i);
+        if (!match) continue;
+        const number = Number(match.groups.number);
+        let label = match.groups.label.replace(/^[*_`\s]+|[*_`\s]+$/g, '').trim();
+        label = label.split(/\s+[—–-]\s+/)[0].replace(/^["']|["']$/g, '').trim();
+        if (label && !found.has(number)) found.set(number, label.slice(0, 100));
+    }
+    const options = Array.from(found, ([number, label]) => ({ number, label })).sort((a, b) => a.number - b.number);
+    return options.length >= 2 && options.length <= 4 ? options : [];
+}
+
+function submitAssistantChoice(text) {
+    if (!prompt || !text) return;
+    prompt.value = text;
+    prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    sendMessage().catch(error => addMessage('error', error && error.message ? error.message : String(error)));
+}
+
+function updateAssistantChoicePanel(parts, content, isFinal) {
+    if (!parts || !parts.host) return;
+    let panel = parts.host.querySelector('.assistant-choice-panel');
+    if (!isFinal) {
+        if (panel) panel.remove();
+        return;
+    }
+    const options = assistantChoiceOptions(content);
+    if (!options.length) {
+        if (panel) panel.remove();
+        return;
+    }
+    if (panel && panel.dataset.options === JSON.stringify(options)) return;
+    if (panel) panel.remove();
+    panel = document.createElement('div');
+    panel.className = 'assistant-choice-panel';
+    panel.dataset.options = JSON.stringify(options);
+    const title = document.createElement('div');
+    title.className = 'assistant-choice-title';
+    title.textContent = 'Choose a response';
+    panel.appendChild(title);
+    const buttons = document.createElement('div');
+    buttons.className = 'assistant-choice-buttons';
+    for (const option of options) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'assistant-choice-button';
+        button.textContent = option.number + ' · ' + option.label;
+        button.addEventListener('click', () => submitAssistantChoice('I choose option ' + option.number + ': ' + option.label + '. Continue the current task using that choice.'));
+        buttons.appendChild(button);
+    }
+    panel.appendChild(buttons);
+    const custom = document.createElement('div');
+    custom.className = 'assistant-choice-custom';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Define another option…';
+    input.setAttribute('aria-label', 'Custom option');
+    const customButton = document.createElement('button');
+    customButton.type = 'button';
+    customButton.className = 'assistant-choice-custom-submit';
+    customButton.textContent = 'Use custom';
+    const submitCustom = () => {
+        const value = input.value.trim();
+        if (value) submitAssistantChoice('Use this custom option for the current task: ' + value);
+    };
+    customButton.addEventListener('click', submitCustom);
+    input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); submitCustom(); } });
+    custom.appendChild(input);
+    custom.appendChild(customButton);
+    panel.appendChild(custom);
+    parts.host.appendChild(panel);
 }
 
 function isSessionOwnershipConflictText(value) {
@@ -30407,7 +30687,11 @@ function updateJackhammerRunCard(parts, toolCalls, fileChanges, final) {
     card.hidden = false;
     card.textContent = '';
     const lastCheckpoint = checkpoints.length ? checkpoints[checkpoints.length - 1] : null;
-    const lastStatus = coordinationPreviewField(lastCheckpoint, 'status') || (final ? 'finished' : 'working');
+    const checkpointStatus = coordinationPreviewField(lastCheckpoint, 'status');
+    const checkpointTerminal = ['ready_final', 'plan_ready', 'needs_user', 'blocked'].includes(checkpointStatus);
+    const lastStatus = final && !checkpointTerminal
+        ? 'incomplete'
+        : (checkpointStatus || (final ? 'incomplete' : 'working'));
     let checkpointArgs = parseToolArgumentsPreview(lastCheckpoint && lastCheckpoint.argumentsPreview);
     if ((!checkpointArgs || !Object.keys(checkpointArgs).length) && lastCheckpoint && lastCheckpoint.resultPreview) {
         try { checkpointArgs = JSON.parse(lastCheckpoint.resultPreview); } catch { checkpointArgs = {}; }
@@ -30583,6 +30867,9 @@ function normalizeToolCallEvent(raw) {
         durationMs: Number(raw.durationMs || raw.elapsedMs || 0) || 0,
         argumentsPreview: coerceString(raw.argumentsPreview || raw.arguments || raw.args || '', ''),
         resultPreview: coerceString(raw.resultPreview || raw.result || raw.body || '', ''),
+        imageDataUrl: coerceString(raw.imageDataUrl || '', ''),
+        imageMimeType: coerceString(raw.imageMimeType || '', ''),
+        imageName: coerceString(raw.imageName || '', ''),
         sourceCount: Number(raw.sourceCount || raw.sources || 0) || 0,
         error: coerceString(raw.error || '', ''),
         progressPercent: Number.isFinite(Number(raw.progressPercent)) ? Math.max(0, Math.min(100, Math.round(Number(raw.progressPercent)))) : -1
@@ -30606,6 +30893,9 @@ function normalizeToolCallEvents(events) {
             startedUtc: event.startedUtc || merged[existingIndex].startedUtc,
             argumentsPreview: event.argumentsPreview || merged[existingIndex].argumentsPreview,
             resultPreview: event.resultPreview || merged[existingIndex].resultPreview,
+            imageDataUrl: event.imageDataUrl || merged[existingIndex].imageDataUrl,
+            imageMimeType: event.imageMimeType || merged[existingIndex].imageMimeType,
+            imageName: event.imageName || merged[existingIndex].imageName,
             summary: event.summary || merged[existingIndex].summary
         });
     });
@@ -31132,10 +31422,11 @@ function summarizeToolCallResult(call) {
 
 function createToolCallActivityRow(call) {
     const normalized = normalizeToolCallEvent(call);
+    const imagePreview = toolCallImagePreview(normalized);
     const row = document.createElement('details');
     const status = normalizeToolCallStatus(normalized && normalized.status);
     row.className = 'tool-call-row status-' + status;
-    row.open = status === 'failed' || status === 'started' || status === 'progress';
+    row.open = !!imagePreview || status === 'failed' || status === 'started' || status === 'progress';
     const summary = document.createElement('summary');
     const indicator = document.createElement('span');
     indicator.className = 'tool-call-indicator';
@@ -31148,7 +31439,7 @@ function createToolCallActivityRow(call) {
     title.textContent = formatToolDisplayName(normalized.name || normalized.label);
     const sub = document.createElement('span');
     sub.className = 'tool-call-summary';
-    sub.textContent = descriptor || normalized.summary || normalized.error || normalized.kind || normalized.name || 'Service access';
+    sub.textContent = descriptor || (imagePreview ? 'Captured foreground image' : (normalized.summary || normalized.error || normalized.kind || normalized.name || 'Service access'));
     main.appendChild(title);
     main.appendChild(sub);
     const meta = document.createElement('span');
@@ -31165,9 +31456,80 @@ function createToolCallActivityRow(call) {
     const body = document.createElement('div');
     body.className = 'tool-call-body';
     appendToolCallPreviewSection(body, 'Target', summarizeToolCallArguments(normalized));
-    appendToolCallPreviewSection(body, status === 'failed' ? 'Issue' : 'Result', summarizeToolCallResult(normalized));
+    if (imagePreview) {
+        appendToolCallPreviewSection(body, 'Result', 'Captured foreground image (' + imagePreview.mimeType + ').');
+        appendToolCallImagePreview(body, imagePreview);
+    } else {
+        appendToolCallPreviewSection(body, status === 'failed' ? 'Issue' : 'Result', summarizeToolCallResult(normalized));
+    }
     row.appendChild(body);
     return row;
+}
+
+function toolCallImagePreview(call) {
+    const directDataUrl = coerceString(call && call.imageDataUrl, '').trim();
+    const directMimeType = coerceString(call && call.imageMimeType, '').trim().toLowerCase();
+    if (/^data:image\//i.test(directDataUrl) && /^image\//i.test(directMimeType)) {
+        const directExtension = directMimeType === 'image/jpeg' ? '.jpg' : (directMimeType === 'image/svg+xml' ? '.svg' : '.' + directMimeType.slice('image/'.length));
+        return { dataUrl: directDataUrl, mimeType: directMimeType, extension: directExtension, name: coerceString(call && call.imageName, 'Companion foreground capture' + directExtension) };
+    }
+    const candidates = [call && call.resultPreview, call && call.summary]
+        .map(value => coerceString(value, '').trim())
+        .filter(Boolean);
+    for (const candidate of candidates) {
+        const parsed = parseToolJsonPreview(candidate);
+        if (!parsed || typeof parsed !== 'object') continue;
+        const mimeType = coerceString(parsed.contentType || parsed.mimeType, '').toLowerCase();
+        if (!/^image\/(?:png|jpe?g|webp|gif|bmp|svg\+xml)$/i.test(mimeType)) continue;
+        const rawData = coerceString(parsed.dataUrl || parsed.data || parsed.imageBase64, '').trim();
+        const dataUrl = /^data:image\//i.test(rawData) ? rawData : (rawData ? 'data:' + mimeType + ';base64,' + rawData : '');
+        if (!/^data:image\//i.test(dataUrl)) continue;
+        const extension = mimeType === 'image/jpeg' ? '.jpg' : (mimeType === 'image/svg+xml' ? '.svg' : '.' + mimeType.slice('image/'.length));
+        const name = coerceString(parsed.fileName || parsed.name, 'Companion foreground capture' + extension);
+        return { dataUrl, mimeType, extension, name };
+    }
+    return null;
+}
+
+function appendToolCallImagePreview(container, preview) {
+    if (!container || !preview || !preview.dataUrl) return;
+    const section = document.createElement('div');
+    section.className = 'tool-call-section';
+    const title = document.createElement('div');
+    title.className = 'tool-call-section-label';
+    title.textContent = 'Image';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tool-call-image-button';
+    button.title = 'Open this capture in File View';
+    button.setAttribute('aria-label', 'Open ' + preview.name + ' in File View');
+    const image = document.createElement('img');
+    image.className = 'tool-call-image';
+    image.alt = preview.name;
+    image.loading = 'lazy';
+    image.src = preview.dataUrl;
+    const caption = document.createElement('span');
+    caption.className = 'tool-call-image-caption';
+    caption.textContent = 'Open in File View';
+    button.append(image, caption);
+    button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const entry = {
+            type: 'file',
+            kind: 'image',
+            sessionId: currentSessionId || '',
+            path: 'Companion captures/' + preview.name,
+            name: preview.name,
+            extension: preview.extension,
+            mimeType: preview.mimeType,
+            previewKind: 'image',
+            dataUrl: preview.dataUrl
+        };
+        renderFilePreview({ ok: true, previewKind: 'image', dataUrl: preview.dataUrl, file: entry });
+    });
+    section.append(title, button);
+    container.appendChild(section);
 }
 
 function appendToolCallPreviewSection(container, label, text) {
@@ -31889,6 +32251,7 @@ function updateAssistantParts(parts, content, reasoning, isFinal) {
     const preview = parts.details.querySelector('.thinking-preview');
     if (preview) updateThinkingPreview(preview, cleanReasoning, !!isFinal);
     scheduleAssistantContentRender(parts, cleanContent, !!isFinal, shouldScroll);
+    updateAssistantChoicePanel(parts, cleanContent, !!isFinal);
     const assistantCopyText = buildAssistantCopyText(cleanContent, cleanReasoning);
     updateMessageCopyButton(parts.host, shouldOfferMessageCopy('assistant', assistantCopyText), assistantCopyText, 'Copy response text');
     if (isFinal)
@@ -31911,7 +32274,7 @@ function shouldStickThinkingScroll(pre) {
     const clientHeight = Number(pre.clientHeight || 0);
     if (scrollHeight <= clientHeight + 1) return true;
     const maxScroll = Math.max(1, scrollHeight - clientHeight);
-    return Number(pre.scrollTop || 0) >= maxScroll * 0.9;
+    return Number(pre.scrollTop || 0) >= maxScroll * 0.98;
 }
 
 function scrollThinkingToEnd(pre) {
@@ -35484,6 +35847,7 @@ function updateRetryPlaceholder(item, attempt, delayMs, error) {
     if (parts)
         setPromptProcessing(parts, null, status);
     setLmStudioStatus('connecting', status);
+    addMessage('error', status);
 }
 
 function finalizeFailedAssistantPlaceholder(item, error) {
@@ -41282,6 +41646,7 @@ async function loadSession(id) {
 }
 
 function renderConversation() {
+    const scrollState = captureMessagesScrollState();
     list.textContent = '';
     const visibleMessages = dedupeAdjacentAssistantMessages(messages.filter(message => message && message.role !== 'system'));
     if (!visibleMessages.length) {
@@ -41293,6 +41658,7 @@ function renderConversation() {
         } else {
             renderEmptyConversationHint();
         }
+        restoreMessagesScrollState(scrollState);
         return;
     }
 
@@ -41317,7 +41683,7 @@ function renderConversation() {
         }
     }
     rebuildSessionToolActivityFromMessages();
-    list.scrollTop = list.scrollHeight;
+    restoreMessagesScrollState(scrollState);
     refreshBrowserMiniChat();
     updateContextToggleMeta();
 }
@@ -41917,6 +42283,7 @@ async function loadModels() {
     else if (values.length)
         modelSelect.value = values[0];
 
+    syncHeirowForgeReasoningModelOptions(saved.heirow_forge_models || {});
     applySelectedRuntimeModelService();
     enforceSelectedServiceModelSupport();
     saveSettings();
@@ -43685,6 +44052,7 @@ if (reasoningLevelInput) {
     reasoningLevelInput.addEventListener('input', () => { updateReasoningLevelUi(); if (!sessionReasoningInherit || sessionReasoningInherit.checked) saveSettings(); else saveSessionReasoningPreference(); });
     reasoningLevelInput.addEventListener('change', saveSessionReasoningPreference);
 }
+Object.values(heirowForgeReasoningModelSelects).forEach(select => { if (select) select.addEventListener('change', saveSettings); });
 if (jackhammerCustomBudget) {
     jackhammerCustomBudget.addEventListener('change', () => {
         const value = Number(jackhammerCustomBudget.value);
@@ -43693,6 +44061,16 @@ if (jackhammerCustomBudget) {
     });
 }
 if (sessionReasoningInherit) sessionReasoningInherit.addEventListener('change', saveSessionReasoningPreference);
+if (dynamicContextExpansion) dynamicContextExpansion.addEventListener('change', saveSettings);
+if (dynamicContextMaxTokens) {
+    dynamicContextMaxTokens.addEventListener('change', () => {
+        const value = Number(dynamicContextMaxTokens.value);
+        dynamicContextMaxTokens.value = Number.isFinite(value) && value > 0
+            ? String(Math.max(8192, Math.min(262144, Math.round(value / 1024) * 1024)))
+            : '';
+        saveSettings();
+    });
+}
 if (voiceInput)
     voiceInput.addEventListener('click', startVoiceInput);
 if (personaPlexToggle)
@@ -44590,7 +44968,7 @@ const chickenIgnoredStorageKey='heirowllm.chickenChaser.ignoredNotifications.v1'
 const chickenPositionStorageKey='heirowllm.chickenChaser.position.v1';
 function loadChickenIgnoredNotifications(){try{const value=JSON.parse(localStorage.getItem(chickenIgnoredStorageKey)||'[]');return new Set(Array.isArray(value)?value.filter(item=>typeof item==='string'):[])}catch{return new Set()}}
 function loadChickenPosition(){try{const value=JSON.parse(localStorage.getItem(chickenPositionStorageKey)||'null');return value&&Number.isFinite(value.right)&&Number.isFinite(value.top)?value:null}catch{return null}}
-const chickenChaser={settings:{mode:'chat',taskMode:'agent',model:'auto',includeContext:true,temperature:.7,topP:1,maxTokens:0,reasoning:'auto',workCap:'preset',useGlobalReasoning:true,hidden:false,compact:false},frame:0,lastFrame:0,state:'idle',hovered:false,dynamicId:0,pictureBankPlan:false,lastNotice:new Map(),activeNotices:new Map(),ignoredNotices:loadChickenIgnoredNotifications(),position:loadChickenPosition(),idlePosition:null,idleBounds:null,idleCaptured:false,dockedPosition:null,attachments:[],drag:null,suppressClickUntil:0,clickTimer:0,queue:[],processing:false,viewportFitFrame:0};
+const chickenChaser={settings:{mode:'chat',taskMode:'agent',model:'auto',includeContext:true,temperature:.7,topP:1,maxTokens:0,reasoning:'auto',workCap:'preset',useGlobalReasoning:true,hidden:false,compact:false},frame:0,lastFrame:0,state:'idle',hovered:false,dynamicId:0,pictureBankPlan:false,lastNotice:new Map(),activeNotices:new Map(),ignoredNotices:loadChickenIgnoredNotifications(),position:loadChickenPosition(),idlePosition:null,idleBounds:null,idleCaptured:false,dockedPosition:null,attachments:[],history:[],drag:null,suppressClickUntil:0,clickTimer:0,queue:[],processing:false,viewportFitFrame:0};
 const chickenEls={shell:document.getElementById('chickenChaserShell'),sprite:document.getElementById('chickenChaserSprite'),restore:document.getElementById('chickenChaserRestore'),panel:document.getElementById('chickenChaserPanel'),settings:document.getElementById('chickenChaserSettings'),menu:document.getElementById('chickenContextMenu'),conversation:document.getElementById('chickenConversation'),prompt:document.getElementById('chickenPrompt'),send:document.getElementById('chickenSend'),attach:document.getElementById('chickenAttach'),fileInput:document.getElementById('chickenFileInput'),attachmentTray:document.getElementById('chickenAttachmentTray'),openIn:document.getElementById('chickenOpenInHeirowLlm'),notifications:document.getElementById('chickenNotifications'),mode:document.getElementById('chickenModeToggle'),modeLabel:document.getElementById('chickenModeLabel'),apply:document.getElementById('chickenApplyPictureBank')};
 function setChickenWebState(state){chickenChaser.state=state||'idle';chickenChaser.frame=0;chickenChaser.lastFrame=0;chickenEls.sprite.dataset.state=chickenChaser.state}
 function animateChickenWeb(now){const sprite=chickenEls.sprite;if(sprite&&!chickenChaser.hovered){const frames={idle:[0],think:[5,7,5,6],working:[8,9,10,11],celebrate:[12,13,14,15]}[chickenChaser.state]||[0];if(!chickenChaser.lastFrame||now-chickenChaser.lastFrame>115){chickenChaser.frame=(chickenChaser.frame+1)%frames.length;chickenChaser.lastFrame=now;const frame=frames[chickenChaser.frame],position=(frame%4)*100/3+'% '+Math.floor(frame/4)*100/3+'%';if(sprite.style.backgroundPosition!==position)sprite.style.backgroundPosition=position}}requestAnimationFrame(animateChickenWeb)}
@@ -44724,7 +45102,7 @@ async function processChickenQueue(){
             let result={reply:'',thoughtSummary:'',actions:[]};
             setChickenWebState('think');
             try{
-                const response=await fetch('/api/chickenchaser/chat/stream',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:item.prompt,mode:item.mode,context:item.context,attachments:item.attachments})});
+                const response=await fetch('/api/chickenchaser/chat/stream',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:item.prompt,mode:item.mode,context:item.context,attachments:item.attachments,history:item.history})});
                 await readChickenStream(response,event=>{
                     if(event.type==='delta'){
                         replyRow.hidden=false;
@@ -44748,6 +45126,8 @@ async function processChickenQueue(){
                 thinking.host.title='Show conclusion';
                 thinking.host.setAttribute('aria-label','Show conclusion');
                 await executeChickenActions(inferred,item.prompt);
+                chickenChaser.history.push({role:'assistant',content:replyRow.textContent||result.reply||'How can I help?'});
+                if(chickenChaser.history.length>32)chickenChaser.history.splice(0,chickenChaser.history.length-32);
                 setChickenWebState('celebrate');
             }catch(error){
                 replyRow.remove();
@@ -44768,7 +45148,7 @@ async function processChickenQueue(){
         setTimeout(()=>setChickenWebState('idle'),1600);
     }
 }
-function askChicken(){const value=chickenEls.prompt.value.trim(),attachments=chickenChaser.attachments.map(item=>({...item}));if(!value&&!attachments.length)return;const prompt=value||'Please inspect the attached material.';addChickenMessage((value?value+'\n':'')+(attachments.length?'📎 '+attachments.map(item=>item.name).join(', '):''),'user');chickenEls.prompt.value='';chickenChaser.attachments=[];renderChickenAttachments();chickenChaser.queue.push({prompt,mode:chickenChaser.settings.mode,context:collectChickenContext(),attachments});processChickenQueue();scheduleChickenViewportFit();chickenEls.prompt.focus()}
+function askChicken(){const value=chickenEls.prompt.value.trim(),attachments=chickenChaser.attachments.map(item=>({...item}));if(!value&&!attachments.length)return;const prompt=value||'Please inspect the attached material.',history=chickenChaser.history.slice(-16).map(item=>({...item}));addChickenMessage((value?value+'\n':'')+(attachments.length?'📎 '+attachments.map(item=>item.name).join(', '):''),'user');chickenChaser.history.push({role:'user',content:prompt});chickenEls.prompt.value='';chickenChaser.attachments=[];renderChickenAttachments();chickenChaser.queue.push({prompt,mode:chickenChaser.settings.mode,context:collectChickenContext(),attachments,history});processChickenQueue();scheduleChickenViewportFit();chickenEls.prompt.focus()}
 function updateChickenMode(){chickenChaser.settings.mode=chickenEls.mode.checked?'help':'chat';chickenEls.modeLabel.textContent=(chickenChaser.settings.mode==='help'?'Agent':'Chat')+' · '+(workspaceViewDefinitions[activeWorkspaceView]?.title||'Workstation')+' context'}
 function chickenModelOptionSupportsText(option){const text=[option?.value,option?.textContent,option?.title].filter(Boolean).join(' ').toLowerCase();return !/(ace[- ]?step|acestep|stable[- ]?diffusion|diffusion[- ]?inpainting|real[- ]?esrgan|birefnet|sam[- ]?vit|audio[-_ ]generation|image[-_ ]generation|video[-_ ]generation|(?:audio|image|video)[-_ ]gen\b|text[- ]to[- ]speech|speech[- ]to[- ]text|\bembedding\b|\breranker\b|\bmanifest(?:\.json)?\b)/i.test(text)}
 function syncChickenModelOptions(){const select=document.getElementById('chickenSettingModel');let wanted=chickenChaser.settings.model||'auto';if(!select)return;select.textContent='';select.add(new Option('Auto · Instant Router','auto'));for(const option of Array.from(modelSelect?.options||[])){if(!option.value||option.value==='auto'||Array.from(select.options).some(item=>item.value===option.value))continue;const compatible=chickenModelOptionSupportsText(option),label=(option.textContent||option.value)+(compatible?'':' · unavailable for chat'),item=new Option(label,option.value);item.disabled=!!option.disabled||!compatible;select.add(item)}const selected=Array.from(select.options).find(item=>item.value===wanted&&!item.disabled);if(!selected){wanted='auto';chickenChaser.settings.model='auto'}select.value=wanted}

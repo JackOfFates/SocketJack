@@ -1038,8 +1038,8 @@ namespace SocketJack.Com
             AddCsv(_options.MasterListUrls, Environment.GetEnvironmentVariable("SOCKETJACK_COM_MASTER_LIST"));
             AddCsv(_options.DirectEndpoints, Environment.GetEnvironmentVariable("SOCKETJACK_COM_ENDPOINTS"));
 
-            AddIfMissing(_options.MasterListUrls, "https://socketjack.com/api/heirowllm/servers");
-            AddIfMissing(_options.MasterListUrls, "https://socketjack.com/api/socketjack-com/servers");
+            AddIfMissing(_options.MasterListUrls, "https://desktop-kssu21a.tail3b2157.ts.net/api/heirowllm/servers");
+            AddIfMissing(_options.MasterListUrls, "https://desktop-kssu21a.tail3b2157.ts.net/api/socketjack-com/servers");
             AddIfMissing(_options.MasterListUrls, "https://JackCast.Live/api/heirowllm/servers");
             AddIfMissing(_options.MasterListUrls, "https://JackCast.Live/api/socketjack-com/servers");
 
@@ -2160,13 +2160,9 @@ namespace SocketJack.Com
             path = path.TrimEnd('/');
             string authority = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
             if (path.StartsWith("/proxy/", StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(uri.Host, "socketjack.com", StringComparison.OrdinalIgnoreCase))
+                string.Equals(uri.Host, "desktop-kssu21a.tail3b2157.ts.net", StringComparison.OrdinalIgnoreCase))
             {
-                var builder = new UriBuilder(uri)
-                {
-                    Host = "www.socketjack.com",
-                    Path = path
-                };
+                var builder = new UriBuilder(uri) { Path = path };
                 return builder.Uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
             }
             return authority + path;

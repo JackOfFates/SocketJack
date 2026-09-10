@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "heirowLLMUpdater": {
-      "commandName": "Project",
-      "commandLineArgs": "--diff"
-    }
-  }
-}

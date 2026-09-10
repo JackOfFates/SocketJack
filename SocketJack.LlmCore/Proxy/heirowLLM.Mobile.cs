@@ -68,7 +68,7 @@ button.primary{background:var(--blue)}button.good{background:var(--green)}button
 button:disabled{opacity:.55;cursor:not-allowed}.pill{border:1px solid var(--line);border-radius:999px;padding:6px 10px;color:var(--muted)}
 code,.code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.code{background:#020617;border:1px solid var(--line);border-radius:14px;padding:13px;overflow:auto;white-space:pre-wrap}
 table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-size:12px;text-transform:uppercase}
-.empty{padding:18px;border:1px dashed var(--line);border-radius:14px;color:var(--muted)}.note{min-height:20px;color:var(--muted)}.error{color:#fca5a5}
+.empty{padding:18px;border:1px dashed var(--line);border-radius:14px;color:var(--muted)}.note{min-height:20px;color:var(--muted)}.error{color:#fca5a5}.steps{display:grid;gap:10px;margin:0;padding:0;list-style:none;counter-reset:setup}.steps li{counter-increment:setup;display:grid;grid-template-columns:30px 1fr;gap:10px;align-items:start}.steps li::before{content:counter(setup);display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#1d4ed8;color:white;font-weight:800}.steps strong{display:block}.callout{margin-top:14px;padding:12px 14px;border-radius:14px;background:#020617;border:1px solid var(--line)}a{color:#93c5fd}
 </style>
 </head>
 <body>
@@ -78,6 +78,12 @@ table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px s
 </section>
 <section class=""card"">
 <div class=""row space""><div><h2>Mobile Access</h2><div class=""muted"">Disabled by default. Enable only when pairing or using trusted phones.</div></div><div class=""row""><button id=""enable"" class=""good"">Enable</button><button id=""disable"" class=""danger"">Disable</button></div></div>
+</section>
+<section class=""card"">
+<h2>Connect over Tailscale</h2>
+<div class=""muted"">Tailscale creates the private path between this Workstation and your phone. Keep both devices signed in to the same tailnet before pairing. <a href=""https://tailscale.com/download"" target=""_blank"" rel=""noopener"">Download Tailscale</a>.</div>
+<ol class=""steps""><li><div><strong>Install Tailscale</strong><span class=""muted"">Install it on this Workstation and on the phone, then sign in to the same tailnet.</span></div></li><li><div><strong>Turn on both devices</strong><span class=""muted"">Leave Tailscale connected while using heirowLLM Mobile. A green Tailscale status on the phone confirms the private path.</span></div></li><li><div><strong>Enable Mobile Access here</strong><span class=""muted"">Use the green Enable button above. It is off by default and can be disabled again at any time.</span></div></li><li><div><strong>Pair the phone</strong><span class=""muted"">Choose its Workstation user, select Start pairing, and enter the six-digit code in the mobile app. The code expires after five minutes and works once.</span></div></li></ol>
+<div class=""callout""><strong>Endpoint note</strong><div class=""muted"">The pairing card includes the endpoint to enter on the phone. If it says <code>localhost</code>, replace that host with this Workstation's Tailscale address or MagicDNS name while keeping the Workstation port.</div></div>
 </section>
 <section class=""card"">
 <div class=""row space""><div><h2>Pair a phone</h2><div class=""muted"">Choose the Workstation user this phone belongs to, then enter the one-time code in heirowLLM Mobile. Codes expire in five minutes and can be used once.</div></div><div class=""row""><select id=""pairOwner"">" + userOptions + @"</select><button id=""pair"" class=""primary"">Start pairing</button></div></div>

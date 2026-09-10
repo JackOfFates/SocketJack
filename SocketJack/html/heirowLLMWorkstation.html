@@ -141,7 +141,7 @@ input,select{width:100%;background:#0b121a;border:1px solid #354c5e;border-radiu
   </aside>
 </main>
 <script>
-const state={candidate:null,candidates:[],lastScan:null,selectedCandidateIndexes:{},downloadJobs:[],lastDownloads:[],conversionJob:null,live:false,timer:null,drag:null,workstation:null,captureInFlight:false,refreshInFlight:false,downloadPollInFlight:false,lastCaptureMs:0,autoStarted:false,hfResults:[],selectedRepo:'',activeTab:'models'};
+const state={candidate:null,candidates:[],lastScan:null,selectedCandidateIndexes:{},downloadJobs:[],lastDownloads:[],conversionJob:null,live:false,timer:null,drag:null,workstation:null,canInstall:false,captureInFlight:false,refreshInFlight:false,downloadPollInFlight:false,lastCaptureMs:0,autoStarted:false,hfResults:[],selectedRepo:'',activeTab:'models'};
 const liveFrameDelayMs=900;
 const inputFrameDelayMs=180;
 const minFrameDelayMs=500;
@@ -211,11 +211,13 @@ async function refreshAll(){
   if(state.refreshInFlight) return;
   state.refreshInFlight=true;
   try{
-    const [health,hardware,workstation]=await Promise.all([
+    const [health,hardware,workstation,session]=await Promise.all([
       api('/health',{timeoutMs:6000}),
       api('/api/server-hardware',{timeoutMs:6000}),
-      api('/api/workstation/state',{timeoutMs:6000})
+      api('/api/workstation/state',{timeoutMs:6000}),
+      api('/api/web-auth/session',{timeoutMs:6000})
     ]);
+    state.canInstall=!!session.isAdministrator;
     setPill('jackState',health.ok?'online':'offline',health.ok?'ok':'bad');
     const gpu=hardware.gpu||{};
     setPill('gpuState',gpu.vramText||gpu.text||'unknown',gpu.available?'ok':'warn');
@@ -223,7 +225,7 @@ async function refreshAll(){
     const workstationOk=!!(workstation&&workstation.ok&&workstation.desktopAvailable);
     setPill('workstationState',workstationOk?'online':'offline',workstationOk?'ok':'bad');
     setPill('mcpState','heirowLLM native endpoints','ok');
-    $('topStatus').textContent=workstationOk?'heirowLLM Workstation remote UI is available from this page.':'heirowLLM is online. Native remote UI is not registered yet.';
+    $('topStatus').textContent=state.canInstall?(workstationOk?'heirowLLM Workstation remote UI is available from this page.':'heirowLLM is online. Native remote UI is not registered yet.'):'Model installation is restricted to Workstation administrators.';
     if(workstationOk&&state.activeTab==='remote'&&!state.autoStarted){
       state.autoStarted=true;
       startLiveView();
@@ -344,8 +346,8 @@ function renderCandidatePanel(scan){
   updateDownloadSelectionButtons();
 }
 function renderCandidateRow(c,i){
-  const canAct=candidateCanDownload(c)||!!c.canConvert;
-  const canSelect=candidateCanDownload(c);
+  const canAct=state.canInstall&&(candidateCanDownload(c)||!!c.canConvert);
+  const canSelect=state.canInstall&&candidateCanDownload(c);
   const statusClass=c.isWarning?'warning-text':canAct?'':'bad-text';
   const action=c.action||'unsupported';
   const label=c.actionLabel||(c.exists?'Already downloaded':canAct?'Download':'Unsupported');
@@ -385,7 +387,7 @@ function updateDownloadSelectionButtons(){
   const selected=selectedDownloadableIndexes().length;
   const btn=$('downloadSelectedButton');
   if(btn){
-    btn.disabled=selected===0;
+    btn.disabled=selected===0||!state.canInstall;
     btn.textContent=selected>0?'Download Selected ('+selected+')':'Download Selected';
   }
 }

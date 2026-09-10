@@ -78,7 +78,7 @@ public sealed class UpdateServerOptions {
         forwarding.Enabled = GetBool(Environment.GetEnvironmentVariable("SOCKETJACK_UPDATE_PUBLIC_FORWARDING_ENABLED"), forwarding.Enabled);
         forwarding.HttpBindHost = NormalizePublicBindHost(FirstNonEmpty(Environment.GetEnvironmentVariable("SOCKETJACK_UPDATE_PUBLIC_HTTP_BIND_HOST"), forwarding.HttpBindHost, "0.0.0.0"));
         forwarding.HttpsBindHost = NormalizePublicBindHost(FirstNonEmpty(Environment.GetEnvironmentVariable("SOCKETJACK_UPDATE_PUBLIC_HTTPS_BIND_HOST"), forwarding.HttpsBindHost, forwarding.HttpBindHost, "0.0.0.0"));
-        forwarding.DefaultCertificateHost = NormalizeHostName(FirstNonEmpty(Environment.GetEnvironmentVariable("SOCKETJACK_UPDATE_PUBLIC_DEFAULT_CERT_HOST"), forwarding.DefaultCertificateHost, "socketjack.com"));
+        forwarding.DefaultCertificateHost = NormalizeHostName(FirstNonEmpty(Environment.GetEnvironmentVariable("SOCKETJACK_UPDATE_PUBLIC_DEFAULT_CERT_HOST"), forwarding.DefaultCertificateHost, "desktop-kssu21a.tail3b2157.ts.net"));
 
         if (int.TryParse(Environment.GetEnvironmentVariable("SOCKETJACK_UPDATE_PUBLIC_HTTP_PORT"), out int httpPort) && httpPort > 0 && httpPort <= 65535)
             forwarding.HttpPort = httpPort;

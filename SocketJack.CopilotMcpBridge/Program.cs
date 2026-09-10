@@ -387,7 +387,7 @@ public enum CopilotBridgeTransport
 public sealed class CopilotBridgeOptions
 {
     public CopilotBridgeTransport Transport { get; private init; } = CopilotBridgeTransport.Stdio;
-    public Uri ServerEndpoint { get; private init; } = new("https://socketjack.com/proxy/TitanX/");
+    public Uri ServerEndpoint { get; private init; } = new("https://desktop-kssu21a.tail3b2157.ts.net/proxy/TitanX/");
     public Uri LocalWebChatEndpoint { get; private init; } = new("http://127.0.0.1:11436/");
     public bool PreferLocalWebChat { get; private init; } = true;
     public string ServerId { get; private init; } = "TitanX";
@@ -411,7 +411,7 @@ public sealed class CopilotBridgeOptions
           --http-proxy             Run a loopback HTTP model proxy at http://127.0.0.1:<port>.
 
         Options:
-          --server-endpoint <url>  SocketJack server endpoint, for example https://socketjack.com/proxy/TitanX.
+          --server-endpoint <url>  SocketJack server endpoint, for example https://desktop-kssu21a.tail3b2157.ts.net/proxy/TitanX.
           --local-webchat-endpoint <url>
                                     Local heirowLLM web-chat endpoint for fast direct streams. Default: http://127.0.0.1:11436.
           --disable-local-webchat  Do not prefer the local heirowLLM endpoint before the configured SocketJack endpoint.
@@ -429,7 +429,7 @@ public sealed class CopilotBridgeOptions
     public static CopilotBridgeOptions Parse(string[] args)
     {
         CopilotBridgeTransport transport = CopilotBridgeTransport.Stdio;
-        Uri endpoint = ReadEndpoint(Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_SERVER_ENDPOINT") ?? "https://socketjack.com/proxy/TitanX");
+        Uri endpoint = ReadEndpoint(Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_SERVER_ENDPOINT") ?? "https://desktop-kssu21a.tail3b2157.ts.net/proxy/TitanX");
         Uri localWebChatEndpoint = ReadEndpoint(Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_LOCAL_WEBCHAT_ENDPOINT") ?? "http://127.0.0.1:11436");
         bool preferLocalWebChat = !string.Equals(Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_DISABLE_LOCAL_WEBCHAT"), "1", StringComparison.OrdinalIgnoreCase);
         string serverId = Environment.GetEnvironmentVariable("SOCKETJACK_COPILOT_SERVER_ID") ?? "TitanX";

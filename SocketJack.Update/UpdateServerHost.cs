@@ -2901,7 +2901,7 @@ public sealed class UpdateServerHost : IDisposable {
     }
 
     private static string CombineUrl(string baseUrl, string relativePath) {
-        baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://socketjack.com/SecureAuthority/" : baseUrl.Trim();
+        baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://desktop-kssu21a.tail3b2157.ts.net/SecureAuthority/" : baseUrl.Trim();
         if (!baseUrl.EndsWith("/", StringComparison.Ordinal))
             baseUrl += "/";
         return baseUrl + (relativePath ?? "").TrimStart('/').Replace("\\", "/");
